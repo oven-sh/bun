@@ -96,6 +96,22 @@ function internalBinding(name: string) {
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
       return { isInsideNodeModules };
+    // The icu-era binding node exposed until nodejs/node#55156; vendored
+    // tests like test-icu-punycode still consume it.
+    case "icu": {
+      const icu = $cpp("NodeURL.cpp", "Bun::createNodeICUBinding");
+      // Node asked ICU's converter registry; answer from the runtime's
+      // encoding registry instead.
+      icu.hasConverter = function hasConverter(label: string) {
+        try {
+          new TextDecoder(label);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      return icu;
+    }
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

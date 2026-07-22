@@ -4,21 +4,16 @@ import { resolveObjectURL } from "node:buffer";
 
 describe("url", () => {
   it("URL throws", () => {
-    expect(() => new URL("")).toThrow('"" cannot be parsed as a URL');
-    expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
-    expect(() => new URL("boop", "http!/example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against "http!/example.com"',
-    );
+    // Node-compatible message: exactly "Invalid URL".
+    expect(() => new URL("")).toThrow("Invalid URL");
+    expect(() => new URL(" ")).toThrow("Invalid URL");
+    expect(() => new URL("boop", "http!/example.com")).toThrow("Invalid URL");
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_URL",
       }),
     );
-
-    // redact
-    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against <redacted>',
-    );
+    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow("Invalid URL");
   });
 
   it("should have correct origin and protocol", () => {

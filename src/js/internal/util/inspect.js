@@ -339,7 +339,151 @@ const validateObject = (value, name, allowArray = false) => {
 };
 
 function isURL(value) {
-  return typeof value.href === "string" && value instanceof URL;
+  if (!(value instanceof URL)) return false;
+  try {
+    // Brand check: subclass prototypes pass instanceof but throw here.
+    return typeof value.href === "string";
+  } catch {
+    return false;
+  }
+}
+
+function isURLSearchParams(value) {
+  return value instanceof URLSearchParams;
+}
+
+const contextForInspect = Symbol("context");
+function getConstructorOf(obj) {
+  while (obj) {
+    const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
+    if (descriptor !== undefined && typeof descriptor.value === "function" && descriptor.value.name !== "") {
+      return descriptor.value;
+    }
+    obj = ObjectGetPrototypeOf(obj);
+  }
+  return null;
+}
+
+// Node's URLContext (lib/internal/url.js): ada's uint32 component offsets
+// into the href, reconstructed from the URL's components so that
+// `util.inspect(url, { showHidden: true })` matches node's output.
+const kOmittedComponent = 4294967295; // ada uses uint32_t(-1) for omitted values
+
+class URLContext {
+  href = "";
+  protocol_end = 0;
+  username_end = 0;
+  host_start = 0;
+  host_end = 0;
+  pathname_start = 0;
+  search_start = 0;
+  hash_start = 0;
+  port = 0;
+  scheme_type = 1;
+
+  get hasPort() {
+    return this.port !== kOmittedComponent;
+  }
+
+  get hasSearch() {
+    return this.search_start !== kOmittedComponent;
+  }
+
+  get hasHash() {
+    return this.hash_start !== kOmittedComponent;
+  }
+}
+
+const kSchemeTypes = {
+  __proto__: null,
+  "http:": 0,
+  "https:": 2,
+  "ws:": 3,
+  "ftp:": 4,
+  "wss:": 5,
+  "file:": 6,
+};
+
+function makeURLContext(url) {
+  const context = new URLContext();
+  const href = url.href;
+  const hostname = url.hostname;
+  context.href = href;
+  context.protocol_end = url.protocol.length;
+  context.scheme_type = kSchemeTypes[url.protocol] ?? 1;
+
+  const hasSlashes = StringPrototypeStartsWith(href, "//", context.protocol_end);
+  const authorityStart = context.protocol_end + (hasSlashes ? 2 : 0);
+  const hasCredentials = url.username !== "" || url.password !== "";
+  let position = authorityStart + url.username.length;
+  context.username_end = position;
+  if (url.password !== "") position += 1 + url.password.length;
+  // ada's host_start points at the '@' when credentials are present.
+  context.host_start = position;
+  context.host_end = position + (hasCredentials ? 1 : 0) + hostname.length;
+  context.port = url.port === "" ? kOmittedComponent : Number(url.port);
+  context.pathname_start = context.host_end + (url.port === "" ? 0 : 1 + url.port.length);
+  const pathnameEnd = context.pathname_start + url.pathname.length;
+  context.search_start = url.search === "" ? kOmittedComponent : pathnameEnd;
+  context.hash_start = url.hash === "" ? kOmittedComponent : pathnameEnd + url.search.length;
+  return context;
+}
+
+// Port of node's URL.prototype[util.inspect.custom] (internal/url.js). The
+// native URL class has no inspect symbol, so formatValue dispatches here.
+function formatURLCustom(depth, opts) {
+  if (typeof depth === "number" && depth < 0) return this;
+
+  const constructor = getConstructorOf(this) || URL;
+  const obj = { __proto__: { constructor } };
+
+  obj.href = this.href;
+  obj.origin = this.origin;
+  obj.protocol = this.protocol;
+  obj.username = this.username;
+  obj.password = this.password;
+  obj.host = this.host;
+  obj.hostname = this.hostname;
+  obj.port = this.port;
+  obj.pathname = this.pathname;
+  obj.search = this.search;
+  obj.searchParams = this.searchParams;
+  obj.hash = this.hash;
+
+  if (opts.showHidden) {
+    obj[contextForInspect] = makeURLContext(this);
+  }
+
+  return `${constructor.name} ${inspect(obj, opts)}`;
+}
+
+// Port of node's URLSearchParams.prototype[util.inspect.custom].
+function formatURLSearchParamsCustom(recurseTimes, ctx) {
+  if (typeof recurseTimes === "number" && recurseTimes < 0) return ctx.stylize("[Object]", "special");
+
+  const separator = ", ";
+  const innerOpts = { ...ctx };
+  if (recurseTimes !== null) {
+    innerOpts.depth = recurseTimes - 1;
+  }
+
+  const output = [];
+  for (const pair of this) {
+    ArrayPrototypePush.$call(output, `${inspect(pair[0], innerOpts)} => ${inspect(pair[1], innerOpts)}`);
+  }
+
+  let length = -separator.length;
+  for (let i = 0; i < output.length; i++) {
+    length += stripVTControlCharacters(output[i]).length + separator.length;
+  }
+
+  const name = this.constructor.name;
+  if (length > ctx.breakLength) {
+    return `${name} {\n  ${ArrayPrototypeJoin(output, ",\n  ")} }`;
+  } else if (output.length) {
+    return `${name} { ${ArrayPrototypeJoin(output, separator)} }`;
+  }
+  return `${name} {}`;
 }
 
 const builtInObjects = new SafeSet(
@@ -1171,7 +1315,16 @@ function formatValue(ctx, value, recurseTimes, typedArray) {
   // Provide a hook for user-specified inspect functions.
   // Check that value is an object with an inspect function on it.
   if (ctx.customInspect) {
-    const maybeCustom = value[customInspectSymbol];
+    let maybeCustom = value[customInspectSymbol];
+    // Bun's native URL / URLSearchParams don't carry the inspect symbol
+    // node's JS implementations define; dispatch to ports of them instead.
+    if (maybeCustom === undefined) {
+      if (isURL(value)) {
+        maybeCustom = formatURLCustom;
+      } else if (isURLSearchParams(value)) {
+        maybeCustom = formatURLSearchParamsCustom;
+      }
+    }
     if (
       typeof maybeCustom === "function" &&
       // Filter out the util module, its inspect function is special.
@@ -1377,11 +1530,6 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       formatter = formatNamespaceObject.bind(null, keys);
     } else if (isBoxedPrimitive(value)) {
       base = getBoxedBase(value, ctx, keys, constructor, tag);
-      if (keys.length === 0 && protoProps === undefined) {
-        return base;
-      }
-    } else if (isURL(value) && !(recurseTimes > ctx.depth && ctx.depth !== null)) {
-      base = value.href;
       if (keys.length === 0 && protoProps === undefined) {
         return base;
       }

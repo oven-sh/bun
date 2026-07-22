@@ -162,7 +162,8 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = base.isEmpty() ? DOMURL::create(WTF::move(url)) : DOMURL::create(WTF::move(url), WTF::move(base));
+    // An empty base string must still be parsed (and fail) per the URL spec.
+    auto object = base.isNull() ? DOMURL::create(WTF::move(url)) : DOMURL::create(WTF::move(url), WTF::move(base));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);

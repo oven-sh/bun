@@ -379,7 +379,9 @@ impl TextDecoder {
                                 return Err(global_this
                                     .err(
                                         jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                                        format_args!("Invalid byte sequence"),
+                                        format_args!(
+                                            "The encoded data was not valid for encoding utf-8"
+                                        ),
                                     )
                                     .throw());
                             }
@@ -462,11 +464,10 @@ impl TextDecoder {
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            // "UTF-16LE" / "UTF-16BE" (NOT `get_label()`,
-                            // which is lowercase "utf-16le"/"utf-16be").
+                            // Node formats the message with the lowercase canonical label.
                             format_args!(
-                                "The encoded data was not valid {} data",
-                                if big_endian { "UTF-16BE" } else { "UTF-16LE" }
+                                "The encoded data was not valid for encoding {}",
+                                if big_endian { "utf-16be" } else { "utf-16le" }
                             ),
                         )
                         .throw());
@@ -556,7 +557,7 @@ impl TextDecoder {
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
-                                "The encoded data was not valid {} data",
+                                "The encoded data was not valid for encoding {}",
                                 bstr::BStr::new(encoding_name)
                             ),
                         )

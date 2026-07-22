@@ -26,9 +26,9 @@
 "use strict";
 
 const { URL, URLSearchParams, URLPattern } = globalThis;
-const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
+const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
-const { validateString } = require("internal/validators");
+const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 function Url() {
@@ -66,14 +66,9 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   unwise = ["{", "}", "|", "\\", "^", "`"].concat(delims),
   // Allowed by RFCs, but cause of XSS attacks.  Always escape these.
   autoEscape = ["'"].concat(unwise),
-  /*
-   * Characters that are never ever allowed in a hostname.
-   * Note that any invalid chars are also handled, but these
-   * are the ones that are *expected* to be seen, so we fast-path
-   * them.
-   */
-  nonHostChars = ["%", "/", "?", ";", "#"].concat(autoEscape),
-  hostEndingChars = ["/", "?", "#"],
+  // Characters never allowed in a hostname (post-IDNA) / bracketed IPv6 hostname.
+  forbiddenHostChars = /[\0\t\n\r #%/:<>?@[\\\]^|]/,
+  forbiddenHostCharsIpv6 = /[\0\t\n\r #%/<>?@\\^|]/,
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
@@ -95,11 +90,15 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
     ftp: true,
     gopher: true,
     file: true,
+    ws: true,
+    wss: true,
     "http:": true,
     "https:": true,
     "ftp:": true,
     "gopher:": true,
     "file:": true,
+    "ws:": true,
+    "wss:": true,
   };
 
 function urlParse(
@@ -254,61 +253,62 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
      * http://a@b?@c => user:a host:c path:/?@c
      */
 
-    /*
-     * v0.12 TODO(isaacs): This is not quite how Chrome does things.
-     * Review our test case against browsers more comprehensively.
-     */
-
-    // find the first instance of any hostEndingChars
-    var hostEnd = -1;
-    for (var i = 0; i < hostEndingChars.length; i++) {
-      var hec = rest.indexOf(hostEndingChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) {
-        hostEnd = hec;
+    let hostEnd = -1;
+    let atSign = -1;
+    let nonHost = -1;
+    for (let i = 0; i < rest.length; ++i) {
+      switch (rest.$charCodeAt(i)) {
+        case Char.TAB:
+        case Char.LINE_FEED:
+        case Char.CARRIAGE_RETURN:
+          // WHATWG URL removes tabs, newlines, and carriage returns. Let's do that too.
+          rest = rest.slice(0, i) + rest.slice(i + 1);
+          i -= 1;
+          break;
+        case Char.SPACE:
+        case Char.DOUBLE_QUOTE:
+        case Char.PERCENT:
+        case Char.SINGLE_QUOTE:
+        case Char.SEMICOLON:
+        case Char.LEFT_ANGLE_BRACKET:
+        case Char.RIGHT_ANGLE_BRACKET:
+        case Char.BACKWARD_SLASH:
+        case Char.CIRCUMFLEX_ACCENT:
+        case Char.GRAVE_ACCENT:
+        case Char.LEFT_CURLY_BRACKET:
+        case Char.VERTICAL_LINE:
+        case Char.RIGHT_CURLY_BRACKET:
+          // Characters that are never ever allowed in a hostname from RFC 2396
+          if (nonHost === -1) nonHost = i;
+          break;
+        case Char.HASH:
+        case Char.FORWARD_SLASH:
+        case Char.QUESTION_MARK:
+          // Find the first instance of any host-ending characters
+          if (nonHost === -1) nonHost = i;
+          hostEnd = i;
+          break;
+        case Char.AT:
+          // At this point, either we have an explicit point where the
+          // auth portion cannot go past, or the last @ char is the decider.
+          atSign = i;
+          nonHost = -1;
+          break;
       }
+      if (hostEnd !== -1) break;
     }
-
-    /*
-     * at this point, either we have an explicit point where the
-     * auth portion cannot go past, or the last @ char is the decider.
-     */
-    var auth: string | undefined, atSign: number;
-    if (hostEnd === -1) {
-      // atSign can be anywhere.
-      atSign = rest.lastIndexOf("@");
-    } else {
-      /*
-       * atSign must be in auth portion.
-       * http://a@b/c@d => host:b auth:a path:/c@d
-       */
-      atSign = rest.lastIndexOf("@", hostEnd);
-    }
-
-    /*
-     * Now we have a portion which is definitely the auth.
-     * Pull that off.
-     */
+    let authStart = 0;
     if (atSign !== -1) {
-      auth = rest.slice(0, atSign);
-      rest = rest.slice(atSign + 1);
-      this.auth = decodeURIComponent(auth);
+      this.auth = decodeURIComponent(rest.slice(0, atSign));
+      authStart = atSign + 1;
     }
-
-    // the host is the remaining to the left of the first non-host char
-    hostEnd = -1;
-    for (var i = 0; i < nonHostChars.length; i++) {
-      var hec = rest.indexOf(nonHostChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) {
-        hostEnd = hec;
-      }
+    if (nonHost === -1) {
+      this.host = rest.slice(authStart);
+      rest = "";
+    } else {
+      this.host = rest.slice(authStart, nonHost);
+      rest = rest.slice(nonHost);
     }
-    // if we still have not hit it, then the entire thing is a host.
-    if (hostEnd === -1) {
-      hostEnd = rest.length;
-    }
-
-    this.host = rest.slice(0, hostEnd);
-    rest = rest.slice(hostEnd);
 
     // pull out port.
     this.parseHost();
@@ -340,14 +340,29 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
       this.hostname = this.hostname.toLowerCase();
     }
 
-    /*
-     * IDNA Support: Returns a punycoded representation of "domain".
-     * It only converts parts of the domain name that
-     * have non-ASCII characters, i.e. it doesn't matter if
-     * you call it with a domain that already is ASCII-only.
-     */
-    if (this.hostname) {
-      this.hostname = new URL("http://" + this.hostname).hostname;
+    if (this.hostname !== "") {
+      if (ipv6Hostname) {
+        // IPv6 literals stay as written (Node only lowercases them).
+        if (forbiddenHostCharsIpv6.test(this.hostname)) {
+          throw $ERR_INVALID_URL(url);
+        }
+      } else {
+        /*
+         * IDNA Support: Returns a punycoded representation of "domain".
+         * It only converts parts of the domain name that
+         * have non-ASCII characters, i.e. it doesn't matter if
+         * you call it with a domain that already is ASCII-only.
+         */
+        this.hostname = idnaToASCII(this.hostname);
+
+        /*
+         * Prevent two potential routes of hostname spoofing (see Node):
+         * an empty result or forbidden chars can only come from toASCII.
+         */
+        if (this.hostname === "" || forbiddenHostChars.test(this.hostname)) {
+          throw $ERR_INVALID_URL(url);
+        }
+      }
     }
 
     var p = this.port ? ":" + this.port : "";
@@ -430,6 +445,80 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   return this;
 };
 
+// Same as node's lib/url.js noEscapeAuth table (noEscape plus the colon).
+// prettier-ignore
+const noEscapeAuth = new Int8Array([
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x00 - 0x0F
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x10 - 0x1F
+  0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, // 0x20 - 0x2F
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, // 0x30 - 0x3F
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x40 - 0x4F
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, // 0x50 - 0x5F
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x60 - 0x6F
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, // 0x70 - 0x7F
+]);
+
+const hexTable = new Array(256);
+for (let i = 0; i < 256; ++i) hexTable[i] = "%" + ((i < 16 ? "0" : "") + i.toString(16)).toUpperCase();
+
+// Port of node's internal/querystring encodeStr, used for auth encoding.
+function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
+  const len = str.length;
+  if (len === 0) return "";
+
+  let out = "";
+  let lastPos = 0;
+  let i = 0;
+
+  outer: for (; i < len; i++) {
+    let c = str.$charCodeAt(i);
+
+    // ASCII
+    while (c < 0x80) {
+      if (noEscapeTable[c] !== 1) {
+        if (lastPos < i) out += str.slice(lastPos, i);
+        lastPos = i + 1;
+        out += hexTable[c];
+      }
+
+      if (++i === len) break outer;
+
+      c = str.$charCodeAt(i);
+    }
+
+    if (lastPos < i) out += str.slice(lastPos, i);
+
+    // Multi-byte characters ...
+    if (c < 0x800) {
+      lastPos = i + 1;
+      out += hexTable[0xc0 | (c >> 6)] + hexTable[0x80 | (c & 0x3f)];
+      continue;
+    }
+    if (c < 0xd800 || c >= 0xe000) {
+      lastPos = i + 1;
+      out += hexTable[0xe0 | (c >> 12)] + hexTable[0x80 | ((c >> 6) & 0x3f)] + hexTable[0x80 | (c & 0x3f)];
+      continue;
+    }
+    // Surrogate pair
+    ++i;
+
+    if (i >= len) throw $ERR_INVALID_URI();
+
+    const c2 = str.$charCodeAt(i) & 0x3ff;
+
+    lastPos = i + 1;
+    c = 0x10000 + (((c & 0x3ff) << 10) | c2);
+    out +=
+      hexTable[0xf0 | (c >> 18)] +
+      hexTable[0x80 | ((c >> 12) & 0x3f)] +
+      hexTable[0x80 | ((c >> 6) & 0x3f)] +
+      hexTable[0x80 | (c & 0x3f)];
+  }
+  if (lastPos === 0) return str;
+  if (lastPos < len) return out + str.slice(lastPos);
+  return out;
+}
+
 function isIpv6Hostname(hostname: string) {
   return (
     hostname.$charCodeAt(0) === Char.LEFT_SQUARE_BRACKET &&
@@ -465,8 +554,8 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
+declare function urlFormat(urlObject: string | URL | Url, options?: object): string;
+function urlFormat(urlObject: unknown, options?: unknown) {
   /*
    * ensure it's an object, and not a string url.
    * If it's an obj, this is a no-op.
@@ -478,6 +567,33 @@ function urlFormat(urlObject: unknown) {
     // NOTE: $isObject returns true for functions
   } else if (typeof urlObject !== "object" || urlObject === null) {
     throw $ERR_INVALID_ARG_TYPE("urlObject", ["Object", "string"], urlObject);
+  } else if (urlObject instanceof URL) {
+    let fragment = true;
+    let unicode = false;
+    let search = true;
+    let auth = true;
+
+    if (options) {
+      validateObject(options, "options");
+
+      if ((options as any).fragment != null) {
+        fragment = Boolean((options as any).fragment);
+      }
+
+      if ((options as any).unicode != null) {
+        unicode = Boolean((options as any).unicode);
+      }
+
+      if ((options as any).search != null) {
+        search = Boolean((options as any).search);
+      }
+
+      if ((options as any).auth != null) {
+        auth = Boolean((options as any).auth);
+      }
+    }
+
+    return formatWhatwgURL(urlObject, fragment, unicode, search, auth);
   }
 
   if (!(urlObject instanceof Url)) {
@@ -486,11 +602,36 @@ function urlFormat(urlObject: unknown) {
   return urlObject.format();
 }
 
+// Mirrors Node's internal WHATWG URL formatter (bindingUrl.format).
+function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: boolean, auth: boolean) {
+  // With everything kept, the serialization is exactly the href.
+  if (fragment && !unicode && search && auth) return url.href;
+  let ret = url.protocol;
+  // file:/// and foo:// have an empty-but-present host; the href carries
+  // the authority marker the components can't express.
+  if (url.href.startsWith(ret + "//")) {
+    ret += "//";
+    const hasUsername = url.username !== "";
+    const hasPassword = url.password !== "";
+    if (auth && (hasUsername || hasPassword)) {
+      if (hasUsername) ret += url.username;
+      if (hasPassword) ret += ":" + url.password;
+      ret += "@";
+    }
+    // On ToUnicode failure ada keeps the host as-is; never erase it.
+    ret += unicode ? domainToUnicode(url.hostname) || url.hostname : url.hostname;
+    if (url.port !== "") ret += ":" + url.port;
+  }
+  ret += url.pathname;
+  if (search) ret += url.search;
+  if (fragment) ret += url.hash;
+  return ret;
+}
+
 Url.prototype.format = function format() {
   var auth: string = this.auth || "";
   if (auth) {
-    auth = encodeURIComponent(auth);
-    auth = auth.replace(/%3A/i, ":");
+    auth = encodeStr(auth, noEscapeAuth, hexTable);
     auth += "@";
   }
 
@@ -500,12 +641,17 @@ Url.prototype.format = function format() {
     host = "",
     query = "";
 
+  if (protocol && protocol.substr(-1) !== ":") {
+    protocol += ":";
+  }
+
   const thisHost = this.host;
   let thisHostname;
   if (thisHost) {
     host = auth + thisHost;
   } else if ((thisHostname = this.hostname)) {
-    host = auth + (thisHostname.indexOf(":") === -1 ? thisHostname : "[" + thisHostname + "]");
+    host =
+      auth + (thisHostname.includes(":") && !isIpv6Hostname(thisHostname) ? "[" + thisHostname + "]" : thisHostname);
     const thisPort = this.port;
     if (thisPort) {
       host += ":" + thisPort;
@@ -519,21 +665,20 @@ Url.prototype.format = function format() {
 
   var search = this.search || (query && "?" + query) || "";
 
-  if (protocol && protocol.substr(-1) !== ":") {
-    protocol += ":";
-  }
-
   /*
    * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
    * unless they had them to begin with.
    */
-  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host.length > 0)) {
-    host = "//" + (host || "");
-    if (pathname && pathname.charAt(0) !== "/") {
-      pathname = "/" + pathname;
+  if (this.slashes || slashedProtocol[protocol]) {
+    if (this.slashes || host) {
+      if (pathname && pathname.charAt(0) !== "/") {
+        pathname = "/" + pathname;
+      }
+      host = "//" + host;
+    } else if (protocol.startsWith("file")) {
+      // Node special-cases hostless file: URLs to keep the // marker.
+      host = "//";
     }
-  } else if (!host) {
-    host = "";
   }
 
   if (hash && hash.charAt(0) !== "#") {
@@ -936,10 +1081,24 @@ const enum Char {
   PERCENT = 37,              // %
   LEFT_SQUARE_BRACKET = 91,  // [
   RIGHT_SQUARE_BRACKET = 93, // ]
+  DOUBLE_QUOTE = 34,         // "
+  SINGLE_QUOTE = 39,         // '
+  SEMICOLON = 59,            // ;
+  LEFT_ANGLE_BRACKET = 60,   // <
+  RIGHT_ANGLE_BRACKET = 62,  // >
+  CIRCUMFLEX_ACCENT = 94,    // ^
+  GRAVE_ACCENT = 96,         // `
+  LEFT_CURLY_BRACKET = 123,  // {
+  VERTICAL_LINE = 124,       // |
+  RIGHT_CURLY_BRACKET = 125, // }
 
   // whitespace
-  NO_BREAK_SPACE = 160,             // \u00A0
-  ZERO_WIDTH_NOBREAK_SPACE = 65279, // \uFEFF
+  TAB = 9,                          // \t
+  LINE_FEED = 10,                   // \n
+  CARRIAGE_RETURN = 13,             // \r
+  SPACE = 32,                       // ' '
+  NO_BREAK_SPACE = 160,             //
+  ZERO_WIDTH_NOBREAK_SPACE = 65279, //
 }
 
 const path = require("node:path");

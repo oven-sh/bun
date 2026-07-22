@@ -43,7 +43,6 @@ impl URLPath {
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
-    let mut needs_redirect = false;
 
     if strings::index_of_char(decoded_pathname, b'%').is_some() {
         // The in-place decode buffer is capped at 16384 bytes of input.
@@ -53,7 +52,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         let n = PercentEncoding::decode_fault_tolerant::<_, true>(
             &mut buf,
             capped,
-            Some(&mut needs_redirect),
+            None,
         )?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);

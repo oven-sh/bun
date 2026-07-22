@@ -1539,7 +1539,7 @@ impl CustomPropertyName {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             CustomPropertyName::Custom(custom) => {
-                // DashedIdent.toCss → dest.writeDashedIdent(ident, true),
+                // DashedIdent.toCss → dest.writeDashedIdent(ident),
                 // which applies CSS-Modules dashed-ident renaming.
                 dest.write_dashed_ident(custom)
             }

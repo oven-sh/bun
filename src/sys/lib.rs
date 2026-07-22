@@ -1548,9 +1548,9 @@ impl From<Tag> for &'static str {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const MAX_COUNT: usize = 0x7ffff000;
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-pub const MAX_COUNT: usize = i32::MAX as usize;
+const MAX_COUNT: usize = i32::MAX as usize;
 #[cfg(windows)]
-pub const MAX_COUNT: usize = u32::MAX as usize;
+const MAX_COUNT: usize = u32::MAX as usize;
 
 // ── libc shims with no preconditions ────────────────────────────────────────
 // Every fn here takes only by-value scalars (`c_int` fd, `mode_t`, `uid_t`,

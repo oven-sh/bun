@@ -1372,7 +1372,7 @@ pub mod bv2_impl {
 
         /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
         #[inline]
-        pub fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
+        pub(crate) fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
             let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
                 .expect("BundleV2 watcher: bv2 is non-null");
             // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
@@ -7424,7 +7424,7 @@ pub mod bv2_impl {
     }
     bun_core::declare_scope!(ContentHasher, hidden);
     impl ContentHasher {
-        pub fn write(&mut self, bytes: &[u8]) {
+        pub(crate) fn write(&mut self, bytes: &[u8]) {
             bun_core::scoped_log!(
                 ContentHasher,
                 "HASH_UPDATE {}:\n{}\n----------\n",
@@ -7434,16 +7434,16 @@ pub mod bv2_impl {
             self.hasher.update(&(bytes.len() as u64).to_ne_bytes());
             self.hasher.update(bytes);
         }
-        pub fn run(bytes: &[u8]) -> u64 {
+        pub(crate) fn run(bytes: &[u8]) -> u64 {
             let mut h = ContentHasher::default();
             h.write(bytes);
             h.digest()
         }
-        pub fn write_ints(&mut self, i: &[u32]) {
+        pub(crate) fn write_ints(&mut self, i: &[u32]) {
             bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
             self.hasher.update(bytemuck::cast_slice::<u32, u8>(i));
         }
-        pub fn digest(&self) -> u64 {
+        pub(crate) fn digest(&self) -> u64 {
             self.hasher.digest()
         }
     }

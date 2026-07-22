@@ -39,12 +39,12 @@ pub mod standalone_path {
     #[cfg(not(windows))]
     pub(crate) const BASE_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
-    pub const BASE_PATH: &str = "B:\\~BUN\\";
+    pub(crate) const BASE_PATH: &str = "B:\\~BUN\\";
 
     #[cfg(not(windows))]
     pub(crate) const BASE_PUBLIC_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
-    pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
+    pub(crate) const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 
     #[cfg(windows)]
     pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str =

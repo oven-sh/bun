@@ -143,7 +143,7 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
 /// ```
 ///
 /// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`.
-pub const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
+pub(crate) const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
     if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
         let (_, key) = name.split_at(2);
         let mut i = 0;

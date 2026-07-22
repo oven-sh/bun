@@ -1391,7 +1391,9 @@ impl PercentEncoding {
                                 && &input[i + 1..][..b"PUBLIC_URL%".len()] == b"PUBLIC_URL%"
                             {
                                 i += b"PUBLIC_URL%".len() + 1;
-                                *needs_redirect.as_deref_mut().unwrap() = true;
+                                if let Some(r) = needs_redirect.as_deref_mut() {
+                                    *r = true;
+                                }
                                 continue;
                             }
                             return Err(DecodeError::DecodingError);

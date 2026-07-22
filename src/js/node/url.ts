@@ -620,7 +620,8 @@ function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: 
     }
     // On ToUnicode failure ada keeps the host as-is; never erase it.
     ret += unicode ? domainToUnicode(url.hostname) || url.hostname : url.hostname;
-    if (url.port !== "") ret += ":" + url.port;
+    const { port } = url;
+    if (port !== "") ret += ":" + port;
   }
   ret += url.pathname;
   if (search) ret += url.search;
@@ -669,8 +670,9 @@ Url.prototype.format = function format() {
    * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
    * unless they had them to begin with.
    */
-  if (this.slashes || slashedProtocol[protocol]) {
-    if (this.slashes || host) {
+  const { slashes } = this;
+  if (slashes || slashedProtocol[protocol]) {
+    if (slashes || host) {
       if (pathname && pathname.charAt(0) !== "/") {
         pathname = "/" + pathname;
       }

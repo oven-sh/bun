@@ -356,8 +356,9 @@ const contextForInspect = Symbol("context");
 function getConstructorOf(obj) {
   while (obj) {
     const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
-    if (descriptor !== undefined && typeof descriptor.value === "function" && descriptor.value.name !== "") {
-      return descriptor.value;
+    const ctor = descriptor === undefined ? undefined : descriptor.value;
+    if (typeof ctor === "function" && ctor.name !== "") {
+      return ctor;
     }
     obj = ObjectGetPrototypeOf(obj);
   }
@@ -417,7 +418,8 @@ function makeURLContext(url) {
   const hasCredentials = url.username !== "" || url.password !== "";
   let position = authorityStart + url.username.length;
   context.username_end = position;
-  if (url.password !== "") position += 1 + url.password.length;
+  const { password } = url;
+  if (password !== "") position += 1 + password.length;
   // ada's host_start points at the '@' when credentials are present.
   context.host_start = position;
   context.host_end = position + (hasCredentials ? 1 : 0) + hostname.length;

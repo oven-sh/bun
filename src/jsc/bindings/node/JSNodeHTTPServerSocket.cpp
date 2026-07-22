@@ -14,6 +14,7 @@
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
+extern "C" void Bun__NodeHTTPResponse_spillPendingPinnedWrite(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -246,10 +247,14 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
         return false;
     }
     /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
-     * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
-     * is sequenced after the response bytes (like Node's destroySoon). */
+     * response data has flushed, HTTP_CONNECTION_CLOSE is set and
+     * HTTP_RESPONSE_PENDING is clear, so the FIN is sequenced after the
+     * response bytes (like Node's destroySoon). socket.end() means no more
+     * response bytes will ever be written, so the pending bit is cleared here
+     * too (res.end() may never be called). */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    httpResponseData->state = (httpResponseData->state | uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)
+        & ~uWS::HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
     return true;
 }
 
@@ -257,6 +262,12 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
 {
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
+    }
+    /* A large res.write() that hit backpressure keeps its unsent tail pinned in
+     * the response (not in AsyncSocketData::buffer). Move it there before the
+     * getBufferedAmount() probe so the FIN is sequenced after those bytes. */
+    if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+        Bun__NodeHTTPResponse_spillPendingPinnedWrite(res->m_ctx);
     }
     if (is_ssl) {
         return deferShutdownUntilResponseDrains<true>(socket);

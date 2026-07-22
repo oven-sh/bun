@@ -8,11 +8,8 @@ import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
 
 test("aborted request body emits 'error' ECONNRESET and res 'close' before req 'close'", async () => {
-  // Node.js's socketOnClose → abortIncoming destroys the in-flight request with
-  // a ConnResetException, so req emits 'error' (when listened for) and 'close'
-  // after res 'close'. A mid-body disconnect is surfaced as a clientError which
-  // destroys the socket before the native close; the request abort must still
-  // go through the socket-close path, not a no-error destroy earlier.
+  // Like Node.js's socketOnClose → abortIncoming: the aborted request is
+  // destroyed with ConnResetException after res 'close' has been scheduled.
   const events: string[] = [];
   const { promise: gotRequest, resolve: resolveRequest } = Promise.withResolvers<void>();
   const { promise: reqClosed, resolve: resolveReqClosed } = Promise.withResolvers<void>();

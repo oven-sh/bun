@@ -228,7 +228,13 @@ impl Watcher {
                 .spawn(move || unsafe {
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
-                .expect("spawn FileWatcher thread"),
+                .map_err(|e| {
+                    crate::Error::Sys(
+                        e.raw_os_error()
+                            .map(bun_errno::from_errno)
+                            .unwrap_or(bun_errno::SystemErrno::EAGAIN),
+                    )
+                })?,
         );
         Ok(())
     }

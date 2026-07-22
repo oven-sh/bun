@@ -132,7 +132,7 @@ public:
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
-    void dispatchErrorWithMessage(WTF::String message);
+    void dispatchErrorWithMessage(WTF::String message, WTF::String sourceURL, unsigned lineNumber, unsigned columnNumber);
     bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     bool dispatchExit(int32_t exitCode);
 

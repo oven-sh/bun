@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
+import { pathToFileURL } from "url";
 import wt from "worker_threads";
 
 describe("web worker", () => {
@@ -240,60 +241,30 @@ describe("web worker", () => {
     });
   });
 
-  test("worker with event listeners doesn't close event loop", done => {
-    const x = Bun.spawn({
+  test("worker with event listeners doesn't close event loop", async () => {
+    await using x = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages.js"],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
+    const [stdout, code] = await Promise.all([x.stdout.text(), x.exited]);
+    // "done" means the worker processed every message before the event loop
+    // closed, rather than the loop dying early.
+    expect(stdout).toContain("done");
+    expect(code).toBe(0);
   });
 
-  test("worker with event listeners doesn't close event loop 2", done => {
-    const x = Bun.spawn({
+  test("worker with event listeners doesn't close event loop 2", async () => {
+    await using x = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages2.js"],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
+    const [stdout, code] = await Promise.all([x.stdout.text(), x.exited]);
+    expect(stdout).toContain("done");
+    expect(code).toBe(0);
   });
 
   test("worker with process.exit", done => {
@@ -333,6 +304,46 @@ describe("web worker", () => {
       expect(err.type).toBe("error");
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
+    });
+
+    test("module worker from a data: URL populates message/filename/lineno/colno", async () => {
+      const url = new URL("data:,throw new Error('foo')", import.meta.url).href;
+      const worker = new Worker(url, { type: "module" });
+      try {
+        const [err] = await once(worker, "error");
+        expect(err.type).toBe("error");
+        // The message is a plain description, not the formatted console log.
+        expect(err.message).toBe("Error: foo");
+        expect(err.filename).toBe("data:,throw new Error('foo')");
+        expect(err.lineno).toBe(1);
+        expect(err.colno).toBe(11);
+        expect(err.error).toBe(null);
+      } finally {
+        worker.terminate();
+      }
+    });
+
+    test("module worker from a file populates message/filename/lineno/colno", async () => {
+      using dir = tempDir("worker-error-event", {
+        "bad-worker.mjs": "\n\nthrow new Error('boom from file worker');\n",
+      });
+      const workerPath = path.join(String(dir), "bad-worker.mjs");
+      const worker = new Worker(pathToFileURL(workerPath).href, { type: "module" });
+      try {
+        const [err] = await once(worker, "error");
+        expect(err.message).toBe("Error: boom from file worker");
+        // Compare the basename + absoluteness rather than the exact path: the
+        // filename round-trips through pathToFileURL -> fileSystemPath -> the
+        // resolver, which can differ from path.join on Windows (separator,
+        // drive-letter case, realpath canonicalization).
+        expect(err.filename).toEndWith("bad-worker.mjs");
+        expect(path.isAbsolute(err.filename)).toBe(true);
+        expect(err.lineno).toBe(3);
+        expect(err.colno).toBe(11);
+        expect(err.error).toBe(null);
+      } finally {
+        worker.terminate();
+      }
     });
   });
 });

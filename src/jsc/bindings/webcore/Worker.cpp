@@ -33,8 +33,10 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Scope.h>
 #include "SerializedScriptValue.h"
@@ -517,11 +519,14 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
     }
 }
 
-void Worker::dispatchErrorWithMessage(WTF::String message)
+void Worker::dispatchErrorWithMessage(WTF::String message, WTF::String sourceURL, unsigned lineNumber, unsigned columnNumber)
 {
-    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext&) {
+    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy(), sourceURL = sourceURL.isolatedCopy(), lineNumber, columnNumber](ScriptExecutionContext&) {
         ErrorEvent::Init init;
         init.message = message;
+        init.filename = sourceURL;
+        init.lineno = lineNumber;
+        init.colno = columnNumber;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
         protectedThis->dispatchEvent(event);
@@ -728,20 +733,44 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
+
+    // Resolve the throwing location so the ErrorEvent's filename/lineno/colno
+    // match where the error originated. materializeErrorInfoIfNeeded runs Bun's
+    // computeErrorInfo, which remaps the position through any source map and
+    // exposes it as the error's line/column/sourceURL own-properties.
+    WTF::String sourceURL;
+    unsigned lineNumber = 0;
+    unsigned columnNumber = 0;
+    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(error)) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        errorInstance->materializeErrorInfoIfNeeded(vm);
+        lineNumber = errorInstance->line();
+        columnNumber = errorInstance->column();
+        // materializeErrorInfoIfNeeded moves m_sourceURL into the own-property,
+        // so read the property rather than the (now-empty) sourceURL() accessor.
+        if (JSValue sourceURLValue = errorInstance->getDirect(vm, vm.propertyNames->sourceURL); sourceURLValue && sourceURLValue.isString())
+            sourceURL = sourceURLValue.toWTFString(globalObject);
+        scope.clearExceptionExceptTermination();
+    }
+
     ErrorEvent::Init init;
     init.message = messageStr.isolatedCopy();
     init.error = error;
+    init.filename = sourceURL;
+    init.lineno = lineNumber;
+    init.colno = columnNumber;
     init.cancelable = false;
     init.bubbles = false;
 
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr), sourceURL, lineNumber, columnNumber);
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
-            worker->dispatchErrorWithMessage(WTF::move(messageStr));
+            worker->dispatchErrorWithMessage(WTF::move(messageStr), sourceURL, lineNumber, columnNumber);
         }
         return;
     }

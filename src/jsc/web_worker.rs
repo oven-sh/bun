@@ -1568,7 +1568,22 @@ fn on_unhandled_rejection(
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
-    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
+    // The web `ErrorEvent.message` is a short description (e.g. "Error: foo"),
+    // not the multi-line formatted console log (source preview + stack) that
+    // `format2` produces. For Error instances use the error's string form;
+    // non-errors (e.g. `throw 5`) keep the formatted output. `to_bun_string`
+    // can throw from a user `toString`, so fall back to the formatted text.
+    let mut error_message = if error_instance.is_error() {
+        match error_instance.to_bun_string(global_object) {
+            Ok(s) => bun_core::OwnedString::new(s),
+            Err(_) => {
+                let _ = global_object.try_take_exception();
+                bun_core::OwnedString::new(BunString::clone_utf8(&array))
+            }
+        }
+    } else {
+        bun_core::OwnedString::new(BunString::clone_utf8(&array))
+    };
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
         WebWorker__dispatchError(

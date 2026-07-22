@@ -259,7 +259,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.$reject(pool.connectionClosedError());
+        return Promise.$reject(state.storedError ?? pool.connectionClosedError());
       }
       if ($isArray(strings)) {
         // detect if is tagged template
@@ -287,7 +287,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.$reject(pool.connectionClosedError());
+        return Promise.$reject(state.storedError ?? pool.connectionClosedError());
       }
       return Promise.$resolve(reserved_sql);
     };
@@ -319,7 +319,7 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.$reject(pool.connectionClosedError());
+        return Promise.$reject(state.storedError ?? pool.connectionClosedError());
       }
       let callback = fn;
 
@@ -343,7 +343,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.$reject(pool.connectionClosedError());
+        return Promise.$reject(state.storedError ?? pool.connectionClosedError());
       }
       let callback = fn;
       let options: string | undefined = options_or_fn as unknown as string;
@@ -366,7 +366,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     reserved_sql.flush = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        throw pool.connectionClosedError();
+        throw state.storedError ?? pool.connectionClosedError();
       }
       // Use pooled connection's flush if available, otherwise use adapter's flush
       if (pooledConnection.flush) {
@@ -426,7 +426,7 @@ const SQL: typeof Bun.SQL = function SQL(
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.$reject(pool.connectionClosedError());
+        return Promise.$reject(state.storedError ?? pool.connectionClosedError());
       }
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
@@ -591,7 +591,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.$reject(pool.connectionClosedError());
+        return Promise.$reject(state.storedError ?? pool.connectionClosedError());
       }
 
       return Promise.$resolve(transaction_sql);
@@ -631,7 +631,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     transaction_sql.flush = function () {
       if (state.connectionState & ReservedConnectionState.closed) {
-        throw pool.connectionClosedError();
+        throw state.storedError ?? pool.connectionClosedError();
       }
       // Use pooled connection's flush if available, otherwise use adapter's flush
       if (pooledConnection.flush) {
@@ -730,7 +730,7 @@ const SQL: typeof Bun.SQL = function SQL(
           state.connectionState & ReservedConnectionState.closed ||
           !(state.connectionState & ReservedConnectionState.acceptQueries)
         ) {
-          throw pool.connectionClosedError();
+          throw state.storedError ?? pool.connectionClosedError();
         }
 
         if ($isCallable(name)) {

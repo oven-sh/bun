@@ -24,13 +24,13 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     await using sql = new SQL({ url: url(), max: 4, idleTimeout: 5 });
     await using adm = new SQL({ url: url(), max: 1, idleTimeout: 5 });
 
-    const txReady = Promise.withResolvers<number>();
+    const txReady = Promise.withResolvers<{ tx: any; pid: number }>();
     const gate = Promise.withResolvers<void>();
     let callbackDone = false;
 
     const p = sql.begin(async tx => {
       const [{ pid }] = await tx`select pg_backend_pid() as pid`;
-      txReady.resolve(pid);
+      txReady.resolve({ tx, pid });
       // The callback is *not* touching `tx` here; it is doing other async
       // work while the backend is killed and the close event propagates.
       await gate.promise;
@@ -50,15 +50,34 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       },
     );
 
-    const pid = await txReady.promise;
+    const { tx, pid } = await txReady.promise;
     await adm`select pg_terminate_backend(${pid})`;
 
-    // Give the tx connection's socket time to observe the FATAL + close
-    // and fire its onClose handler. On the buggy build p settles inside
-    // this window; on the fixed build it stays pending.
-    for (let i = 0; i < 50 && settledBeforeCallback === undefined; i++) {
-      await new Promise<void>(r => setTimeout(r, 5));
+    // Wait until the terminated backend has exited (observed via adm on a
+    // separate connection). By the time it is gone from pg_stat_activity the
+    // server has already sent FATAL + FIN to the tx socket, and the adm
+    // round-trip yields to the event loop so the tx socket's readable event
+    // delivers the FATAL through the idle-connection ErrorResponse path.
+    let gone = false;
+    for (let i = 0; i < 500 && !gone; i++) {
+      const [{ n }] = await adm`select count(*)::int as n from pg_stat_activity where pid = ${pid}`;
+      gone = n === 0;
+      if (!gone) await new Promise<void>(r => setTimeout(r, 5));
     }
+    expect(gone).toBe(true);
+
+    // Positive precondition: onTransactionDisconnected has fired (state is
+    // closed) so tx`...` rejects. Fail loudly if the disconnect never
+    // reached the tx handle before the ordering check below.
+    let txClosed = false;
+    for (let i = 0; i < 500 && !txClosed; i++) {
+      txClosed = await tx`select 1`.then(
+        () => false,
+        () => true,
+      );
+      if (!txClosed) await new Promise<void>(r => setTimeout(r, 5));
+    }
+    expect(txClosed).toBe(true);
 
     gate.resolve();
     await settled;
@@ -68,7 +87,6 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(caught).toBeDefined();
     // The rejection must carry the server's FATAL (57P01) or a
     // connection-closed identity, not the opaque "Failed to read data".
-    expect(caught.code).not.toBe("ERR_POSTGRES_EXPECTED_REQUEST");
-    expect(String(caught.message ?? "")).not.toContain("Failed to read data");
+    expect(["ERR_POSTGRES_SERVER_ERROR", "ERR_POSTGRES_CONNECTION_CLOSED"]).toContain(caught.code);
   });
 });

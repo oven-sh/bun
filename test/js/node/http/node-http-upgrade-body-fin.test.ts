@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("upgrade with a body: a mid-body client FIN closes the upgraded socket and lets the process exit", async () => {

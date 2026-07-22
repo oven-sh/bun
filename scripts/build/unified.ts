@@ -59,6 +59,12 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcore/SerializedScriptValue.cpp",
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
 
+  // #includes InternalModuleRegistryConstants.h — ~3 MB of embedded byte
+  // arrays for every bundled JS module, ~16s to parse on its own
+  // (-ftime-trace). Bundling it made its unified TU ~18s slower than its
+  // siblings and put it on the release critical path.
+  "src/jsc/bindings/InternalModuleRegistry.cpp",
+
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.
   "src/jsc/bindings/webcore/JSMIMEType.cpp",
@@ -151,14 +157,8 @@ const noUnify: readonly string[] = [
 /**
  * Directories whose every .cpp compiles standalone (repo-root-relative,
  * posix-style, no trailing slash). Same semantics as `noUnify`, per-directory.
- * The streams entry exists because its sibling TUs repeat file-local static
- * helper names; it can be lifted once those are deduplicated.
  */
-const noUnifyDirs: readonly string[] = [
-  // One WHATWG spec algorithm group per TU, each with file-local static
-  // helpers written assuming TU isolation; a unified bundle collides them.
-  "src/jsc/bindings/webcore/streams",
-];
+const noUnifyDirs: readonly string[] = [];
 
 /**
  * How many .cpp files per bundle. WebKit defaults to 8.

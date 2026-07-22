@@ -228,3 +228,23 @@ it has swept clean.
 Corollary for target selection: prefer field crash classes whose fault is an
 **error return, short/garbage transfer, or resource exhaustion** — those are
 exactly our levers. Deprioritize UAF/ordering signatures.
+
+
+## Socket payload faults: send works, receive needs completion-time application (2026-07-22)
+
+Rules can key socket ioctls by decoded AFD code (`afd:SEND`, `afd:RECV`) at
+any callsite, and the runtime follows the WSABUF indirection.
+
+- `afd:SEND` + `mangle:short` (halve the first WSABUF.len pre-call): FIRES
+  and is a genuine partial send. Verified clean 3/3 at several depths against
+  the http-load workload - bun's socket writer retries the remainder
+  correctly. Partial sends on the fetch/HTTP write path: swept clean.
+- `afd:RECV` + `mangle:garbage`: does NOT fire, and correctly so - overlapped
+  WSARecv returns STATUS_PENDING and the data lands LATER via the IOCP
+  completion, so an exit-time mangle finds no synchronous success to
+  poison. This is a runtime gap, not a workload or coordinate problem:
+  poisoning received data means catching it at COMPLETION time - remember
+  {IOSB -> WSABUF array} at AFD_RECV entry, and when a dequeued completion's
+  IOSB matches, poison Information bytes across those buffers. Until that
+  exists, hostile-peer-data coverage of the receive path is NOT achieved;
+  do not read a clean afd:RECV run as coverage.

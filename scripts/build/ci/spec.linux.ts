@@ -305,6 +305,19 @@ const linuxCommonComponents = [
   "cleanup",
 ] as const;
 
+/** The CI finalization tail every linux image ends with. Install steps
+ * (a browser, a cross toolchain) belong BEFORE it: cleanup empties /tmp
+ * (the download scratch) and trims disks for capture, so nothing may
+ * install after it. Insert with withInstall(), never by appending. */
+const linuxFinalization = ["buildkite-agent", "prefetch", "core-dumps", "cleanup"] as const;
+
+/** The common list with extra install-time components placed before the
+ * finalization tail. */
+function withInstall(...extra: string[]): string[] {
+  const tail = linuxCommonComponents.length - linuxFinalization.length;
+  return [...linuxCommonComponents.slice(0, tail), ...extra, ...linuxCommonComponents.slice(tail)];
+}
+
 /** The build host additionally installs the cross toolchains, before the
  * CI finalization steps (buildkite-agent, prefetch, core-dumps, cleanup). */
 const linuxBuildHostComponents = [
@@ -368,7 +381,7 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
     release: "13",
     abi: "gnu",
     buildHost: false,
-    components: [...linuxCommonComponents, "chrome"],
+    components: withInstall("chrome"),
     base: debianAmi("x64"),
     bake: linuxBake("x64"),
     packages: debianPackages,
@@ -395,7 +408,7 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
     release: "25.04",
     abi: "gnu",
     buildHost: false,
-    components: [...linuxCommonComponents, "chrome"],
+    components: withInstall("chrome"),
     base: ubuntuAmi("25.04", "x64"),
     bake: linuxBake("x64"),
     packages: ubuntuPackages,

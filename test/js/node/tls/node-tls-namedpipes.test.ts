@@ -94,3 +94,57 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
+
+// https://github.com/oven-sh/bun/issues/32242
+it.if(isWindows)("named-pipe TLS upgrade does not re-emit bytes on the original socket", async () => {
+  const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers<string>();
+  const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers<string>();
+  const { promise: done, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers<void>();
+
+  let client: ReturnType<typeof connect> | null = null;
+  let nonTLSClient: ReturnType<typeof net.connect> | null = null;
+  let server: ReturnType<typeof createServer> | null = null;
+
+  const leakedToOriginal: Buffer[] = [];
+
+  const pipe_name = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  try {
+    server = createServer(tls, socket => {
+      socket.on("error", rejectDone);
+      socket.on("data", data => {
+        socket.write("Goodbye World!");
+        resolveMessageReceived(data.toString());
+      });
+    });
+    server.on("error", rejectDone);
+
+    server.listen(pipe_name);
+    await once(server, "listening");
+
+    nonTLSClient = net.connect(pipe_name);
+    nonTLSClient.on("error", rejectDone);
+    nonTLSClient.on("data", chunk => {
+      leakedToOriginal.push(chunk);
+    });
+
+    client = connect({ socket: nonTLSClient, ca: tls.cert });
+    client.on("error", rejectDone);
+    client.on("data", data => {
+      resolveClientReceived(data.toString());
+    });
+
+    await Promise.race([once(client, "secureConnect"), done]);
+    client.write("Hello World!");
+
+    expect(await Promise.race([messageReceived, done])).toBe("Hello World!");
+    expect(await Promise.race([clientReceived, done])).toBe("Goodbye World!");
+
+    expect(Buffer.concat(leakedToOriginal).length).toBe(0);
+    resolveDone();
+    await done;
+  } finally {
+    client?.destroy();
+    nonTLSClient?.destroy();
+    server?.close();
+  }
+});

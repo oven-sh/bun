@@ -24,7 +24,6 @@ pub enum KeyframesName {
 }
 
 // A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
-pub type KeyframesNameHashMap<V> = bun_collections::ArrayHashMap<KeyframesName, V>;
 
 impl Hash for KeyframesName {
     fn hash<H: Hasher>(&self, state: &mut H) {

@@ -682,7 +682,6 @@ impl Parser<'_> {
             };
         }
 
-        self.table_col_count = col_count;
         TableUnderlineResult {
             is_underline: true,
             col_count,

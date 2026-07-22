@@ -122,9 +122,6 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
 use crate::test_runner::snapshot::{InlineSnapshotToWrite, Snapshots};
 
-/// Re-export for `bunfig.rs` (`crate::test_command::CoverageReporters { .. }`).
-pub use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-
 #[allow(non_snake_case)]
 mod bun_test {
     //! Façade over `crate::test_runner` that preserves the legacy paths
@@ -196,17 +193,6 @@ fn fmt_status_text_line(
     }
 }
 
-pub fn write_test_status_line(
-    status: bun_test::Execution::Result,
-    writer: &mut impl bun_io::Write,
-) {
-    if Output::enable_ansi_colors_stderr() {
-        let _ = writer.write_all(&fmt_status_text_line(status, true));
-    } else {
-        let _ = writer.write_all(&fmt_status_text_line(status, false));
-    }
-}
-
 // `Output::error_writer()` / `Output::writer()` already return an unbounded
 // `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
 // reborrows. Call sites use the `Output` accessors directly.
@@ -218,9 +204,7 @@ pub fn write_test_status_line(
 pub struct JunitReporter {
     pub contents: Vec<u8>,
     pub total_metrics: Metrics,
-    pub testcases_metrics: Metrics,
     pub offset_of_testsuites_value: usize,
-    pub offset_of_testsuite_value: usize,
     pub current_file: Box<[u8]>,
     pub properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
@@ -771,7 +755,6 @@ pub struct CommandLineReporter {
     // reporter ever becomes scoped.
     pub jest: TestRunner<'static>,
     pub last_dot: u32,
-    pub prev_file: u64,
     pub repeat_count: u32,
     /// Interior-mut: written from `BunTestRoot::on_before_print` via `&CommandLineReporter`
     pub last_printed_dot: core::cell::Cell<bool>,
@@ -797,8 +780,6 @@ pub struct ReportersConfig {
 }
 
 impl CommandLineReporter {
-    pub fn handle_test_start(_: &mut Self, _: /* TestRunner.Test.ID */ u32) {}
-
     fn print_test_line<const DIM: bool>(
         status: bun_test::Execution::Result,
         sequence: &mut bun_test::Execution::ExecutionSequence,
@@ -2107,9 +2088,6 @@ impl TestCommand {
                 current_file: jest::CurrentFile::default(),
                 files: jest::FileList::default(),
                 index: jest::FileMap::default(),
-                last_file: 0,
-                drainer: Default::default(),
-                has_pending_tests: false,
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
@@ -2118,7 +2096,6 @@ impl TestCommand {
                 summary: Summary::default(),
             },
             last_dot: 0,
-            prev_file: 0,
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
@@ -2196,7 +2173,6 @@ impl TestCommand {
             *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
             *node_env_entry.value_ptr = DotEnv::HashTableValue {
                 value: Box::<[u8]>::from(b"test" as &[u8]),
-                conditional: false,
             };
         }
 

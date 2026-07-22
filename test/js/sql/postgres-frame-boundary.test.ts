@@ -31,8 +31,10 @@ import {
 } from "./wire-frames";
 
 // One mock server for the file; each test sets `current` before connecting and
-// the accept handler latches it per connection.
-let current!: { atStartup: Buffer[]; atQuery?: Buffer[] };
+// the accept handler latches it per connection. Each simple-Query ('Q') read
+// shifts the next reply off `atQuery`, so a test can script a different
+// response per query on the same connection.
+let current!: { atStartup: Buffer[]; atQuery?: Buffer[][] };
 const { port, server } = await listeningServer(socket => {
   const { atStartup, atQuery } = current;
   let startup = true;
@@ -42,15 +44,25 @@ const { port, server } = await listeningServer(socket => {
       socket.write(Buffer.concat([pgAuthenticationOk(), ...atStartup]));
       return;
     }
-    if (atQuery && data[0] === 0x51 /* 'Q' */) socket.write(Buffer.concat(atQuery));
+    if (atQuery && data[0] === 0x51 /* 'Q' */) {
+      const reply = atQuery.shift();
+      if (reply) socket.write(Buffer.concat(reply));
+    }
   });
   socket.on("error", () => {});
 });
 afterAll(() => new Promise<void>(r => server.close(() => r())));
 
+const okRow = (value: string) => [
+  pgRowDescription([{ name: "n", typeOid: 25 }]),
+  pgDataRow([Buffer.from(value)]),
+  pgCommandComplete("SELECT 1"),
+  pgReadyForQuery(),
+];
+
 /** Complete the handshake, then answer the first simple query with `frames`; returns the query's rejection. */
 async function queryError(frames: Buffer[]): Promise<any> {
-  current = { atStartup: [pgReadyForQuery()], atQuery: frames };
+  current = { atStartup: [pgReadyForQuery()], atQuery: [frames] };
   const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, connectionTimeout: 1, idleTimeout: 1 });
   try {
     await db`select x`.simple();
@@ -70,19 +82,37 @@ async function queryError(frames: Buffer[]): Promise<any> {
 // type byte and length.
 test("postgres: ErrorResponse field with an empty value does not wedge the connection", async () => {
   // S=ERROR C=42P01 W="" (empty, protocol-legal) M=<real message>
-  const err = await queryError([
-    pgErrorResponse({ S: "ERROR", C: "42P01", W: "", M: "relation t does not exist" }),
-    pgReadyForQuery(),
-  ]);
-  // Before the fix the W field's empty value broke decode_list early, losing
-  // the M field (err.message === "") and leaving the M bytes as the next
-  // dispatch's header; the following ReadyForQuery was then never seen and a
-  // second query would wait forever. With the fix the whole body is consumed.
-  expect({ code: err.code, errno: err.errno, message: err.message }).toEqual({
-    code: "ERR_POSTGRES_SERVER_ERROR",
-    errno: "42P01",
-    message: "relation t does not exist",
-  });
+  current = {
+    atStartup: [pgReadyForQuery()],
+    atQuery: [
+      [pgErrorResponse({ S: "ERROR", C: "42P01", W: "", M: "relation t does not exist" }), pgReadyForQuery()],
+      okRow("second"),
+    ],
+  };
+  const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, connectionTimeout: 1, idleTimeout: 1 });
+  try {
+    let err: any;
+    try {
+      await db`select x`.simple();
+      err = new Error("expected the query to reject");
+    } catch (e) {
+      err = e;
+    }
+    // Before the fix the W field's empty value broke decode_list early, losing
+    // the M field (err.message === "") and leaving the M bytes as the next
+    // dispatch's header; the following ReadyForQuery was never seen.
+    expect({ code: err.code, errno: err.errno, message: err.message }).toEqual({
+      code: "ERR_POSTGRES_SERVER_ERROR",
+      errno: "42P01",
+      message: "relation t does not exist",
+    });
+    // With the whole body consumed the connection is back at ReadyForQuery, so
+    // a second query on it runs instead of waiting forever.
+    const rows: any = await db`select n`.simple();
+    expect(rows[0]).toEqual({ n: "second" });
+  } finally {
+    await db.close({ timeout: 0 }).catch(() => {});
+  }
 });
 
 test("postgres: NoticeResponse field with an empty value does not wedge the connection", async () => {
@@ -92,18 +122,14 @@ test("postgres: NoticeResponse field with an empty value does not wedge the conn
   notice[0] = 0x4e; // 'N'
   current = {
     atStartup: [pgReadyForQuery()],
-    atQuery: [
-      notice,
-      pgRowDescription([{ name: "n", typeOid: 25 }]),
-      pgDataRow([Buffer.from("ok")]),
-      pgCommandComplete("SELECT 1"),
-      pgReadyForQuery(),
-    ],
+    atQuery: [[notice, ...okRow("first")], okRow("second")],
   };
   const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, connectionTimeout: 1, idleTimeout: 1 });
   try {
-    const rows: any = await db`select n`.simple();
-    expect(rows[0]).toEqual({ n: "ok" });
+    const first: any = await db`select n`.simple();
+    expect(first[0]).toEqual({ n: "first" });
+    const second: any = await db`select n`.simple();
+    expect(second[0]).toEqual({ n: "second" });
   } finally {
     await db.close({ timeout: 0 }).catch(() => {});
   }
@@ -172,10 +198,12 @@ test("postgres: well-formed ParameterStatus and NotificationResponse during star
       pgNotificationResponse(42, "ch", ""),
       pgReadyForQuery(),
     ],
+    atQuery: [okRow("after")],
   };
   const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, connectionTimeout: 1, idleTimeout: 1 });
   try {
-    await expect(db.connect()).resolves.toBeDefined();
+    const rows: any = await db`select n`.simple();
+    expect(rows[0]).toEqual({ n: "after" });
   } finally {
     await db.close({ timeout: 0 }).catch(() => {});
   }

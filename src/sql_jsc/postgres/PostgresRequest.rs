@@ -485,21 +485,7 @@ pub(crate) fn on_data<Context: ReaderContext>(
         // string past the frame or returned with tail bytes still in it, and
         // the stream is unrecoverable (libpq: "message contents do not agree
         // with length in message").
-        let before = reader.peek().len();
-        if before < 4 {
-            return Err(AnyPostgresError::ShortRead);
-        }
-        let length = {
-            let v = reader.peek();
-            u32::from_be_bytes([v[0], v[1], v[2], v[3]])
-        };
-        if length < 4 || length > i32::MAX as u32 {
-            return Err(AnyPostgresError::InvalidMessageLength);
-        }
-        let length = length as usize;
-        if before < length {
-            return Err(AnyPostgresError::ShortRead);
-        }
+        let (before, length) = reader.peek_length()?;
         let after = before - length;
 
         match c {

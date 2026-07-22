@@ -11,7 +11,8 @@ import { describeWithContainer } from "harness";
 import { listeningServer, pgAuthenticationOk, pgCString, pgRaw, pgReadyForQuery } from "./wire-frames";
 
 // PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
-const pgParameterStatus = (name: string, value: string) => pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+const pgParameterStatus = (name: string, value: string) =>
+  pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
 
 // ---------------------------------------------------------------------------
 // Protocol-level: the StartupMessage must carry DateStyle=ISO so server-side
@@ -24,11 +25,7 @@ test("StartupMessage pins DateStyle=ISO so server-side datestyle defaults cannot
     socket.once("data", data => {
       startup.resolve(Buffer.from(data));
       socket.write(
-        Buffer.concat([
-          pgAuthenticationOk(),
-          pgParameterStatus("DateStyle", "ISO, MDY"),
-          pgReadyForQuery(),
-        ]),
+        Buffer.concat([pgAuthenticationOk(), pgParameterStatus("DateStyle", "ISO, MDY"), pgReadyForQuery()]),
       );
     });
   });

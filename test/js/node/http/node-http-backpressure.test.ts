@@ -172,14 +172,17 @@ describe("backpressure", () => {
     }
 
     it.each([
-      ["res.write() then res.end()", false, true],
-      ["res.write() without res.end()", false, false],
-      ["res.write() then res.end(), httpAllowHalfOpen", true, true],
-    ] as const)("%s", async (_name, halfOpen, callEnd) => {
+      ["res.write() then res.end()", false, "sync"],
+      ["res.write() without res.end()", false, "never"],
+      // httpAllowHalfOpen: the close gate must wait for the handler's own
+      // res.end() after drain, not force-close on the !httpAllowHalfOpen term.
+      ["res.write() then res.end() after drain, httpAllowHalfOpen", true, "drain"],
+    ] as const)("%s", async (_name, halfOpen, endMode) => {
       await using server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Length": String(BODY) });
         res.write(payload);
-        if (callEnd) res.end();
+        if (endMode === "sync") res.end();
+        else if (endMode === "drain") res.once("drain", () => res.end());
       });
       if (halfOpen) server.httpAllowHalfOpen = true;
       await once(server.listen(0, "127.0.0.1"), "listening");

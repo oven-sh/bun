@@ -791,12 +791,12 @@ private:
             /* Node's socketOnEnd: with httpAllowHalfOpen, in-flight and queued
              * responses keep writing (Node marks the last one `_last` so
              * resOnFinish destroySoon()s after it). Without it, Node does
-             * `socket.end()` — no new writes, but bytes already handed to the
-             * socket via res.write() drain before FIN. Either way, response
-             * bytes already queued (AsyncSocketData::buffer, or a pinned write
-             * an onWritable callback is still draining) must not be discarded
-             * by the close() below; the connection shuts down from the
-             * shouldCloseConnection() gates once they have flushed. */
+             * `socket.end()`, which drains bytes already handed to the socket
+             * before FIN. Either way, response bytes already queued
+             * (AsyncSocketData::buffer, or a pinned write an onWritable
+             * callback is still draining) must not be discarded by the close()
+             * below; the connection shuts down from the shouldCloseConnection()
+             * gates once they have flushed. */
             bool hasQueuedOutgoing = asyncSocket->getBufferedAmount() > 0
                 || httpResponseData->onWritable != nullptr;
             bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0

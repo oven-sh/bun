@@ -550,15 +550,7 @@ impl<Id> ComptimeClap<Id> {
             if param.names.long.is_none() && param.names.short.is_none() {
                 pos.push(arg.value.unwrap());
                 if opt.stop_after_positional_at > 0 && pos.len() >= opt.stop_after_positional_at {
-                    let mut remaining_ = stream.iter.remain();
-                    let first: &[u8] = if !remaining_.is_empty() {
-                        remaining_[0]
-                    } else {
-                        b""
-                    };
-                    if !first.is_empty() && first == b"--" {
-                        remaining_ = &remaining_[1..];
-                    }
+                    let remaining_ = stream.iter.remain();
 
                     passthrough_positionals.reserve_exact(remaining_.len());
                     for arg_ in remaining_ {

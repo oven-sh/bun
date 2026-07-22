@@ -143,19 +143,25 @@ pub(crate) fn create_and_schedule_completion_task(
     let vm = global_this.bun_vm_ptr();
     // Snapshot the env map now, on the JS thread, so the bundle thread never
     // dereferences worker-owned memory (a worker terminated mid-bundle frees
-    // its VM's loader). `Loader::init` only populates `map`; the bundle-thread
-    // consumers read the map only (`NODE_PATH`, proxy, reject-unauthorized).
-    let env_map = bun_core::heap::into_raw(Box::new(
-        global_this
-            .bun_vm()
-            .env_loader()
-            .map
-            .clone_with_allocator()?,
-    ));
-    // SAFETY: `env_map` is a fresh heap allocation owned by this task; the
-    // `'static` borrow is the lifetime erasure for the task-lifetime map.
-    let env =
-        bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init(unsafe { &mut *env_map })));
+    // its VM's loader). `did_load_process` is set so `run_env_loader`'s
+    // `load_process()` early-returns instead of re-walking OS environ and
+    // clobbering JS-set values that differ from it.
+    let env_map = match global_this.bun_vm().env_loader().map.clone_with_allocator() {
+        Ok(m) => bun_core::heap::into_raw(Box::new(m)),
+        Err(e) => {
+            if let Some(p) = plugins {
+                Plugin::destroy(p.as_ptr());
+            }
+            return Err(e.into());
+        }
+    };
+    let env = {
+        // SAFETY: `env_map` is a fresh heap allocation owned by this task; the
+        // `'static` borrow is the lifetime erasure for the task-lifetime map.
+        let mut l = bun_dotenv::Loader::init(unsafe { &mut *env_map });
+        l.did_load_process = true;
+        bun_core::heap::into_raw(Box::new(l))
+    };
     // SAFETY: `event_loop()` is non-null once `Bun.build` is reachable.
     let jsc_event_loop =
         BackRef::from(unsafe { NonNull::new_unchecked(global_this.bun_vm().event_loop()) });

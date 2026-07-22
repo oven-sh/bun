@@ -1548,7 +1548,7 @@ test(
         parentPort.postMessage("up");\`;
       for (let r = 0; r < ${rounds}; r++) {
         const w = new Worker(src, { eval: true, workerData: { entry } });
-        await new Promise(res => w.once("message", res));
+        await new Promise((res, rej) => { w.once("message", res); w.once("error", rej); });
         await Bun.sleep(60 + (r * 41) % 220);
         await w.terminate();
       }

@@ -72,8 +72,9 @@ Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consume
   `build/debug/compile_commands.json` and re-run it with `-fsyntax-only`.
 - The directory is unified-source bundled (see `scripts/build/unified.ts`): sibling `.cpp`
   files share a translation unit, so file-local `static` helper names must be unique across
-  the directory (or wrapped in an anonymous namespace). A helper used from more than one
-  file belongs in `WebStreamsInternals.h` with its definition in one `.cpp`.
+  the directory (an anonymous namespace does not help: unnamed namespaces merge within a
+  TU). A helper used from more than one file belongs in `WebStreamsInternals.h` with its
+  definition in one `.cpp`.
 - Exception discipline: any call that can enter user JS needs `RETURN_IF_EXCEPTION` under a
   `ThrowScope` before its result is used. The `// userJS:` annotations in
   `WebStreamsInternals.h` are the source of truth for which operations can.

@@ -22,7 +22,9 @@
  *
  * Pitfalls (handled by convention, not by this script — fix at the source):
  *   - File-static names from N files now share a TU. On collision, wrap the
- *     statics in an anonymous or `namespace FILENAME { }` block, or rename.
+ *     statics in a per-file `namespace FILENAME { }` block, or rename.
+ *     (An anonymous namespace does not help: unnamed namespaces merge
+ *     within a TU.)
  *   - `using namespace X;` at file scope leaks into later includes in the
  *     same bundle.
  *   - A file may build only because an earlier sibling already pulled a

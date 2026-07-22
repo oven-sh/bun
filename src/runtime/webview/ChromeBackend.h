@@ -319,7 +319,10 @@ for (;;) {
   const el = document.querySelector(sel);
   if (el) { el.scrollIntoView({ block, behavior: 'instant' }); return; }
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "'";
-  await new Promise(f => requestAnimationFrame(f));
+  await new Promise(f => {
+    const id = setTimeout(f, Math.max(0, deadline - performance.now()));
+    requestAnimationFrame(t => { clearTimeout(id); f(t); });
+  });
 }
 }))js"_s;
 

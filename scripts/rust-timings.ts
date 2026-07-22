@@ -185,7 +185,9 @@ function report(htmlPath: string, top: number): void {
 
   console.log(`\n${dim("report:")} ${htmlPath}`);
   if (total < 0.1) {
-    console.log(`${bold("total")}  ${fmt(total)}  ${dim(`(all ${units.length} units fresh; run with --clean for a cold baseline)`)}\n`);
+    console.log(
+      `${bold("total")}  ${fmt(total)}  ${dim(`(all ${units.length} units fresh; run with --clean for a cold baseline)`)}\n`,
+    );
     return;
   }
   console.log(
@@ -254,11 +256,10 @@ if (cfg.cargo === undefined) {
 // manifest. The configure step is a no-op when already done.
 if (!existsSync(cfg.codegenDir) || !existsSync(join(repo, "vendor/lolhtml/Cargo.toml"))) {
   console.log(cyan("[setup]") + " bun scripts/build.ts --configure-only --profile=" + opts.profile);
-  const r = spawnSync(
-    process.execPath,
-    ["scripts/build.ts", "--configure-only", `--profile=${opts.profile}`],
-    { stdio: "inherit", cwd: repo },
-  );
+  const r = spawnSync(process.execPath, ["scripts/build.ts", "--configure-only", `--profile=${opts.profile}`], {
+    stdio: "inherit",
+    cwd: repo,
+  });
   if (r.status !== 0) process.exit(1);
   spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml"], { stdio: "inherit", cwd: repo });
 }
@@ -270,7 +271,17 @@ const inv = cargoBuildInvocation(cfg);
 // at a scratch target dir so it doesn't poison incremental state.
 if (opts.llvmLines !== undefined) {
   const llDir = join(cfg.buildDir, "rust-llvm-lines");
-  const llArgs = ["llvm-lines", "-p", opts.llvmLines, "--target", inv.triple, "--target-dir", llDir, "--profile", cargoProfile(cfg).name];
+  const llArgs = [
+    "llvm-lines",
+    "-p",
+    opts.llvmLines,
+    "--target",
+    inv.triple,
+    "--target-dir",
+    llDir,
+    "--profile",
+    cargoProfile(cfg).name,
+  ];
   console.log(cyan("[llvm-lines]") + ` cargo ${llArgs.join(" ")}`);
   const r = spawnSync(cfg.cargo, llArgs, {
     cwd: repo,

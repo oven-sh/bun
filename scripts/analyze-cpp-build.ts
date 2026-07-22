@@ -34,7 +34,7 @@
 
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 function run(argv: string[], opts: SpawnSyncOptions): void {
   const r = spawnSync(argv[0]!, argv.slice(1), opts);
@@ -60,8 +60,13 @@ const buildDir = resolve(repo, flag("dir") || "build/time-trace");
 // that is the repo root or an ancestor of it (which is what --dir "", --dir .,
 // --dir / all resolve to) so a typo can't recursively delete the checkout.
 {
+  // On Windows, relative() across drive roots returns the absolute `to` path;
+  // a buildDir on a different drive cannot contain the repo, so allow it.
   const repoFromBuild = relative(buildDir, repo);
-  if (repoFromBuild === "" || !(repoFromBuild === ".." || repoFromBuild.startsWith(`..${sep}`))) {
+  if (
+    repoFromBuild === "" ||
+    !(repoFromBuild === ".." || repoFromBuild.startsWith(`..${sep}`) || isAbsolute(repoFromBuild))
+  ) {
     console.error(`refusing --dir ${JSON.stringify(buildDir)}: contains the repository root`);
     process.exit(1);
   }
@@ -77,6 +82,16 @@ const noClean = has("no-clean");
 
 const cbaVersion = "1.6.0";
 async function resolveClangBuildAnalyzer(): Promise<string> {
+  // A system install always wins — it's the only option on platforms without
+  // a matching prebuilt (the upstream release ships x64-only binaries).
+  const system = Bun.which("ClangBuildAnalyzer");
+  if (system) return system;
+  if (process.platform === "linux" && process.arch !== "x64") {
+    throw new Error(
+      `ClangBuildAnalyzer v${cbaVersion} has no linux-${process.arch} prebuilt; ` +
+        `build it from source (github.com/aras-p/ClangBuildAnalyzer) and put it on PATH`,
+    );
+  }
   const cacheRoot =
     process.env.BUN_BUILD_CACHE ??
     resolve(process.env.BUN_INSTALL ?? `${process.env.HOME ?? process.env.USERPROFILE}/.bun`, "build-cache");

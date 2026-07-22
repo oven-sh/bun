@@ -198,3 +198,33 @@ confirm or dismiss — the instrument reported them, nobody triaged them:
   `C:\wsfhostile`, `C:\wsfrepro`) are timestamped per invocation and accumulate.
   Every run's full test case (schedule + program + trace + stdout) stays on
   disk. Prune old runs yourself when disk demands it.
+
+
+## Reach limit: same-thread ordering bugs (2026-07-22, the watcher UAF)
+
+The largest actionable Windows crash class in field telemetry is a segfault
+under `uv__process_fs_event_req` — a directory-change completion dispatched
+into a `PathWatcher` that `close()` has already freed. Extensive attack on
+this target (`workloads/fs-watch-churn.js`) established:
+
+- The watcher's arm path (`NtNotifyChangeDirectoryFileEx`) tolerates every
+  fault we can express: `DELETE_PENDING` (watched dir deleted mid-watch),
+  resource failure, and arm delay — all clean, deterministic.
+- Delaying completion *delivery* (`NtRemoveIoCompletionEx` at several depths,
+  and compounded with an arm delay) is also clean.
+
+Why the technique cannot reach it: this is a **same-thread ordering** bug —
+the completion must be dequeued and dispatched into a watcher whose memory
+`close()` released, an interleaving *inside one loop iteration*. Our lever
+is a per-syscall return perturbation (fail / delay / mangle). A delay makes
+everything late *together*; it cannot make a queued completion be processed
+after a close that the same loop queues later. No return-address fault
+reorders work within a thread. Do not resume chaos on this workload
+expecting the field crash — that requires source-level instrumentation of the
+close/callback ordering, which is out of scope for a binary syscall fuzzer.
+The workload stays as *error-path coverage* (arm/delivery failures), which
+it has swept clean.
+
+Corollary for target selection: prefer field crash classes whose fault is an
+**error return, short/garbage transfer, or resource exhaustion** — those are
+exactly our levers. Deprioritize UAF/ordering signatures.

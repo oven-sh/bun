@@ -151,33 +151,19 @@ export type { SQLHelper };
 class SQLHelper<T> {
   public readonly value: T;
   public readonly columns: (keyof T)[];
+  /**
+   * True when the column list was derived from the first row's own keys
+   * rather than supplied explicitly by the caller. The INSERT path uses this
+   * to widen the column list to the union of keys across every row so that
+   * keys first appearing on a later row are not silently dropped.
+   */
+  public readonly autoColumns: boolean;
 
   constructor(value: T, keys?: (keyof T)[]) {
+    let autoColumns = false;
     if (keys !== undefined && keys.length === 0 && ($isObject(value[0]) || $isArray(value[0]))) {
-      // For batch inserts the caller may pass rows whose key sets differ
-      // (a key missing entirely, not just set to undefined). Union the keys
-      // across every row so a column that first appears in a later row is
-      // still emitted; rows that lack it bind null, which is what
-      // buildDefinedColumnsAndQuery already does for explicit `undefined`.
-      if ($isArray(value) && (value as unknown[]).length > 1 && !$isArray(value[0])) {
-        const seen = new Set<keyof T>();
-        const unionKeys: (keyof T)[] = [];
-        for (let i = 0; i < (value as unknown[]).length; i++) {
-          const item = value[i];
-          if (item == null || !$isObject(item)) continue;
-          const itemKeys = Object.keys(item);
-          for (let k = 0; k < itemKeys.length; k++) {
-            const key = itemKeys[k] as keyof T;
-            if (!seen.has(key)) {
-              seen.add(key);
-              unionKeys.push(key);
-            }
-          }
-        }
-        keys = unionKeys;
-      } else {
-        keys = Object.keys(value[0]) as (keyof T)[];
-      }
+      keys = Object.keys(value[0]) as (keyof T)[];
+      autoColumns = true;
     }
 
     if (keys !== undefined) {
@@ -204,7 +190,32 @@ class SQLHelper<T> {
 
     this.value = value;
     this.columns = keys ?? [];
+    this.autoColumns = autoColumns;
   }
+}
+
+/**
+ * Return the union of own keys across every object in a multi-row array,
+ * seeded from the first row's key list so column order is stable. Used by the
+ * INSERT helper when no explicit column list was given, so a key that first
+ * appears on a later row is still emitted instead of being silently dropped.
+ */
+function unionRowKeys<T>(firstRowKeys: (keyof T)[], items: T[]): (keyof T)[] {
+  const seen = new Set<keyof T>(firstRowKeys);
+  const union = firstRowKeys.slice();
+  for (let i = 1; i < items.length; i++) {
+    const item = items[i];
+    if (item == null || !$isObject(item)) continue;
+    const itemKeys = Object.keys(item);
+    for (let k = 0; k < itemKeys.length; k++) {
+      const key = itemKeys[k] as keyof T;
+      if (!seen.has(key)) {
+        seen.add(key);
+        union.push(key);
+      }
+    }
+  }
+  return union;
 }
 
 /**
@@ -444,7 +455,7 @@ function normalizeQuery(
           binding_idx += sub_values.length;
         } else if (value instanceof SQLHelper) {
           const command = adapter.getHelperCommand(query);
-          const { columns, value: items } = value as SQLHelper<any>;
+          const { columns, value: items, autoColumns } = value as SQLHelper<any>;
           const columnCount = columns.length;
           if (columnCount === 0 && command !== SQLCommand.in) {
             throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
@@ -456,9 +467,18 @@ function normalizeQuery(
             // insert into users ${sql(users)} or insert into users ${sql(user)}
             //
 
+            // When the column list came from Object.keys(rows[0]) and there are
+            // further rows, widen it to the union of keys across every row so a
+            // key that first appears on a later row is still emitted. Explicit
+            // column lists and single-row inserts are left as supplied.
+            const insertColumns =
+              autoColumns && $isArray(items) && items.length > 1 && !$isArray(items[0])
+                ? unionRowKeys(columns, items)
+                : columns;
+
             // Build column list while determining which columns have at least one defined value
             const { definedColumns, columnsSql } = buildDefinedColumnsAndQuery(
-              columns,
+              insertColumns,
               items,
               adapter.escapeIdentifier.bind(adapter),
             );

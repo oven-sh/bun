@@ -189,6 +189,17 @@ describe("sqlite helper behavior preserved", () => {
       { id: 2, a: "y" },
     ]);
   });
+
+  // Column-list widening is scoped to INSERT. A WHERE IN helper over objects
+  // with no explicit column keeps deriving its single column from the first
+  // row's keys so existing queries keep working.
+  test("WHERE IN helper with heterogeneous objects still uses first-row keys", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (id INTEGER)`;
+    await sql`INSERT INTO t VALUES (1), (2), (3)`;
+    const rows = await sql`SELECT id FROM t WHERE id IN ${sql([{ id: 1 }, { id: 2, other: "x" }] as any)} ORDER BY id`;
+    expect(rows).toEqual([{ id: 1 }, { id: 2 }]);
+  });
 });
 
 // sql.array() builds the Postgres array literal up front, so its serialization

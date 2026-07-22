@@ -444,17 +444,10 @@ class EnvHttpProxyAgent extends Dispatcher {
         : [];
   }
 
-  #isNoProxy(url) {
+  #isNoProxy(hostname, port) {
     const list = this.#noProxy;
     if (list.length === 0) return false;
     if (list.includes("*")) return true;
-    let hostname, port;
-    try {
-      ({ hostname, port } = new URL(url));
-    } catch {
-      return false;
-    }
-    hostname = hostname.toLowerCase();
     const hostport = port ? `${hostname}:${port}` : hostname;
     for (let entry of list) {
       if (entry === hostname || entry === hostport) return true;
@@ -465,9 +458,18 @@ class EnvHttpProxyAgent extends Dispatcher {
   }
 
   [kProxyFor](url) {
-    if (this.#isNoProxy(url)) return "";
-    const https = typeof url === "string" ? url.startsWith("https:") : url?.protocol === "https:";
-    const proxy = https ? (this.#httpsProxy ?? this.#httpProxy) : this.#httpProxy;
+    let protocol, hostname, port;
+    try {
+      ({ protocol, hostname, port } = new URL(url));
+    } catch {
+      return this.#httpProxy ?? "";
+    }
+    // WHATWG serializes IPv6 hostnames with brackets; NO_PROXY entries are
+    // conventionally unbracketed (curl/wget/Bun's native no_proxy_matches).
+    hostname = hostname.toLowerCase();
+    if (hostname[0] === "[") hostname = hostname.slice(1, -1);
+    if (this.#isNoProxy(hostname, port)) return "";
+    const proxy = protocol === "https:" ? (this.#httpsProxy ?? this.#httpProxy) : this.#httpProxy;
     return proxy ?? "";
   }
 }

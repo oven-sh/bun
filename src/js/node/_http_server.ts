@@ -64,6 +64,7 @@ const {
   fakeSocketSymbol,
   noBodySymbol,
   kOutHeaders,
+  onDataIncomingMessage,
   validateMsecs,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
@@ -871,9 +872,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
-        // start buffering data if any, the user will need to resume() or .on("data") to read it
+        // Like Node's connectionListener -> parserOnBody: body bytes flow into
+        // the IncomingMessage as they arrive, and the push callback readStop()s
+        // the socket (which emits 'pause' on it) once the buffer fills.
         if (hasBody) {
-          handle.pause();
+          handle.ondata = onDataIncomingMessage.bind(http_req);
+          handle.hasCustomOnData = false;
         }
         drainMicrotasks();
 

@@ -965,18 +965,6 @@ export const linkerFlags: Flag[] = [
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
   },
   {
-    // BoringSSL's allocator hooks (defined in src/boringssl/lib.rs, routing
-    // OPENSSL_malloc to mimalloc) are referenced by BoringSSL only as COFF
-    // weak externals, which never pull the defining archive member on their
-    // own — so on Windows the hooks silently stayed unbound and every
-    // BoringSSL allocation (TLS handshakes, parsed certificates) landed on
-    // the CRT's NT heap instead of mimalloc. Force the symbols in so the
-    // weak externals bind, like they already do on ELF/Mach-O.
-    flag: ["/INCLUDE:OPENSSL_memory_alloc", "/INCLUDE:OPENSSL_memory_free", "/INCLUDE:OPENSSL_memory_get_size"],
-    when: c => c.windows,
-    desc: "Bind BoringSSL's mimalloc-backed allocator hooks (COFF weak externals don't pull archive members)",
-  },
-  {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",

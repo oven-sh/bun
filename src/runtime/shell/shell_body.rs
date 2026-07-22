@@ -43,8 +43,8 @@ pub use bun_shell_parser::parse::{
     JSValueRaw, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexError, LexResult, Lexer, LexerAscii,
     LexerError, LexerUnicode, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
     ShellCharIter, SmolList, Src, SrcAscii, SrcUnicode, StringEncoding, SubShellKind, SubshellKind,
-    TextRange, Token, TokenTag, assert_special_char, ast, escape_8bit, escape_bun_str,
-    escape_utf16, has_eq_sign, is_if_clause_keyword_bunstr, is_valid_var_name, needs_escape_bunstr,
+    TextRange, Token, TokenTag, ast, escape_8bit, escape_bun_str, escape_utf16, has_eq_sign,
+    is_if_clause_keyword_bunstr, is_valid_var_name, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1, needs_escape_utf16,
 };
 

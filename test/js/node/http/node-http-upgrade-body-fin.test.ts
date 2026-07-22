@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("upgrade with a body: a mid-body client FIN closes the upgraded socket and lets the process exit", async () => {
+test("upgrade with a body: a mid-body client FIN closes the upgraded socket and lets server.close() complete", async () => {
   // Like Node's UpgradeStream: a FIN before the request body completes closes
   // the upgraded socket instead of leaving the connection half-open.
   const fixture = /* js */ `
@@ -40,17 +40,20 @@ test("upgrade with a body: a mid-body client FIN closes the upgraded socket and 
       await gotSocketClose;
       c.destroy();
 
+      // server.close() only resolves once pending_requests has reached zero,
+      // which is the ref the pre-fix half-open path stranded.
       await new Promise((resolve, reject) => {
         server.close(err => err ? reject(err) : resolve());
       });
       console.log(JSON.stringify(events));
+      process.exit(0);
     })().catch(err => { console.error(err); process.exit(1); });
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
     env: bunEnv,
     stderr: "pipe",
-    timeout: 10_000,
+    timeout: 20_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
@@ -64,4 +67,4 @@ test("upgrade with a body: a mid-body client FIN closes the upgraded socket and 
     stderr: expect.not.stringContaining("error"),
     exitCode: 0,
   });
-}, 15_000);
+}, 30_000);

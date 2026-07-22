@@ -2183,6 +2183,10 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection.on("close", events[3]);
     this[kupgraded] = connection;
     this._handle = result;
+    // ServerHandlers.open skips onconnection for standalone server-side
+    // wraps, so register here too or the duplex-backed TLS socket never
+    // appears in _getActiveHandles()/getActiveResourcesInfo().
+    registerHandle(this, "TCPSocketWrap", kUserUnrefed);
     return;
   }
   this[kupgraded] = connection;

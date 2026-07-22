@@ -1037,7 +1037,12 @@ mod _async_tasks {
             let this_ref = unsafe { &mut *this };
             // `bun_sys::Error` frees its path on Drop.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
+            super::PENDING_ASYNC_REQUESTS.with(|c| {
+                // The create/destroy pairing is 1:1; a silent absorb here would
+                // make getActiveResourcesInfo() under-report forever.
+                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                c.set(c.get().saturating_sub(1));
+            });
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1405,7 +1410,12 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
+            super::PENDING_ASYNC_REQUESTS.with(|c| {
+                // The create/destroy pairing is 1:1; a silent absorb here would
+                // make getActiveResourcesInfo() under-report forever.
+                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                c.set(c.get().saturating_sub(1));
+            });
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1838,7 +1848,12 @@ mod _async_tasks {
                 this_ref
                     .r#ref
                     .unref(event_loop_handle_to_ctx(this_ref.evtloop));
-                super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
+                super::PENDING_ASYNC_REQUESTS.with(|c| {
+                // The create/destroy pairing is 1:1; a silent absorb here would
+                // make getActiveResourcesInfo() under-report forever.
+                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                c.set(c.get().saturating_sub(1));
+            });
             }
             // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
@@ -2689,7 +2704,12 @@ mod _async_tasks {
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            super::PENDING_ASYNC_REQUESTS.with(|c| c.set(c.get().saturating_sub(1)));
+            super::PENDING_ASYNC_REQUESTS.with(|c| {
+                // The create/destroy pairing is 1:1; a silent absorb here would
+                // make getActiveResourcesInfo() under-report forever.
+                debug_assert!(c.get() > 0, "PENDING_ASYNC_REQUESTS underflow");
+                c.set(c.get().saturating_sub(1));
+            });
             // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
             this_ref.free_root_path();
             this_ref.clear_result_list();

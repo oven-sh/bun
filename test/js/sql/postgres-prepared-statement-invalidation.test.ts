@@ -33,64 +33,78 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     await container.ready;
     await using sql = connect();
     const tbl = "t_inv_" + randomUUIDv7("hex").replaceAll("-", "");
-    await sql`create table ${sql(tbl)}(a int, b int)`.simple();
-    await sql`insert into ${sql(tbl)} values (1, 2)`.simple();
-    const q = () => sql`select * from ${sql(tbl)}`;
-    expect(await q()).toEqual([{ a: 1, b: 2 }]);
+    try {
+      await sql`create table ${sql(tbl)}(a int, b int)`.simple();
+      await sql`insert into ${sql(tbl)} values (1, 2)`.simple();
+      const q = () => sql`select * from ${sql(tbl)}`;
+      expect(await q()).toEqual([{ a: 1, b: 2 }]);
 
-    await sql`alter table ${sql(tbl)} add column c int default 3`.simple();
-    // Before the fix every call below rejected with errno 0A000; now the
-    // stale plan is re-prepared under a fresh name and the new column is
-    // returned.
-    expect(await q()).toEqual([{ a: 1, b: 2, c: 3 }]);
-    expect(await q()).toEqual([{ a: 1, b: 2, c: 3 }]);
-    await sql`drop table ${sql(tbl)}`.simple();
+      await sql`alter table ${sql(tbl)} add column c int default 3`.simple();
+      // Before the fix every call below rejected with errno 0A000; now the
+      // stale plan is re-prepared under a fresh name and the new column is
+      // returned.
+      expect(await q()).toEqual([{ a: 1, b: 2, c: 3 }]);
+      expect(await q()).toEqual([{ a: 1, b: 2, c: 3 }]);
+
+      // ALTER COLUMN TYPE: the postgres.js "Recreate prepared statements on
+      // RevalidateCachedQuery error" case (same 0A000, different DDL shape).
+      await sql`alter table ${sql(tbl)} alter column b type text using b::text`.simple();
+      expect(await q()).toEqual([{ a: 1, b: "2", c: 3 }]);
+    } finally {
+      await sql`drop table if exists ${sql(tbl)}`.simple();
+    }
   });
 
   test("DEALLOCATE/DISCARD (26000) is recovered by re-preparing instead of poisoning the connection", async () => {
     await container.ready;
     await using sql = connect();
     const tbl = "t_inv_" + randomUUIDv7("hex").replaceAll("-", "");
-    await sql`create table ${sql(tbl)}(a int)`.simple();
-    await sql`insert into ${sql(tbl)} values (7)`.simple();
-    // With a parameter so the two-phase Parse+Describe / Bind+Execute path is
-    // exercised as well.
-    const q = (n: number) => sql`select a from ${sql(tbl)} where a = ${n}`;
-    expect(await q(7)).toEqual([{ a: 7 }]);
+    try {
+      await sql`create table ${sql(tbl)}(a int)`.simple();
+      await sql`insert into ${sql(tbl)} values (7)`.simple();
+      // With a parameter so the two-phase Parse+Describe / Bind+Execute path
+      // is exercised as well.
+      const q = (n: number) => sql`select a from ${sql(tbl)} where a = ${n}`;
+      expect(await q(7)).toEqual([{ a: 7 }]);
 
-    await sql`deallocate all`.simple();
-    expect(await q(7)).toEqual([{ a: 7 }]);
+      await sql`deallocate all`.simple();
+      expect(await q(7)).toEqual([{ a: 7 }]);
 
-    await sql`discard all`.simple();
-    expect(await q(7)).toEqual([{ a: 7 }]);
-    expect(await q(7)).toEqual([{ a: 7 }]);
-    await sql`drop table ${sql(tbl)}`.simple();
+      await sql`discard all`.simple();
+      expect(await q(7)).toEqual([{ a: 7 }]);
+      expect(await q(7)).toEqual([{ a: 7 }]);
+    } finally {
+      await sql`drop table if exists ${sql(tbl)}`.simple();
+    }
   });
 
   test("a pipelined batch over an invalidated statement recovers for later queries", async () => {
     await container.ready;
     await using sql = connect();
     const tbl = "t_inv_" + randomUUIDv7("hex").replaceAll("-", "");
-    await sql`create table ${sql(tbl)}(x int)`.simple();
-    await sql`insert into ${sql(tbl)} values (1)`.simple();
-    const p = () => sql`select * from ${sql(tbl)}`;
-    expect(await p()).toEqual([{ x: 1 }]);
+    try {
+      await sql`create table ${sql(tbl)}(x int)`.simple();
+      await sql`insert into ${sql(tbl)} values (1)`.simple();
+      const p = () => sql`select * from ${sql(tbl)}`;
+      expect(await p()).toEqual([{ x: 1 }]);
 
-    await sql`alter table ${sql(tbl)} add column y int default 9`.simple();
-    // Two Bind+Execute pipelined against the stale plan. Both were already on
-    // the wire when the first ErrorResponse arrives, so at least the first is
-    // surfaced; the second may be transparently re-prepared.
-    const [r0, r1] = await Promise.allSettled([p(), p()]);
-    expect(r0.status === "rejected" ? (r0.reason as any).errno : r0.value).toEqual(
-      r0.status === "rejected" ? "0A000" : [{ x: 1, y: 9 }],
-    );
-    expect(r1.status === "rejected" ? (r1.reason as any).errno : r1.value).toEqual(
-      r1.status === "rejected" ? "0A000" : [{ x: 1, y: 9 }],
-    );
-    // The connection must not be poisoned: the next execution succeeds.
-    // Before the fix this rejected with errno 0A000 forever.
-    expect(await p()).toEqual([{ x: 1, y: 9 }]);
-    await sql`drop table ${sql(tbl)}`.simple();
+      await sql`alter table ${sql(tbl)} add column y int default 9`.simple();
+      // Two Bind+Execute pipelined against the stale plan. Both were already
+      // on the wire when the first ErrorResponse arrives, so at least the
+      // first is surfaced; the second may be transparently re-prepared.
+      const [r0, r1] = await Promise.allSettled([p(), p()]);
+      expect(r0.status === "rejected" ? (r0.reason as any).errno : r0.value).toEqual(
+        r0.status === "rejected" ? "0A000" : [{ x: 1, y: 9 }],
+      );
+      expect(r1.status === "rejected" ? (r1.reason as any).errno : r1.value).toEqual(
+        r1.status === "rejected" ? "0A000" : [{ x: 1, y: 9 }],
+      );
+      // The connection must not be poisoned: the next execution succeeds.
+      // Before the fix this rejected with errno 0A000 forever.
+      expect(await p()).toEqual([{ x: 1, y: 9 }]);
+    } finally {
+      await sql`drop table if exists ${sql(tbl)}`.simple();
+    }
   });
 });
 

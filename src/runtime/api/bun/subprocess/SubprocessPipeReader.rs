@@ -388,32 +388,18 @@ impl PipeReader {
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
     /// whose generated trait `destructor` upholds the sole-owner contract.
     fn deinit(this: *mut PipeReader) {
-        // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-        let this_ref = unsafe { &mut *this };
-
         #[cfg(unix)]
         {
+            // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
+            let this_ref = unsafe { &*this };
             debug_assert!(this_ref.reader.is_done() || matches!(this_ref.state, State::Err(_)));
         }
 
-        #[cfg(windows)]
-        {
-            // WindowsBufferedReader.on_error() never closes the source, so a
-            // reader can reach deinit with a live uv.Pipe. Non-error teardown
-            // paths (`Readable::finalize` on a never-started pipe, a sibling
-            // pipe left Pending after the other errored) also arrive here with
-            // a live source; close unconditionally.
-            if this_ref
-                .reader
-                .source
-                .as_ref()
-                .is_some_and(|s| !s.is_closed())
-            {
-                this_ref.reader.close_impl::<false>();
-            }
-        }
-
         // The `state` buffer and `reader` are freed by Drop when the Box drops.
+        // On Windows, `WindowsBufferedReader::drop` closes any live uv.Pipe
+        // source (on_error never closes it, and non-error teardown paths such
+        // as `Readable::finalize` on a never-started pipe can arrive here with
+        // a live source).
 
         // SAFETY: `this` was created via heap::alloc in `create()`.
         drop(unsafe { bun_core::heap::take(this) });

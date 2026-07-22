@@ -96,6 +96,78 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(received.length).toBe(256);
   });
 
+  // EAGAIN forever parks the write callback on a drain that can never arrive,
+  // so the socket's teardown is the only path left to it. Node cancels the
+  // write request on handle close; Bun dropped the callback entirely.
+  test("a peer reset fails a client's parked write callback", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const clientFd = (p.client as any)._handle.fd;
+    expect(clientFd).toBeGreaterThanOrEqual(0);
+    const errors: NodeJS.ErrnoException[] = [];
+    p.client.on("error", e => errors.push(e));
+
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: clientFd });
+    const written = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    p.client.write(Buffer.alloc(256, "x"), err => written.resolve(err));
+    p.serverSock.resetAndDestroy();
+
+    const writeErr = await written.promise;
+    // The cancelled write and the error that caused it are separate signals,
+    // exactly as Node reports them.
+    expect({ code: writeErr?.code, syscall: writeErr?.syscall }).toEqual({ code: "ECANCELED", syscall: "write" });
+    expect(errors.map(e => e.code)).toEqual(["ECONNRESET"]);
+    expect(p.client.writableFinished).toBe(false);
+  });
+
+  // Same gap on the accepted side, which reaches it through SocketEmitEndNT:
+  // a server still writing a response when the client resets.
+  test("a peer reset fails a server socket's parked write callback", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const serverFd = (p.serverSock as any)._handle.fd;
+    expect(serverFd).toBeGreaterThanOrEqual(0);
+    // resetAndDestroy() emits on the resetting socket when terminate() fails; an
+    // unhandled 'error' would crash the run instead of failing an assertion.
+    p.client.on("error", () => {});
+
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: serverFd });
+    const written = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    p.serverSock.write(Buffer.alloc(256, "x"), err => written.resolve(err));
+    p.client.resetAndDestroy();
+
+    const writeErr = await written.promise;
+    expect({ code: writeErr?.code, syscall: writeErr?.syscall }).toEqual({ code: "ECANCELED", syscall: "write" });
+    expect(p.serverSock.writableFinished).toBe(false);
+  });
+
+  // One write parks and the rest queue in the Writable; failing the parked one
+  // is what cascades through that queue. Without it every queued callback is
+  // left pending forever.
+  test("a peer reset settles every queued write callback, not just the parked one", async () => {
+    using p = await connectedPair(s => s.on("error", () => {}));
+    const serverFd = (p.serverSock as any)._handle.fd;
+    p.client.on("error", () => {});
+
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: serverFd });
+    const N = 32;
+    const settled: string[] = new Array(N).fill("PENDING");
+    const closed = Promise.withResolvers<void>();
+    p.serverSock.on("close", () => closed.resolve());
+    for (let i = 0; i < N; i++) {
+      p.serverSock.write(
+        Buffer.alloc(256, "x"),
+        err => (settled[i] = err ? (err as NodeJS.ErrnoException).code! : "OK"),
+      );
+    }
+    p.client.resetAndDestroy();
+    await closed.promise;
+
+    // Node: the in-flight write gets ECANCELED; the queued ones get the
+    // stream's stored error (ECONNRESET) via errorBuffer.
+    expect(settled.filter(x => x === "PENDING")).toEqual([]);
+    expect(settled[0]).toBe("ECANCELED");
+    expect(new Set(settled.slice(1))).toEqual(new Set(["ECONNRESET"]));
+  });
+
   test("send → short writes still deliver complete payload to peer", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedPair(s => {

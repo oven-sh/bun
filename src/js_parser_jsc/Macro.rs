@@ -908,6 +908,110 @@ impl<'a> Run<'a> {
     }
 }
 
+/// Convert a single raw template segment into its "cooked" JS string value.
+/// Per spec, segments with undecodable escape sequences evaluate to `undefined`
+/// in the cooked array while still appearing verbatim in `.raw`.
+fn cook_raw_template_segment(
+    bump: &bun_alloc::Arena,
+    global: &JSGlobalObject,
+    raw: &[u8],
+) -> Result<JSValue, MacroError> {
+    // Fast path: no escapes, CR, or non-ASCII → cooked == raw.
+    if strings::index_of_any(raw, b"\\\r").is_none() && strings::first_non_ascii(raw).is_none() {
+        return Ok(jsc::bun_string_jsc::create_utf8_for_js(global, raw)?);
+    }
+
+    // The lexer's escape decoder computes diagnostic source positions relative
+    // to the opening quote and can subtract up to three widths from the cursor
+    // when reporting `\u{…}` errors, so give it a source with a short prefix so
+    // the arithmetic can't underflow. We don't surface these diagnostics
+    // anywhere; the log is only inspected to detect failure.
+    const PREFIX: &[u8] = b"   `";
+    let mut wrapped = Vec::with_capacity(PREFIX.len() + raw.len() + 1);
+    wrapped.extend_from_slice(PREFIX);
+    wrapped.extend_from_slice(raw);
+    wrapped.push(b'`');
+
+    let mut throwaway_log = Log::new();
+    let throwaway_source = Source::init_path_string("", wrapped.as_slice());
+    let mut lexer =
+        js_parser::lexer::Lexer::init_without_reading(&mut throwaway_log, &throwaway_source, bump);
+
+    let mut buf: Vec<u16> = Vec::with_capacity(raw.len());
+    let text = &wrapped[PREFIX.len()..wrapped.len() - 1];
+    if lexer
+        .decode_escape_sequences(PREFIX.len() - 1, text, &mut buf)
+        .is_err()
+    {
+        // Invalid escape sequence in a tagged template → cooked value is undefined.
+        return Ok(JSValue::UNDEFINED);
+    }
+    drop(lexer);
+    if throwaway_log.has_errors() {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    if buf.is_empty() {
+        // A segment that is only a line continuation (`\<newline>`) cooks to "".
+        let empty = bun_core::String::EMPTY;
+        return Ok(jsc::bun_string_jsc::to_js(&empty, global)?);
+    }
+
+    let (mut out, chars) = bun_core::String::create_uninitialized_utf16(buf.len());
+    chars.copy_from_slice(&buf);
+    Ok(jsc::bun_string_jsc::transfer_to_js(&mut out, global)?)
+}
+
+/// Build the `TemplateStringsArray`-shaped first argument for a tagged template call.
+fn make_template_strings_array(
+    bump: &bun_alloc::Arena,
+    global: &JSGlobalObject,
+    template: &E::Template,
+) -> Result<JSValue, MacroError> {
+    let parts = template.parts();
+    let segment_count = 1 + parts.len();
+
+    let cooked_array = JSValue::create_empty_array(global, segment_count)?;
+    let _cooked_guard = cooked_array.protected();
+
+    let raw_array = JSValue::create_empty_array(global, segment_count)?;
+    let _raw_guard = raw_array.protected();
+
+    for i in 0..segment_count {
+        let contents = if i == 0 {
+            &template.head
+        } else {
+            &parts[i - 1].tail
+        };
+        match contents {
+            E::TemplateContents::Raw(raw) => {
+                let raw_bytes = raw.slice();
+                raw_array.put_index(
+                    global,
+                    i as u32,
+                    jsc::bun_string_jsc::create_utf8_for_js(global, raw_bytes)?,
+                )?;
+                cooked_array.put_index(
+                    global,
+                    i as u32,
+                    cook_raw_template_segment(bump, global, raw_bytes)?,
+                )?;
+            }
+            E::TemplateContents::Cooked(cooked) => {
+                // Tagged templates are parsed with raw contents, so this branch
+                // should not occur for macro callers. Fall back to using the
+                // cooked value for both arrays so we never panic.
+                let js_str = crate::expr_jsc::string_to_js(cooked, global)?;
+                raw_array.put_index(global, i as u32, js_str)?;
+                cooked_array.put_index(global, i as u32, js_str)?;
+            }
+        }
+    }
+
+    cooked_array.put(global, "raw", raw_array);
+    Ok(cooked_array)
+}
+
 impl Runner {
     pub(crate) fn run(
         macro_: &Macro,
@@ -985,13 +1089,33 @@ impl Runner {
                     js_args.args[i] = value;
                 }
             }
-            ExprData::ETemplate(_) => {
-                log.add_error_fmt(
-                    Some(source),
-                    caller.loc,
-                    format_args!("template literal macro invocations are not supported"),
-                );
-                return Err(MacroError::MacroFailed);
+            ExprData::ETemplate(template) => {
+                // A tagged template `` fn`a${x}b${y}c` `` is invoked as
+                // `fn(strings, x, y)` where `strings` is a frozen array of the
+                // cooked string segments with a `.raw` property holding the
+                // raw segments.
+                let parts = template.parts();
+                let extra = usize::from(javascript_object != JSValue::ZERO);
+                js_args.args = vec![JSValue::ZERO; 1 + parts.len() + extra];
+                js_args.processed_len = 0;
+
+                let strings_array = make_template_strings_array(bump, global_object, template)?;
+                strings_array.protect();
+                js_args.args[0] = strings_array;
+                js_args.processed_len = 1;
+
+                for (i, part) in parts.iter().enumerate() {
+                    let value = match part.value.to_js(global_object) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            js_args.processed_len = 1 + i;
+                            return Err(e.into());
+                        }
+                    };
+                    value.protect();
+                    js_args.args[1 + i] = value;
+                }
+                js_args.processed_len = 1 + parts.len() + extra;
             }
             _ => {
                 panic!("Unexpected caller type");

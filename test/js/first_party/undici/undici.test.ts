@@ -404,6 +404,27 @@ describe("undici ProxyAgent / dispatcher", () => {
     expect(proxy.seen.length).toBe(1);
   });
 
+  it("fetch(Request, {dispatcher}) resolves proxy from Request.url", async () => {
+    await using origin = Bun.serve({ port: 0, fetch: () => new Response("ORIGIN") });
+    await using proxy = await recordingProxy();
+
+    // With ProxyAgent the target URL doesn't matter for routing, so this also
+    // covers the basic "Request as first arg proxies" case.
+    const res = await undiciFetch(new Request(`http://127.0.0.1:${origin.port}/req-obj`), {
+      dispatcher: new ProxyAgent(proxy.url),
+    });
+    expect(await res.text()).toBe("PROXIED");
+    expect(proxy.seen.length).toBe(1);
+
+    // EnvHttpProxyAgent inspects the target URL; a Request has no `.protocol`
+    // so the wrapper must extract `Request.url` for NO_PROXY to apply.
+    const agent = new EnvHttpProxyAgent({ httpProxy: proxy.url, noProxy: `127.0.0.1:${origin.port}` });
+    const res2 = await undiciFetch(new Request(`http://127.0.0.1:${origin.port}/req-noproxy`), { dispatcher: agent });
+    expect(await res2.text()).toBe("ORIGIN");
+    // Proxy must not have seen the noProxy'd Request.
+    expect(proxy.seen.length).toBe(1);
+  });
+
   it("Agent dispatcher means direct (no proxy) even when a global ProxyAgent is set", async () => {
     const originSeen: string[] = [];
     await using origin = Bun.serve({

@@ -60,7 +60,10 @@ function applyDispatcher(url, options) {
 }
 
 function fetch(input, init) {
-  return nativeFetch(input, applyDispatcher(input, init));
+  // `input` may be a Request; dispatchers that inspect the target URL need the
+  // string href, not the Request object, so normalize before resolving proxy.
+  const url = input instanceof Request ? input.url : input;
+  return nativeFetch(input, applyDispatcher(url, init));
 }
 fetch.preconnect = nativeFetch.preconnect;
 
@@ -311,7 +314,7 @@ class Dispatcher extends EventEmitter {
     }
     const p = request(url, { ...opts, dispatcher: this });
     if (typeof callback === "function") {
-      p.then(
+      p.$then(
         data => callback(null, data),
         err => callback(err, null),
       );
@@ -325,7 +328,7 @@ class Dispatcher extends EventEmitter {
       queueMicrotask(callback);
       return;
     }
-    return Promise.resolve();
+    return Promise.$resolve();
   }
 
   destroy(err, callback) {
@@ -336,7 +339,7 @@ class Dispatcher extends EventEmitter {
       queueMicrotask(callback);
       return;
     }
-    return Promise.resolve();
+    return Promise.$resolve();
   }
 
   get closed() {

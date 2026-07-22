@@ -22,6 +22,7 @@
 // These three are used by name below (`JSC::JSUint8Array*` is a typedef and cannot be
 // forward-declared; `const JSC::Identifier&`; `WTF::String`) — do not rely on transitive
 // includes from root.h for them. MarkedVector.h supplies JSC::MarkedArgumentBuffer.
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSTypedArrays.h>
@@ -29,7 +30,9 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <optional>
+#include <type_traits>
 #include <utility>
+#include <wtf/Locker.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 #include "helpers.h"
@@ -198,6 +201,30 @@ void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSVa
 // termination (which the caller must propagate, never consume). Never call bare
 // clearException() anywhere in the subsystem.
 JSC::JSValue takeAbruptCompletion(JSC::JSGlobalObject*, JSC::TopExceptionScope&); // userJS: no — WebStreamsMisc.cpp
+
+// Detaches the reader's request list before dispatch, per the spec's "set to an empty
+// list, then iterate": once the requests leave the visited deque the MarkedArgumentBuffer
+// is their only GC-visible root. A template so both reader types share one body; defined
+// here because every consumer TU must see it. userJS: no (may throw OOM).
+template<typename Reader>
+void detachReadRequests(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Reader* reader, JSC::MarkedArgumentBuffer& out)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    {
+        WTF::Locker locker { reader->cellLock() };
+        if constexpr (std::is_same_v<Reader, JSReadableStreamDefaultReader>) {
+            for (auto& request : reader->m_readRequests)
+                out.append(request.get());
+            reader->m_readRequests.clear();
+        } else {
+            for (auto& request : reader->m_readIntoRequests)
+                out.append(request.get());
+            reader->m_readIntoRequests.clear();
+        }
+    }
+    if (out.hasOverflowed()) [[unlikely]]
+        JSC::throwOutOfMemoryError(globalObject, scope);
+}
 
 // ReadableStreamOperations.cpp — stream-level RS ops, reader set-up, controller set-up,
 // tee, from-iterable.

@@ -124,29 +124,6 @@ static void reactToStartResult(JSC::VM& vm, JSGlobalObject* globalObject, JSValu
     RETURN_IF_EXCEPTION(scope, void());
 }
 
-// Detaches the reader's request list before dispatch, per the spec's "set to an empty list,
-// then iterate". A MarkedArgumentBuffer is the only GC-visible holder once the requests
-// leave the visited deque.
-template<typename Reader>
-static void detachReadRequests(JSC::VM& vm, JSGlobalObject* globalObject, Reader* reader, MarkedArgumentBuffer& out)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    {
-        WTF::Locker locker { reader->cellLock() };
-        if constexpr (std::is_same_v<Reader, WebCore::JSReadableStreamDefaultReader>) {
-            for (auto& request : reader->m_readRequests)
-                out.append(request.get());
-            reader->m_readRequests.clear();
-        } else {
-            for (auto& request : reader->m_readIntoRequests)
-                out.append(request.get());
-            reader->m_readIntoRequests.clear();
-        }
-    }
-    if (out.hasOverflowed()) [[unlikely]]
-        throwOutOfMemoryError(globalObject, scope);
-}
-
 // InitializeReadableStream(stream)
 void initializeReadableStream(JSReadableStream* stream)
 {

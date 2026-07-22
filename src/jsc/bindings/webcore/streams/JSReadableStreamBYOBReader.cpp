@@ -39,28 +39,13 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSStreamsRuntime;
 
-// Detaches [[readIntoRequests]] before dispatch ("set to an empty list, then iterate"): once
-// the requests leave the visited deque the MarkedArgumentBuffer is their only root.
-static void detachReadIntoRequests(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamBYOBReader* reader, MarkedArgumentBuffer& out)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    {
-        WTF::Locker locker { reader->cellLock() };
-        for (auto& request : reader->m_readIntoRequests)
-            out.append(request.get());
-        reader->m_readIntoRequests.clear();
-    }
-    if (out.hasOverflowed()) [[unlikely]]
-        throwOutOfMemoryError(globalObject, scope);
-}
-
 // ReadableStreamBYOBReaderErrorReadIntoRequests(reader, e)
 void readableStreamBYOBReaderErrorReadIntoRequests(JSGlobalObject* globalObject, JSReadableStreamBYOBReader* reader, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer readIntoRequests;
-    detachReadIntoRequests(vm, globalObject, reader, readIntoRequests);
+    detachReadRequests(vm, globalObject, reader, readIntoRequests);
     RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0, count = readIntoRequests.size(); i < count; ++i) {
         uncheckedDowncast<WebCore::JSReadIntoRequest>(readIntoRequests.at(i))->errorSteps(globalObject, error);

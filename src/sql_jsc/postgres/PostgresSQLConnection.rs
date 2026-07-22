@@ -3058,7 +3058,13 @@ impl PostgresSQLConnection {
                                 // SAFETY: `slot` points into `self.statements`
                                 // and the map has not been mutated since
                                 // `get_or_put`; the `ref_()` above is its ref.
-                                unsafe { *slot = core::ptr::from_mut(stmt) };
+                                // Store the allocation's root `heap::into_raw`
+                                // pointer the request holds (same provenance
+                                // discipline as `do_run`), not a
+                                // `&mut`-derived one.
+                                unsafe {
+                                    *slot = request.statement.get().expect("statement set")
+                                };
                             }
                             request.status.set(QueryStatus::Pending);
                             request.update_flags(|f| {

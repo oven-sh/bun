@@ -13,10 +13,7 @@ use crate::{
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// Was `BumpVec<'bump, Transform>` in an earlier port iteration; uses `Vec` so
-// the `Property` enum (properties_generated.rs) stays lifetime-free.
-// Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
-// (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
+// `Vec`, not arena-backed: the generated `Property` enum is lifetime-free.
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
     pub v: Vec<Transform>,
@@ -957,10 +954,7 @@ crate::css_eql_partialeq!(
     Scale
 );
 
-// Was `TransformHandler<'bump>` holding `TransformList<'bump>` in an earlier
-// port iteration; the `Property` enum is lifetime-free (see TransformList
-// above), so the handler is too. Re-threading `'bump` crate-wide is deferred
-// work (see /tmp/todo-fix/complex/mk04-repair.md).
+// Lifetime-free because `Property` is (see `TransformList` above).
 #[derive(Default)]
 pub struct TransformHandler {
     pub transform: Option<(TransformList, VendorPrefix)>,

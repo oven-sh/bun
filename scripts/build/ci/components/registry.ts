@@ -35,6 +35,7 @@ import { age, buildkiteAgent, bun, curlH3 } from "./runtimes.ts";
 import { scoop } from "./scoop.ts";
 import { baseSystem, cleanup, coreDumps } from "./system-linux.ts";
 import { defenderRemoval, optimizeWindows } from "./system-windows.ts";
+import { gcc } from "./gcc.ts";
 import { cmake, docker, llvm, pythonFuse, rust, tailscale } from "./toolchain-linux.ts";
 import { ccache, intelSde, openssh, pdbAddr2line, powershell, visualStudio } from "./toolchain-windows.ts";
 
@@ -51,6 +52,7 @@ const all: readonly Component[] = [
   baseSystem,
   cmake,
   llvm,
+  gcc,
   pythonFuse,
   rust,
   docker,

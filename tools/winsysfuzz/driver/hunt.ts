@@ -15,7 +15,7 @@
 // confirmed first. The agent entry point: run one command, read one file
 // (hunt-findings.md).
 
-import { readdirSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { ensureDir, here, stamp } from "./lib";
 
@@ -32,6 +32,7 @@ if (!bun) {
 const timeout = flag("--timeout", "30")!;
 const jobs = flag("--jobs", "6")!;
 const parallel = Math.max(1, +(flag("--parallel", "2") as string));
+const startedAt = new Date().toISOString();
 const outRoot = join(flag("--out", "C:\\wsfhunt") as string, stamp);
 ensureDir(outRoot);
 
@@ -96,24 +97,51 @@ async function sweep(s: Scenario) {
   }
 }
 
-// Bounded-parallel over scenarios. With --loop the circuit repeats forever
-// (the continuous feeder): every pass re-sweeps every target and each
-// sweep appends its verified findings to the global triage queue, so the
-// triager can drain it while the fuzzer keeps producing. Each pass writes
-// its own roll-up. Stop it by killing the process.
-const loop = argv.includes("--loop");
-let pass = 0;
-do {
-  pass++;
-  if (loop) console.log(`\n=== pass ${pass} (continuous mode) ===`);
+// Bounded-parallel over the not-yet-swept frontier. Each sweep appends its
+// verified findings to the global triage queue, which the triager drains.
+// The sweep is DETERMINISTIC: the same target against the same bun binary
+// re-runs the same plan to the same outcomes, so re-sweeping is waste, not
+// coverage. A ledger records what has been swept per (target, binary
+// identity = path+size+mtime) and those are skipped; the freed budget goes
+// to targets not yet swept. When nothing is left the run says so and
+// stops - "continuous" means widening the frontier (new targets, a new
+// bun build, more depth), never repeating a pass. --resweep ignores the
+// ledger (e.g. after changing fault modes or --hits).
+const ledgerPath = flag("--ledger", "C:\\wsfqueue\\swept.jsonl") as string;
+const resweep = argv.includes("--resweep");
+const bunSt = statSync(bun);
+const bunId = `${bun}|${bunSt.size}|${Math.floor(bunSt.mtimeMs)}`;
+const ledger = new Set<string>();
+if (!resweep && existsSync(ledgerPath)) {
+  for (const line of readFileSync(ledgerPath, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e.bunId === bunId) ledger.add(e.target);
+    } catch {}
+  }
+}
+const targetKey = (s: Scenario) => s.progArgs.join(" ");
+const todo = scenarios.filter(s => resweep || !ledger.has(targetKey(s)));
+console.log(
+  `frontier: ${todo.length} target(s) to sweep, ${scenarios.length - todo.length} already swept ` +
+    `against this bun build (skipped)${resweep ? " [--resweep: ledger ignored]" : ""}`,
+);
+if (!todo.length) {
+  console.log("nothing left to sweep for this build - widen the circuit or point at a new bun binary");
+} else {
   let next = 0;
   await Promise.all(
     Array.from({ length: parallel }, async () => {
-      while (next < scenarios.length) await sweep(scenarios[next++]);
+      while (next < todo.length) {
+        const s = todo[next++];
+        await sweep(s);
+        // record the sweep so this exact work is never repeated
+        appendFileSync(ledgerPath, JSON.stringify({ target: targetKey(s), bunId, ok: s.ok, at: startedAt }) + "\n");
+      }
     }),
   );
-  if (!loop) break;
-} while (true);
+}
 
 // --- roll-up ------------------------------------------------------------------
 // Each sweep wrote <workDir>\<stamp>\findings.md and sweep-report.json;

@@ -4,6 +4,7 @@ import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
+import os from "node:os";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -632,6 +633,28 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   });
 
   expect(signal).toBe("SIGTRAP");
+});
+
+// SIGSTKFLT (signal 16 on Linux) used to be reported as the made-up name
+// "SIG16" on child exit, even though os.constants.signals and child.kill()
+// both spell it "SIGSTKFLT". Node reports "SIGSTKFLT".
+it.if(isLinux)("child killed by SIGSTKFLT reports 'SIGSTKFLT', not 'SIG16'", async () => {
+  expect(os.constants.signals.SIGSTKFLT).toBe(16);
+
+  const child = spawn("sleep", ["30"], { stdio: "ignore" });
+  const { promise, resolve, reject } = Promise.withResolvers<[number | null, string | null]>();
+  child.on("exit", (code, signal) => resolve([code, signal]));
+  child.on("error", reject);
+  await once(child, "spawn");
+
+  expect(child.kill("SIGSTKFLT")).toBe(true);
+  const [code, signal] = await promise;
+
+  expect({ code, signal, signalCode: child.signalCode }).toEqual({
+    code: null,
+    signal: "SIGSTKFLT",
+    signalCode: "SIGSTKFLT",
+  });
 });
 
 it("spawnSync(does-not-exist)", () => {

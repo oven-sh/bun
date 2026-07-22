@@ -56,18 +56,28 @@ const has = (name: string) => args.includes(`--${name}`);
 
 const repo = resolve(import.meta.dir, "..");
 const buildDir = resolve(repo, flag("dir") || "build/time-trace");
-// The default clean step is rmSync(buildDir, {recursive}). Refuse any buildDir
-// that is the repo root or an ancestor of it (which is what --dir "", --dir .,
-// --dir / all resolve to) so a typo can't recursively delete the checkout.
+// The default clean step is rmSync(buildDir, {recursive}). A buildDir inside
+// the repo must sit under build/ (so --dir "", --dir ., --dir src, --dir .git
+// can't recursively delete checkout contents); anything outside the repo is
+// fine. On Windows, relative() across drive roots returns the absolute `to`
+// path, which correctly counts as outside.
 {
+  // Refuse the repo root or an ancestor of it (--dir "", --dir ., --dir /).
   // On Windows, relative() across drive roots returns the absolute `to` path;
   // a buildDir on a different drive cannot contain the repo, so allow it.
   const repoFromBuild = relative(buildDir, repo);
-  if (
-    repoFromBuild === "" ||
-    !(repoFromBuild === ".." || repoFromBuild.startsWith(`..${sep}`) || isAbsolute(repoFromBuild))
-  ) {
-    console.error(`refusing --dir ${JSON.stringify(buildDir)}: contains the repository root`);
+  const containsRepo = !(
+    repoFromBuild === ".." ||
+    repoFromBuild.startsWith(`..${sep}`) ||
+    isAbsolute(repoFromBuild)
+  );
+  // Refuse in-repo paths outside build/ (--dir src, --dir .git).
+  const buildFromRepo = relative(repo, buildDir);
+  const insideRepo = !(buildFromRepo.startsWith(`..${sep}`) || isAbsolute(buildFromRepo));
+  if (containsRepo || (insideRepo && !buildFromRepo.startsWith(`build${sep}`))) {
+    console.error(
+      `refusing --dir ${JSON.stringify(buildDir)}: the clean step would rm -rf a repo path outside build/`,
+    );
     process.exit(1);
   }
 }

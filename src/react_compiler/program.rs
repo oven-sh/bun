@@ -446,8 +446,6 @@ pub(crate) fn parse_fixture_pragmas(
                     source: "ReactForgetFeatureFlag".to_owned(),
                     import_specifier_name: "isForgetEnabled_Fixtures".to_owned(),
                 });
-                if val.is_some_and(|v| v.first() == Some(&b'{')) {
-                }
             }
             b"dynamicGating" => {
                 // Value is a JSON object `{"source":"<module>"}`, not a quoted
@@ -462,7 +460,6 @@ pub(crate) fn parse_fixture_pragmas(
                 });
                 if let Some(source) = parsed {
                     opts.dynamic_gating = Some(source);
-                } else {
                 }
             }
             b"ignoreUseNoForget" => {
@@ -476,7 +473,14 @@ pub(crate) fn parse_fixture_pragmas(
             b"expectNothingCompiled" => {
                 opts.expect_nothing_compiled = true;
             }
-            b"flow" | b"script" | b"eslintSuppressionRules" | b"debug" => {} // recognized; handled by the runner
+            b"flow"
+            | b"script"
+            | b"eslintSuppressionRules"
+            | b"debug"
+            | b"validateBlocklistedImports"
+            | b"hookPattern"
+            | b"customHooks"
+            | b"moduleTypeProvider" => {} // recognized; handled by the runner
 
             // ---- EnvironmentConfig: Option<bool> ----------------------------
             b"enableResetCacheOnSourceFileChanges" => {
@@ -569,13 +573,10 @@ pub(crate) fn parse_fixture_pragmas(
             b"validateNoCapitalizedCalls" => {
                 env.validate_no_capitalized_calls = Some(Vec::new());
             }
-            b"validateBlocklistedImports" => {
-            }
             b"customMacros" => {
                 if let Some(v) = val.and_then(pragma_string_value) {
                     let head = v.split('.').next().unwrap_or(&v).to_owned();
                     env.custom_macros = Some(vec![head]);
-                } else {
                 }
             }
             b"enableEmitHookGuards" => {
@@ -596,8 +597,6 @@ pub(crate) fn parse_fixture_pragmas(
                     }),
                     global_gating: Some("DEV".to_owned()),
                 });
-            }
-            b"hookPattern" | b"customHooks" | b"moduleTypeProvider" => {
             }
             _ => {}
         }

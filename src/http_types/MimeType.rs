@@ -437,8 +437,6 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
     None
 }
 
-// this is partially auto-generated
-
 // TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn by_name(name: &[u8]) -> MimeType {

@@ -46,9 +46,8 @@ impl From<MimeTypeList> for &'static str {
     }
 }
 
-/// Module-level alias of [`MimeTypeList::ALL`] so callers can
-/// `pub use mime_type_list_enum::ALL` (associated consts are not `use`-able).
-pub const ALL: &[MimeTypeList] = &[
+/// Backing storage for [`MimeTypeList::ALL`].
+pub(crate) const ALL: &[MimeTypeList] = &[
     MimeTypeList("application/1d-interleaved-parityfec"),
     MimeTypeList("application/3gpdash-qoe-report+xml"),
     MimeTypeList("application/3gpp-ims+xml"),

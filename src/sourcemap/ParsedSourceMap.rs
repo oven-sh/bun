@@ -13,8 +13,6 @@ use crate::{
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
-    // bun.ptr.ThreadSafeRefCount → intrusive atomic count; managed via
-    // `bun_ptr::RefPtr<ParsedSourceMap>`. `ref`/`deref` are methods on RefPtr.
     pub input_line_count: usize,
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
@@ -210,8 +208,7 @@ impl ParsedSourceMap {
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
     /// `Arc::decrement_strong_count` instead — same observable
     /// `deref()` semantics, with the allocator that
-    /// actually owns the bytes. The embedded `ref_count` field is kept for
-    /// layout/ABI parity but is NOT the live counter.
+    /// actually owns the bytes.
     ///
     /// # Safety
     /// `this` must come from `Arc::<Self>::into_raw` and must still have at

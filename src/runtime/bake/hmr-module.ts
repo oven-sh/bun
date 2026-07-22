@@ -910,6 +910,22 @@ export function setRefreshRuntime(runtime: HMRModule) {
 // react-refresh/runtime does not provide this function for us
 // https://github.com/facebook/metro/blob/febdba2383113c88296c61e28e4ef6a7f4939fda/packages/metro/src/lib/polyfills/require.js#L748-L774
 function isReactRefreshBoundary(esmExports): boolean {
+  // `refreshRuntime` is populated during bootstrap by `setRefreshRuntime`
+  // (gated on `config.refresh` being present in the emitted chunk). If the
+  // bundler ships a module with `hmr.reactRefreshAccept()` while omitting
+  // `refresh:` from the chunk config, this function runs before
+  // `setRefreshRuntime` ever did — a destructure of `undefined` here would
+  // crash every accept boundary.
+  //
+  // Return `false` instead of treating the missing-runtime case as a
+  // refresh boundary: self-accepting here would later skip
+  // `refreshRuntime.performReactRefresh()` (see line ~791, guarded by
+  // `if (refreshRuntime)`) and the React tree would never re-render after
+  // a hot update — silently swallowing every edit. Declining to
+  // self-accept instead lets `replaceModules` walk importers to the root,
+  // hit `importers.size === 0`, and fall back to `fullReload()` — a
+  // normal page refresh, which is strictly better than a silent no-op.
+  if (!refreshRuntime) return false;
   const { isLikelyComponentType } = refreshRuntime;
   if (!isLikelyComponentType) return true;
   if (isLikelyComponentType(esmExports)) {

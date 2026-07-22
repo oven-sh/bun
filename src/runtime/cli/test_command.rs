@@ -1398,25 +1398,37 @@ impl CommandLineReporter {
             return Ok(());
         }
 
-        let Some(map) = ByteRangeMapping::map() else {
-            return Ok(());
+        let mut byte_ranges: Vec<&mut ByteRangeMapping> = if let Some(map) = ByteRangeMapping::map()
+        {
+            // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
+            // collection loop below (single-threaded CLI report path).
+            let map = unsafe { &mut *map.as_ptr() };
+            // PORT NOTE: Zig bitwise-copied each `ByteRangeMapping` out of the map
+            // (`entry.*`). The Rust struct owns a `MultiArrayList` and is not
+            // `Copy`, so collect mutable borrows into the thread-local map instead
+            // — same observable behaviour, no double-free risk.
+            let mut ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
+            for entry in map.values_mut() {
+                ranges.push(entry);
+            }
+            ranges
+        } else {
+            Vec::new()
         };
-        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
-        // collection loop below (single-threaded CLI report path).
-        let map = unsafe { &mut *map.as_ptr() };
-        // `ByteRangeMapping` owns a `MultiArrayList` and is not `Copy`, so
-        // collect mutable borrows into the thread-local map instead — no
-        // double-free risk.
-        let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
-        for entry in map.values_mut() {
-            byte_ranges.push(entry);
-        }
-
-        if byte_ranges.is_empty() {
-            return Ok(());
-        }
 
         byte_ranges.sort_by(coverage::is_less_than_cmp);
+
+        if byte_ranges.is_empty() {
+            // No files to report — show empty text table but skip LCOV file creation
+            if REPORTERS_TEXT {
+                return self.print_code_coverage::<true, false, ENABLE_ANSI_COLORS>(
+                    vm,
+                    opts,
+                    &mut byte_ranges,
+                );
+            }
+            return Ok(());
+        }
 
         self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(
             vm,
@@ -1889,6 +1901,15 @@ pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
 
     // always ignore node_modules.
     if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\")
+    {
+        return false;
+    }
+
+    // Ignore built-in modules. ZigSourceProvider.cpp already filters these
+    // via !isBuiltin, but InternalModuleRegistry.cpp does not in debug builds.
+    if strings::has_prefix_comptime(slice, b"internal:")
+        || strings::has_prefix_comptime(slice, b"node:")
+        || strings::has_prefix_comptime(slice, b"bun:")
     {
         return false;
     }

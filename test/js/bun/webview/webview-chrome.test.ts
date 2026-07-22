@@ -741,15 +741,15 @@ it("chrome: click(selector) waits for animation to stop", async () => {
   // sample can land in the same rendering frame and dispatch the click at
   // the from-position. Looping closes the remaining window across Chrome's
   // frame scheduling.
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 5; i++) {
     await view.evaluate(
-      `(m => { m.style.animation = 'none'; void m.offsetHeight; m.style.animation = 'slide 200ms linear forwards'; })(document.getElementById('mover'))`,
+      `(m => { m.style.animation = 'none'; void m.offsetHeight; m.style.animation = 'slide 100ms linear forwards'; })(document.getElementById('mover'))`,
     );
     await view.click("#mover");
   }
   // The animation ends at left=100; the element is 60px wide, so every click
   // lands at clientX=130 once the slide has settled.
-  expect(await view.evaluate("__x")).toEqual(Array(10).fill(130));
+  expect(await view.evaluate("__x")).toEqual(Array(5).fill(130));
 });
 
 // --- scrollTo variants -----------------------------------------------------

@@ -893,8 +893,7 @@ pub mod store {
         /// backing buffer is resizable/growable, a `SharedArrayBuffer`, or
         /// otherwise unsuitable for borrowing.
         pub fn init_pinned_array_buffer(value: JSValue) -> Option<StoreRef> {
-            let (ptr, len, allocator) =
-                crate::array_buffer::pinned_store_allocator::retain(value)?;
+            let (ptr, len, allocator) = crate::array_buffer::pinned_store_allocator::retain(value)?;
             let len = len as SizeType;
             // SAFETY: `ptr[..len]` is the view's slice of the live
             // `JSC::ArrayBuffer` contents, read after materialization by

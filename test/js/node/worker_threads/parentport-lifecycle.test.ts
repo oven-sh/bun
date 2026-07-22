@@ -53,27 +53,22 @@ function check({ stdout, stderr, exitCode, error }: Awaited<ReturnType<typeof ru
   expect(exitCode).toBe(0);
 }
 
-test.concurrent(
-  "parentPort.close() inside a message handler lets the process exit",
-  async () => {
-    check(
-      await run(/* js */ `
+test.concurrent("parentPort.close() inside a message handler lets the process exit", async () => {
+  check(
+    await run(/* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.on("message", () => {
           parentPort.close();
         });
       `),
-      ["parent: exit 0"],
-    );
-  },
-);
+    ["parent: exit 0"],
+  );
+});
 
-test.concurrent(
-  "parentPort.close() stops delivery: late postMessage is dropped",
-  async () => {
-    check(
-      await run(
-        /* js */ `
+test.concurrent("parentPort.close() stops delivery: late postMessage is dropped", async () => {
+  check(
+    await run(
+      /* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.on("message", (m) => {
           console.log("worker: got", m);
@@ -82,7 +77,7 @@ test.concurrent(
         // keep the worker up past the late post so, if close() were a no-op, it would arrive
         setTimeout(() => {}, 200);
       `,
-        /* js */ `
+      /* js */ `
         import { Worker } from "node:worker_threads";
         const worker = new Worker("./worker.mjs");
         worker.on("exit", (code) => console.log("parent: exit", code));
@@ -92,19 +87,16 @@ test.concurrent(
           worker.postMessage("late");
         });
       `,
-      ),
-      ["worker: got stop", "parent: exit 0"],
-    );
-  },
-);
+    ),
+    ["worker: got stop", "parent: exit 0"],
+  );
+});
 
-test.concurrent(
-  "parentPort.close() emits 'close' and lets other handles drain",
-  async () => {
-    // close() returns synchronously, 'close' fires on nextTick, and the worker stays up until
-    // the interval is cleared because close() only drops parentPort's own ref.
-    check(
-      await run(/* js */ `
+test.concurrent("parentPort.close() emits 'close' and lets other handles drain", async () => {
+  // close() returns synchronously, 'close' fires on nextTick, and the worker stays up until
+  // the interval is cleared because close() only drops parentPort's own ref.
+  check(
+    await run(/* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.on("close", () => console.log("worker: close"));
         parentPort.on("message", () => {
@@ -121,33 +113,27 @@ test.concurrent(
           });
         });
       `),
-      ["worker: after close()", "worker: close", "worker: still alive after close", "parent: exit 0"],
-    );
-  },
-);
+    ["worker: after close()", "worker: close", "worker: still alive after close", "parent: exit 0"],
+  );
+});
 
-test.concurrent(
-  "parentPort.unref() lets the worker exit while a listener is still installed",
-  async () => {
-    check(
-      await run(/* js */ `
+test.concurrent("parentPort.unref() lets the worker exit while a listener is still installed", async () => {
+  check(
+    await run(/* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.on("message", () => {});
         parentPort.unref();
         console.log("worker: hasRef", parentPort.hasRef());
       `),
-      ["worker: hasRef false", "parent: exit 0"],
-    );
-  },
-);
+    ["worker: hasRef false", "parent: exit 0"],
+  );
+});
 
-test.concurrent(
-  "parentPort.ref() keeps the worker alive without a listener",
-  async () => {
-    // ref() with no listener should hold the event loop open on its own; we flip it back with
-    // unref() from a queued task so the test isn't timing-dependent.
-    check(
-      await run(/* js */ `
+test.concurrent("parentPort.ref() keeps the worker alive without a listener", async () => {
+  // ref() with no listener should hold the event loop open on its own; we flip it back with
+  // unref() from a queued task so the test isn't timing-dependent.
+  check(
+    await run(/* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.ref();
         console.log("worker: hasRef", parentPort.hasRef());
@@ -156,16 +142,13 @@ test.concurrent(
           parentPort.unref();
         });
       `),
-      ["worker: hasRef true", "worker: still alive", "parent: exit 0"],
-    );
-  },
-);
+    ["worker: hasRef true", "worker: still alive", "parent: exit 0"],
+  );
+});
 
-test.concurrent(
-  "parentPort.hasRef() tracks listener/ref/unref/close transitions",
-  async () => {
-    check(
-      await run(/* js */ `
+test.concurrent("parentPort.hasRef() tracks listener/ref/unref/close transitions", async () => {
+  check(
+    await run(/* js */ `
         import { parentPort } from "node:worker_threads";
         const log = [];
         log.push(parentPort.hasRef());            // false: no listener yet
@@ -179,32 +162,26 @@ test.concurrent(
         log.push(parentPort.hasRef());            // true: close() doesn't clear the flag
         console.log(JSON.stringify(log));
       `),
-      ["[false,true,false,true,true]", "parent: exit 0"],
-    );
-  },
-);
+    ["[false,true,false,true,true]", "parent: exit 0"],
+  );
+});
 
-test.concurrent(
-  "parentPort.onmessage keeps the worker alive and close() releases it",
-  async () => {
-    check(
-      await run(/* js */ `
+test.concurrent("parentPort.onmessage keeps the worker alive and close() releases it", async () => {
+  check(
+    await run(/* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.onmessage = (ev) => {
           console.log("worker: onmessage", ev.data);
           parentPort.close();
         };
       `),
-      ["worker: onmessage go", "parent: exit 0"],
-    );
-  },
-);
+    ["worker: onmessage go", "parent: exit 0"],
+  );
+});
 
-test.concurrent(
-  "removing the last parentPort message listener lets the worker exit",
-  async () => {
-    check(
-      await run(/* js */ `
+test.concurrent("removing the last parentPort message listener lets the worker exit", async () => {
+  check(
+    await run(/* js */ `
         import { parentPort } from "node:worker_threads";
         const handler = (msg) => {
           console.log("worker: got", msg);
@@ -212,7 +189,6 @@ test.concurrent(
         };
         parentPort.on("message", handler);
       `),
-      ["worker: got go", "parent: exit 0"],
-    );
-  },
-);
+    ["worker: got go", "parent: exit 0"],
+  );
+});

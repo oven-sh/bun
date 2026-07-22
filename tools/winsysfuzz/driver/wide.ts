@@ -104,8 +104,14 @@ function drawSchedule(): string[] {
     // The first event/semaphore creations and the first closes are process
     // init (JSC/WTF primitives, loader) - by-design init fatals, not bugs.
     // With no baseline there is no mask, so floor the hit index instead.
-    if (/^(NtCreateEvent|NtCreateSemaphore|NtClose|NtCreateSection|NtMapViewOfSection)$/.test(sysName)) {
-      if (hit === "*" || (typeof hit === "number" && hit < 3)) hit = 3 + Math.floor(rnd() * 20);
+    // Process-startup infrastructure: the first event/semaphore/thread
+    // creations, handle duplications, closes and section maps are JSC/WTF
+    // bring-up - failing them is a by-design init fatal (isSuccessful
+    // release-assert, CRASH() on a missing helper thread), never a bun bug.
+    // With no baseline mask, floor the hit index and forbid '*' (every
+    // occurrence necessarily includes the init ones).
+    if (/^(NtCreateEvent|NtCreateSemaphore|NtCreateThreadEx|NtDuplicateObject|NtClose|NtCreateSection|NtMapViewOfSection)$/.test(sysName)) {
+      if (hit === "*" || (typeof hit === "number" && hit < 4)) hit = 4 + Math.floor(rnd() * 20);
     }
     rules.add(`${sysName} * ${hit} ${f.mode} ${f.status}`);
   }

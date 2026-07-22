@@ -4299,20 +4299,27 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
 
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
-    if (signalValue.isNumber()) {
-        signal = signalValue.toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else if (signalValue.isString()) {
+
+    // this is mimicking `if (sig === (sig | 0))`, which preserves the null signal
+    // and rejects numbers that are not an exact int32
+    int32_t signalAsInt32 = signalValue.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isExactInt32 = JSC::JSValue::strictEqual(globalObject, signalValue, jsNumber(signalAsInt32));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (isExactInt32) {
+        signal = signalAsInt32;
+    } else if (signalValue.toBoolean(globalObject)) {
+        // this is mimicking `sig ||= 'SIGTERM'` and then `constants[sig]`,
+        // so undefined, null, NaN, false and "" all stay SIGTERM
         loadSignalNumberMap();
-        if (auto num = signalNameToNumberMap->get(signalValue.toWTFString(globalObject))) {
-            signal = num;
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
+        auto signalName = signalValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto num = signalNameToNumberMap->get(signalName);
+        if (!num) {
             return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signalValue);
         }
-        RETURN_IF_EXCEPTION(scope, {});
-    } else if (!signalValue.isUndefinedOrNull()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "signal"_s, "string or number"_s, signalValue);
+        signal = num;
     }
 
     auto global = uncheckedDowncast<Zig::GlobalObject>(globalObject);

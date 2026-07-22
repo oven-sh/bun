@@ -998,6 +998,54 @@ describe.concurrent(() => {
       expect(() => process.kill(2147483640, "SIGPOOP")).toThrow();
       expect(() => process.kill(2147483640, 456)).toThrow();
     });
+
+    it.serial("process.kill(2) rejects signals that are not an exact int32", async () => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), process_sleep, "1000000"],
+        stdout: "pipe",
+        cwd: import.meta.dir,
+        env: bunEnv,
+        stderr: "inherit",
+      });
+
+      // node only forwards a signal to kill(2) when `sig === (sig | 0)`
+      for (const signal of [9.9, 2 ** 32 + 9, 2 ** 33, 2 ** 31, Infinity, -Infinity, true, {}]) {
+        expect(() => process.kill(child.pid, signal)).toThrow(
+          expect.objectContaining({ code: "ERR_UNKNOWN_SIGNAL", name: "TypeError" }),
+        );
+      }
+
+      // none of those were delivered, so the child is still running to receive this one
+      const prom = child.exited;
+      expect(process.kill(child.pid, "SIGTERM")).toBe(true);
+      await prom;
+      if (isWindows) {
+        expect(child.exitCode).toBe(1);
+      } else {
+        expect(child.signalCode).toBe("SIGTERM");
+      }
+    });
+
+    it("process.kill(2) coerces falsy signals to SIGTERM, like node", async () => {
+      // `process._kill` is monkey-patched, so nothing reaches the OS, and the pid
+      // is one that cannot exist so an unpatched `_kill` would throw instead of signalling
+      const { stdout } = await runInlineFixture(
+        `
+        const sent = [];
+        process._kill = (pid, signal) => (sent.push(signal), 0);
+        const returned = [undefined, null, NaN, false, "", 0, -0, 9, "SIGHUP"].map(signal =>
+          process.kill(2147483640, signal),
+        );
+        console.log(JSON.stringify({ sent, returned }));
+        `,
+      );
+
+      expect(JSON.parse(stdout)).toEqual({
+        // SIGTERM for every falsy signal, int32 signal numbers are passed through untouched
+        sent: [15, 15, 15, 15, 15, 0, 0, 9, 1],
+        returned: Array(9).fill(true),
+      });
+    });
   });
 
   const undefinedStubs = [

@@ -519,6 +519,11 @@ describe("junit reporter", () => {
 
 function filterJunitXmlOutput(xmlContent, dir) {
   let out = xmlContent.replaceAll(/ (time|hostname)=".*?"/g, "");
-  if (dir) out = out.replaceAll(String(dir), "<dir>");
+  if (dir) {
+    out = out.replaceAll(String(dir), "<dir>");
+    out = out.replaceAll(String(dir).replaceAll("\\", "/"), "<dir>");
+  }
+  // <failure> bodies render stack-frame paths with the platform separator.
+  out = out.replaceAll(/(<dir>)[\\\/]/g, "$1/");
   return out;
 }

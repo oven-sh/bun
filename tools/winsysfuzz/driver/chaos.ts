@@ -111,12 +111,14 @@ for (let i = 0; i < MASK_PROGRAMS.length; i++) {
   for (const r of t?.recs ?? []) if (!r.entryOnly) masked.add(`${r.sys}:${r.key}`);
 }
 const allCoords = [...coordMap.entries()];
-// Also exclude completion-dequeue calls (NtRemoveIoCompletion[Ex]) made
-// from another module's private worker loop ('o:' key): faulting a system
-// DLL's own dequeue thread sabotages system code, not bun - such findings
-// are never bun-attributable.
-const privateDequeue = (c: Coord) => c.key.startsWith("o:") && c.sysName.startsWith("NtRemoveIoCompletion");
-const coords = allCoords.filter(([id, c]) => !masked.has(id) && !privateDequeue(c)).map(([, c]) => c);
+// A call issued from INSIDE another module ('o:' key) is that module's own
+// machinery - failing it fails system plumbing, lying about it fabricates an
+// impossible world, delaying it is that module's scheduling. Such coordinates
+// are excluded from the drawable pool entirely (not merely refused at draw
+// time), so the fault surface is exactly the boundary bun crosses and the
+// picker never comes up empty retrying on them. The sweeper drops the same.
+const otherModule = (c: Coord) => c.key.startsWith("o:");
+const coords = allCoords.filter(([id, c]) => !masked.has(id) && !otherModule(c)).map(([, c]) => c);
 console.log(
   `  ${coordMap.size} injectable coordinate(s), ${coords.length} after startup mask, ` +
     `${baseTrace.recCount} records`,
@@ -151,14 +153,6 @@ function drawSchedule(): string[] {
   while (rules.size < n && guard++ < n * 8) {
     const c = pickCoord();
     const f = pick(FAULTS[c.sysName]);
-    // A call issued from INSIDE another module ('o:' key) is that module's
-    // own machinery: a post-lie there fabricates an impossible world, and a
-    // pre-failure there fails system plumbing mid-operation - bun only ever
-    // sees the API boundary. Never draw fail/lie faults on o: keys (delays
-    // stay: they perturb scheduling, not truth). Sweeper drops the same.
-    // Delays included: a pause inside another module's own loop is that
-    // module's scheduling, not bun's. All o:-keyed modes are refused.
-    if (c.key.startsWith("o:")) continue;
     // hit biased deep: sqrt of a uniform skews toward the late end
     const hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
     rules.add(`${c.sysName} ${c.key} ${hit} ${f.mode} ${f.status}`);

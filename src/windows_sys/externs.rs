@@ -692,6 +692,12 @@ pub mod kernel32 {
     }
     pub const MEM_FREE: u32 = 0x10000;
 
+    /// `LOAD_LIBRARY_SEARCH_SYSTEM32` (`libloaderapi.h`): restrict the DLL
+    /// search to `%windir%\System32`. Passed as `dwFlags` to `LoadLibraryEx*`
+    /// for loads of system DLLs that must not be satisfied from the
+    /// application directory, CWD, or `PATH`.
+    pub const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x0000_0800;
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
@@ -1425,6 +1431,11 @@ unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
 
     pub fn LoadLibraryA(name: *const c_char) -> *mut c_void;
+
+    /// `LoadLibraryExA` (`libloaderapi.h`). `hFile` is reserved and must be
+    /// null; `dwFlags` takes the `LOAD_LIBRARY_SEARCH_*` /
+    /// `LOAD_WITH_ALTERED_SEARCH_PATH` bits.
+    pub fn LoadLibraryExA(name: *const c_char, hFile: *mut c_void, dwFlags: DWORD) -> *mut c_void;
 }
 
 // Declared as `extern "system"` so the callconv is correct on all targets

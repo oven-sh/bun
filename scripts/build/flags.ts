@@ -945,6 +945,15 @@ export const linkerFlags: Flag[] = [
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
   },
   {
+    // Writes DependentLoadFlags into the PE load-config directory so the OS
+    // loader resolves bun.exe's static imports from System32 only. The
+    // /delayload set below is covered by the __pfnDliNotifyHook2 delay-load
+    // hook in src/jsc/bindings/WindowsDelayLoadHook.cpp.
+    flag: "/DEPENDENTLOADFLAG:0x800",
+    when: c => c.windows,
+    desc: "Static DLL imports resolve from System32 only (LOAD_LIBRARY_SEARCH_SYSTEM32)",
+  },
+  {
     flag: "/DEBUG:FULL",
     when: c => c.windows && c.debug,
     desc: "Emit PDB so the crash handler can symbolize stack traces",

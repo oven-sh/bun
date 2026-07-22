@@ -851,7 +851,7 @@ unsafe extern "system" {
 }
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
-/// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
+/// need. Loaded lazily (LoadLibraryExA inside `load_factory`) so the binary
 /// carries no import-table dependency on windowscodecs — nano-server / stripped
 /// containers without the WIC feature still launch and just fall back.
 type WICConvertBitmapSourceFn = unsafe extern "system" fn(
@@ -897,8 +897,16 @@ fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
 fn load_factory() {
     // Resolve the one flat C export first; if windowscodecs.dll isn't present
     // we never attempt CoCreateInstance and the whole backend stays disabled.
-    // SAFETY: literal C string; LoadLibraryA is safe to call from any thread.
-    let dll = unsafe { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) };
+    // LOAD_LIBRARY_SEARCH_SYSTEM32 pins the load to %windir%\System32, so a
+    // same-named DLL planted in the application directory / CWD is ignored.
+    // SAFETY: literal C string, null reserved handle; safe from any thread.
+    let dll = unsafe {
+        windows::LoadLibraryExA(
+            c"windowscodecs.dll".as_ptr(),
+            ptr::null_mut(),
+            windows::kernel32::LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    };
     if dll.is_null() {
         return;
     }

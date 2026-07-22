@@ -174,4 +174,36 @@ if (process.platform === "win32") {
     // Sanity check: we actually parsed something meaningful.
     expect(imports.some(i => i.dll.toLowerCase() === "kernel32.dll")).toBe(true);
   });
+
+  // 0x800 = LOAD_LIBRARY_SEARCH_SYSTEM32, written into the PE load-config
+  // directory by /DEPENDENTLOADFLAG:0x800 (scripts/build/flags.ts). Without it
+  // the loader resolves static imports via the default search order (the
+  // application directory is checked BEFORE System32), so a same-named DLL
+  // planted next to bun.exe is loaded instead of the real system DLL. The
+  // /delayload set is covered separately by the __pfnDliNotifyHook2 hook in
+  // src/jsc/bindings/WindowsDelayLoadHook.cpp.
+  test("PE load-config restricts static DLL imports to System32", async () => {
+    const readobj = Bun.which("llvm-readobj");
+    if (!readobj) {
+      throw new Error("llvm-readobj not found. It ships with LLVM (required to build bun).");
+    }
+
+    // --coff-load-config dumps IMAGE_LOAD_CONFIG_DIRECTORY64. The field prints
+    // as `  DependentLoadFlags: 0x800`.
+    const output = await $`${readobj} --coff-load-config ${BUN_EXE}`.text();
+
+    const match = output.match(/^\s*DependentLoadFlags:\s*(0x[0-9a-fA-F]+)\s*$/m);
+    if (!match) {
+      // A missing line means the PE has no load-config directory at all (the
+      // MSVC CRT's `_load_config_used` symbol did not make it into the link),
+      // not just an unset flag. Fail loudly rather than silently passing.
+      throw new Error(
+        `llvm-readobj --coff-load-config did not report DependentLoadFlags for ${BUN_EXE}.\n` +
+          `Either bun.exe lost its PE load-config directory or the llvm-readobj output format changed.\n\n` +
+          output.slice(0, 1000),
+      );
+    }
+
+    expect(Number(match[1])).toBe(0x800);
+  });
 }

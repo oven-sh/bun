@@ -566,12 +566,17 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                auto env = Bun::createEmptyProcessEnvMap(globalObject);
+                // putDirectMayBeIndex on a JSNonFinalObject dispatches index keys
+                // through the method table's defineOwnProperty, which declares a
+                // ThrowScope. This runs before topEntryFrame is set, so catch it here.
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 size_t i = 0;
                 for (auto k : map) {
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    scope.assertNoException();
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {

@@ -120,6 +120,7 @@
 #include "CryptoKeyType.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "../napi.h"
+#include "../JSEnvironmentVariableMap.h"
 #include <limits>
 #include <algorithm>
 
@@ -2812,7 +2813,12 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // like a plain object from JS's perspective (matches Node.js).
             // ObjectPrototype is allowed because %Object.prototype% is an immutable
             // prototype exotic object that the spec carves out of this rejection.
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info())
+            // process.env (JSProcessEnvMap / JSSharedEnvMap) is a plain object whose
+            // only method-table override is defineOwnProperty; Node clones it.
+            if (inObject->classInfo() != JSFinalObject::info()
+                && inObject->classInfo() != Zig::NapiPrototype::info()
+                && inObject->classInfo() != JSC::ObjectPrototype::info()
+                && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

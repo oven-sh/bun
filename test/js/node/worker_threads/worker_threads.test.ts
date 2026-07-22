@@ -1459,22 +1459,25 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
-  // An accessor installed via defineProperty lands on the base object, but reads hit
-  // the store first — so the store entry must go, or the getter is shadowed. (Node
-  // rejects accessors on process.env entirely; bun allows them on the regular map,
-  // so the shared map matches the regular one rather than diverging from it.)
-  it("does not let the store shadow an accessor defined on process.env", async () => {
+  // Node rejects anything but a fully-specified writable+enumerable+configurable
+  // data descriptor on process.env (ERR_INVALID_OBJECT_DEFINE_PROPERTY). The
+  // SHARE_ENV map must match the regular map here.
+  it("rejects accessor descriptors on process.env like the regular map", async () => {
     const proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const { Worker, SHARE_ENV } = require("worker_threads");
-         const probe = \`process.env.FOO = "old";
-           Object.defineProperty(process.env, "FOO", { get: () => "new", configurable: true });
-           const count = Object.keys(process.env).filter(k => k === "FOO").length;
+         const probe = \`(() => {
+           process.env.FOO = "old";
+           let code = null;
+           try {
+             Object.defineProperty(process.env, "FOO", { get: () => "new", configurable: true });
+           } catch (e) { code = e.code; }
            const read = process.env.FOO;
            delete process.env.FOO;
-           ({ read, count, afterDelete: process.env.FOO ?? null })\`;
+           return { code, read };
+         })()\`;
          const regular = eval(probe);
          const w = new Worker(
            'const { parentPort } = require("worker_threads"); parentPort.postMessage(eval(' + JSON.stringify(probe) + '));',
@@ -1486,8 +1489,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // count === 1: defineProperty on an existing enumerable key keeps it enumerable.
-    const want = { read: "new", count: 1, afterDelete: null };
+    const want = { code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", read: "old" };
     expect(JSON.parse(stdout)).toEqual({ regular: want, shared: want });
     expect(exitCode).toBe(0);
   });

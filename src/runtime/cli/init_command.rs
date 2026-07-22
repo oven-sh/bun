@@ -1613,10 +1613,7 @@ impl Template {
             let contents = file.contents;
 
             let result = if path == b"README.md" {
-                if exists_z(b"README")
-                    || exists_z(b"README.txt")
-                    || exists_z(b"README.mdx")
-                {
+                if exists_z(b"README") || exists_z(b"README.txt") || exists_z(b"README.mdx") {
                     Err(crate::Error::Sys(bun_errno::SystemErrno::EEXIST))
                 } else {
                     let buf = Assets::substitute(

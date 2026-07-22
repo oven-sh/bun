@@ -55,19 +55,21 @@ pub struct AtomicCell<T: Copy> {
     inner: UnsafeCell<T>,
 }
 
-// SAFETY: every shared access goes through an atomic op; `T: Atom ⊃ Copy` so
-// no drop glue races. We bound on `T: Atom` (not `T: Send`) because `Atom`'s
-// safety contract includes cross-thread transport — that's what lets the
-// pointer specializations carry `*mut U` / `NonNull<U>` across threads
-// (matching `AtomicPtr<U>: Send + Sync` unconditionally) even though raw
-// pointers are `!Send`. What the receiving thread *does* with a loaded pointer
-// is on the caller, same as `AtomicPtr`. A plain `T: Copy` bound would be
-// unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to another thread
-// via `into_inner()` would be a data race.
-unsafe impl<T: Atom> Sync for AtomicCell<T> {}
+// SAFETY: every access goes through an atomic op; `T: Copy` so no drop glue
+// races. The previous bound was `<T: Copy>`, which auto-derived `Send + Sync`
+// on `AtomicCell<T>` for any external `unsafe impl Atom for SomeCopyButNotSend`
+// — and then `load`/`swap`/`compare_exchange` on a shared reference would
+// hand owned `T` across threads (audit witness in the CodeRabbit review of
+// #30924). Gate Send/Sync on the explicit [`AtomSend`] marker instead: the
+// built-in numeric `unsafe_impl_atom!` types and the pointer specializations
+// below opt in (matching `AtomicPtr<U>: Send + Sync` unconditionally for the
+// pointer case), and any downstream `unsafe impl Atom` must now also
+// `unsafe impl AtomSend` if it wants the cross-thread carrier behavior —
+// forcing the implementor to consider the cross-thread story explicitly.
+unsafe impl<T: AtomSend> Sync for AtomicCell<T> {}
 // SAFETY: see the `Sync` justification above — the same invariants apply to
-// moving the cell itself across threads; `T: Copy` has no drop glue to race.
-unsafe impl<T: Atom> Send for AtomicCell<T> {}
+// moving the cell itself across threads.
+unsafe impl<T: AtomSend> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`
@@ -163,13 +165,10 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   produced from a valid `Self`) yields the original value. This is weaker
 ///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
-/// - `Self` is safe to transport across threads when stored in an
-///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
-///   itself provides. This is what backs `AtomicCell<T: Atom>: Send + Sync`.
-///   Raw pointers / `NonNull` qualify (the *pointee* may be thread-affine, but
-///   that's the caller's problem, exactly as with `AtomicPtr`). A `Copy`
-///   reference like `&Cell<_>` does **not** — it would alias unsynchronized
-///   interior mutability across threads.
+///
+/// `Atom` alone says nothing about cross-thread transport. Add
+/// [`AtomSend`] only when `AtomicCell<Self>` may be sent/shared across
+/// threads.
 ///
 /// Prefer the [`unsafe_impl_atom!`](crate::unsafe_impl_atom) macro over a
 /// hand-written `impl`.
@@ -189,6 +188,33 @@ pub unsafe trait Atom: Copy {
         failure: Ordering,
     ) -> Result<Self, Self>;
 }
+
+/// Marker trait: `AtomicCell<Self>` is safe to hand across threads.
+///
+/// `Atom` constrains only the atomic representation (size, padding). It
+/// does **not** imply that `Self` values are safe to send/share between
+/// threads — a downstream `unsafe impl Atom for SomeCopyButNotSend` is
+/// fine for in-thread atomic use, but `AtomicCell` exposes owned `T` to
+/// any thread holding `&AtomicCell<T>` via [`load`](AtomicCell::load),
+/// [`swap`](AtomicCell::swap), [`compare_exchange`](AtomicCell::compare_exchange),
+/// etc. — so the auto-trait bound for `AtomicCell<T>: Send + Sync` lives
+/// here, not on [`Atom`].
+///
+/// The built-in scalar impls below opt in explicitly, and the pointer
+/// specializations implement `AtomSend` directly, matching the unconditional
+/// `AtomicPtr<U>: Send + Sync` story — the atomic op makes the address
+/// transfer well-defined, and what the receiver dereferences is on them.
+///
+/// # Safety
+///
+/// Implementor asserts that the cross-thread observable state of `Self`
+/// is fully synchronized by the atomic load/store on the underlying
+/// integer/pointer word — i.e. moving and sharing an owned `Self` value
+/// between threads via `AtomicCell` cannot violate `Self`'s invariants.
+/// For primitive `Copy` scalars this is trivial. For `!Send` types it
+/// requires an explicit decision (e.g. raw pointers, where the address
+/// itself is OK to transfer but dereferencing is the caller's hazard).
+pub unsafe trait AtomSend: Atom {}
 
 /// Bit-reinterpret `a` as `B` without a size check (caller asserts the sizes
 /// match). Uses a `union` so the dead arms of the size-dispatch below remain
@@ -370,11 +396,27 @@ unsafe_impl_atom!(
     bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
 );
 
+macro_rules! unsafe_impl_builtin_atomsend {
+    ($($T:ty),+ $(,)?) => {$(
+        // SAFETY: built-in scalar atomics are plain `Send` value types; moving
+        // their bits between threads via the matching `AtomicU*` backing does
+        // not violate any type-specific invariant.
+        unsafe impl AtomSend for $T {}
+    )+};
+}
+
+unsafe_impl_builtin_atomsend!(
+    bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
+);
+
 // Pointer specializations: route through `AtomicPtr` so provenance survives
 // the round-trip (the integer path would launder it to an int and back).
 
 // SAFETY: `*mut U` is pointer-sized, padding-free; `AtomicPtr<U>` is its
-// native atomic backing.
+// native atomic backing. `AtomSend` mirrors `AtomicPtr<U>: Send + Sync`
+// (unconditional): the atomic op makes the address transfer well-defined,
+// and dereferencing the loaded pointer remains the caller's hazard.
+unsafe impl<U> AtomSend for *mut U {}
 unsafe impl<U> Atom for *mut U {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
@@ -409,6 +451,7 @@ unsafe impl<U> Atom for *mut U {
 }
 
 // SAFETY: same as `*mut U`; the cast goes through `*mut U`.
+unsafe impl<U> AtomSend for *const U {}
 unsafe impl<U> Atom for *const U {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
@@ -464,6 +507,7 @@ fn nn_to_raw<U>(v: Option<NonNull<U>>) -> *mut U {
 // SAFETY: `Option<NonNull<U>>` is guaranteed to have the same layout as
 // `*mut U` (null-pointer niche), so the storage cast to `AtomicPtr<U>` is
 // sound; round-tripping preserves provenance.
+unsafe impl<U> AtomSend for Option<NonNull<U>> {}
 unsafe impl<U> Atom for Option<NonNull<U>> {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
@@ -674,5 +718,78 @@ mod tests {
         let r = c.fetch_update(|cur| (5 > cur).then_some(5));
         assert_eq!(r, Err(10));
         assert_eq!(c.load(), 10);
+    }
+
+    #[test]
+    fn atomic_cell_atomsend_marker_is_required_for_send() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<AtomicCell<u64>>();
+        assert_sync::<AtomicCell<u64>>();
+        assert_send::<AtomicCell<*mut u8>>();
+        assert_sync::<AtomicCell<*mut u8>>();
+        assert_send::<AtomicCell<Option<NonNull<u8>>>>();
+        assert_sync::<AtomicCell<Option<NonNull<u8>>>>();
+
+        #[repr(C)]
+        #[derive(Copy, Clone)]
+        struct FunkyCopy {
+            bits: u32,
+            _not_send: core::marker::PhantomData<*const ()>,
+        }
+
+        // SAFETY: test fixture only. `FunkyCopy` is a 4-byte no-padding
+        // wrapper around `u32`, so it satisfies `Atom`'s representation
+        // contract while deliberately remaining `!Send` / `!Sync`. This must
+        // use the exported macro: the regression is that `unsafe_impl_atom!`
+        // used to grant `AtomSend` too broadly.
+        crate::unsafe_impl_atom!(FunkyCopy);
+
+        mod negative_probe {
+            use core::marker::PhantomData;
+
+            pub(super) struct Probe<T: ?Sized>(PhantomData<fn() -> T>);
+            impl<T: ?Sized> Probe<T> {
+                pub(super) fn new() -> Self {
+                    Self(PhantomData)
+                }
+            }
+
+            pub(super) trait NotSendA {
+                fn check_send(&self) {}
+            }
+            impl<T: ?Sized> NotSendA for Probe<T> {}
+            pub(super) trait NotSendB {
+                fn check_send(&self) {}
+            }
+            impl<T: Send + ?Sized> NotSendB for Probe<T> {}
+
+            pub(super) trait NotSyncA {
+                fn check_sync(&self) {}
+            }
+            impl<T: ?Sized> NotSyncA for Probe<T> {}
+            pub(super) trait NotSyncB {
+                fn check_sync(&self) {}
+            }
+            impl<T: Sync + ?Sized> NotSyncB for Probe<T> {}
+        }
+
+        macro_rules! assert_not_send {
+            ($T:ty) => {{
+                use negative_probe::{NotSendA as _, NotSendB as _};
+                negative_probe::Probe::<$T>::new().check_send();
+            }};
+        }
+        macro_rules! assert_not_sync {
+            ($T:ty) => {{
+                use negative_probe::{NotSyncA as _, NotSyncB as _};
+                negative_probe::Probe::<$T>::new().check_sync();
+            }};
+        }
+
+        assert_not_send!(FunkyCopy);
+        assert_not_sync!(FunkyCopy);
+        assert_not_send!(AtomicCell<FunkyCopy>);
+        assert_not_sync!(AtomicCell<FunkyCopy>);
     }
 }

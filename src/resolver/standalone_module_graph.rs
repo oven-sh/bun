@@ -57,7 +57,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
         } else if ext == b".ts" {
             buf[joined_len - 3..joined_len].copy_from_slice(b".js");
             joined_len
-        } else if matches!(ext, b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cts" | b".cjs") {
+        } else if matches!(
+            ext,
+            b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cts" | b".cjs"
+        ) {
             let base = joined_len - ext.len();
             buf[base..base + 3].copy_from_slice(b".js");
             base + 3

@@ -4337,8 +4337,10 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     // caller's original File. `get_name_string()` prefers this over the store's
     // `stored_name`, so an explicit FormData `filename` is honored even when
     // value was already a named File (https://xhr.spec.whatwg.org/#create-an-entry
-    // step 3). Empty means no filename was supplied; leave `name` as-is so a
-    // bare Blob entry keeps reporting `name: undefined`.
+    // step 3). When no filename argument was given the C++ caller defaults
+    // `path_str` from `Blob__getFileNameString(this)`, so this write is a no-op
+    // against the dupe's existing `name`. Skip the empty case so a bare Blob
+    // entry keeps reporting `name: undefined`.
     if !path_str.is_empty() {
         this.name.set(path_str.dupe_ref());
     }
@@ -4361,6 +4363,17 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
+    // Only caller is FormData append/set defaulting the entry filename when the
+    // `filename` argument is omitted. Prefer the per-Blob `name` (what JS
+    // `file.name` reports via `get_name_string`) so the defaulted value matches
+    // the dupe's `name` and `Blob__setAsFile` round-trips it unchanged. Falling
+    // through to the store-derived path here would clobber a user-assigned
+    // `file.name` or a `new File([Bun.file(p)], name)` display name. The caller
+    // owns `this` and wraps the result via `toWTFString(ZeroCopy)`, so a borrow
+    // is sufficient in every branch.
+    if this.name.get().tag() != bun_core::Tag::Dead {
+        return this.name.get();
+    }
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);
     }

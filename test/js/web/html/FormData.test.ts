@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -109,6 +109,36 @@ describe("FormData", () => {
     expect(a).not.toBe(origA);
     expect(a instanceof File).toBe(true);
     expect(a.type).toBe(origA.type);
+  });
+
+  // When no filename argument is given, the entry keeps the File's own
+  // user-visible `.name`, not the store-derived path or stored_name.
+  it("append/set without a filename keep the File's own name", async () => {
+    using dir = tempDir("formdata-file-name", { "payload.bin": "payload" });
+    const onDisk = join(String(dir), "payload.bin");
+
+    const fileBacked = new File([Bun.file(onDisk)], "display.txt");
+    expect(fileBacked.name).toBe("display.txt");
+
+    const renamed = new File(["abc"], "one.txt") as File & { name: string };
+    renamed.name = "two.txt";
+    expect(renamed.name).toBe("two.txt");
+
+    const fd = new FormData();
+    fd.append("file", fileBacked);
+    fd.set("renamed", renamed);
+
+    expect({
+      file: (fd.get("file") as File).name,
+      renamed: (fd.get("renamed") as File).name,
+    }).toEqual({
+      file: "display.txt",
+      renamed: "two.txt",
+    });
+
+    const body = await new Response(fd).text();
+    expect(body).toContain('Content-Disposition: form-data; name="file"; filename="display.txt"\r\n');
+    expect(body).toContain('Content-Disposition: form-data; name="renamed"; filename="two.txt"\r\n');
   });
 
   const multipartFormDataFixturesRawBody = [

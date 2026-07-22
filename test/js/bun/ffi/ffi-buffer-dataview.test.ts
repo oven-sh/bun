@@ -25,8 +25,8 @@ describe.skipIf(isWindows || !cc)("bun:ffi buffer FFIType and DataView arguments
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) console.error(stderr);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr || stdout);
     expect(exitCode).toBe(0);
   });
 
@@ -39,9 +39,12 @@ describe.skipIf(isWindows || !cc)("bun:ffi buffer FFIType and DataView arguments
     const lib = dlopen(libPath, {
       first_byte: { args: [FFIType.buffer], returns: FFIType.u8 },
     });
-    const bytes = new Uint8Array([11, 22, 33]);
-    expect(lib.symbols.first_byte(bytes)).toBe(11);
-    lib.close();
+    try {
+      const bytes = new Uint8Array([11, 22, 33]);
+      expect(lib.symbols.first_byte(bytes)).toBe(11);
+    } finally {
+      lib.close();
+    }
   });
 
   test("FFIType.buffer as a return type gives the byteLength/byteOffset error, not 'invalid ABI type'", () => {
@@ -58,11 +61,14 @@ describe.skipIf(isWindows || !cc)("bun:ffi buffer FFIType and DataView arguments
     const lib = dlopen(libPath, {
       first_byte: { args: ["buffer"], returns: "u8" },
     });
-    const backing = new Uint8Array([11, 22, 33]);
-    const dv = new DataView(backing.buffer, 2);
-    expect(lib.symbols.first_byte(dv)).toBe(33);
-    expect(lib.symbols.first_byte(new DataView(backing.buffer))).toBe(11);
-    lib.close();
+    try {
+      const backing = new Uint8Array([11, 22, 33]);
+      const dv = new DataView(backing.buffer, 2);
+      expect(lib.symbols.first_byte(dv)).toBe(33);
+      expect(lib.symbols.first_byte(new DataView(backing.buffer))).toBe(11);
+    } finally {
+      lib.close();
+    }
   });
 
   // `ptr` args should accept DataView the same way the standalone `ptr()`
@@ -71,19 +77,25 @@ describe.skipIf(isWindows || !cc)("bun:ffi buffer FFIType and DataView arguments
     const lib = dlopen(libPath, {
       first_byte: { args: ["ptr"], returns: "u8" },
     });
-    const backing = new Uint8Array([11, 22, 33]);
-    const dv = new DataView(backing.buffer, 2);
-    expect(lib.symbols.first_byte(dv)).toBe(33);
-    expect(lib.symbols.first_byte(ptr(dv))).toBe(33);
-    lib.close();
+    try {
+      const backing = new Uint8Array([11, 22, 33]);
+      const dv = new DataView(backing.buffer, 2);
+      expect(lib.symbols.first_byte(dv)).toBe(33);
+      expect(lib.symbols.first_byte(ptr(dv))).toBe(33);
+    } finally {
+      lib.close();
+    }
   });
 
   test("non-view values are still rejected for a 'buffer' argument", () => {
     const lib = dlopen(libPath, {
       first_byte: { args: ["buffer"], returns: "u8" },
     });
-    expect(() => lib.symbols.first_byte({} as any)).toThrow(/TypedArray or DataView/);
-    expect(() => lib.symbols.first_byte("hello" as any)).toThrow(TypeError);
-    lib.close();
+    try {
+      expect(() => lib.symbols.first_byte({} as any)).toThrow(/TypedArray or DataView/);
+      expect(() => lib.symbols.first_byte("hello" as any)).toThrow(TypeError);
+    } finally {
+      lib.close();
+    }
   });
 });

@@ -144,6 +144,13 @@ pub struct TestRunner<'a> {
     pub filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
     pub unhandled_errors_between_tests: u32,
+    /// Total number of test files queued for the serial run, set by
+    /// `test_command` after discovery so [`on_process_exit_during_tests`]
+    /// can report how many files were never reached. `0` in a `--parallel`
+    /// worker (the coordinator owns the file list).
+    ///
+    /// [`on_process_exit_during_tests`]: crate::cli::test_command::on_process_exit_during_tests
+    pub total_test_files: u32,
     pub summary: Summary,
 
     pub bun_test_root: bun_test::BunTestRoot,

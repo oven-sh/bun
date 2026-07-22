@@ -4054,3 +4054,78 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
+
+it("http.Server maxConnections destroys the excess and emits 'drop' like net.Server", async () => {
+  let served = 0;
+  const drops: any[] = [];
+  const server = createServer((_req, res) => {
+    served++;
+    res.end("ok");
+  });
+  server.maxConnections = 2;
+  server.on("drop", data => drops.push(data));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const openAndRequest = async () => {
+    const sock = connect(port, "127.0.0.1");
+    sock.on("error", () => {});
+    await once(sock, "connect");
+    let body = "";
+    sock.setEncoding("utf8");
+    sock.on("data", c => (body += c));
+    sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    while (!body.endsWith("ok")) await once(sock, "data");
+    return sock;
+  };
+
+  const s1 = await openAndRequest();
+  const s2 = await openAndRequest();
+  expect(served).toBe(2);
+  expect(drops).toEqual([]);
+
+  // Connections 3 and 4 are over the limit: the server emits 'drop' and
+  // destroys them on accept; the client side observes the close, and no
+  // 'request' is dispatched.
+  const outcomes: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const sock = connect(port, "127.0.0.1");
+    sock.on("error", () => {});
+    const outcome = new Promise<string>(r => {
+      sock.once("data", () => r("served"));
+      sock.once("close", () => r("dropped"));
+    });
+    await once(sock, "connect");
+    sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    outcomes.push(await outcome);
+    sock.destroy();
+  }
+
+  expect({ served, drops: drops.length, outcomes }).toEqual({
+    served: 2,
+    drops: 2,
+    outcomes: ["dropped", "dropped"],
+  });
+  expect(drops[0]).toEqual({
+    localAddress: "127.0.0.1",
+    localPort: port,
+    localFamily: "IPv4",
+    remoteAddress: "127.0.0.1",
+    remotePort: expect.any(Number),
+    remoteFamily: "IPv4",
+  });
+  const connectionCount = await new Promise<number>(r => server.getConnections((_e, n) => r(n)));
+  expect(connectionCount).toBe(2);
+
+  // Freeing a slot lets the next connection through again.
+  s1.destroy();
+  while ((await new Promise<number>(r => server.getConnections((_e, n) => r(n)))) !== 1) {
+    await new Promise(r => setImmediate(r));
+  }
+  const s5 = await openAndRequest();
+  expect(served).toBe(3);
+  expect(drops.length).toBe(2);
+
+  for (const s of [s2, s5]) s.destroy();
+  await new Promise<void>(r => server.close(() => r()));
+});

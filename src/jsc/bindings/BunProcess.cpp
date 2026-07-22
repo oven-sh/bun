@@ -3255,10 +3255,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
     return Bun::ERR::ASSERTION(throwScope, globalObject, "assertion error"_s);
 }
 
-extern "C" uint64_t Bun__Os__getFreeMemory(void);
+extern "C" uint64_t Bun__Os__getAvailableMemory(void);
 JSC_DEFINE_HOST_FUNCTION(Process_availableMemory, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsNumber(Bun__Os__getFreeMemory()));
+    return JSValue::encode(jsNumber(Bun__Os__getAvailableMemory()));
 }
 
 #define PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE(str, issue)                                                                                                                                                                                \

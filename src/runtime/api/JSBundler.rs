@@ -226,6 +226,7 @@ pub mod js_bundler {
         }
     }
 
+    #[derive(Default)]
     pub struct CompileOptions {
         pub compile_target: CompileTarget,
         pub exec_argv: OwnedString,
@@ -242,28 +243,6 @@ pub mod js_bundler {
         pub autoload_bunfig: bool,
         pub autoload_tsconfig: bool,
         pub autoload_package_json: bool,
-    }
-
-    impl Default for CompileOptions {
-        fn default() -> Self {
-            Self {
-                compile_target: CompileTarget::default(),
-                exec_argv: OwnedString::default(),
-                executable_path: OwnedString::default(),
-                windows_hide_console: false,
-                windows_icon_path: OwnedString::default(),
-                windows_title: OwnedString::default(),
-                windows_publisher: OwnedString::default(),
-                windows_version: OwnedString::default(),
-                windows_description: OwnedString::default(),
-                windows_copyright: OwnedString::default(),
-                outfile: OwnedString::default(),
-                autoload_dotenv: false,
-                autoload_bunfig: false,
-                autoload_tsconfig: false,
-                autoload_package_json: false,
-            }
-        }
     }
 
     impl CompileOptions {

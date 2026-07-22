@@ -881,10 +881,17 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
-    if (server?.pauseOnConnect) {
-      self.pause();
-    } else {
-      self.resume();
+    // readableFlowing === null: no 'connection' / 'secureConnection' handler
+    // touched the stream state, so apply the server's default. A handler that
+    // paused (false) or attached 'data'/'readable' (true/false) is honored -
+    // the post-emit resume() here must not stomp a pause() made inside either
+    // handler.
+    if (self.readableFlowing === null) {
+      if (server?.pauseOnConnect) {
+        self.pause();
+      } else {
+        self.resume();
+      }
     }
   },
   error(socket, error) {
@@ -2110,7 +2117,14 @@ Socket.prototype.resume = function resume() {
 };
 
 Socket.prototype.pause = function pause() {
-  if (!this.destroyed) {
+  // While the TLS handshake is in flight the native handle must keep reading:
+  // stopping the poll here would starve the TLS engine of the ClientHello /
+  // server Finished and wedge the handshake forever. In Node, TLSWrap reads
+  // the underlying socket independently of the TLSSocket's stream state, so a
+  // pre-handshake pause() only affects delivery of *decrypted* bytes. Mirror
+  // that: pause only the Duplex; the data handler applies native backpressure
+  // at highWaterMark once application data starts arriving.
+  if (!this.destroyed && !this.secureConnecting) {
     this._handle?.pause?.();
     // libuv only counts a stream handle as active - and therefore as keeping
     // the event loop alive - while it is reading. A paused socket lets the

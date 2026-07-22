@@ -1303,3 +1303,136 @@ it("tls.connect honors secureOptions when negotiating the protocol version", asy
   }
   await once(server, "close");
 });
+
+describe("pausing a TLS socket before the handshake does not stall it", () => {
+  // Before the fix Socket.prototype.pause() stopped native reads unconditionally,
+  // so a pre-handshake pause() starved the TLS engine of the ClientHello and the
+  // handshake never completed. Node's TLSWrap keeps reading the underlying fd
+  // regardless of the TLSSocket's stream state; these tests match that.
+
+  it("server: s.pause() inside the 'connection' handler", async () => {
+    const server: Server = createServer(COMMON_CERT);
+    let connSock: TLSSocket | undefined;
+    server.on("connection", s => {
+      connSock = s as TLSSocket;
+      s.pause();
+    });
+    const accepted = Promise.withResolvers<TLSSocket>();
+    server.on("secureConnection", s => accepted.resolve(s));
+    server.on("tlsClientError", accepted.reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let cli: TLSSocket | undefined;
+    let srv: TLSSocket | undefined;
+    try {
+      const port = (server.address() as AddressInfo).port;
+      cli = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      cli.on("error", () => {});
+      // Before the fix this hung: the native poll was switched to write-only
+      // and the TLS engine never saw the ClientHello.
+      await once(cli, "secureConnect");
+      srv = await accepted.promise;
+      expect({ paused: srv.isPaused(), flowing: srv.readableFlowing }).toEqual({ paused: true, flowing: false });
+
+      let stopped = true;
+      let got = "";
+      srv.on("data", d => {
+        if (stopped) throw new Error("data event fired while paused");
+        got += d;
+      });
+      cli.write("hello");
+      // Round-trip the other way so we know the client's write has traversed
+      // the event loop on the server side while still paused.
+      srv.write("ack");
+      expect((await once(cli, "data"))[0].toString()).toBe("ack");
+      expect({ got, flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
+        got: "",
+        flowing: false,
+        readableLength: 5,
+      });
+      stopped = false;
+      const dataP = once(srv, "data");
+      srv.resume();
+      await dataP;
+      expect(got).toBe("hello");
+    } finally {
+      cli?.destroy();
+      srv?.destroy();
+      connSock?.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
+
+  it("server: pauseOnConnect: true", async () => {
+    const server: Server = createServer({ ...COMMON_CERT, pauseOnConnect: true });
+    const accepted = Promise.withResolvers<{ paused: boolean; flowing: boolean | null; socket: TLSSocket }>();
+    server.on("secureConnection", s =>
+      accepted.resolve({ paused: s.isPaused(), flowing: s.readableFlowing, socket: s }),
+    );
+    server.on("tlsClientError", accepted.reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let cli: TLSSocket | undefined;
+    let srv: TLSSocket | undefined;
+    try {
+      const port = (server.address() as AddressInfo).port;
+      cli = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      cli.on("error", () => {});
+      await once(cli, "secureConnect");
+      const { paused, flowing, socket } = await accepted.promise;
+      srv = socket;
+      expect({ paused, flowing }).toEqual({ paused: true, flowing: false });
+
+      cli.write("hello");
+      srv.write("ack");
+      expect((await once(cli, "data"))[0].toString()).toBe("ack");
+      expect({ flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
+        flowing: false,
+        readableLength: 5,
+      });
+      srv.resume();
+      expect((await once(srv, "data"))[0].toString()).toBe("hello");
+    } finally {
+      cli?.destroy();
+      srv?.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
+
+  it("client: pauseOnConnect: true", async () => {
+    const server: Server = createServer(COMMON_CERT);
+    const accepted = Promise.withResolvers<TLSSocket>();
+    server.on("secureConnection", s => accepted.resolve(s));
+    server.on("tlsClientError", accepted.reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let cli: TLSSocket | undefined;
+    let srv: TLSSocket | undefined;
+    try {
+      const port = (server.address() as AddressInfo).port;
+      cli = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, pauseOnConnect: true });
+      cli.on("error", () => {});
+      // Before the fix SocketHandlers2.open called self.pause() -> native
+      // pause and the handshake never completed.
+      await once(cli, "secureConnect");
+      srv = await accepted.promise;
+      // Sanity: data flows both ways. The client side is resumed explicitly
+      // because Node leaves the TLSSocket at readableFlowing === null here
+      // (pauseOnConnect applies to the underlying net.Socket, which is a
+      // separate object in Node) while Bun preserves the pause() on the same
+      // TLSSocket instance; resuming makes the observable match either way.
+      cli.resume();
+      srv.write("from-server");
+      expect((await once(cli, "data"))[0].toString()).toBe("from-server");
+      cli.write("from-client");
+      expect((await once(srv, "data"))[0].toString()).toBe("from-client");
+    } finally {
+      cli?.destroy();
+      srv?.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
+});

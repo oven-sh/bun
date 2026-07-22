@@ -6009,11 +6009,21 @@ impl VirtualMachine {
                     continue;
                 }
 
+                let kind = value.js_type();
+
                 if field.eql_comptime(b"cause") {
                     saw_cause = true;
+                    // An Error-typed cause always gets a full recursive render
+                    // (stack + its own cause chain), even at depth >= 2 where
+                    // other Error-typed properties fall through to the
+                    // truncated inline path.
+                    if kind == JSType::ErrorInstance {
+                        value.protect();
+                        errors_to_append.push(value);
+                        continue;
+                    }
                 }
 
-                let kind = value.js_type();
                 if kind == JSType::ErrorInstance && !prev_had_errors {
                     value.protect();
                     errors_to_append.push(value);

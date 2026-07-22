@@ -1348,26 +1348,23 @@ impl CommandLineReporter {
                     // sequences run; the per-file loop in `run_all_tests` and
                     // the `--rerun-each` loop in `run` both check `bailed`.
                     buntest.execution.aborted = true;
-                    if VirtualMachine::get().hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
-                        // Under --watch the run unwinds back to `exec`, which
-                        // prints the full summary and enters the watch loop.
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            this.jest.bail,
-                            if this.jest.bail == 1 { "" } else { "s" }
-                        );
-                        Output::flush();
-                    } else {
+                    let watching =
+                        VirtualMachine::get().hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH;
+                    if !watching {
                         this.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            this.jest.bail,
-                            if this.jest.bail == 1 { "" } else { "s" }
-                        );
-                        Output::flush();
+                    }
+                    pretty_error!(
+                        "\nBailed out after {} failure{}<r>\n",
+                        this.jest.bail,
+                        if this.jest.bail == 1 { "" } else { "s" }
+                    );
+                    Output::flush();
+                    if !watching {
                         this.write_junit_report_if_needed();
                         Global::exit(1);
                     }
+                    // Under --watch the run unwinds back to `exec`, which
+                    // prints the full summary and enters the watch loop.
                 }
             }
         }
@@ -3162,16 +3159,22 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
+                        reporter.bailed = true;
+                        let watching = vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH;
+                        if !watching {
+                            reporter.print_summary();
+                        }
                         pretty_error!(
                             "\nBailed out after {} failure{}<r>\n",
                             reporter.jest.bail,
                             if reporter.jest.bail == 1 { "" } else { "s" }
                         );
-                        reporter.bailed = true;
-                        if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
+                        if watching {
+                            // Under --watch the run unwinds back to `exec`,
+                            // which prints the full summary and enters the
+                            // watch loop.
                             return Ok(());
                         }
-                        reporter.print_summary();
                         reporter.write_junit_report_if_needed();
 
                         vm.exit_handler.exit_code = 1;

@@ -790,6 +790,7 @@ describe.concurrent("S3 - List Objects", () => {
             <ID>some_id_</ID>
         </Owner>
         <StorageClass>STANDARD_IA</StorageClass>
+        <ChecksumAlgorithm>AbCd1234567890EfGhIjKlMnOpQrStUvWxYz1234567890</ChecksumAlgorithm>
     </Contents>
    
 
@@ -838,6 +839,7 @@ describe.concurrent("S3 - List Objects", () => {
           lastModified: "2025-01-20T23:02:53.000Z",
           size: 922282819299999,
           storageClass: "STANDARD_IA",
+          checksumAlgorithm: "AbCd1234567890EfGhIjKlMnOpQrStUvWxYz1234567890",
           owner: {
             displayName: "some display name",
             id: "some_id_",
@@ -903,6 +905,7 @@ describe.concurrent("S3 - List Objects", () => {
             <ID>some_id_</ID>
         </Owner>
         <StorageClass>STANDARD_IA</StorageClass>
+        <ChecksumAlgorithm>AbCd1234567890EfGhIjKlMnOpQrStUvWxYz1234567890</ChecksumAlgorithm>
     </Contents>`,
         )
         .join("");

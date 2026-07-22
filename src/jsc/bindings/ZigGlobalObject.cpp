@@ -3197,6 +3197,10 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    // Also reached from web_worker.rs start_vm before the worker thread takes
+    // the API lock; putDirectNativeFunction allocates and asserts the lock.
+    // JSLock is recursive, so this is a no-op on the main path.
+    JSC::JSLockHolder locker(vm);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
 

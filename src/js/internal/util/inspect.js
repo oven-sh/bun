@@ -730,10 +730,8 @@ function inspect(value, opts) {
 }
 inspect.custom = customInspectSymbol;
 
-// The global console uses a native formatter that knows nothing about
-// `inspectDefaultOptions`. The first time user code mutates the defaults we
-// hand the native side a pair of JS formatters so it can switch over and the
-// global console matches `new console.Console(...)` / Node.js behavior.
+// The global console's native formatter ignores `inspectDefaultOptions`; on the
+// first mutation, hand it JS formatters so its output matches Node.js.
 let defaultOptionsOverridden = false;
 const setDefaultInspectOptionsOverridden = $newRustFunction(
   "node_util_binding.rs",

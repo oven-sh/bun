@@ -323,13 +323,10 @@ pub struct VirtualMachine {
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
-    /// `util.formatWithOptions`-backed formatter for the global console. Set by
-    /// `node:util` the first time `util.inspect.defaultOptions` is mutated;
-    /// when present, `console.log`/`warn`/etc. route through it instead of the
-    /// native formatter so option changes (depth, maxArrayLength, ...) apply.
+    /// JS formatter the global console switches to once
+    /// `util.inspect.defaultOptions` is mutated; empty keeps the native path.
     pub console_util_format: crate::strong::Optional,
-    /// `util.inspect`-backed formatter for global `console.dir`; installed
-    /// together with [`console_util_format`](Self::console_util_format).
+    /// `util.inspect` formatter for global `console.dir`; paired with the above.
     pub console_util_dir: crate::strong::Optional,
 
     /// A set of extensions that exist in the require.extensions map.
@@ -4698,6 +4695,8 @@ impl VirtualMachine {
         }
 
         self.overridden_main.deinit();
+        self.console_util_format.deinit();
+        self.console_util_dir.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         if let Some(promise) = self.pending_internal_promise {

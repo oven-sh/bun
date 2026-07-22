@@ -117,6 +117,16 @@ describe("global console honors util.inspect.defaultOptions", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("Object.defineProperty on defaultOptions", async () => {
+    const { stdout, exitCode } = await run(`
+      const util = require("node:util");
+      Object.defineProperty(util.inspect.defaultOptions, "depth", { value: 0 });
+      console.log({ a: { b: 1 } });
+    `);
+    expect(stdout).toBe("{ a: [Object] }\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("setter form and console.dir", async () => {
     const { stdout, exitCode } = await run(`
       const util = require("node:util");

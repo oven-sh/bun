@@ -558,10 +558,9 @@ fn message_with_type_and_level_(
         }
     }
 
-    // `util.inspect.defaultOptions` was modified: the native formatter does not
-    // implement most of those knobs (maxArrayLength, numericSeparator, ...), so
-    // hand off to the `util.formatWithOptions`-backed closures `node:util`
-    // installed on the VM. The unmodified fast path above stays native.
+    // `util.inspect.defaultOptions` was modified: hand off to the JS
+    // formatters `node:util` installed so those knobs (maxArrayLength,
+    // numericSeparator, ...) apply. Untouched defaults keep the native path.
     if len >= 1 {
         let vm = global.bun_vm();
         let fallback = if message_type == MessageType::Dir {

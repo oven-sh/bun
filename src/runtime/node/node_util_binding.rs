@@ -162,10 +162,8 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     }
 }
 
-/// Installed by `node:util` the first time `util.inspect.defaultOptions` is
-/// mutated. Stores a `(colors, ...args) -> string` formatter and a
-/// `(colors, value, options) -> string` `console.dir` formatter on the VM so
-/// the native global console can honor the modified defaults.
+/// Stores the `(colors, ...args)` and `(colors, value, opts)` JS formatters on
+/// the VM so the global console honors mutated `util.inspect.defaultOptions`.
 #[bun_jsc::host_fn]
 pub(crate) fn set_default_inspect_options_overridden(
     global: &JSGlobalObject,

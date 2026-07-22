@@ -226,10 +226,7 @@ describe("transpiler cache", () => {
       // >= MINIMUM_CACHE_SIZE so the source is cached, and the marker string
       // is printed verbatim so it appears as a literal in the transpiled
       // output section.
-      writeFileSync(
-        join(temp_dir, "a.js"),
-        dummyFile(50 * 1024, "tamper", { code: JSON.stringify(marker) }),
-      );
+      writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "tamper", { code: JSON.stringify(marker) }));
       const first = bunRun(join(temp_dir, "a.js"), env);
       expect(first.stdout).toBe(marker);
       const entries = readdirSync(cache_dir);

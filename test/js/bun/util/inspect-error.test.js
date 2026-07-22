@@ -87,7 +87,6 @@ const normalizeError = str => {
   return str;
 };
 
-
 test("Error inside minified file (no color) ", () => {
   try {
     require("./inspect-error-fixture.min.js");

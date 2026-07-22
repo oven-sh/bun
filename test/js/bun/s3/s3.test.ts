@@ -656,22 +656,29 @@ for (let credentials of allCredentials) {
               await using tmpfile = await tmp();
               const s3file = file(tmpfile.name, options);
 
-              const writer = s3file.writer({
-                //@ts-ignore
-                partSize: mediumPayload.length,
-              });
-              writer.write(mediumPayload);
-              writer.write(mediumPayload);
+              // 5 MiB is the minimum partSize Bun and S3 accept.
+              const partSize = 5 * 1024 * 1024;
+              const partA = Buffer.alloc(partSize, "a").toString();
+              const partB = Buffer.alloc(partSize, "b").toString();
+              //@ts-ignore
+              const writer = s3file.writer({ partSize });
+              writer.write(partA);
+              writer.write(partB);
               // flush() resolves with the byte length of one finished part (or 0 once drained).
               // Parts may complete between awaits, so a running total is not guaranteed to equal bytes written.
               let flushed = await writer.flush();
               while (flushed > 0) {
-                expect(flushed).toBe(Buffer.byteLength(mediumPayload));
+                expect(flushed).toBe(partSize);
                 flushed = await writer.flush();
               }
               await writer.end();
-              // Content correctness for writer() is covered by the #16452 test above; a HEAD is enough here.
-              expect((await s3file.stat()).size).toBe(Buffer.byteLength(mediumPayload) * 2);
+              expect((await s3file.stat()).size).toBe(partSize * 2);
+              // partSize + flush() control where the multipart cut lands; a wrong boundary or part order
+              // would be visible at the seam, so a range GET here covers the streaming path without
+              // re-downloading 10 MiB that the #16452 test above already checks byte-for-byte.
+              expect(await s3file.slice(partSize - 16, partSize + 16).text()).toBe(
+                partA.slice(-16) + partB.slice(0, 16),
+              );
             }, 100_000);
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
@@ -801,21 +808,28 @@ for (let credentials of allCredentials) {
               await using tmpfile = await tmp();
               const s3file = s3(tmpfile.name, options);
 
-              const writer = s3file.writer({
-                partSize: mediumPayload.length,
-              });
-              writer.write(mediumPayload);
-              writer.write(mediumPayload);
+              // 5 MiB is the minimum partSize Bun and S3 accept.
+              const partSize = 5 * 1024 * 1024;
+              const partA = Buffer.alloc(partSize, "a").toString();
+              const partB = Buffer.alloc(partSize, "b").toString();
+              const writer = s3file.writer({ partSize });
+              writer.write(partA);
+              writer.write(partB);
               // flush() resolves with the byte length of one finished part (or 0 once drained).
               // Parts may complete between awaits, so a running total is not guaranteed to equal bytes written.
               let flushed = await writer.flush();
               while (flushed > 0) {
-                expect(flushed).toBe(Buffer.byteLength(mediumPayload));
+                expect(flushed).toBe(partSize);
                 flushed = await writer.flush();
               }
               await writer.end();
-              // Content correctness for writer() is covered by the surrounding large-upload tests; a HEAD is enough here.
-              expect((await s3file.stat()).size).toBe(Buffer.byteLength(mediumPayload) * 2);
+              expect((await s3file.stat()).size).toBe(partSize * 2);
+              // partSize + flush() control where the multipart cut lands; a wrong boundary or part order
+              // would be visible at the seam. A range GET here covers the streaming path without
+              // re-downloading the full object.
+              expect(await s3file.slice(partSize - 16, partSize + 16).text()).toBe(
+                partA.slice(-16) + partB.slice(0, 16),
+              );
             }, 100_000);
 
             it("should be able to upload large files in one go using S3File.write", async () => {

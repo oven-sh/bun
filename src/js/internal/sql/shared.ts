@@ -147,6 +147,23 @@ function normalizeSSLMode(value: string): SSLMode {
   throw $ERR_INVALID_ARG_VALUE("sslmode", value, "must be one of: disable, prefer, require, verify-ca, verify-full");
 }
 
+/**
+ * Reject helper keys that are neither identifier-like strings nor small
+ * non-negative integers. Numeric strings are coerced first so the same rule
+ * applies regardless of how the key was spelled.
+ */
+function validateHelperKey(key: unknown): void {
+  if (typeof key === "string") {
+    const asNumber = Number(key);
+    if (Number.isNaN(asNumber)) return;
+    key = asNumber;
+  }
+  if (typeof key !== "string") {
+    if (Number.isSafeInteger(key) && (key as number) >= 0 && (key as number) <= 64 * 1024) return;
+    throw new Error(`Keys must be strings or numbers: ${String(key)}`);
+  }
+}
+
 export type { SQLHelper };
 class SQLHelper<T> {
   public readonly value: T;
@@ -167,25 +184,7 @@ class SQLHelper<T> {
     }
 
     if (keys !== undefined) {
-      for (let key of keys) {
-        if (typeof key === "string") {
-          const asNumber = Number(key);
-          if (Number.isNaN(asNumber)) {
-            continue;
-          }
-          key = asNumber as keyof T;
-        }
-
-        if (typeof key !== "string") {
-          if (Number.isSafeInteger(key)) {
-            if (key >= 0 && key <= 64 * 1024) {
-              continue;
-            }
-          }
-
-          throw new Error(`Keys must be strings or numbers: ${String(key)}`);
-        }
-      }
+      for (const key of keys) validateHelperKey(key);
     }
 
     this.value = value;
@@ -210,6 +209,7 @@ function unionRowKeys<T>(firstRowKeys: (keyof T)[], items: T[]): (keyof T)[] {
     for (let k = 0; k < itemKeys.length; k++) {
       const key = itemKeys[k] as keyof T;
       if (!seen.has(key)) {
+        validateHelperKey(key);
         seen.add(key);
         union.push(key);
       }

@@ -467,6 +467,9 @@ pub(crate) fn writable_stream(
                 }
             }
         }
+        // The upload has terminally completed: release the sink's +1 on the
+        // task now so `poll_ref` is unref'd synchronously, not on GC.
+        sink.detach_writable();
         // SAFETY: `sink` is the heap-allocated `callback_context`; this releases
         // the task's +1 on it and is the last use of `sink`.
         unsafe { NetworkSink::deref(core::ptr::from_mut(sink)) };

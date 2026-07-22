@@ -2261,7 +2261,7 @@ impl NetworkSink {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    fn detach_writable(&mut self) {
+    pub fn detach_writable(&mut self) {
         if let Some(task) = self.task.take() {
             // task is ref-counted; deref releases our ref
             bun_s3::MultiPartUpload::deref_(task.as_ptr());

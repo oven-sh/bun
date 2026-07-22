@@ -66,3 +66,29 @@ describe.skipIf(!isASAN)("S3 writer() NetworkSink is freed", () => {
     }
   }
 });
+
+test("S3 writer() unrefs the event loop once end() resolves, even if the writer is retained", async () => {
+  const script = `
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) { await req.arrayBuffer(); return new Response("", { status: 200, headers: { etag: '"e"' } }); },
+    });
+    server.unref();
+    const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: \`http://127.0.0.1:\${server.port}\` });
+    const w = s3.file("k").writer({ retry: 0 });
+    w.write("hi");
+    await w.end();
+    globalThis.keep = w;
+    process.once("beforeExit", () => console.log("beforeExit"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, http_proxy: undefined, HTTP_PROXY: undefined, https_proxy: undefined, HTTPS_PROXY: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("beforeExit");
+  expect(exitCode).toBe(0);
+});

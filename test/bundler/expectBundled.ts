@@ -469,7 +469,7 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  if (!new Error().stack!.includes("test/bundler/")) {
+  if (!new Error().stack!.replaceAll("\\", "/").includes("test/bundler/")) {
     throw new Error(
       `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
     );
@@ -1306,8 +1306,8 @@ for (const [key, blob] of build.outputs) {
 
             const filename = position?.file
               ? position.namespace === "file"
-                ? "/" + path.relative(root, position.file)
-                : `${position.namespace}:${position.file.replace(root, "")}`
+                ? "/" + path.relative(root, position.file).replaceAll(path.sep, "/")
+                : `${position.namespace}:${position.file.replace(root, "").replaceAll(path.sep, "/")}`
               : "<bun>";
 
             allErrors.push({

@@ -928,14 +928,9 @@ impl FileSink {
         self.release_wrapper_ref();
     }
 
-    // Per-wrapper accounting is on `ref_count` directly: each path that
-    // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
-    // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
-    // `JsSinkType::construct` allocates with `ref_count=1` and that +1
-    // belongs to the wrapper it's about to be stored in, so no extra
-    // `ref_()` there. Callers that allocate via `init`/`create` and then
-    // `to_js()` must `deref()` once to release init's +1 (see
-    // `Blob::get_writer`).
+    // Each C++ wrapper holds one +1 (taken in `to_js`/`to_js_with_destructor`,
+    // released here). `construct`'s initial rc=1 belongs to its wrapper; callers
+    // using `init`/`create` then `to_js()` release init's +1 (see Blob::get_writer).
     fn release_wrapper_ref(&mut self) {
         self.readable_stream.set(readable_stream::Strong::default());
         self.js_sink_ref.with_mut(|r| r.deinit());

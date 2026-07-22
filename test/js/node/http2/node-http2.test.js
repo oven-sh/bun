@@ -2024,50 +2024,67 @@ it(
   async () => {
     const server = http2.createServer({ maxSessionMemory: 1 });
 
-    return await new Promise(resolve => {
-      server.on("session", session => {
-        session.on("stream", stream => {
-          stream.on("end", function () {
-            this.respond(
-              {
-                ":status": 200,
-              },
-              {
-                endStream: true,
-              },
-            );
-          });
-          stream.resume();
+    server.on("session", session => {
+      session.on("stream", stream => {
+        stream.on("end", function () {
+          this.respond(
+            {
+              ":status": 200,
+            },
+            {
+              endStream: true,
+            },
+          );
         });
-      });
-
-      server.listen(0, () => {
-        const port = server.address().port;
-        const client = http2.connect(`http://localhost:${port}`);
-
-        function next(i) {
-          if (i === 10000) {
-            client.close();
-            server.close();
-            resolve();
-            return;
-          }
-
-          const stream = client.request({ ":method": "POST" });
-
-          stream.on("response", function (headers) {
-            expect(headers[":status"]).toBe(200);
-
-            this.on("close", () => next(i + 1));
-          });
-
-          stream.end();
-        }
-
-        // Start the sequence with the first request
-        next(0);
+        stream.resume();
       });
     });
+
+    await new Promise(resolve => server.listen(0, resolve));
+    const port = server.address().port;
+    const client = http2.connect(`http://localhost:${port}`);
+
+    // A session-level failure (e.g. GOAWAY with ENHANCE_YOUR_CALM) should fail
+    // the test immediately instead of hanging until the timeout.
+    let sessionError = null;
+    client.on("error", err => {
+      sessionError = err;
+    });
+
+    try {
+      // Debug builds spend several milliseconds of CPU per request, so scale
+      // the total down there. Pipeline the requests in batches of 50 (well
+      // under the advertised maxConcurrentStreams of 100) so the test is
+      // bounded by TOTAL / BATCH round trips instead of TOTAL sequential ones.
+      const TOTAL = isDebug ? 1_000 : 10_000;
+      const BATCH = 50;
+      let ok = 0;
+
+      for (let sent = 0; sent < TOTAL; sent += BATCH) {
+        if (sessionError) throw sessionError;
+        await Promise.all(
+          Array.from(
+            { length: Math.min(BATCH, TOTAL - sent) },
+            () =>
+              new Promise((resolve, reject) => {
+                const stream = client.request({ ":method": "POST" });
+                stream.on("error", reject);
+                stream.on("response", headers => {
+                  if (headers[":status"] === 200) ok++;
+                });
+                stream.on("close", resolve);
+                stream.end();
+              }),
+          ),
+        );
+      }
+
+      if (sessionError) throw sessionError;
+      expect(ok).toBe(TOTAL);
+    } finally {
+      client.close();
+      server.close();
+    }
   },
   15_000 * ASAN_MULTIPLIER,
 );

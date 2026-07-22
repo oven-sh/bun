@@ -843,13 +843,16 @@ impl EventLoop {
     /// FinalizationRegistry tests wedging on musl/windows release lanes).
     #[inline(never)]
     pub fn scrub_callee_stack() {
-        let mut window = core::mem::MaybeUninit::<[u8; 8192]>::uninit();
+        // 32 KB: the callback invocation chain's spill slots sit deeper than
+        // 8 KB under some codegen profiles (x64-baseline traps showed a
+        // residual after the 8 KB window).
+        let mut window = core::mem::MaybeUninit::<[u8; 32768]>::uninit();
         // A real memset of the callee window; black_box keeps it from being
         // elided and from being promoted out of the stack frame.
         // SAFETY: `window` is a live 8192-byte stack allocation owned by this
         // frame; writing zeroes to the whole of it is in-bounds and
         // MaybeUninit places no validity requirement on the bytes.
-        unsafe { core::ptr::write_bytes(window.as_mut_ptr().cast::<u8>(), 0, 8192) };
+        unsafe { core::ptr::write_bytes(window.as_mut_ptr().cast::<u8>(), 0, 32768) };
         core::hint::black_box(window.as_mut_ptr());
     }
 

@@ -313,6 +313,11 @@ public:
                     break;
                 }
             }
+            // A path with an unmatched ')' (e.g. "/tmp/a)b/file.js") leaves
+            // depth > 0; fall back to the first '(' rather than dropping the
+            // whole remaining trace.
+            if (openingParentheses == WTF::notFound)
+                openingParentheses = line.find('(');
         }
 
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound || openingParentheses > closingParentheses) {

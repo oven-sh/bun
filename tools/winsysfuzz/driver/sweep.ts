@@ -457,10 +457,10 @@ let queuedCount = 0;
 // admission rules (artifact classes stay in the roll-up only) and the
 // known-signature dedupe (already-triaged/queued signatures are silent).
 async function queueFinding(r: Result, v: Verify) {
-  if (v.verdict === "load-dependent" && v.outcomes.every(o => o === "clean")) return;
-  // A stall that verified load-dependent did NOT stall standalone (clean or
-  // graceful error-exits): the sweep-time timeout was contention, not a bug.
-  if (r.outcome === "stalled" && v.verdict === "load-dependent") return;
+  // A load-dependent verdict means, by definition, NO standalone replay
+  // showed anything bad (clean or graceful error-exits): the sweep-time
+  // symptom was contention. Roll-up only, never queued.
+  if (v.verdict === "load-dependent") return;
   if (r.job.expect === "abort-expected" && v.outcomes.every(o => o !== "HANG" && o !== "CRASH")) return;
   if (r.job.mode.startsWith("mangle") && v.verdict === "slow") return;
   if (v.verdict === "not-reproduced") return;

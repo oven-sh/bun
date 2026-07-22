@@ -65,6 +65,23 @@ export const FAULTS: Record<string, Fault[]> = {
     // corrupted socket/ioctl output: the AFD receive path with poisoned bytes
     F("A5", "mangle:garbage"),
   ],
+  // Directory watchers (fs.watch -> ReadDirectoryChangesW). The field's
+  // top actionable Windows crash is a use-after-free of the watcher context
+  // (a change completion delivered after the watcher is gone), so this surface
+  // gets the levers that open that window deterministically:
+  //   DELETE_PENDING  - the watched directory is being deleted out from
+  //                     under the watch (the classic rug-pull);
+  //   delay           - stall the (re)arm / cancel / close so a pending
+  //                     completion races the watcher's teardown.
+  NtNotifyChangeDirectoryFile: [F("C0000056"), F("C000009A"), F(DELAY_MS, "delay", "judgment")],
+  NtNotifyChangeDirectoryFileEx: [F("C0000056"), F("C000009A"), F(DELAY_MS, "delay", "judgment")],
+  // "Nothing to cancel" (STATUS_NOT_FOUND) and a delayed cancel both perturb
+  // watcher/socket teardown ordering.
+  NtCancelIoFile: [F("C0000225"), F(DELAY_MS, "delay", "judgment")],
+  NtCancelIoFileEx: [F("C0000225"), F(DELAY_MS, "delay", "judgment")],
+  // A delayed close widens close-vs-completion races (watchers, sockets,
+  // pipes); the removed post-close lie stays gone.
+  NtClose: [F(DELAY_MS, "delay", "judgment")],
   NtCreateEvent: [F("C000009A")],
   NtCreateSection: [F("C000009A")],
   NtMapViewOfSection: [F("C000009A")],

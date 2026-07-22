@@ -113,9 +113,9 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The .expect("spawn FileWatcher thread") panic inside start() must be gone;
-  // the error now reaches the caller, which reports it by name.
+  // the error now reaches the caller, which reports it by errno name.
   expect(stderr).not.toContain("spawn FileWatcher thread");
-  expect(stderr).toContain("Failed to start File Watcher");
+  expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
 });

@@ -3234,6 +3234,87 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(jsNumber(result));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto userValue = callFrame->argument(0);
+    auto extraGroupValue = callFrame->argument(1);
+
+    // Resolve user argument to a username string (initgroups() requires const char*)
+    char usernameBuf[8192];
+    const char* username = nullptr;
+
+    if (userValue.isString()) {
+        auto str = userValue.getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto utf8 = str.utf8();
+        struct passwd pwd;
+        struct passwd* pp = nullptr;
+        char buf[8192];
+        if (getpwnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            size_t len = strlen(pp->pw_name);
+            if (len >= sizeof(usernameBuf)) {
+                auto message = makeString("User identifier does not exist: "_s, str);
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+                return {};
+            }
+            memcpy(usernameBuf, pp->pw_name, len + 1);
+            username = usernameBuf;
+        } else {
+            auto message = makeString("User identifier does not exist: "_s, str);
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+    } else if (userValue.isNumber()) {
+        uint32_t uid = 0;
+        Bun::V::validateInteger(scope, globalObject, userValue, "user"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &uid);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        struct passwd pwd2;
+        struct passwd* pp2 = nullptr;
+        char buf2[8192];
+        if (getpwuid_r(static_cast<uid_t>(uid), &pwd2, buf2, sizeof(buf2), &pp2) == 0 && pp2 != nullptr) {
+            size_t len = strlen(pp2->pw_name);
+            if (len >= sizeof(usernameBuf)) {
+                auto message = makeString("User identifier does not exist: "_s, String::number(uid));
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+                return {};
+            }
+            memcpy(usernameBuf, pp2->pw_name, len + 1);
+            username = usernameBuf;
+        } else {
+            auto message = makeString("User identifier does not exist: "_s, String::number(uid));
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+            return {};
+        }
+    } else {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, "string or number"_s, userValue);
+    }
+
+    // Resolve extraGroup to a gid_t using the existing maybe_gid_by_name helper
+    if (!extraGroupValue.isNumber() && !extraGroupValue.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "extraGroup"_s, "string or number"_s, extraGroupValue);
+    }
+    uint32_t gid = 0;
+    auto is_number = extraGroupValue.isNumber();
+    extraGroupValue = maybe_gid_by_name(scope, globalObject, extraGroupValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, extraGroupValue, "extraGroup"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &gid);
+    if (!is_number) gid = extraGroupValue.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Call POSIX initgroups(username, gid) -- exactly 2 arguments per POSIX spec
+    errno = 0;
+    if (initgroups(username, static_cast<gid_t>(gid)) != 0) {
+        throwSystemError(scope, globalObject, "initgroups"_s, errno);
+        return {};
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -4515,6 +4596,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   getgid                           Process_functiongetgid                              Function 0
   getgroups                        Process_functiongetgroups                           Function 0
   getuid                           Process_functiongetuid                              Function 0
+  initgroups                       Process_functioninitgroups                          Function 2
 
   setegid                          Process_functionsetegid                             Function 1
   seteuid                          Process_functionseteuid                             Function 1

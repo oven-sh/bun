@@ -303,7 +303,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
                 // node_worker.cc: only an explicitly provided env object has its
                 // NODE_OPTIONS validated (the Rust side skips when it is
-                // byte-identical to the parent's, i.e. process.env passed through).
+                // byte-identical to the process's OS-startup NODE_OPTIONS;
+                // runtime process.env writes are still validated).
                 if (envValue && envValue.isCell()) {
                     auto nodeOptions = env.find("NODE_OPTIONS"_s);
                     if (nodeOptions != env.end()) {

@@ -4,8 +4,9 @@
 //! per-process options, V8 flags, unknown flags, and missing required values
 //! with `ERR_WORKER_INVALID_EXEC_ARGV` (behavior verified on node v26.3.0).
 //! Bun's accept set = its own runtime flag tables (`RUNTIME_PARAMS_` +
-//! `TRANSPILER_PARAMS_` + `AUTO_OR_RUN_PARAMS`, minus process-global flags
-//! node also rejects) plus
+//! `TRANSPILER_PARAMS_` + `AUTO_ONLY_PARAMS` + `BASE_PARAMS_` — everything
+//! `create_exec_argv`'s `AUTO_PARAMS` can put into `process.execArgv`, minus
+//! process-global flags node also rejects) plus
 //! the node options in `NODE_FLAGS`. Deliberate supersets of node: Bun-only
 //! runtime flags, and `--expose-gc`/`--stack-trace-limit` (both honored
 //! per-worker here, so rejecting them to mimic node would be a regression).
@@ -186,14 +187,20 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
             bun_core::handle_oom(map.put(&key, spec));
         };
         // Bun's runtime flag surface first, then NODE_FLAGS overrides.
-        // AUTO_OR_RUN_PARAMS carries the run-surface flags (`--bun`,
-        // `--shell`, ...) that tooling forwards into worker
-        // execArgv/NODE_OPTIONS (Next.js propagates `--bun` from
-        // process.execArgv into its build workers' NODE_OPTIONS).
+        // The chained set must cover everything `create_exec_argv` can emit
+        // into `process.execArgv` (its source is `AUTO_PARAMS` =
+        // AUTO_ONLY_PARAMS + RUNTIME_PARAMS_ + TRANSPILER_PARAMS_ +
+        // BASE_PARAMS_; AUTO_ONLY_PARAMS already contains AUTO_OR_RUN_PARAMS,
+        // whose run-surface flags tooling forwards into worker
+        // execArgv/NODE_OPTIONS — Next.js propagates `--bun` from
+        // process.execArgv into its build workers' NODE_OPTIONS). A narrower
+        // set rejects flags Bun itself reports in `process.execArgv` and
+        // breaks value-consumption in `scan_process_exec_argv`.
         for param in crate::cli::arguments::RUNTIME_PARAMS_
             .iter()
             .chain(crate::cli::arguments::TRANSPILER_PARAMS_)
-            .chain(crate::cli::arguments::AUTO_OR_RUN_PARAMS)
+            .chain(crate::cli::arguments::AUTO_ONLY_PARAMS)
+            .chain(crate::cli::arguments::BASE_PARAMS_)
         {
             let value = match param.takes_value {
                 bun_clap::Values::None => ValueMode::None,
@@ -291,6 +298,12 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
         };
         if spec.policy == Policy::Reject {
             out.invalid.push(tok.to_vec());
+            // A rejected flag still owns its value token (node consumes it by
+            // arity); skip it so scanning continues at the next flag and the
+            // error lists every invalid flag.
+            if spec.value == ValueMode::Required && eq_value.is_none() && i < tokens.len() {
+                i += 1;
+            }
             continue;
         }
         let value: Option<Vec<u8>> = match spec.value {
@@ -457,7 +470,10 @@ pub unsafe extern "C" fn Bun__Worker__validateWorkerNodeOptions(
     let value = unsafe { &*node_options }.to_owned_slice_z();
     let value = value.as_bytes();
 
-    // Parent comparison: same env map the parent's `process.env` is backed by.
+    // Skip when equal to the process's OS-startup NODE_OPTIONS
+    // (`env_loader().map` is a per-VM clone of that snapshot; runtime
+    // `process.env` writes do not reach it, so a miss just re-validates
+    // against the full table).
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     if let Some(parent) = vm.env_loader().map.get(b"NODE_OPTIONS") {
         if parent == value {

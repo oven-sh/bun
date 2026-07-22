@@ -392,6 +392,17 @@ describe("execArgv option", async () => {
     expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --foo, --bar, --title=blah");
   });
 
+  it("a rejected flag consumes its value token, so later flags are still reported", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, execArgv: ["--max-old-space-size", "4096", "--foo"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --max-old-space-size, --foo");
+  });
+
   it("reports a missing required value", () => {
     let err: any;
     try {
@@ -403,10 +414,11 @@ describe("execArgv option", async () => {
     expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --redirect-warnings requires an argument");
   });
 
-  it("stops validating at the first positional, like node", () => {
+  it("stops validating at the first positional, like node", async () => {
     // node accepts these: parsing stops at `--`/the first non-flag token.
-    new Worker("1", { eval: true, execArgv: ["foo.js"] }).unref();
-    new Worker("1", { eval: true, execArgv: ["--", "--not-a-flag"] }).unref();
+    const w1 = new Worker("1", { eval: true, execArgv: ["foo.js"] });
+    const w2 = new Worker("1", { eval: true, execArgv: ["--", "--not-a-flag"] });
+    await Promise.all([once(w1, "exit"), once(w2, "exit")]);
   });
 
   it("throws for invalid NODE_OPTIONS in an explicit env", () => {
@@ -422,11 +434,18 @@ describe("execArgv option", async () => {
     );
   });
 
-  it("accepts Bun run-surface flags in execArgv and NODE_OPTIONS", () => {
+  it("accepts Bun run-surface flags in execArgv and NODE_OPTIONS", async () => {
     // Next.js forwards `--bun` from process.execArgv into its build workers'
-    // NODE_OPTIONS; rejecting it broke `bun --bun next build`.
-    new Worker("1", { eval: true, execArgv: ["--bun"] }).unref();
-    new Worker("1", { eval: true, env: { NODE_OPTIONS: "--bun" } }).unref();
+    // NODE_OPTIONS; rejecting it broke `bun --bun next build`. `--silent` and
+    // `--cwd` land in `process.execArgv` the same way (create_exec_argv reads
+    // the full AUTO_PARAMS surface), so they must round-trip too.
+    const workers = [
+      new Worker("1", { eval: true, execArgv: ["--bun"] }),
+      new Worker("1", { eval: true, env: { NODE_OPTIONS: "--bun" } }),
+      new Worker("1", { eval: true, execArgv: ["--silent"] }),
+      new Worker("1", { eval: true, execArgv: ["--cwd", process.cwd()] }),
+    ];
+    await Promise.all(workers.map(w => once(w, "exit")));
     // A Bun flag does not disable validation of the rest of the value.
     let err: any;
     try {
@@ -472,7 +491,7 @@ describe("execArgv option", async () => {
   });
 
   it("inheriting workers take --expose-gc from the process", async () => {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "--expose-gc",
@@ -480,10 +499,30 @@ describe("execArgv option", async () => {
         "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",
       ],
       env: bunEnv,
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("function");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
+  });
+
+  it("inheriting workers take --expose-gc behind a value-taking Bun flag", async () => {
+    // `--cwd <dir>` is outside RUNTIME_PARAMS_/TRANSPILER_PARAMS_; if the
+    // scanner does not know its arity it treats the directory as the first
+    // positional and never reaches --expose-gc.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--cwd",
+        process.cwd(),
+        "--expose-gc",
+        "-e",
+        "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
   });
 });
 

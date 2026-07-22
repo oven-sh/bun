@@ -2,25 +2,6 @@ import { isAscii } from "buffer";
 import fs from "fs";
 import path from "path";
 
-// MSVC has a max of 16k characters per string literal
-// Combining string literals didn't support constexpr apparently
-// so we have to do this the gigantic array way
-export function fmtCPPCharArray(str: string, nullTerminated: boolean = true) {
-  const normalized = str + "\n";
-
-  var remain = normalized;
-
-  const chars =
-    "{" +
-    remain
-      .split("")
-      .map(a => a.charCodeAt(0))
-      .join(",") +
-    (nullTerminated ? ",0" : "") +
-    "}";
-  return [chars, normalized.length + (nullTerminated ? 1 : 0)] as const;
-}
-
 export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
   const normalized = str.trim() + "\n";
   return (
@@ -29,12 +10,6 @@ export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
       .map(a => a.charCodeAt(0))
       .join(",") + (nullTerminated ? ",0" : "")
   );
-}
-
-export function declareASCIILiteral(name: string, value: string) {
-  const [chars, count] = fmtCPPCharArray(value, true);
-  return `static constexpr const char ${name}Bytes[${count}] = ${chars};
-static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);`;
 }
 
 export function cap(str: string) {
@@ -93,6 +68,18 @@ export function writeIfNotChanged(file: string, contents: string) {
 
   if (fs.readFileSync(file, "utf8") !== contents) {
     throw new Error(`Failed to write file ${file}`);
+  }
+}
+
+export function writeIfNotChangedBinary(file: string, contents: Buffer) {
+  try {
+    if (fs.readFileSync(file).equals(contents)) return;
+  } catch {}
+  try {
+    fs.writeFileSync(file, contents);
+  } catch {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, contents);
   }
 }
 

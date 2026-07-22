@@ -17,6 +17,7 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::webcore::response::HeadersRef;
+use crate::webcore::streams::StreamResult;
 use crate::webcore::{self, Response};
 use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
@@ -555,6 +556,10 @@ pub struct BufferOutputSink {
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: StrongOptional,
+    /// Set by [`Self::on_readable_stream_available`] when a consumer
+    /// (`Bun.serve`, `response.body`) converts the pending output body into a
+    /// ByteStream. `done`/the error paths must terminally settle that stream.
+    pub readable_stream_ref: webcore::readable_stream::Strong,
     pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
     // Points at the `sink_error` stack local in `init()`;
     // only written while `init()` is on the stack.
@@ -596,6 +601,7 @@ impl BufferOutputSink {
             context,
             response: core::ptr::null_mut(),
             response_value: StrongOptional::empty(),
+            readable_stream_ref: webcore::readable_stream::Strong::default(),
             body_value_bufferer: None,
             tmp_sync_error: None,
         }));
@@ -614,6 +620,10 @@ impl BufferOutputSink {
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(sink.cast::<core::ffi::c_void>());
+                // A consumer can turn this pending body into a ByteStream via
+                // `Value::to_readable_stream` before the input is buffered;
+                // without this hook the sink never learns and it never ends.
+                pv.on_readable_stream_available = Some(Self::on_readable_stream_available);
                 webcore::body::Value::Locked(pv)
             }),
             BunString::empty(),
@@ -658,6 +668,11 @@ impl BufferOutputSink {
             scope.apply(vm);
         }
 
+        // lol-html asserts the preallocation is below `max_allowed_memory_usage`,
+        // and `get_body_len` reports an unknown size as either `blob::MAX_SIZE`
+        // or `u64::MAX` (non-seekable/missing file), both past that bound.
+        let max_allowed_memory_usage = u32::MAX as usize;
+
         // The handler closures point into `Box`es owned by `(*sink).context`,
         // which `sink` keeps alive for the rewriter's whole lifetime.
         // SAFETY: sink is a live heap allocation (refcount >= 1); the `RefMut`
@@ -674,13 +689,13 @@ impl BufferOutputSink {
                 encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
                 memory_settings: lol_html::MemorySettings {
                     preallocated_parsing_buffer_size: if input_size as u64
-                        == webcore::blob::MAX_SIZE
+                        >= max_allowed_memory_usage as u64
                     {
                         1024
                     } else {
                         input_size.max(1024) as usize
                     },
-                    max_allowed_memory_usage: u32::MAX as usize,
+                    max_allowed_memory_usage,
                 },
                 strict: false,
                 enable_esi_tags: false,
@@ -785,6 +800,74 @@ impl BufferOutputSink {
         Ok(response_js_value)
     }
 
+    /// `PendingValue::on_readable_stream_available` hook registered on the
+    /// output Response's pending body in [`Self::init`]. Runs inside
+    /// `Value::to_readable_stream` on the JS thread.
+    fn on_readable_stream_available(
+        ctx: *mut core::ffi::c_void,
+        global_this: &JSGlobalObject,
+        readable: webcore::ReadableStream,
+    ) {
+        let sink = ctx.cast::<BufferOutputSink>();
+        // SAFETY: `ctx` is the `PendingValue::task` pointer registered in
+        // `init()`. The output body is still `Locked` (this hook only fires
+        // from `to_readable_stream` on that variant), which means
+        // `on_finished_buffering` has not run yet and the in-flight bufferer
+        // still holds its +1 on the sink.
+        unsafe {
+            (*sink).readable_stream_ref =
+                webcore::readable_stream::Strong::init(readable, global_this);
+        }
+    }
+
+    /// Deliver the terminal `result` into the consumer-attached output
+    /// ByteStream (set by [`Self::on_readable_stream_available`]) and release
+    /// the sink's reference to it. No-op if no stream is attached.
+    ///
+    /// Takes `*mut Self`, not `&mut self`, per the module-wide aliasing rule
+    /// (see [`Self::run_output_sink`]): `ByteStream::on_data` re-enters the
+    /// consumer (pipe handler / promise resolution).
+    ///
+    /// # Safety
+    /// `sink` must be a live `BufferOutputSink` heap allocation (refcount > 0).
+    unsafe fn finish_output_stream(sink: *mut Self, result: StreamResult) {
+        // SAFETY: sink is live (caller invariant); `global` is a Copy back-ref.
+        let global = unsafe { (*sink).global };
+        // Take the Strong out before `on_data`; `stream_ref` drops at function
+        // exit, so the ByteStream stays rooted across the re-entrant call.
+        // SAFETY: sink is live (caller invariant).
+        let stream_ref = unsafe { core::mem::take(&mut (*sink).readable_stream_ref) };
+        let Some(readable) = stream_ref.get(&global) else {
+            return;
+        };
+        // `to_readable_stream` only ever hands a `Source::Bytes` stream to
+        // `on_readable_stream_available`.
+        let Some(byte_stream) = readable.ptr.bytes() else {
+            return;
+        };
+        let _ = byte_stream.on_data(result);
+    }
+
+    /// Fail an asynchronous rewrite with `err`, delivering it through both
+    /// output channels: the consumer-attached ByteStream (if any, see
+    /// [`Self::finish_output_stream`]) and the output body value.
+    ///
+    /// # Safety
+    /// `sink` must be a live `BufferOutputSink` heap allocation with
+    /// refcount > 0 and `(*sink).response` set.
+    unsafe fn fail_async(sink: *mut Self, mut err: webcore::body::ValueError) {
+        // SAFETY: sink is live (caller invariant); both fields are Copy reads.
+        let (global, response) = unsafe { ((*sink).global, (*sink).response) };
+        // SAFETY: `sink` is live (caller invariant).
+        if unsafe { (*sink).readable_stream_ref.has() } {
+            let stream_error = err.to_stream_error(&global);
+            // SAFETY: `sink` is live (caller invariant).
+            unsafe { Self::finish_output_stream(sink, StreamResult::Err(stream_error)) };
+        }
+        // SAFETY: response kept alive by response_value Strong.
+        let _ = unsafe { (*response).get_body_value() }.to_error_instance(err, &global);
+    }
+
     fn on_finished_buffering_trampoline(
         ctx: *mut core::ffi::c_void,
         bytes: &[u8],
@@ -822,17 +905,29 @@ impl BufferOutputSink {
         let global = unsafe { (*sink).global };
 
         if let Some(mut err) = js_err {
-            // SAFETY: (*sink).response is the heap Response allocated in init()
-            // and kept alive by (*sink).response_value (Strong root).
-            let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
-            let sink_ptr_usize = sink as usize;
             // If a `.body` readable is already attached, stay `Locked` so
             // `to_error_instance` delivers the error to its ByteStream; clearing
             // to `Empty` here would strand any pending `reader.read()` forever.
-            let has_readable = match sink_body_value {
+            // SAFETY: (*sink).response is the heap Response allocated in init()
+            // and kept alive by (*sink).response_value (Strong root).
+            let has_readable = match unsafe { (*(*sink).response).get_body_value() } {
                 webcore::body::Value::Locked(l) => l.readable.has(),
                 _ => false,
             };
+            // A consumer can instead take the readable out of the lock entirely
+            // (Bun.serve does, marking the body `Used`); `to_error_instance`
+            // never reaches it then, so fail it through the sink's own ref.
+            // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
+            if !has_readable && unsafe { (*sink).readable_stream_ref.has() } {
+                let stream_error = err.to_stream_error(&global);
+                // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
+                unsafe { Self::finish_output_stream(sink, StreamResult::Err(stream_error)) };
+            }
+            // Fetched after `finish_output_stream`: `get_body_value`'s borrow
+            // must not be held across a call that can re-enter JS.
+            // SAFETY: see the `get_body_value` SAFETY note above.
+            let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
+            let sink_ptr_usize = sink as usize;
             if !has_readable
                 && matches!(sink_body_value, webcore::body::Value::Locked(l)
                     if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
@@ -884,9 +979,9 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the rewriter calls so no
         // borrow of `*sink` is live across the re-entrant output sink.
-        let (global, response, rewriter) = unsafe {
+        let (global, rewriter) = unsafe {
             let _ = (*sink).bytes.grow_by(bytes.len()); // OOM/capacity: fire-and-forget
-            ((*sink).global, (*sink).response, (*sink).rewriter)
+            ((*sink).global, (*sink).rewriter)
         };
 
         // SAFETY: rewriter heap-allocated by init(), not yet freed.
@@ -894,12 +989,10 @@ impl BufferOutputSink {
             // Poisoned: never call `end()` after a failed `write()`. The
             // field stays non-null so `Drop` frees the rewriter.
             if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
-                // TODO: properly propagate exception upwards
+                // SAFETY: `sink` is live (refcount > 0, caller invariant).
+                unsafe {
+                    Self::fail_async(sink, webcore::body::ValueError::Message(lol_err_string(&e)))
+                };
                 return None;
             } else {
                 return Some(create_lolhtml_error(&global, &e));
@@ -913,12 +1006,10 @@ impl BufferOutputSink {
         // SAFETY: `rewriter` was heap-allocated by init(); sole owner now.
         if let Err(e) = unsafe { bun_core::heap::take(rewriter) }.end() {
             if is_async {
-                // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
-                    webcore::body::ValueError::Message(lol_err_string(&e)),
-                    &global,
-                );
-                // TODO: properly propagate exception upwards
+                // SAFETY: `sink` is live (refcount > 0, caller invariant).
+                unsafe {
+                    Self::fail_async(sink, webcore::body::ValueError::Message(lol_err_string(&e)))
+                };
                 return None;
             } else {
                 return Some(create_lolhtml_error(&global, &e));
@@ -932,6 +1023,31 @@ impl BufferOutputSink {
         // SAFETY: self.response is kept alive by self.response_value (Strong
         // root) for the lifetime of this sink.
         let body_value = unsafe { (*self.response).get_body_value() };
+
+        // A consumer (Bun.serve, `.body`) may already hold the output body as
+        // a ByteStream (`on_readable_stream_available`). `Value::resolve`
+        // below only settles promises, so deliver the rewritten bytes into
+        // that stream here or it never produces any data.
+        if self.readable_stream_ref.has() {
+            // Detach the lock first: `PendingValue::task` points at this
+            // sink, which is freed once `on_finished_buffering` returns, and
+            // the consumer already owns the stream.
+            *body_value = webcore::body::Value::Used;
+            let sink: *mut Self = self;
+            // SAFETY: `sink` is this live allocation; the `Temporary*` slice
+            // borrows `self.bytes`, which outlives the synchronous `on_data`
+            // call inside `finish_output_stream`.
+            unsafe {
+                Self::finish_output_stream(
+                    sink,
+                    StreamResult::TemporaryAndDone(bun_ptr::RawSlice::new(
+                        (*sink).bytes.list.as_slice(),
+                    )),
+                );
+            }
+            return;
+        }
+
         let mut prev_value = core::mem::replace(
             body_value,
             webcore::body::Value::InternalBlob(webcore::InternalBlob {
@@ -971,7 +1087,8 @@ impl lol_html::OutputSink for SinkRef {
 
 impl Drop for BufferOutputSink {
     fn drop(&mut self) {
-        // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.
+        // bytes, body_value_bufferer, context (Rc), response_value (Strong),
+        // and readable_stream_ref (Strong) drop automatically.
         if !self.rewriter.is_null() {
             // SAFETY: rewriter heap-allocated by init() and not yet freed
             // (`run_output_sink` nulls the field before consuming it in `end`).

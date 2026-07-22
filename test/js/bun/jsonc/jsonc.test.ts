@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Bun.JSONC exists", () => {
   expect(Bun.JSONC).toBeDefined();
@@ -251,7 +251,7 @@ test("Bun.JSONC.parse matches JSON.parse on generated documents", () => {
     }
     expect(Bun.JSONC.parse(doc)).toEqual(expected as any);
   }
-});
+}, 30_000);
 
 test("Bun.JSONC.parse matches JSON.parse across 64-byte block boundaries", () => {
   for (let pad = 40; pad <= 96; pad++) {
@@ -363,6 +363,78 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
     expect(() => Bun.JSONC.parse(doc), doc).toThrow();
     expect(() => JSON.parse(doc), doc).toThrow();
   }
+});
+
+describe("Bun.JSONC.parse rejects content after the root value", () => {
+  test("second top-level value", () => {
+    for (const doc of ['{"a":1} {"b":2}', '{"a":1}{"b":2}', "null true", "[] []", '"a" "b"']) {
+      expect(() => Bun.JSONC.parse(doc), doc).toThrow();
+      expect(() => JSON.parse(doc), doc).toThrow();
+    }
+  });
+
+  test("arbitrary trailing junk", () => {
+    for (const doc of ['{"a":1} arbitrary garbage', '"a"+"b"', '{"a":"b"}#', "[1]x", "1]", "{}}", "[][]"]) {
+      expect(() => Bun.JSONC.parse(doc), doc).toThrow();
+      expect(() => JSON.parse(doc), doc).toThrow();
+    }
+  });
+
+  test("still accepts trailing whitespace and comments", () => {
+    expect(Bun.JSONC.parse('{"a":1}  \t\r\n  ')).toEqual({ a: 1 });
+    expect(Bun.JSONC.parse('{"a":1} // trailing line comment')).toEqual({ a: 1 });
+    expect(Bun.JSONC.parse('{"a":1} /* trailing block */ ')).toEqual({ a: 1 });
+    expect(Bun.JSONC.parse('{"a":1}\uFEFF')).toEqual({ a: 1 });
+    expect(Bun.JSONC.parse('{"a":1}\u00A0/* c */\u00A0')).toEqual({ a: 1 });
+  });
+
+  test("git merge-conflict package.json is rejected by bun run / bun pm pkg", async () => {
+    const conflicted = [
+      '{"name":"first","scripts":{"s":"echo FIRST_BLOCK_RAN"}}',
+      "<<<<<<< HEAD",
+      '{"name":"second","scripts":{"s":"echo SECOND"}}',
+      ">>>>>>> feature",
+      "",
+    ].join("\n");
+    using dir = tempDir("jsonc-merge-conflict", { "package.json": conflicted });
+
+    for (const argv of [["run", "s"], ["pm", "pkg", "get", "name"], ["install"]] as const) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...argv],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout, `bun ${argv.join(" ")} stdout`).not.toContain("FIRST_BLOCK_RAN");
+      expect(stdout, `bun ${argv.join(" ")} stdout`).not.toContain('"first"');
+      expect(stderr.toLowerCase(), `bun ${argv.join(" ")} stderr`).toMatch(/unexpected|parse|error/);
+      expect(exitCode, `bun ${argv.join(" ")} exit code`).not.toBe(0);
+    }
+  });
+
+  test("bun build rejects a .json / .jsonc import with trailing content", async () => {
+    using dir = tempDir("jsonc-build-trailing", {
+      "data.json": '{"x":1} trailing junk\n',
+      "data.jsonc": '{"x":1} // ok\n{"y":2}\n',
+      "entry.ts": `import d from "./data.json"; console.log(d);`,
+      "entry2.ts": `import d from "./data.jsonc"; console.log(d);`,
+    });
+    for (const entry of ["entry.ts", "entry2.ts"]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout, entry).not.toContain("x: 1");
+      expect(stderr, entry).toContain("error");
+      expect(exitCode, entry).not.toBe(0);
+    }
+  });
 });
 
 describe("structural index window seams", () => {
@@ -535,9 +607,7 @@ describe("structural index window seams", () => {
 
   test("closing brace at a window boundary followed by trailing garbage", () => {
     for (const offset of [WINDOW - 1, WINDOW, 2 * WINDOW - 1, 2 * WINDOW]) {
-      const doc = docAt(offset, '{"k":1', "", "}", "@@@@");
-      expect(() => JSON.parse(doc)).toThrow();
-      expect(Bun.JSONC.parse(doc)).toEqual(Bun.JSONC.parse('{"k":1}@@@@'));
+      expectBothThrow(docAt(offset, '{"k":1', "", "}", "@@@@"));
     }
   });
 

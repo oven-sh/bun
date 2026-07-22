@@ -316,7 +316,7 @@ pub fn parse_utf8(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
-    parse_utf8_impl::<false>(source, log, bump)
+    parse_utf8_impl::<true>(source, log, bump)
 }
 
 #[inline]
@@ -435,7 +435,7 @@ fn parse_to_rows(
             tape: Some(tape),
         });
     }
-    let out = parse_impl(source, log, opts, false)?;
+    let out = parse_impl(source, log, opts, true)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
@@ -458,7 +458,7 @@ fn parse_to_rows_in(
             bun_ast::Loc { start: 0 },
         ));
     }
-    Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
+    Ok(parse_impl_in(source, log, opts, true, tape_alloc)?.root)
 }
 
 /// Parse package.json (comments & trailing commas allowed) into the classic `E::Object` AST.
@@ -470,7 +470,7 @@ pub fn parse_package_json_utf8(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, true)?.root)
 }
 
 #[derive(Default)]
@@ -492,7 +492,7 @@ pub fn parse_package_json_utf8_with_opts(
             ..Default::default()
         });
     }
-    let out = parse_classic(source, log, bump, opts, false)?;
+    let out = parse_classic(source, log, bump, opts, true)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -507,7 +507,7 @@ pub fn parse_for_macro(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, true)?.root)
 }
 
 /// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic `E::Object` AST.
@@ -520,7 +520,7 @@ pub fn parse_ts_config(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
+    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, true)?.root)
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.

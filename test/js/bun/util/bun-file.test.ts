@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import fs from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -154,4 +155,88 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     emptyErr: "Unexpected end of JSON input",
   });
   expect(exitCode).toBe(0);
+});
+
+describe("BunFile exists()/size/lastModified reflect the current filesystem state", () => {
+  test("exists() sees a file deleted after the first call", async () => {
+    using dir = tempDir("bunfile-stat-deleted", {});
+    const p = join(String(dir), "a");
+    fs.writeFileSync(p, "abc");
+    const f = Bun.file(p);
+    expect(await f.exists()).toBe(true);
+    expect(f.size).toBe(3);
+    fs.unlinkSync(p);
+    expect({ exists: await f.exists(), size: f.size, truth: fs.existsSync(p) }).toEqual({
+      exists: false,
+      size: 0,
+      truth: false,
+    });
+  });
+
+  test("exists() sees a file created after the first call, and reads its contents", async () => {
+    using dir = tempDir("bunfile-stat-created", {});
+    const p = join(String(dir), "b");
+    const f = Bun.file(p);
+    expect(await f.exists()).toBe(false);
+    fs.writeFileSync(p, "content");
+    expect({ exists: await f.exists(), size: f.size, text: await f.text() }).toEqual({
+      exists: true,
+      size: 7,
+      text: "content",
+    });
+  });
+
+  test("size and lastModified track changes to the underlying file", async () => {
+    using dir = tempDir("bunfile-stat-changed", {});
+    const p = join(String(dir), "c");
+    fs.writeFileSync(p, "0123456789");
+    const f = Bun.file(p);
+    expect(f.size).toBe(10);
+    const firstMtime = f.lastModified;
+    fs.appendFileSync(p, "0123456789");
+    fs.utimesSync(p, 1000, 2000);
+    expect({ size: f.size, lastModified: f.lastModified }).toEqual({
+      size: fs.statSync(p).size,
+      lastModified: fs.statSync(p).mtimeMs,
+    });
+    expect(f.lastModified).not.toBe(firstMtime);
+  });
+
+  test("polling exists() observes create and delete", async () => {
+    using dir = tempDir("bunfile-stat-poll", {});
+    const p = join(String(dir), "d");
+    const f = Bun.file(p);
+    const seen: boolean[] = [];
+    seen.push(await f.exists());
+    fs.writeFileSync(p, "x");
+    seen.push(await f.exists());
+    fs.unlinkSync(p);
+    seen.push(await f.exists());
+    fs.writeFileSync(p, "y");
+    seen.push(await f.exists());
+    expect(seen).toEqual([false, true, false, true]);
+    expect(await f.text()).toBe("y");
+  });
+
+  test("slice() size is preserved across re-stat", async () => {
+    using dir = tempDir("bunfile-stat-slice", {});
+    const p = join(String(dir), "e");
+    fs.writeFileSync(p, "0123456789");
+    const f = Bun.file(p);
+    const s = f.slice(0, 5);
+    expect(s.size).toBe(5);
+    expect(await s.exists()).toBe(true);
+    fs.appendFileSync(p, "0123456789");
+    expect({ whole: f.size, slice: s.size }).toEqual({ whole: 20, slice: 5 });
+  });
+
+  test("slice() size is preserved for non-seekable and missing files", () => {
+    using dir = tempDir("bunfile-stat-slice-edge", {});
+    // A slice bound must survive a re-stat that cannot produce a regular-file
+    // size: a missing file has no stat, and a char device has no st_size.
+    expect(Bun.file(join(String(dir), "missing")).slice(0, 5).size).toBe(5);
+    if (isPosix) {
+      expect(Bun.file("/dev/null").slice(0, 5).size).toBe(5);
+    }
+  });
 });

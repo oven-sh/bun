@@ -14,7 +14,8 @@
 // machine.mjs, which owns that state handling). Credentials come from the
 // same buildkite secrets machine.mjs uses; there is no separate identity.
 
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { imageName } from "./naming.ts";
 import type { Image } from "./types.ts";
 
@@ -49,29 +50,28 @@ async function checkAwsAmi(image: Image, name: string, secrets: Secrets): Promis
   // state=available only: an AMI that is still pending, or that failed,
   // is NOT usable and must not suppress its own re-bake (mirrors the Azure
   // path, which counts only a Succeeded version).
-  const result = spawnSync(
-    "aws",
-    [
-      "ec2",
-      "describe-images",
-      "--owners",
-      "self",
-      "--filters",
-      `Name=name,Values=${name}`,
-      "Name=state,Values=available",
-      "--output",
-      "json",
-    ],
-    { encoding: "utf8", env },
-  );
-  if (result.error) {
-    // The command could not start (aws CLI missing / not executable).
-    throw new Error(`could not run the aws CLI to check ${name}: ${result.error.message}`);
+  const args = [
+    "ec2",
+    "describe-images",
+    "--owners",
+    "self",
+    "--filters",
+    `Name=name,Values=${name}`,
+    "Name=state,Values=available",
+    "--output",
+    "json",
+  ];
+  let stdout: string;
+  try {
+    // Async so the per-image probes actually overlap under Promise.all.
+    ({ stdout } = await promisify(execFile)("aws", args, { encoding: "utf8", env }));
+  } catch (cause) {
+    const e = cause as NodeJS.ErrnoException & { code?: unknown; stderr?: string };
+    // ENOENT / spawn failure: the aws CLI could not start at all.
+    if (typeof e.code === "string") throw new Error(`could not run the aws CLI to check ${name}: ${e.message}`);
+    throw new Error(`aws describe-images failed for ${name} (exit ${String(e.code)}): ${(e.stderr ?? e.message).trim()}`);
   }
-  if (result.status !== 0) {
-    throw new Error(`aws describe-images failed for ${name} (exit ${result.status}): ${result.stderr.trim()}`);
-  }
-  const parsed = JSON.parse(result.stdout);
+  const parsed = JSON.parse(stdout);
   const [found] = parsed.Images;
   if (found) return { image, name, exists: true, detail: `${found.ImageId} (available)` };
   return { image, name, exists: false, detail: "no available AMI with this name" };

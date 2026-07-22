@@ -61,6 +61,7 @@ describe("crypto.hash", () => {
       ["shake128", 8],
       ["shake128", 64],
       ["shake256", 16],
+      ["shake256", 256],
     ] as const) {
       const expected = crypto.createHash(algorithm, { outputLength: length }).update("abc").digest("hex");
       const expectedBase64 = crypto.createHash(algorithm, { outputLength: length }).update("abc").digest("base64");
@@ -75,6 +76,7 @@ describe("crypto.hash", () => {
     }
 
     expect(crypto.hash("shake128", "abc", { outputLength: 0 })).toBe("");
+    expect(crypto.hash("shake128", "abc", { outputLength: 0, outputEncoding: "buffer" })).toEqual(Buffer.alloc(0));
 
     expect(() => crypto.hash("shake128", "abc", { outputLength: 8, outputEncoding: "not an encoding" })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),

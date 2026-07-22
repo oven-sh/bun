@@ -39,11 +39,13 @@ function waitFor(cond) {
     writes++;
     if (!cli.write(chunk)) break;
   }
-  // Wait until either a 'drain' fires (the bug) or enough turns for the
-  // kernel buffers to have settled without one.
   let turns = 0;
   await waitFor(() => drains > 0 || ++turns > 200);
-  console.log("drainsWhilePaused", drains, "backpressured", writes < 4000);
+  // 'drain' can fire while the peer is paused (the Writable buffer flushes
+  // into the kernel send buffer, whose capacity is platform-dependent); the
+  // distinguishing observables are readableFlowing and whether bytes are
+  // delivered after resume().
+  console.log("backpressured", writes < 4000);
 
   let got = 0;
   acc.on("data", d => (got += d.length));

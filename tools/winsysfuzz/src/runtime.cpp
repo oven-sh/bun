@@ -106,6 +106,12 @@ inline bool AfterCall(uintptr_t ip) {
 
 // WSF_FRAMES scales the stack-scrape depth (x32 qwords); 0 = _ReturnAddress only.
 int g_frames = 6;
+// WSF_MAXRECS caps X/E trace records per process (default 3M). A stress
+// workload issues tens of millions of syscalls whose tail is repetition;
+// unbounded traces reached 200+ MB per run and filled the disk mid-sweep.
+// Faults keep firing past the cap (hit counting never depends on logging);
+// only the record emission stops. # notes and T records stay exempt.
+LONG64 g_maxRecs = 3000000;
 // WSF_ARGS=1: decode and log the NT path handed to path-bearing syscalls
 // ('A' records) — the hostile-argument attack's ground truth.
 bool g_logArgs = false;
@@ -475,8 +481,9 @@ void LogEntryOnly(uint32_t sysId, uintptr_t retAddr) {
   SetDepth(1);
   CallKey k = KeyOf(retAddr);
   LONG64 seq = InterlockedIncrement64(&g_seq);
-  LogLine("E %lld %lu %u %c:%llx 0\n", seq, GetCurrentThreadId(), sysId, k.tag,
-          (unsigned long long)k.rva);
+  if (seq <= g_maxRecs)
+    LogLine("E %lld %lu %u %c:%llx 0\n", seq, GetCurrentThreadId(), sysId, k.tag,
+            (unsigned long long)k.rva);
   SetDepth(0);
 }
 
@@ -657,10 +664,12 @@ bool CallCtx::PreFault() {
       char kbuf[24];
       FormatRvas(rvas, sizeof rvas);
       LONG64 seq = InterlockedIncrement64(&g_seq);
-      CallCtx::Key(kbuf, sizeof kbuf, frames_[0]);
-      LogLine("X %lld %lu %u %llx %s %s !P\n", seq, GetCurrentThreadId(), sys_,
-              (unsigned long long)injected_, kbuf, rvas);
-      LogDetail(seq, injected_);
+      if (seq <= g_maxRecs) {
+        CallCtx::Key(kbuf, sizeof kbuf, frames_[0]);
+        LogLine("X %lld %lu %u %llx %s %s !P\n", seq, GetCurrentThreadId(), sys_,
+                (unsigned long long)injected_, kbuf, rvas);
+        LogDetail(seq, injected_);
+      }
       return true;
     }
     return false; // post-fault: real call runs, Exit() substitutes
@@ -882,9 +891,13 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
     FormatRvas(rvas, sizeof rvas);
     Key(kbuf, sizeof kbuf, frames_[0]);
     LONG64 seq = InterlockedIncrement64(&g_seq);
-    LogLine("X %lld %lu %u %llx %s %s%s\n", seq, GetCurrentThreadId(), sys_,
-            (unsigned long long)ret, kbuf, rvas, tag);
-    LogDetail(seq, ret);
+    if (seq <= g_maxRecs) {
+      LogLine("X %lld %lu %u %llx %s %s%s\n", seq, GetCurrentThreadId(), sys_,
+              (unsigned long long)ret, kbuf, rvas, tag);
+      LogDetail(seq, ret);
+    } else if (seq == g_maxRecs + 1) {
+      LogNote("# record cap reached: further X/E records suppressed (faults still fire)\n");
+    }
   }
   return ret;
 }
@@ -999,6 +1012,10 @@ bool RuntimeInit() {
   if (g_frames < 0) g_frames = 0; // 0 = no stack walk, _ReturnAddress only
   if (g_frames > kMaxFrames - 1) g_frames = kMaxFrames - 1;
   if (EnvA("WSF_ARGS", tmp, sizeof tmp)) g_logArgs = tmp[0] == '1';
+  if (EnvA("WSF_MAXRECS", tmp, sizeof tmp)) {
+    LONG64 v = _atoi64(tmp);
+    if (v > 0) g_maxRecs = v;
+  }
 
   char exePath[MAX_PATH];
   GetModuleFileNameA(nullptr, exePath, sizeof exePath);

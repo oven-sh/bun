@@ -523,13 +523,11 @@ test("Blob constructor copies typed array parts before later parts run user code
   expect(exitCode).toBe(0);
 });
 
-test("Bun.file().slice at an odd byte offset decodes UTF-16LE (BOM) content with text() and json()", async () => {
+test("Bun.file() with a leading UTF-16LE BOM decodes via text() and json(), including after slice()", async () => {
   // Bun.file().text()/.json() sniff a leading UTF-16LE BOM (FF FE) as a
-  // convenience (standard Blob does not). A file sliced at an odd start keeps a
-  // view into the store at an odd byte offset; the UTF-16 decode of those
-  // odd-aligned bytes must not abort on alignment. Run in a subprocess so a
-  // process abort surfaces as a nonzero exit code.
-  using dir = tempDir("bunfile-utf16le-odd-slice", {});
+  // convenience; standard Blob does not. Run in a subprocess so a process abort
+  // surfaces as a nonzero exit code rather than killing the test runner.
+  using dir = tempDir("bunfile-utf16le-bom", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -537,17 +535,17 @@ test("Bun.file().slice at an odd byte offset decodes UTF-16LE (BOM) content with
       `
         import { writeFileSync } from "node:fs";
         // 0x41 prefix byte, then UTF-16LE BOM (FF FE) followed by "hi" / "42".
-        // slice(1) makes the decoded view start at an odd offset into the file.
+        // slice(1) makes the read window start one byte into the file.
         writeFileSync("t.bin", new Uint8Array([0x41, 0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]));
-        const oddText = await Bun.file("t.bin").slice(1).text();
+        const slicedText = await Bun.file("t.bin").slice(1).text();
 
         writeFileSync("j.bin", new Uint8Array([0x41, 0xff, 0xfe, 0x34, 0x00, 0x32, 0x00]));
-        const oddJson = await Bun.file("j.bin").slice(1).json();
+        const slicedJson = await Bun.file("j.bin").slice(1).json();
 
         writeFileSync("a.bin", new Uint8Array([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]));
-        const alignedText = await Bun.file("a.bin").text();
+        const wholeText = await Bun.file("a.bin").text();
 
-        console.log(JSON.stringify({ oddText, oddJson, alignedText }));
+        console.log(JSON.stringify({ slicedText, slicedJson, wholeText }));
       `,
     ],
     env: bunEnv,
@@ -558,7 +556,7 @@ test("Bun.file().slice at an odd byte offset decodes UTF-16LE (BOM) content with
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe(JSON.stringify({ oddText: "hi", oddJson: 42, alignedText: "hi" }));
+  expect(stdout.trim()).toBe(JSON.stringify({ slicedText: "hi", slicedJson: 42, wholeText: "hi" }));
   expect(exitCode).toBe(0);
 });
 

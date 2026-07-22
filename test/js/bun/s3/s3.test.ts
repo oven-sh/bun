@@ -348,6 +348,17 @@ for (let credentials of allCredentials) {
               expect(text).toBe("Hello Bun!");
             });
 
+            it("text()/json() should honour a UTF-16LE BOM", async () => {
+              // docs/runtime/s3.mdx: S3File.text()/json() decode as UTF-16 when
+              // the payload begins with a UTF-16LE BOM (FF FE).
+              await using tmpfile = await tmp();
+              const file = bucket.file(tmpfile.name, options!);
+              await file.write(Buffer.of(0xff, 0xfe, 0x68, 0x00, 0x69, 0x00));
+              expect(await file.text()).toBe("hi");
+              await file.write(Buffer.of(0xff, 0xfe, 0x34, 0x00, 0x32, 0x00));
+              expect(await file.json()).toBe(42);
+            });
+
             it("should download range", async () => {
               await using tmpfile = await tmp();
               const file = bucket.file(tmpfile.name, options!);

@@ -296,6 +296,7 @@ pub trait BlobExt {
         &self,
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
+        sniff_utf16: bool,
     ) -> JsResult<JSValue>;
     fn to_string_transfer(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_string(&self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue>;
@@ -307,6 +308,7 @@ pub trait BlobExt {
         &self,
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
+        sniff_utf16: bool,
     ) -> JsResult<JSValue>;
     /// # Safety
     /// `buf` must be valid for reads for the duration of the call.
@@ -2608,14 +2610,17 @@ impl BlobExt for Blob {
         &self,
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
+        sniff_utf16: bool,
     ) -> JsResult<JSValue> {
         // SAFETY: `raw_bytes` is valid for reads for the duration of this call
         // (either a leaked Box for `Temporary` or a store-backed view otherwise).
         let raw_slice: &[u8] = unsafe { &*raw_bytes };
         // File API `text()` is "UTF-8 decode" (strip only EF BB BF). The UTF-16LE
         // BOM sniff is a Bun.file/S3 convenience (documented in docs/runtime/s3.mdx)
-        // and must not leak into standard Blob/Response(blob).text().
-        let (bom, buf) = if self.is_bun_file() || self.is_s3() {
+        // and must not leak into standard Blob/Response(blob).text(). `sniff_utf16`
+        // is decided at dispatch time because the S3 download callback swaps the
+        // store to `Data::Bytes` before this runs.
+        let (bom, buf) = if sniff_utf16 {
             strings::BOM::detect_and_split(raw_slice)
         } else {
             (None, strings::without_utf8_bom(raw_slice))
@@ -2787,15 +2792,15 @@ impl BlobExt for Blob {
             // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
             // valid for reads while the store ref is held.
             Lifetime::Clone => unsafe {
-                self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_ptr)
+                self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_ptr, false)
             },
             // SAFETY: same as `Clone` above.
             Lifetime::Transfer => unsafe {
-                self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr)
+                self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr, false)
             },
             // SAFETY: same as `Clone` above.
             Lifetime::Share => unsafe {
-                self.to_string_with_bytes::<{ Lifetime::Share }>(global, view_ptr)
+                self.to_string_with_bytes::<{ Lifetime::Share }>(global, view_ptr, false)
             },
             // UB guard: `Temporary` would `heap::take(view_ptr)`, but
             // `view_ptr` points at a store-owned interior slice (not a leaked
@@ -2825,15 +2830,15 @@ impl BlobExt for Blob {
             // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
             // valid for reads while the store ref is held.
             Lifetime::Clone => unsafe {
-                self.to_json_with_bytes::<{ Lifetime::Clone }>(global, view_ptr)
+                self.to_json_with_bytes::<{ Lifetime::Clone }>(global, view_ptr, false)
             },
             // SAFETY: same as `Clone` above.
             Lifetime::Transfer => unsafe {
-                self.to_json_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr)
+                self.to_json_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr, false)
             },
             // SAFETY: same as `Clone` above.
             Lifetime::Share => unsafe {
-                self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_ptr)
+                self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_ptr, false)
             },
             // UB guard: `Temporary` would `heap::take(view_ptr)`, but
             // `view_ptr` points at a store-owned interior slice (not a leaked
@@ -2854,12 +2859,13 @@ impl BlobExt for Blob {
         &self,
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
+        sniff_utf16: bool,
     ) -> JsResult<JSValue> {
         // SAFETY: `raw_bytes` is valid for reads for the duration of this call
         // (either a leaked Box for `Temporary` or a store-backed view otherwise).
         let raw_slice: &[u8] = unsafe { &*raw_bytes };
         // Same gate as `to_string_with_bytes`: only Bun.file/S3 sniff a UTF-16LE BOM.
-        let (bom, buf) = if self.is_bun_file() || self.is_s3() {
+        let (bom, buf) = if sniff_utf16 {
             strings::BOM::detect_and_split(raw_slice)
         } else {
             (None, strings::without_utf8_bom(raw_slice))
@@ -6292,14 +6298,19 @@ pub struct ToFormDataWithBytesFn;
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        // `ReadFileToJs` is only reached via `do_read_file` / `do_read_from_s3`,
+        // i.e. the bytes originate from Bun.file()/S3, so the UTF-16LE BOM sniff
+        // is enabled here (and nowhere else).
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
         // `Box<[u8]>` for `Temporary`, store-backed otherwise.
         unsafe {
             match l {
-                Lifetime::Clone => b.to_string_with_bytes::<{ Lifetime::Clone }>(g, by),
-                Lifetime::Temporary => b.to_string_with_bytes::<{ Lifetime::Temporary }>(g, by),
-                Lifetime::Share => b.to_string_with_bytes::<{ Lifetime::Share }>(g, by),
-                Lifetime::Transfer => b.to_string_with_bytes::<{ Lifetime::Transfer }>(g, by),
+                Lifetime::Clone => b.to_string_with_bytes::<{ Lifetime::Clone }>(g, by, true),
+                Lifetime::Temporary => {
+                    b.to_string_with_bytes::<{ Lifetime::Temporary }>(g, by, true)
+                }
+                Lifetime::Share => b.to_string_with_bytes::<{ Lifetime::Share }>(g, by, true),
+                Lifetime::Transfer => b.to_string_with_bytes::<{ Lifetime::Transfer }>(g, by, true),
             }
         }
     }
@@ -6310,10 +6321,10 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
         // SAFETY: see `ToStringWithBytesFn::call`.
         unsafe {
             match l {
-                Lifetime::Clone => b.to_json_with_bytes::<{ Lifetime::Clone }>(g, by),
-                Lifetime::Temporary => b.to_json_with_bytes::<{ Lifetime::Temporary }>(g, by),
-                Lifetime::Share => b.to_json_with_bytes::<{ Lifetime::Share }>(g, by),
-                Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by),
+                Lifetime::Clone => b.to_json_with_bytes::<{ Lifetime::Clone }>(g, by, true),
+                Lifetime::Temporary => b.to_json_with_bytes::<{ Lifetime::Temporary }>(g, by, true),
+                Lifetime::Share => b.to_json_with_bytes::<{ Lifetime::Share }>(g, by, true),
+                Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by, true),
             }
         }
     }

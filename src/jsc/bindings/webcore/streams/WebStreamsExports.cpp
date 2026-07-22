@@ -168,6 +168,20 @@ extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleRea
     markPromiseAsHandled(vm, result);
 }
 
+extern "C" void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    // See ReadableStream__cancel: never return to the native caller with a pending exception.
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
+    if (catchScope.exception()) [[unlikely]]
+        catchScope.clearExceptionExceptTermination();
+}
+
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));

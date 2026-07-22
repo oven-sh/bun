@@ -1865,6 +1865,13 @@ impl FetchTasklet {
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.
         self.native_response = Some(Response::ref_(response));
+        // This tasklet's own abort listener is detached once the body is fully
+        // received; give the Response its own so aborting after that still
+        // errors the body (Fetch spec "abort a fetch" step 4).
+        if let Some(signal) = self.abort_signal() {
+            // SAFETY: `response` is the live heap allocation owned by JSC.
+            unsafe { Response::attach_abort_signal(response, &global_this, signal) };
+        }
         response_js
     }
 

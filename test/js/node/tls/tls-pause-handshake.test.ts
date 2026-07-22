@@ -43,16 +43,18 @@ describe("pausing a TLS socket before the handshake does not stall it", () => {
       expect({ paused: srv.isPaused(), flowing: srv.readableFlowing }).toEqual({ paused: true, flowing: false });
 
       let stopped = true;
+      let firedWhilePaused = false;
       let got = "";
       srv.on("data", d => {
-        if (stopped) throw new Error("data event fired while paused");
+        if (stopped) firedWhilePaused = true;
         got += d;
       });
       cli.write("hello");
       // Await the actual observable; a reverse round-trip is not a barrier
       // because kqueue/IOCP do not order ready-fd dispatch within a batch.
       await waitFor(() => srv!.readableLength >= 5);
-      expect({ got, flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
+      expect({ firedWhilePaused, got, flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
+        firedWhilePaused: false,
         got: "",
         flowing: false,
         readableLength: 5,

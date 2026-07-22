@@ -31,12 +31,14 @@ test("upgrade with a body: a mid-body client FIN closes the upgraded socket and 
       await once(server, "listening");
 
       const c = net.connect(server.address().port, "127.0.0.1");
+      c.on("error", () => {});
       await once(c, "connect");
       c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: foo\\r\\nConnection: Upgrade\\r\\nContent-Length: 100\\r\\n\\r\\npartial");
       await gotUpgrade;
       // Half-close the client; the body (100 bytes) is never completed.
       c.end();
       await gotSocketClose;
+      c.destroy();
 
       await new Promise((resolve, reject) => {
         server.close(err => err ? reject(err) : resolve());

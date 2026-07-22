@@ -328,8 +328,14 @@ describe("WebSocket send/ping/pong with detached buffers", () => {
       const expected = Buffer.from([3, 4, 5, 6]);
 
       const nextEcho = () =>
-        new Promise<Buffer>(resolve => {
-          ws.onmessage = e => resolve(Buffer.from(e.data as ArrayBuffer));
+        new Promise<Buffer>((resolve, reject) => {
+          const settle = (fn: () => void) => {
+            ws.onmessage = ws.onerror = ws.onclose = null;
+            fn();
+          };
+          ws.onmessage = e => settle(() => resolve(Buffer.from(e.data as ArrayBuffer)));
+          ws.onerror = () => settle(() => reject(new Error("socket errored before echo")));
+          ws.onclose = e => settle(() => reject(new Error(`socket closed (${e.code}) before echo`)));
         });
 
       let echoed = nextEcho();

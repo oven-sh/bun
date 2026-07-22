@@ -1708,6 +1708,15 @@ pub(crate) mod strings_impl {
         to_utf8_alloc(&aligned)
     }
 
+    /// Transcode raw UTF-16-BE bytes to a fresh UTF-8 `Vec`.
+    pub fn to_utf8_alloc_from_be_bytes(be_bytes: &[u8]) -> Vec<u8> {
+        let mut le_bytes = be_bytes[..be_bytes.len() & !1].to_vec();
+        for unit in le_bytes.chunks_exact_mut(2) {
+            unit.swap(0, 1);
+        }
+        to_utf8_alloc_from_le_bytes(&le_bytes)
+    }
+
     pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {
         let need = simdutf::length::utf8::from::utf16::le(utf16);
         list.reserve(need + 16);

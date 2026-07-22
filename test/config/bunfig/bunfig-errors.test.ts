@@ -22,8 +22,11 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
     [`[install]\nglobalStore = "true"`, "expected boolean but received string"],
     [`[install]\nlinkWorkspacePackages = "true"`, "expected boolean but received string"],
     [`[install]\nconcurrentScripts = "4"`, "expected number but received string"],
+    [`[install]\nconcurrentScripts = -1`, "Expected a non-negative finite number for concurrentScripts"],
     [`[install]\nglobalDir = true`, "expected string but received boolean"],
     [`[install]\nglobalBinDir = true`, "expected string but received boolean"],
+    [`[install]\nlockfile = 5`, "expected object but received number"],
+    [`[install]\ncache = 5`, "Expected cache to be a boolean, string, or object"],
     [`[install.lockfile]\nsave = "true"`, "expected boolean but received string"],
     [`[install.lockfile]\npath = true`, "expected string but received boolean"],
     [`[install.lockfile]\nsavePath = true`, "expected string but received boolean"],
@@ -63,6 +66,8 @@ describe.concurrent("bunfig.toml [install] correctly-typed values still accepted
     `[install]\nconcurrentScripts = 4\nglobalDir = "/tmp"\nglobalBinDir = "/tmp"`,
     `[install.lockfile]\nsave = true\npath = "bun.lock"\nsavePath = "bun.lock"`,
     `[install.cache]\ndisable = true\ndisableManifest = true\ndir = "/tmp"`,
+    `[install]\ncache = false`,
+    `[install]\ncache = "/tmp"`,
   ];
 
   test.each(cases)("%s", async config => {

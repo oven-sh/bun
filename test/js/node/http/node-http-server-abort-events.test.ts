@@ -47,3 +47,52 @@ test("aborted request body emits 'error' ECONNRESET and res 'close' before req '
     server.close();
   }
 });
+
+test("res.write()/end() after req.socket.destroy() inside the handler", async () => {
+  // The request handler destroys its own socket before writing: write() must
+  // report false (Node.js's OutgoingMessage._writeRaw returns false for a
+  // destroyed socket) and end() must still transition to `finished` /
+  // `writableEnded` and emit 'prefinish', without emitting 'finish'.
+  const events: string[] = [];
+  const { promise: resClosed, resolve: resolveResClosed } = Promise.withResolvers<void>();
+  let writeResult: boolean | undefined;
+  let endResult: unknown;
+  let finishedAfterEnd: boolean | undefined;
+  let writableEndedAfterEnd: boolean | undefined;
+
+  const server = createServer((req, res) => {
+    res.on("prefinish", () => events.push("res.prefinish"));
+    res.on("finish", () => events.push("res.finish"));
+    res.on("close", () => {
+      events.push("res.close");
+      resolveResClosed();
+    });
+
+    req.socket.destroy();
+    writeResult = res.write("body");
+    endResult = res.end("done");
+    finishedAfterEnd = res.finished;
+    writableEndedAfterEnd = res.writableEnded;
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, "connect");
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await resClosed;
+
+    expect({ writeResult, finishedAfterEnd, writableEndedAfterEnd, events }).toEqual({
+      writeResult: false,
+      finishedAfterEnd: true,
+      writableEndedAfterEnd: true,
+      events: ["res.prefinish", "res.close"],
+    });
+    expect(endResult).toBeInstanceOf(Object);
+  } finally {
+    server.close();
+  }
+});

@@ -3082,9 +3082,6 @@ ServerResponse.prototype.writeContinue = function (cb) {
 // But we don't want it for the fetch() response version.
 ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const handle = this[kHandle];
-  if (handle?.aborted) {
-    return this;
-  }
 
   if ($isCallable(chunk)) {
     callback = chunk;
@@ -3166,9 +3163,22 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // node.js will return true if the handle is closed but the internal state is not
-    // and will not throw or emit an error
-    return true;
+    // The underlying socket is already closed (or the response completed
+    // natively). Node.js's OutgoingMessage.end() still transitions to
+    // `finished` and emits 'prefinish' in this state; the `finish` callback
+    // that would emit 'finish' is dropped by _writeRaw()'s conn.destroyed
+    // early-return, so 'finish' never fires and the end() callback (registered
+    // on 'finish') is never called. 'close' is emitted by the socket close
+    // path.
+    this._header = " ";
+    const req = this.req;
+    if (!req._consuming && !req?._readableState?.resumeScheduled) {
+      req._dump();
+    }
+    this.finished = true;
+    process.nextTick(markResponseEndedNT, this);
+    this.emit("prefinish");
+    return this;
   }
   const sentState = NodeHTTPHeaderState.sent;
   if (headerState !== sentState) {
@@ -3335,9 +3345,9 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // node.js will return true if the handle is closed but the internal state is not
-    // and will not throw or emit an error
-    return true;
+    // Node.js's OutgoingMessage._writeRaw() returns false when the assigned
+    // socket is destroyed; the write callback is dropped (never invoked).
+    return false;
   }
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {

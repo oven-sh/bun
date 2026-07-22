@@ -197,5 +197,7 @@ test.skipIf(!isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   },
-  60_000,
+  // `detect_leaks=1` runs LSan's reachability scan at child exit, which alone
+  // takes ~5-6s under debug+ASAN; the sibling tests above set detect_leaks=0.
+  30_000,
 );

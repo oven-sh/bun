@@ -11,7 +11,7 @@ use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 use bun_parsers::json as JSON;
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_resolver::fs;
@@ -1427,14 +1427,14 @@ pub mod upgrade_js_bindings {
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_open_temp_dir_without_sharing_delete(
-        _global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub(crate) fn js_open_temp_dir_without_sharing_delete<'s>(
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         #[cfg(not(windows))]
         {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         #[cfg(windows)]
         {
@@ -1445,7 +1445,7 @@ pub mod upgrade_js_bindings {
             let mut wtmp = bun_paths::WPathBuffer::uninit();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
-                sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
+                sys::Result::Err(_) => return Ok(scope.undefined()),
                 sys::Result::Ok(norm) => norm,
             };
 
@@ -1504,18 +1504,18 @@ pub mod upgrade_js_bindings {
                 _ => {}
             }
 
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_close_temp_dir_handle(
-        _global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub(crate) fn js_close_temp_dir_handle<'s>(
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         #[cfg(not(windows))]
         {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         #[cfg(windows)]
         {
@@ -1527,7 +1527,7 @@ pub mod upgrade_js_bindings {
                 fd.close();
             }
 
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
     }
 }

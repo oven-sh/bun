@@ -52,7 +52,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{HTTPHeaderName, Local, Scope, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -225,28 +225,27 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 // Bun__fetchPreconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-#[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
-pub(crate) fn bun_fetch_preconnect(
-    global_object: &JSGlobalObject,
+#[bun_jsc::host_fn(export = "Bun__fetchPreconnect", scoped)]
+pub(crate) fn bun_fetch_preconnect<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    let arguments = arguments.slice();
+) -> JsResult<Local<'s>> {
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<1>(scope);
 
-    if arguments.len() < 1 {
-        return Err(global_object.throw_not_enough_arguments(
-            "fetch.preconnect",
-            1,
-            arguments.len(),
-        ));
+    if arguments.len < 1 {
+        return Err(scope.throw_not_enough_arguments("fetch.preconnect", 1, arguments.len));
     }
 
     // `href_from_js` returns a +1 (`Bun::toStringRef`). `bun_core::String` is
     // `Copy` with no `Drop`, so wrap in `OwnedString` for the scope-exit deref.
-    let url_str = bun_core::OwnedString::new(jsc::URL::href_from_js(arguments[0], global_object)?);
+    let url_str = bun_core::OwnedString::new(jsc::URL::href_from_js(
+        arguments.ptr[0].unscoped(),
+        global_object,
+    )?);
 
     if url_str.tag() == BunStringTag::Dead {
-        return Err(global_object
+        return Err(scope
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("Invalid URL"),
@@ -255,7 +254,7 @@ pub(crate) fn bun_fetch_preconnect(
     }
 
     if url_str.is_empty() {
-        return Err(global_object
+        return Err(scope
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("{}", FETCH_ERROR_BLANK_URL),
@@ -283,14 +282,12 @@ pub(crate) fn bun_fetch_preconnect(
 
     if !url.is_http() && !url.is_https() && !url.is_s3() {
         reclaim_href!();
-        return Err(
-            global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS"))
-        );
+        return Err(scope.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS")));
     }
 
     if url.hostname.is_empty() {
         reclaim_href!();
-        return Err(global_object
+        return Err(scope
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("{}", FETCH_ERROR_BLANK_URL),
@@ -300,13 +297,13 @@ pub(crate) fn bun_fetch_preconnect(
 
     if !url.has_valid_port() {
         reclaim_href!();
-        return Err(global_object.throw_invalid_arguments(format_args!("Invalid port")));
+        return Err(scope.throw_invalid_arguments(format_args!("Invalid port")));
     }
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
     http::async_http::preconnect(url, true);
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -337,9 +334,11 @@ impl StringOrURL {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
-#[bun_jsc::host_fn(export = "Bun__fetch")]
-pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
+#[bun_jsc::host_fn(export = "Bun__fetch", scoped)]
+pub(crate) fn bun_fetch<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let ctx = scope.unscoped_global();
+    let v = reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))?;
+    Ok(scope.local(v))
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`

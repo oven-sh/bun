@@ -23,8 +23,8 @@ use bun_core::zstr;
 use bun_core::{ZStr, strings};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
-    JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _, JsRef,
+    JsResult, Local, Scope, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -447,84 +447,108 @@ impl Image {
         self.pipeline.set(p);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_resize(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        if args.len() < 1 || !args[0].is_number() {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_resize<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        callframe: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<3>(scope);
+        if args.len < 1 || !args.ptr[0].is_number() {
             return Err(
-                global.throw_invalid_arguments(format_args!("resize(width, height?, options?)"))
+                scope.throw_invalid_arguments(format_args!("resize(width, height?, options?)"))
             );
         }
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
         let mut r = Resize {
-            w: coerce_int!(u32, args[0].as_number(), 1.0, 0x3FFFF as f64),
+            w: coerce_int!(u32, args.ptr[0].as_number(), 1.0, 0x3FFFF as f64),
             // 0 height = preserve aspect ratio (resolved at execute time once the
             // source dimensions are known).
-            h: if args.len() > 1 && args[1].is_number() {
-                coerce_int!(u32, args[1].as_number(), 0.0, 0x3FFFF as f64)
+            h: if args.len > 1 && args.ptr[1].is_number() {
+                coerce_int!(u32, args.ptr[1].as_number(), 0.0, 0x3FFFF as f64)
             } else {
                 0
             },
             ..Default::default()
         };
-        if args.len() > 2 && args[2].is_object() {
-            let opt = args[2];
-            if let Some(v) = opt.get_optional_enum::<codecs::Filter>(global, "filter")? {
+        if args.len > 2 && args.ptr[2].is_object() {
+            let opt = args.ptr[2];
+            let global = scope.unscoped_global();
+            if let Some(v) = opt
+                .unscoped()
+                .get_optional_enum::<codecs::Filter>(global, "filter")?
+            {
                 r.filter = v;
             }
-            if let Some(v) = opt.get_optional_enum::<Fit>(global, "fit")? {
+            if let Some(v) = opt.unscoped().get_optional_enum::<Fit>(global, "fit")? {
                 r.fit = v;
             }
-            if let Some(v) = opt.get(global, "withoutEnlargement")? {
+            if let Some(v) = opt.get(scope, "withoutEnlargement")? {
                 r.without_enlargement = v.to_boolean();
             }
         }
-        self.update_pipeline(|p| p.resize = Some(r));
-        Ok(callframe.this())
+        this.update_pipeline(|p| p.resize = Some(r));
+        Ok(callframe.scoped_this(scope))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_rotate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        if args.len() < 1 || !args[0].is_number() {
-            return Err(global
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_rotate<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        callframe: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<1>(scope);
+        if args.len < 1 || !args.ptr[0].is_number() {
+            return Err(scope
                 .throw_invalid_arguments(format_args!("rotate(degrees) expects 90, 180 or 270")));
         }
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
-        let raw: i64 = coerce_int!(i64, args[0].as_number(), -1e15, 1e15);
+        let raw: i64 = coerce_int!(i64, args.ptr[0].as_number(), -1e15, 1e15);
         let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "rotate: only multiples of 90 are supported"
             )));
         }
-        self.update_pipeline(|p| p.rotate = u16::try_from(deg).expect("int cast"));
-        Ok(callframe.this())
+        this.update_pipeline(|p| p.rotate = u16::try_from(deg).expect("int cast"));
+        Ok(callframe.scoped_this(scope))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_flip(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        self.update_pipeline(|p| p.flip = true);
-        Ok(callframe.this())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_flip<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        callframe: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        this.update_pipeline(|p| p.flip = true);
+        Ok(callframe.scoped_this(scope))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_flop(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        self.update_pipeline(|p| p.flop = true);
-        Ok(callframe.this())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_flop<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        callframe: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        this.update_pipeline(|p| p.flop = true);
+        Ok(callframe.scoped_this(scope))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_modulate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
-        if args.len() > 0 && args[0].is_object() {
-            let opt = args[0];
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_modulate<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        callframe: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<1>(scope);
+        let mut m: Modulate = this.pipeline.get().modulate.unwrap_or_default();
+        if args.len > 0 && args.ptr[0].is_object() {
+            let opt = args.ptr[0];
             // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
             // f32 +Inf (0×Inf = NaN → static_cast<u8>(NaN) is UB).
-            if let Some(v) = opt.get(global, "brightness")? {
+            if let Some(v) = opt.get(scope, "brightness")? {
                 if v.is_number() {
                     let x = v.as_number();
                     m.brightness = if x.is_finite() {
@@ -534,7 +558,7 @@ impl Image {
                     };
                 }
             }
-            if let Some(v) = opt.get(global, "saturation")? {
+            if let Some(v) = opt.get(scope, "saturation")? {
                 if v.is_number() {
                     let x = v.as_number();
                     m.saturation = if x.is_finite() {
@@ -545,8 +569,8 @@ impl Image {
                 }
             }
         }
-        self.update_pipeline(|p| p.modulate = Some(m));
-        Ok(callframe.this())
+        this.update_pipeline(|p| p.modulate = Some(m));
+        Ok(callframe.scoped_this(scope))
     }
 
     fn set_format(
@@ -599,25 +623,50 @@ impl Image {
         Ok(callframe.this())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_format_jpeg(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Jpeg)
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_format_jpeg<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.set_format(scope.unscoped_global(), cf, codecs::Format::Jpeg)?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn do_format_png(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Png)
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_format_png<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.set_format(scope.unscoped_global(), cf, codecs::Format::Png)?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn do_format_webp(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Webp)
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_format_webp<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.set_format(scope.unscoped_global(), cf, codecs::Format::Webp)?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn do_format_heic(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Heic)
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_format_heic<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.set_format(scope.unscoped_global(), cf, codecs::Format::Heic)?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.set_format(g, cf, codecs::Format::Avif)
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_format_avif<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.set_format(scope.unscoped_global(), cf, codecs::Format::Avif)?;
+        Ok(scope.local(v))
     }
 }
 
@@ -888,38 +937,43 @@ impl Image {
 // ───────────────────────────── getters ──────────────────────────────────────
 
 impl Image {
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_width(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_width.get()))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_width<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(f64::from(this.last_width.get())))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_height(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_height.get()))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_height<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(f64::from(this.last_height.get())))
     }
 }
 
 // ───────────────────────────── async terminals ──────────────────────────────
 
 impl Image {
-    #[bun_jsc::host_fn(method)]
-    pub fn do_metadata(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_metadata<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        callframe: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
-        if let Some(buf) = self.js_thread_bytes(callframe.this(), global) {
-            match codecs::probe(buf, self.max_pixels) {
+        if let Some(buf) = this.js_thread_bytes(callframe.this(), global) {
+            match codecs::probe(buf, this.max_pixels) {
                 Ok(p) => {
                     let mut w = p.width;
                     let mut h = p.height;
-                    if self.auto_orient && p.format == codecs::Format::Jpeg {
+                    if this.auto_orient && p.format == codecs::Format::Jpeg {
                         let t = exif::read_jpeg(buf).transform();
                         if t.rotate == 90 || t.rotate == 270 {
                             mem::swap(&mut w, &mut h);
                         }
                     }
-                    self.last_width.set(i32::try_from(w).expect("int cast"));
-                    self.last_height.set(i32::try_from(h).expect("int cast"));
+                    this.last_width.set(i32::try_from(w).expect("int cast"));
+                    this.last_height.set(i32::try_from(h).expect("int cast"));
                     let obj = JSValue::create_empty_object(global, 3);
                     obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                     obj.put(global, b"height", JSValue::js_number(f64::from(h)));
@@ -931,74 +985,94 @@ impl Image {
                             format_name(p.format).as_bytes(),
                         )?,
                     );
-                    return Ok(JSPromise::resolved_promise_value(global, obj));
+                    return Ok(scope.local(JSPromise::resolved_promise_value(global, obj)));
                 }
                 // HEIC/AVIF need the system backend → fall through to async.
                 Err(codecs::Error::UnsupportedOnPlatform) => {}
                 Err(e) => {
-                    return Ok(JSPromise::rejected_promise(global, reject_error(global, e))
-                        .as_value(global));
+                    return Ok(scope.local(
+                        JSPromise::rejected_promise(global, reject_error(global, e))
+                            .as_value(global),
+                    ));
                 }
             }
         }
-        self.schedule(
+        let v = this.schedule(
             global,
             callframe.this(),
             Kind::Metadata,
             Deliver::Uint8Array,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(
-            global,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_bytes<'s>(this: &Self, scope: &mut Scope<'s>, cf: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.schedule(
+            scope.unscoped_global(),
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(this.pipeline.get().output),
             Deliver::Uint8Array,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(
-            global,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_buffer<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.schedule(
+            scope.unscoped_global(),
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(this.pipeline.get().output),
             Deliver::Buffer,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(
-            global,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_blob<'s>(this: &Self, scope: &mut Scope<'s>, cf: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.schedule(
+            scope.unscoped_global(),
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(this.pipeline.get().output),
             Deliver::Blob,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_to_base64(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(
-            global,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_to_base64<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.schedule(
+            scope.unscoped_global(),
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(this.pipeline.get().output),
             Deliver::Base64,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
     /// `data:image/{format};base64,{…}`. Same encode as `.toBase64()` plus the
     /// MIME prefix, so it drops straight into `<img src>`.
-    #[bun_jsc::host_fn(method)]
-    pub fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        self.schedule(
-            global,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_data_url<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.schedule(
+            scope.unscoped_global(),
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Kind::Encode(this.pipeline.get().output),
             Deliver::DataUrl,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
     /// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
@@ -1006,21 +1080,31 @@ impl Image {
     /// src>` / Next's `blurDataURL`. Runs entirely on the work pool; the
     /// pipeline ops (resize/rotate/…) are skipped — a placeholder is OF the
     /// source, not of the output.
-    #[bun_jsc::host_fn(method)]
-    pub fn do_placeholder(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments();
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_placeholder<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        cf: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let args = cf.scoped_arguments::<1>(scope);
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
-        if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+        if args.len > 0 && !args.ptr[0].is_undefined_or_null() {
+            let s = bun_core::OwnedString::new(args.ptr[0].to_bun_string(scope)?);
             if !s.eql_comptime(b"dataurl") {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
                 )));
             }
         }
-        self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
+        let v = this.schedule(
+            scope.unscoped_global(),
+            cf.this(),
+            Kind::Placeholder,
+            Deliver::DataUrl,
+        )?;
+        Ok(scope.local(v))
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1029,21 +1113,21 @@ impl Image {
     /// with bytes written. If no format method was chained and `dest` is a path
     /// string, the encode format is inferred from its extension, falling back to
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
-    #[bun_jsc::host_fn(method)]
-    pub fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let args = cf.arguments();
-        if args.len() < 1 || args[0].is_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(format_args!(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_write<'s>(this: &Self, scope: &mut Scope<'s>, cf: &CallFrame) -> JsResult<Local<'s>> {
+        let args = cf.scoped_arguments::<1>(scope);
+        if args.len < 1 || args.ptr[0].is_undefined_or_null() {
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
             )));
         }
 
-        let mut output = self.pipeline.get().output;
+        let mut output = this.pipeline.get().output;
         // Extension inference only when dest is a plain string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
-        if output.is_none() && args[0].is_string() {
-            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+        if output.is_none() && args.ptr[0].is_string() {
+            let str = bun_core::OwnedString::new(args.ptr[0].to_bun_string(scope)?);
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1063,12 +1147,13 @@ impl Image {
                 }
             }
         }
-        self.schedule(
-            global,
+        let v = this.schedule(
+            scope.unscoped_global(),
             cf.this(),
             Kind::Encode(output),
-            Deliver::WriteDest(Strong::create(args[0], global)),
-        )
+            Deliver::WriteDest(scope.persist(args.ptr[0])),
+        )?;
+        Ok(scope.local(v))
     }
 }
 
@@ -1746,43 +1831,45 @@ impl<'a> PipelineTask<'a> {
                     // The codec's own allocation is handed straight to JS with the
                     // codec's free as the finalizer — no dupe of the output.
                     Deliver::Uint8Array => {
-                        // SAFETY: see `out_slice` above; mutability is for the
-                        // `from_bytes` signature only — JS takes ownership.
-                        let mut_slice = unsafe {
-                            core::slice::from_raw_parts_mut(
-                                out.bytes.as_ptr().cast::<u8>(),
-                                out_slice.len(),
+                        // SAFETY: `out.bytes` is the live codec allocation and
+                        // `out.free` (a thread-safe C allocator free ignoring
+                        // the null ctx) releases it exactly once; the codec
+                        // `Drop` is suppressed above.
+                        let foreign = unsafe {
+                            jsc::js_value::ForeignBytes::new(
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
                             )
                         };
-                        // SAFETY: `out.bytes` is the codec-owned allocation
-                        // whose ownership transfers to JSC; `out.free` frees
-                        // it exactly once at GC and ignores the null ctx.
-                        let v = unsafe {
-                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
-                        };
+                        let v = jsc::array_buffer::typed_array_from_owner(
+                            global,
+                            jsc::TypedArrayType::TypeUint8,
+                            foreign,
+                            |foreign| foreign.as_mut_slice(),
+                        );
                         match v {
                             Ok(v) => promise.resolve(global, v)?,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                         }
                     }
-                    // createBufferWithCtx returns plain JSValue (its C++ side asserts
-                    // the no-throw contract), so the .uint8array catch is unmatched
-                    // here by construction, not omission.
-                    Deliver::Buffer => promise.resolve(
-                        global,
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
+                    // create_buffer_from_foreign returns plain JSValue (its C++ side
+                    // asserts the no-throw contract), so the .uint8array catch is
+                    // unmatched here by construction, not omission.
+                    Deliver::Buffer => promise.resolve(global, {
+                        // SAFETY: `out.bytes` is the live codec allocation and
+                        // `out.free` (a thread-safe C allocator free ignoring
+                        // the null ctx) releases it exactly once; the codec
+                        // `Drop` is suppressed above.
+                        let foreign = unsafe {
+                            jsc::js_value::ForeignBytes::new(
                                 out.bytes,
                                 core::ptr::null_mut(),
                                 out.free,
                             )
-                        },
-                    )?,
+                        };
+                        JSValue::create_buffer_from_foreign(global, foreign)
+                    })?,
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
@@ -1840,17 +1927,18 @@ impl<'a> PipelineTask<'a> {
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        let data = unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
+                        // SAFETY: `out.bytes` is the live codec allocation and
+                        // `out.free` (a thread-safe C allocator free ignoring
+                        // the null ctx) releases it exactly once; the codec
+                        // `Drop` is suppressed above.
+                        let foreign = unsafe {
+                            jsc::js_value::ForeignBytes::new(
                                 out.bytes,
                                 core::ptr::null_mut(),
                                 out.free,
                             )
                         };
+                        let data = JSValue::create_buffer_from_foreign(global, foreign);
                         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];

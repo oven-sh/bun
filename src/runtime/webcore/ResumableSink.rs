@@ -8,7 +8,7 @@ use bun_collections::VecExt;
 use core::cell::Cell;
 
 use bun_core::String as BunString;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Local, Scope, SystemError};
 use bun_output::{declare_scope, scoped_log};
 
 use crate::node::{ErrorCode, StringOrBuffer};
@@ -250,75 +250,78 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         this
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn js_set_handlers(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn js_set_handlers<'s>(
         _this: &mut Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
+        this_value: Local<'s>,
+    ) -> JsResult<Local<'s>> {
         bun_jsc::mark_binding!();
-        let args = callframe.arguments();
+        let global_this = scope.unscoped_global();
+        let args = callframe.scoped_arguments::<2>(scope);
 
-        if args.len() < 2 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+        if args.len < 2 {
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "ResumableSink.setHandlers requires at least 2 arguments"
             )));
         }
 
-        let ondrain = args[0];
-        let oncancel = args[1];
+        let ondrain = args.ptr[0];
+        let oncancel = args.ptr[1];
 
         if ondrain.is_callable() {
-            Self::set_drain(this_value, global_this, ondrain);
+            Self::set_drain(this_value.unscoped(), global_this, ondrain.unscoped());
         }
         if oncancel.is_callable() {
-            Self::set_cancel(this_value, global_this, oncancel);
+            Self::set_cancel(this_value.unscoped(), global_this, oncancel.unscoped());
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn js_start(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn js_start<'s>(
         this: &mut Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         bun_jsc::mark_binding!();
-        let args = callframe.arguments();
-        if args.len() > 0 && args[0].is_object() {
-            if let Some(high_water_mark) =
-                args[0].get_optional_int::<i64>(global_this, "highWaterMark")?
+        let global_this = scope.unscoped_global();
+        let args = callframe.scoped_arguments::<1>(scope);
+        if args.len > 0 && args.ptr[0].is_object() {
+            if let Some(high_water_mark) = args.ptr[0]
+                .unscoped()
+                .get_optional_int::<i64>(global_this, "highWaterMark")?
             {
                 this.high_water_mark = high_water_mark;
             }
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn js_write(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn js_write<'s>(
         this: &mut Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         bun_jsc::mark_binding!();
-        let args = callframe.arguments();
+        let args = callframe.scoped_arguments::<1>(scope);
         // ignore any call if detached
         if this.is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
 
-        if args.len() < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+        if args.len < 1 {
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "ResumableSink.write requires at least 1 argument"
             )));
         }
 
-        let buffer = args[0];
-        let Some(sb) = StringOrBuffer::from_js(global_this, buffer)? else {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+        let buffer = args.ptr[0];
+        let Some(sb) = StringOrBuffer::from_js_scoped(scope, buffer)? else {
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "ResumableSink.write requires a string or buffer"
             )));
         };
@@ -336,20 +339,20 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             }
         }
 
-        Ok(JSValue::from(this.status != Status::Paused))
+        Ok(scope.boolean(this.status != Status::Paused))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn js_end(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn js_end<'s>(
         this: &mut Self,
-        _global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         bun_jsc::mark_binding!();
         let args = callframe.arguments();
         // ignore any call if detached
         if this.is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         this.detach_js();
         scoped_log!(ResumableSink, "jsEnd {}", args.len());
@@ -359,7 +362,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             this.context,
             if args.len() > 0 { Some(args[0]) } else { None },
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     pub fn drain(&mut self) {

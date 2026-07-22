@@ -271,6 +271,46 @@ the JS-facing path.
 These are the patterns that trip people up. Get them wrong and you get
 crashes that only reproduce under load or in CI.
 
+### The branded scope layer (`bun_jsc::scope`) — default for host functions
+
+New JS-facing host functions use the scoped form; it makes the two big
+boundary bug classes (unrooted heap-stored `JSValue`s, JS-heap views used
+across user-JS re-entry) compile errors, at zero runtime cost:
+
+```rust
+use bun_jsc::{CallFrame, JsResult, Local, Scope};
+
+#[bun_jsc::host_fn(scoped)]
+pub fn my_fn<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let arg = callframe.scoped_argument(scope, 0); // Local<'s>
+    let n = arg.to_number(scope)?;                 // can run user JS → needs &mut Scope
+    Ok(scope.number(n * 2.0))
+}
+```
+
+- `Local<'s>` cannot outlive the host call. Persisting requires
+  `scope.persist(local)` → `Strong` (RAII; releases on Drop).
+- Anything that can run user JS (coercions, property gets, `call`) takes
+  `&mut Scope`. Views into the JS heap (`local.array_buffer_bytes(scope)`)
+  borrow `&Scope`, so holding a view across a coercion that could detach
+  the buffer is rejected by the borrow checker — do all coercions first,
+  take the view last.
+- `scope.unscoped_global()` and `local.unscoped()` are migration escape
+  hatches to unwrapped legacy APIs. `test/internal/scope-escapes.test.ts`
+  pins the per-file hatch counts monotonically: prefer a `Local` method or
+  a classified wrapper over adding a hatch. (Ambient routes like
+  `VirtualMachine::get().global()` bypass the layer too — don't reach for
+  them from scoped code.)
+- New throwing `ZIG_EXPORT` externs must carry an effect marker:
+  `reenters_js` (can reach user JS → generated wrapper takes `&mut Scope`)
+  or `no_user_js` (→ `&Scope`). Unclassified functions get no scoped
+  wrapper. Verify against the C++ implementation before annotating — a
+  wrong `no_user_js` is an unsound signature; coercions (`toInt32`,
+  `toString`), property gets, and Proxy-trappable operations all reenter.
+- Not protected: `Vec<Local>` / `Box<Local>` within a scope (the
+  conservative scanner only sees stacks) — accumulate through
+  `MarkedArgumentBuffer` or `Strong` instead.
+
 ### Pointer provenance at FFI boundaries
 
 If a callback may free `self` (close, error, GC finalize), do **not**

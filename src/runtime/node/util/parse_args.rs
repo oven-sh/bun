@@ -1,7 +1,9 @@
 use core::fmt;
 
 use bun_core::{OwnedString, String, ZigString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, Local, MarkedArgumentBuffer, Scope, StringJsc,
+};
 
 use super::parse_args_utils::{
     OptionDefinition, OptionValueType, TokenSubtype, classify_token, find_option_by_short_name,
@@ -906,9 +908,13 @@ impl<'a> ParseArgsState<'a> {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
-pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
+#[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs", scoped)]
+pub fn parse_args<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let v = MarkedArgumentBuffer::new(|default_roots| {
+        parse_args_impl(global, callframe, default_roots)
+    })?;
+    Ok(scope.local(v))
 }
 
 fn parse_args_impl(

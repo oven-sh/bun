@@ -74,6 +74,9 @@ pub mod js_uint8_array;
 pub mod marked_argument_buffer;
 #[path = "RegularExpression.rs"]
 pub mod regular_expression;
+#[path = "scope.rs"]
+pub mod scope;
+pub use self::scope::{Local, LocalArguments, Scope};
 #[path = "ScriptExecutionStatus.rs"]
 pub mod script_execution_status;
 #[path = "sizes.rs"]
@@ -788,6 +791,16 @@ pub mod __macro_support {
         fn into_host_fn_result(self) -> JsResult<JSValue> {
             self
         }
+    }
+
+    /// Scoped host-fn body adapter: opens a [`crate::scope::Scope`] for the
+    /// call and unbrands the returned [`crate::scope::Local`].
+    #[inline]
+    pub fn host_fn_scoped(
+        global: &JSGlobalObject,
+        f: impl for<'t> FnOnce(&mut crate::scope::Scope<'t>) -> JsResult<crate::scope::Local<'t>>,
+    ) -> JsResult<JSValue> {
+        crate::scope::Scope::with(global, |scope| f(scope).map(|v| v.unscoped()))
     }
 
     /// Map a `JsResult<JSValue>` from a Rust host fn to the raw `JSValue` the
@@ -1753,6 +1766,8 @@ impl ZigStringJsc for bun_core::ZigString {
 
 /// Free-function form of `ZigString.toExternalU16` for callers that import
 /// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
+/// Prefer the safe [`zig_string::external_string_from_utf16`] where the
+/// caller owns a `Box<[u16]>`.
 ///
 /// # Safety
 /// See [`zig_string::to_external_u16`].

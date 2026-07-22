@@ -14,7 +14,7 @@ use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsResult, StrongOptional, Task,
+    JsResult, Local, Scope, StrongOptional, Task,
 };
 use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
@@ -2516,14 +2516,12 @@ static THREADSAFE_FUNCTION_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Exposed via `bun:internal-for-testing` so tests can assert a threadsafe
 /// function orphaned by a dead worker is freed rather than leaked.
-#[bun_jsc::host_fn]
-pub(crate) fn js_threadsafe_function_live_count(
-    _global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_threadsafe_function_live_count<'s>(
+    scope: &mut Scope<'s>,
     _callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(
-        THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst) as f64,
-    ))
+) -> JsResult<Local<'s>> {
+    Ok(scope.number(THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst) as f64))
 }
 
 impl Drop for ThreadSafeFunction {

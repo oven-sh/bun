@@ -7,7 +7,7 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult, Local, Scope};
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -106,11 +106,12 @@ where
     Ok(())
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn presign<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(scope.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -124,43 +125,7 @@ pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             )
         {
             return Err(
-                global.throw_invalid_arguments(format_args!("Expected a S3 or path to presign"))
-            );
-        }
-    }
-
-    match path_or_blob {
-        PathOrBlob::Path(path) => {
-            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a S3 or path to presign")));
-            }
-            let options = args.next_eat();
-            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
-            get_presign_url_from(&mut blob, global, options)
-        }
-        PathOrBlob::Blob(mut blob) => get_presign_url_from(&mut blob, global, args.next_eat()),
-    }
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<3>();
-    // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
-
-    // accept a path or a blob
-    let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
-
-    if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
-        {
-            return Err(
-                global.throw_invalid_arguments(format_args!("Expected a S3 or path to delete"))
+                scope.throw_invalid_arguments(format_args!("Expected a S3 or path to presign"))
             );
         }
     }
@@ -169,26 +134,25 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         PathOrBlob::Path(path) => {
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return Err(
-                    global.throw_invalid_arguments(format_args!("Expected a S3 or path to delete"))
+                    scope.throw_invalid_arguments(format_args!("Expected a S3 or path to presign"))
                 );
             }
             let options = args.next_eat();
-            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
-            let store = blob.store.get().as_ref().unwrap();
-            store.data.as_s3().unlink(store, global, options)
+            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+            get_presign_url_from(&mut blob, global, options).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(blob) => {
-            let store = blob.store.get().as_ref().unwrap();
-            store.data.as_s3().unlink(store, global, args.next_eat())
+        PathOrBlob::Blob(mut blob) => {
+            get_presign_url_from(&mut blob, global, args.next_eat()).map(|v| scope.local(v))
         }
     }
 }
 
-#[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn unlink<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(scope.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -201,13 +165,63 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             )
         {
             return Err(
-                global.throw_invalid_arguments(format_args!("Expected a S3 or path to upload"))
+                scope.throw_invalid_arguments(format_args!("Expected a S3 or path to delete"))
+            );
+        }
+    }
+
+    match path_or_blob {
+        PathOrBlob::Path(path) => {
+            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
+                return Err(
+                    scope.throw_invalid_arguments(format_args!("Expected a S3 or path to delete"))
+                );
+            }
+            let options = args.next_eat();
+            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+            let store = blob.store.get().as_ref().unwrap();
+            store
+                .data
+                .as_s3()
+                .unlink(store, global, options)
+                .map(|v| scope.local(v))
+        }
+        PathOrBlob::Blob(blob) => {
+            let store = blob.store.get().as_ref().unwrap();
+            store
+                .data
+                .as_s3()
+                .unlink(store, global, args.next_eat())
+                .map(|v| scope.local(v))
+        }
+    }
+}
+
+#[bun_jsc::host_fn(scoped)]
+pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let arguments = callframe.arguments_old::<3>();
+    // SAFETY: bun_vm() returns the live VM raw ptr.
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(scope.bun_vm(), arguments.slice());
+
+    // accept a path or a blob
+    let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
+
+    if let PathOrBlob::Blob(blob) = &path_or_blob {
+        if blob.store.get().is_none()
+            || !matches!(
+                blob.store.get().as_ref().unwrap().data,
+                blob::store::Data::S3(_)
+            )
+        {
+            return Err(
+                scope.throw_invalid_arguments(format_args!("Expected a S3 or path to upload"))
             );
         }
     }
 
     let Some(data) = args.next_eat() else {
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::MISSING_ARGS,
                 format_args!("Expected a Blob-y thing to upload"),
@@ -220,7 +234,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return Err(
-                    global.throw_invalid_arguments(format_args!("Expected a S3 or path to upload"))
+                    scope.throw_invalid_arguments(format_args!("Expected a S3 or path to upload"))
                 );
             }
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
@@ -236,6 +250,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
                     ..Default::default()
                 },
             )
+            .map(|v| scope.local(v))
         }
         PathOrBlob::Blob(blob) => {
             // Reshaped for borrowck — match consumes path_or_blob; rebuild to pass &mut PathOrBlob
@@ -250,15 +265,17 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
                     ..Default::default()
                 },
             )
+            .map(|v| scope.local(v))
         }
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn size<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(scope.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -271,7 +288,7 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             )
         {
             return Err(
-                global.throw_invalid_arguments(format_args!("Expected a S3 or path to get size"))
+                scope.throw_invalid_arguments(format_args!("Expected a S3 or path to get size"))
             );
         }
     }
@@ -280,22 +297,23 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return Err(global
+                return Err(scope
                     .throw_invalid_arguments(format_args!("Expected a S3 or path to get size")));
             }
             let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::size(global, &mut blob)
+            S3BlobStatTask::size(global, &mut blob).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(blob) => Ok(blob.get_size(global)),
+        PathOrBlob::Blob(blob) => Ok(scope.local(blob.get_size(global))),
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn exists<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(scope.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -307,7 +325,7 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
                 blob::store::Data::S3(_)
             )
         {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Expected a S3 or path to check if it exists"
             )));
         }
@@ -317,15 +335,15 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected a S3 or path to check if it exists"
                 )));
             }
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::exists(global, &blob)
+            S3BlobStatTask::exists(global, &blob).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(blob) => blob.get_exists(global, callframe),
+        PathOrBlob::Blob(blob) => blob.get_exists(global, callframe).map(|v| scope.local(v)),
     }
 }
 
@@ -812,11 +830,12 @@ pub(crate) fn get_stat(
     S3BlobStatTask::stat(global, this)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn stat<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(scope.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -829,7 +848,7 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             )
         {
             return Err(
-                global.throw_invalid_arguments(format_args!("Expected a S3 or path to get size"))
+                scope.throw_invalid_arguments(format_args!("Expected a S3 or path to get size"))
             );
         }
     }
@@ -838,14 +857,14 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         PathOrBlob::Path(path) => {
             let options = args.next_eat();
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return Err(global
+                return Err(scope
                     .throw_invalid_arguments(format_args!("Expected a S3 or path to get size")));
             }
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::stat(global, &blob)
+            S3BlobStatTask::stat(global, &blob).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(blob) => S3BlobStatTask::stat(global, blob),
+        PathOrBlob::Blob(blob) => S3BlobStatTask::stat(global, blob).map(|v| scope.local(v)),
     }
 }
 

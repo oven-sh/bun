@@ -27,6 +27,9 @@ use syn::{
 struct HostFnArgs {
     kind: HostFnKind,
     export: Option<LitStr>,
+    /// The body takes `&mut Scope<'_>` instead of `&JSGlobalObject` and
+    /// returns `JsResult<Local<'_>>`; the shim opens the scope.
+    scoped: bool,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +54,7 @@ impl Parse for HostFnArgs {
                 "method" => out.kind = HostFnKind::Method,
                 "getter" => out.kind = HostFnKind::Getter,
                 "setter" => out.kind = HostFnKind::Setter,
+                "scoped" => out.scoped = true,
                 "export" => {
                     input.parse::<Token![=]>()?;
                     out.export = Some(input.parse()?);
@@ -111,6 +115,9 @@ pub fn host_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2> {
+    if args.scoped {
+        return expand_host_fn_scoped(args, func);
+    }
     let fn_name = &func.sig.ident;
     let fn_name_str = fn_name.to_string();
 
@@ -247,6 +254,146 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
     Ok(quote! {
         #func
         #shim
+    })
+}
+
+/// `scoped`: the user body takes `&mut Scope<'s>` (plus `&CallFrame` / a
+/// typed `this`) and returns `JsResult<Local<'s>>`. Emitted as a renamed
+/// inner fn plus a signature-compatible wrapper carrying the original name —
+/// so every existing wiring (js2native, `.classes.ts`, direct callers) keeps
+/// the unscoped signature — and the wrapper opens the `Scope`.
+fn expand_host_fn_scoped(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2> {
+    if args.kind == HostFnKind::Setter {
+        return Err(syn::Error::new(
+            func.sig.ident.span(),
+            "#[host_fn(setter, scoped)] is not supported yet",
+        ));
+    }
+    if func
+        .sig
+        .inputs
+        .iter()
+        .any(|a| matches!(a, FnArg::Receiver(_)))
+    {
+        return Err(syn::Error::new(
+            func.sig.ident.span(),
+            "#[host_fn(scoped)] takes a typed `this: &Self` parameter, not a receiver",
+        ));
+    }
+
+    let vis = &func.vis;
+    let name = func.sig.ident.clone();
+    let inner_ident = format_ident!("__scoped_{}", name);
+    let n_inputs = func.sig.inputs.len();
+
+    let mut inner = func.clone();
+    inner.sig.ident = inner_ident.clone();
+
+    let first_param_type = |func: &ItemFn| -> syn::Result<syn::Type> {
+        match func.sig.inputs.first() {
+            Some(FnArg::Typed(pt)) => Ok((*pt.ty).clone()),
+            _ => Err(syn::Error::new(
+                func.sig.ident.span(),
+                "#[host_fn(scoped)] method/getter requires a typed `this` first parameter",
+            )),
+        }
+    };
+
+    let wrapper: TokenStream2 = match args.kind {
+        HostFnKind::Free => {
+            if n_inputs != 2 {
+                return Err(syn::Error::new(
+                    func.sig.ident.span(),
+                    "#[host_fn(scoped)] expects `fn(&mut Scope<'s>, &CallFrame) -> JsResult<Local<'s>>`",
+                ));
+            }
+            quote! {
+                #[inline]
+                #vis fn #name(
+                    __global: &::bun_jsc::JSGlobalObject,
+                    __frame: &::bun_jsc::CallFrame,
+                ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                    ::bun_jsc::__macro_support::host_fn_scoped(__global, |__scope| {
+                        #inner_ident(__scope, __frame)
+                    })
+                }
+            }
+        }
+        HostFnKind::Method => {
+            let this_ty = first_param_type(func)?;
+            if n_inputs >= 4 {
+                // The 4th parameter receives the wrapper's `this` JSValue —
+                // require it to be named `this_value` so a mismatched intent
+                // fails loudly instead of silently binding the wrong value.
+                let ok = matches!(
+                    func.sig.inputs.iter().nth(3),
+                    Some(FnArg::Typed(pt))
+                        if matches!(&*pt.pat, syn::Pat::Ident(pi) if pi.ident == "this_value")
+                );
+                if !ok {
+                    return Err(syn::Error::new(
+                        func.sig.ident.span(),
+                        "#[host_fn(method, scoped)] with 4 parameters: the 4th must be `this_value: Local<'s>`",
+                    ));
+                }
+                quote! {
+                    #[inline]
+                    #vis fn #name(
+                        __this: #this_ty,
+                        __global: &::bun_jsc::JSGlobalObject,
+                        __frame: &::bun_jsc::CallFrame,
+                        __this_value: ::bun_jsc::JSValue,
+                    ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                        ::bun_jsc::__macro_support::host_fn_scoped(__global, |__scope| {
+                            let __this_local = __scope.local(__this_value);
+                            Self::#inner_ident(__this, __scope, __frame, __this_local)
+                        })
+                    }
+                }
+            } else {
+                quote! {
+                    #[inline]
+                    #vis fn #name(
+                        __this: #this_ty,
+                        __global: &::bun_jsc::JSGlobalObject,
+                        __frame: &::bun_jsc::CallFrame,
+                    ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                        ::bun_jsc::__macro_support::host_fn_scoped(__global, |__scope| {
+                            Self::#inner_ident(__this, __scope, __frame)
+                        })
+                    }
+                }
+            }
+        }
+        HostFnKind::Getter => {
+            let this_ty = first_param_type(func)?;
+            quote! {
+                #[inline]
+                #vis fn #name(
+                    __this: #this_ty,
+                    __global: &::bun_jsc::JSGlobalObject,
+                ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                    ::bun_jsc::__macro_support::host_fn_scoped(__global, |__scope| {
+                        Self::#inner_ident(__this, __scope)
+                    })
+                }
+            }
+        }
+        HostFnKind::Setter => unreachable!(),
+    };
+
+    let wrapper_fn: ItemFn = syn::parse2(wrapper)?;
+    let unscoped_args = HostFnArgs {
+        kind: args.kind,
+        export: args.export.clone(),
+        scoped: false,
+    };
+    let expanded = expand_host_fn(&unscoped_args, &wrapper_fn)?;
+
+    Ok(quote! {
+        #[doc(hidden)]
+        #inner
+        #expanded
     })
 }
 

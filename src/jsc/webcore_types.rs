@@ -970,8 +970,9 @@ pub mod store {
                 return;
             };
             // SAFETY: caller passes a `*Store` (originally leaked via
-            // `heap::alloc`) as the opaque pointer.
-            unsafe { Store::deref(this) };
+            // `StoreRef::into_raw`, one outstanding ref) as the opaque
+            // pointer; adopting it releases exactly that ref on drop.
+            drop(unsafe { StoreRef::adopt(this) });
         }
     }
 
@@ -1001,6 +1002,16 @@ pub mod store {
     }
 
     impl StoreRef {
+        /// Adopt an existing +1. Does **not** increment.
+        ///
+        /// # Safety
+        /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`,
+        /// and the caller transfers one outstanding reference.
+        #[inline]
+        pub unsafe fn adopt(ptr: NonNull<Store>) -> Self {
+            Self { ptr }
+        }
+
         /// Wrap a raw `*Store`, incrementing its intrusive refcount.
         ///
         /// # Safety

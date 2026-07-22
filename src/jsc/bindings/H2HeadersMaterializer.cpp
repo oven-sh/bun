@@ -66,7 +66,7 @@ static JSString* h2ValueToJS(VM& vm, const uint8_t* ptr, size_t length)
 // packed layout: name bytes then value bytes, in field order.
 // Returns [rawHeadersArray, headersObject, sensitiveArray | undefined], or 0
 // with an exception pending.
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializeHeaders(
+extern "C" [[ZIG_EXPORT(zero_is_throw, no_user_js)]] JSC::EncodedJSValue Bun__h2__materializeHeaders(
     JSC::JSGlobalObject* globalObject,
     const uint8_t* packed,
     const uint32_t* meta,

@@ -14,7 +14,7 @@ use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_core::{ZStr, ZigString};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
-    JsError, JsResult, SystemError, ZigStringJsc,
+    JsError, JsResult, Local, Scope, SystemError, ZigStringJsc,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -1607,10 +1607,10 @@ impl FFI {
         js_object
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_symbols(_this: &FFI, _: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_symbols<'s>(_this: &FFI, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // This shouldn't be called. The cachedValue is what should be called.
-        JSValue::UNDEFINED
+        Ok(scope.undefined())
     }
 
     pub fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {

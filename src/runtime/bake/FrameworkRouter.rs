@@ -12,7 +12,8 @@ use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, Local, Scope, StringJsc, Strong,
+    StrongOptional,
 };
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::{DirInfo, Resolver};
@@ -2035,9 +2036,13 @@ impl JSFrameworkRouter {
 
 // Note: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
 // shim that calls the bare ident, so this cannot live inside the `impl` block.
-#[bun_jsc::host_fn]
-pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    JSFrameworkRouter::parse_route_pattern(global, frame)
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn parse_route_pattern<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let v = JSFrameworkRouter::parse_route_pattern(scope.unscoped_global(), frame)?;
+    Ok(scope.local(v))
 }
 
 use bun_core::fmt::VecWriter as ByteFmtWriter;

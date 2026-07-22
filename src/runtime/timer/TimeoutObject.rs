@@ -1,4 +1,4 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 
 use super::Kind;
 
@@ -42,19 +42,23 @@ impl TimeoutObject {
         Self::init_with(global, id, kind, interval, callback, arguments)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_refresh(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_refresh<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.internals.do_refresh(global, frame.this())
+    ) -> JsResult<Local<'s>> {
+        let this_value = frame.scoped_this(scope);
+        let v = this
+            .internals
+            .do_refresh(scope.unscoped_global(), this_value.unscoped())?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn close(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.cancel(global.bun_vm_ptr());
-        Ok(frame.this())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn close<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        this.internals.cancel(scope.unscoped_global().bun_vm_ptr());
+        Ok(frame.scoped_this(scope))
     }
 
     // Cached-property getters/setters — codegen passes `this_value` (the JS

@@ -7,7 +7,7 @@ use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    JsError, JsResult, Local, MarkedArgumentBuffer, Scope, wtf,
 };
 use bun_parsers::yaml::{YAML, YamlParseError};
 
@@ -21,25 +21,28 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     )
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn stringify<'s>(scope: &mut Scope<'s>, call_frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let [value, replacer, space_value] = call_frame.scoped_arguments::<3>(scope).ptr;
 
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "YAML.stringify does not support the replacer argument"
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let mut stringifier = Stringifier::init(global, space_value.unscoped())?;
 
-    if let Err(err) = stringifier.find_anchors_and_aliases(global, value, ValueOrigin::Root) {
+    if let Err(err) =
+        stringifier.find_anchors_and_aliases(global, value.unscoped(), ValueOrigin::Root)
+    {
         return match err {
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),
@@ -48,7 +51,7 @@ pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsRe
         };
     }
 
-    if let Err(err) = stringifier.stringify(global, value) {
+    if let Err(err) = stringifier.stringify(global, value.unscoped()) {
         return match err {
             StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
             StringifyError::JsError => Err(JsError::Thrown),
@@ -57,7 +60,8 @@ pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsRe
         };
     }
 
-    stringifier.builder.to_string(global)
+    let v = stringifier.builder.to_string(global)?;
+    Ok(scope.local(v))
 }
 
 pub(crate) struct Stringifier {
@@ -1027,6 +1031,8 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
         || (a == 0x49 /* 'I' */ && b == 0x4e /* 'N' */ && c == 0x46/* 'F' */)
 }
 
+// Not `scoped`: `ParserCtx::run` signals errors by returning `Ok(JSValue::ZERO)`
+// with the exception already thrown, which `Local` cannot represent.
 #[bun_jsc::host_fn]
 pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     // reject_nullish=false preserves YAML's coerce-undefined-to-"undefined" behavior.

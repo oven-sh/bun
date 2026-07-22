@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use bun_collections::VecExt as _;
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult, Local, Scope};
 use bun_simdutf_sys::simdutf;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
@@ -26,25 +26,31 @@ impl TextEncoderStreamEncoder {
         Ok(Box::new(TextEncoderStreamEncoder::default()))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
-        let arguments = arguments.slice();
-        if arguments.is_empty() {
-            return Err(global.throw_not_enough_arguments(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn encode<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let arguments = frame.scoped_arguments::<1>(scope);
+        if arguments.len == 0 {
+            return Err(scope.throw_not_enough_arguments(
                 "TextEncoderStreamEncoder.encode",
                 1,
-                arguments.len(),
+                arguments.len,
             ));
         }
 
-        let str = arguments[0].get_zig_string(global)?;
+        let str = arguments.ptr[0].get_zig_string(scope)?;
+        let global = scope.unscoped_global();
 
         if str.is_16bit() {
-            return Ok(self.encode_utf16(global, str.utf16_slice_aligned()));
+            let v = this.encode_utf16(global, str.utf16_slice_aligned())?;
+            return Ok(scope.local(v));
         }
 
-        Ok(self.encode_latin1(global, str.slice()))
+        let v = this.encode_latin1(global, str.slice());
+        Ok(scope.local(v))
     }
 
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
@@ -103,7 +109,7 @@ impl TextEncoderStreamEncoder {
         JSUint8Array::from_bytes(global, buffer.into())
     }
 
-    fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JSValue {
+    fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JsResult<JSValue> {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeUTF16: \"{}\"",
@@ -111,7 +117,7 @@ impl TextEncoderStreamEncoder {
         );
 
         if input.is_empty() {
-            return JSUint8Array::create_empty(global);
+            return Ok(JSUint8Array::create_empty(global));
         }
 
         #[derive(Clone, Copy)]
@@ -149,10 +155,10 @@ impl TextEncoderStreamEncoder {
 
                     remain = &remain[1..];
                     if remain.is_empty() {
-                        return JSUint8Array::from_bytes_copy(
+                        return Ok(JSUint8Array::from_bytes_copy(
                             global,
                             &sequence[0..converted.utf8_width() as usize],
-                        );
+                        ));
                     }
 
                     break 'prepend Some(Prepend::from_sequence(sequence, converted.utf8_width()));
@@ -194,29 +200,34 @@ impl TextEncoderStreamEncoder {
         };
 
         if result.status == simdutf::Status::SUCCESS {
-            JSUint8Array::from_bytes(global, buf.into())
+            Ok(JSUint8Array::from_bytes(global, buf.into()))
         } else {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
             let lead_surrogate = match strings::to_utf8_list_with_type_bun::<true>(&mut buf, remain)
             {
                 Ok(v) => v,
-                Err(_) => return global.throw_out_of_memory_value(),
+                Err(_) => return Err(global.throw_out_of_memory()),
             };
 
             if let Some(pending_lead) = lead_surrogate {
                 self.pending_lead_surrogate.set(Some(pending_lead));
                 if buf.is_empty() {
-                    return JSUint8Array::create_empty(global);
+                    return Ok(JSUint8Array::create_empty(global));
                 }
             }
 
-            JSUint8Array::from_bytes(global, buf.into())
+            Ok(JSUint8Array::from_bytes(global, buf.into()))
         }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn flush(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(self.flush_body(global))
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn flush<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let v = this.flush_body(scope.unscoped_global());
+        Ok(scope.local(v))
     }
 
     fn flush_body(&self, global: &JSGlobalObject) -> JSValue {

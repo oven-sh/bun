@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use bun_ptr::RefCount;
 
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
-    VirtualMachine,
+    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, Local,
+    Scope, VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
@@ -366,13 +366,14 @@ impl Subprocess<'_> {
         self.abort_signal.get().map(bun_ptr::BackRef::from)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn resource_usage(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn resource_usage<'s>(
         this: &Self,
-        global_object: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.create_resource_usage_object(global_object)
+    ) -> JsResult<Local<'s>> {
+        let v = this.create_resource_usage_object(scope.unscoped_global())?;
+        Ok(scope.local(v))
     }
 
     pub fn create_resource_usage_object(
@@ -567,36 +568,39 @@ impl Subprocess<'_> {
         Err(global_object.throw(format_args!("Cannot construct Subprocess")))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_stderr(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_stderr<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // When terminal is used, stderr goes through the terminal
         if this.terminal.get().is_some() {
-            return Ok(JSValue::NULL);
+            return Ok(scope.null());
         }
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stderr);
         let exited = this.has_exited();
-        this.stderr.with_mut(|s| s.to_js(global_this, exited))
+        let global_this = scope.unscoped_global();
+        let v = this.stderr.with_mut(|s| s.to_js(global_this, exited))?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_stdin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_stdin<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // When terminal is used, stdin goes through the terminal
         if this.terminal.get().is_some() {
-            return Ok(JSValue::NULL);
+            return Ok(scope.null());
         }
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stdin);
         // `Writable::to_js` takes only the parent and projects `stdin`
         // internally so no two `&mut` overlap here.
-        Ok(Writable::to_js(this, global_this))
+        let v = Writable::to_js(this, scope.unscoped_global());
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_stdout(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_stdout<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // When terminal is used, stdout goes through the terminal
         if this.terminal.get().is_some() {
-            return Ok(JSValue::NULL);
+            return Ok(scope.null());
         }
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stdout);
@@ -604,31 +608,35 @@ impl Subprocess<'_> {
         // gets cached on JSSubprocess (created via bindgen). This makes it
         // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
         let exited = this.has_exited();
-        this.stdout.with_mut(|s| s.to_js(global_this, exited))
+        let global_this = scope.unscoped_global();
+        let v = this.stdout.with_mut(|s| s.to_js(global_this, exited))?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_terminal<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if let Some(terminal) = this.terminal.get() {
-            return crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this);
+            let v =
+                crate::api::bun_terminal_body::to_js(terminal.as_ptr(), scope.unscoped_global());
+            return Ok(scope.local(v));
         }
-        JSValue::UNDEFINED
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn async_dispose(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn async_dispose<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if this.process().has_exited() {
             // rely on GC to clean everything up in this case
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
 
-        let this_jsvalue = callframe.this();
+        let this_jsvalue = callframe.scoped_this(scope);
 
-        let _keep = jsc::EnsureStillAlive(this_jsvalue);
+        let _keep = jsc::EnsureStillAlive(this_jsvalue.unscoped());
 
         // unref streams so that this disposed process will not prevent
         // the process from exiting causing a hang
@@ -636,6 +644,7 @@ impl Subprocess<'_> {
         this.stdout.with_mut(|s| s.unref());
         this.stderr.with_mut(|s| s.unref());
 
+        let global = scope.unscoped_global();
         match this.try_kill(this.kill_signal) {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
@@ -644,7 +653,8 @@ impl Subprocess<'_> {
             }
         }
 
-        Ok(this.get_exited(this_jsvalue, global))
+        let v = this.get_exited(this_jsvalue.unscoped(), global);
+        Ok(scope.local(v))
     }
 
     pub fn set_event_loop_timer_refd(&self, refd: bool) {
@@ -777,20 +787,24 @@ impl Subprocess<'_> {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_ref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_ref<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         this.js_ref();
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_unref(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_unref<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         this.js_unref();
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     pub fn on_stdin_destroyed(&self) {
@@ -811,12 +825,12 @@ impl Subprocess<'_> {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_send(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn do_send<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         bun_output::scoped_log!(IPC, "Subprocess#doSend");
 
         let context = if this.has_exited() {
@@ -826,7 +840,8 @@ impl Subprocess<'_> {
         };
         // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(this.ipc(), global, call_frame, context)
+        let v = crate::ipc_host::do_send(this.ipc(), scope.unscoped_global(), call_frame, context)?;
+        Ok(scope.local(v))
     }
 
     pub fn disconnect_ipc(&self, next_tick: bool) {
@@ -834,43 +849,44 @@ impl Subprocess<'_> {
         ipc_data.close_socket_next_tick(next_tick);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn disconnect(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn disconnect<'s>(
         this: &Self,
-        _global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         this.disconnect_ipc(true);
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_connected<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let connected = this
             .ipc_data
             .get()
             .as_ref()
             .map(|d| d.is_connected())
             .unwrap_or(false);
-        JSValue::from(connected)
+        Ok(scope.boolean(connected))
     }
 
     pub fn pid(&self) -> i32 {
         self.process().pid
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_pid(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.pid() as f64)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_pid<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(this.pid() as f64))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_killed(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.has_killed())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_killed<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.boolean(this.has_killed()))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_stdio(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_stdio<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         let array = JSValue::create_empty_array(global, 0)?;
         array.push(global, JSValue::NULL)?;
         array.push(global, JSValue::NULL)?; // TODO: align this with options
@@ -911,7 +927,7 @@ impl Subprocess<'_> {
                 }
             }
         });
-        Ok(array)
+        Ok(scope.local(array))
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -1098,16 +1114,14 @@ impl Subprocess<'_> {
 
         let mut did_update_has_pending_activity = false;
 
-        // Kept as raw `*mut` so the enter guard and the body can both call
-        // `&mut`-taking methods without tripping borrowck.
+        // Kept as raw `*mut` so `run_callback` below can take `&mut` without
+        // tripping borrowck.
         let event_loop = (*jsc_vm).event_loop();
 
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
-                    // SAFETY: event_loop points into the live VM and outlives this scope.
-                    let _exit_guard =
-                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+                    let _exit_guard = jsc_vm.enter_event_loop_scope();
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1553,32 +1567,31 @@ pub mod testing_apis {
     ///
     /// Returns true if an error was injected, false if the given stdio is
     /// not (or no longer) a buffered pipe reader.
-    #[bun_jsc::host_fn]
-    pub fn inject_stdio_read_error(
-        global_this: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub fn inject_stdio_read_error<'s>(
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [subprocess_value, kind_value] = callframe.arguments_as_array::<2>();
-        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
-            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
+    ) -> JsResult<Local<'s>> {
+        let arguments = callframe.scoped_arguments::<2>(scope);
+        let (subprocess_value, kind_value) = (arguments.ptr[0], arguments.ptr[1]);
+        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value.unscoped()) else {
+            return Err(scope.throw(format_args!("first argument must be a Subprocess")));
         };
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
         let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = bun_core::OwnedString::new(kind_value.to_bun_string(global_this)?);
+        let kind_str = bun_core::OwnedString::new(kind_value.to_bun_string(scope)?);
 
         let out: &JsCell<Readable> = if kind_str.eql_comptime(b"stdout") {
             &subprocess.stdout
         } else if kind_str.eql_comptime(b"stderr") {
             &subprocess.stderr
         } else {
-            return Err(
-                global_this.throw(format_args!("second argument must be 'stdout' or 'stderr'"))
-            );
+            return Err(scope.throw(format_args!("second argument must be 'stdout' or 'stderr'")));
         };
 
         let Readable::Pipe(pipe) = out.get() else {
-            return Ok(JSValue::FALSE);
+            return Ok(scope.boolean(false));
         };
 
         // Mirror what the real error path does (onStreamRead on Windows,
@@ -1589,7 +1602,7 @@ pub mod testing_apis {
             let _ = Readable::pipe_reader_mut(pipe).reader.stop_reading();
         }
         Readable::pipe_reader_mut(pipe).reader.on_error(fake_err);
-        Ok(JSValue::TRUE)
+        Ok(scope.boolean(true))
     }
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`

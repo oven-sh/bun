@@ -19,7 +19,7 @@ use super::protocol_jsc;
 use super::valkey;
 use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
-use bun_jsc::url::URL;
+use bun_jsc::url::{OwnedUrl, URL};
 use bun_valkey::valkey_protocol as protocol;
 
 /// `bun.JSTerminated!T`
@@ -619,13 +619,8 @@ impl JSValkeyClient {
                 }
             }
         };
-        // SAFETY: `from_utf8` heap-allocates; release on scope exit.
-        let _parsed_url_drop =
-            scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let parsed_url = bun_ptr::BackRef::from(parsed_url);
+        // Owns the C++ URL; destroyed exactly once on drop (early returns included).
+        let parsed_url = OwnedUrl::adopt(parsed_url);
 
         // Extract protocol string
         let protocol_str = parsed_url.protocol();

@@ -8,7 +8,8 @@ use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
+    CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope, StringJsc, SystemError,
+    bun_string_jsc,
 };
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
@@ -827,36 +828,36 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
 // `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
-#[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
-pub(crate) fn bun_canonicalize_ip(
-    global_this: &JSGlobalObject,
+#[bun_jsc::host_fn(export = "Bun__canonicalizeIP", scoped)]
+pub(crate) fn bun_canonicalize_ip<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
+) -> JsResult<Local<'s>> {
     bun_jsc::mark_binding!();
 
-    let arguments = callframe.arguments();
+    let arguments = callframe.scoped_arguments::<1>(scope);
 
-    if arguments.is_empty() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
+    let Some(addr_value) = arguments.get(0) else {
+        return Err(scope.throw_invalid_arguments(format_args!(
             "canonicalizeIP() expects a string but received no arguments."
         )));
-    }
+    };
 
-    let addr_arg = arguments[0].to_slice(global_this)?;
+    let addr_arg = addr_value.to_slice(scope)?;
     let addr_str = addr_arg.slice();
 
     // CIDR not allowed
     if strings::index_of_char(addr_str, b'/').is_some() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     }
 
     let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
     let Some(slice) = bun_boringssl::canonicalize_ip(addr_str, &mut ip_addr) else {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     };
     if addr_str == slice {
-        return Ok(arguments[0]);
+        return Ok(addr_value);
     }
 
-    bun_string_jsc::create_utf8_for_js(global_this, slice)
+    scope.string_utf8(slice)
 }

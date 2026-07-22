@@ -14,7 +14,7 @@ use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
-    WorkPool, WorkPoolTask,
+    Local, Scope, WorkPool, WorkPoolTask,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
@@ -428,26 +428,28 @@ fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigString
 /// For Archive instances, uses the archive's compression settings unless overridden by options.
 /// Options:
 ///   - gzip: { level?: number } - Override compression settings
-#[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
-    if data_arg.is_empty() {
-        return Err(global.throw_invalid_arguments(format_args!(
+#[bun_jsc::host_fn(scoped)]
+pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let args = callframe.scoped_arguments::<3>(scope);
+    let (path_arg, data_arg, options_arg) = (args.ptr[0], args.ptr[1], args.ptr[2]);
+    if data_arg.unscoped().is_empty() {
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Archive.write requires 2 arguments (path, data)"
         )));
     }
 
     // Get the path
     if !path_arg.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "Archive.write: first argument must be a string path"
         )));
     }
 
-    let path_slice = path_arg.to_slice(global)?;
+    let path_slice = path_arg.to_slice(scope)?;
 
     // Parse options for compression override
-    let options_compress = parse_compression_options(global, options_arg)?;
+    let options_compress = parse_compression_options(global, options_arg.unscoped())?;
 
     // For Archive instances, use options override or archive's compression settings
     if let Some(archive) = data_arg.as_class_ref::<Archive>() {
@@ -456,49 +458,53 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         } else {
             archive.compress
         };
-        return start_write_task(
+        let promise = start_write_task(
             global,
             WriteData::Store(archive.store.clone()),
             path_slice.slice(),
             compress,
-        );
+        )?;
+        return Ok(scope.local(promise));
     }
 
     // For Blobs, use store reference with options compression
-    if let Some(blob) = blob_from_js(data_arg) {
+    if let Some(blob) = blob_from_js(data_arg.unscoped()) {
         if let Some(store) = blob.store.get().as_ref() {
-            return start_write_task(
+            let promise = start_write_task(
                 global,
                 WriteData::Store(store.clone()),
                 path_slice.slice(),
                 options_compress,
-            );
+            )?;
+            return Ok(scope.local(promise));
         }
     }
 
     // For ArrayBuffer/TypedArray, copy the data with options compression
-    if let Some(array_buffer) = data_arg.as_array_buffer(global) {
+    if let Some(array_buffer) = data_arg.unscoped().as_array_buffer(global) {
         let data = array_buffer.slice().to_vec();
-        return start_write_task(
+        let promise = start_write_task(
             global,
             WriteData::Owned(data),
             path_slice.slice(),
             options_compress,
-        );
+        )?;
+        return Ok(scope.local(promise));
     }
 
     // For plain objects, build a tarball with options compression
     if data_arg.is_object() {
-        let data = build_tarball_from_object(global, data_arg)?;
-        return start_write_task(
+        let data = build_tarball_from_object(global, data_arg.unscoped())?;
+        let promise = start_write_task(
             global,
             WriteData::Owned(data),
             path_slice.slice(),
             options_compress,
-        );
+        )?;
+        return Ok(scope.local(promise));
     }
 
-    Err(global.throw_invalid_arguments(format_args!(
+    Err(scope.throw_invalid_arguments(format_args!(
         "Expected an object, Blob, TypedArray, ArrayBuffer, or Archive"
     )))
 }

@@ -2,10 +2,9 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use crate::jsc::{
-    CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
-    VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js,
-    webcore::AutoFlusher,
+    CallFrame, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, GlobalRef, HasAutoFlush,
+    JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive, VirtualMachine,
+    VirtualMachineSqlExt as _, codegen::js_mysql_connection as js, webcore::AutoFlusher,
 };
 use crate::shared::CachedStructure;
 use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
@@ -388,7 +387,7 @@ impl JSMySQLConnection {
         // Raw-pointer RAII guard so no reference is live across the potential
         // free.
         let _ref = self.ref_guard();
-        let _loop_guard = self.event_loop().entered();
+        let _loop_guard = self.event_loop().scope();
         self.ensure_js_value_is_alive();
         if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
             self.connection_mut().flush_queue()
@@ -1060,7 +1059,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             return;
         }
 
-        let _loop_guard = this.event_loop().entered();
+        let _loop_guard = this.event_loop().scope();
         this.ensure_js_value_is_alive();
 
         if let Err(e) = this.connection_mut().read_and_process_data(data) {

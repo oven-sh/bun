@@ -1,6 +1,8 @@
 use bun_core::String as BunString;
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass, JsResult, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSType, JSValue, JsClass, JsResult, Local, Scope, StringJsc,
+};
 
 use crate::node::Encoding;
 
@@ -127,24 +129,25 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
 
 // The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
 // correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
-#[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
-pub(crate) fn bun_random_uuid_v7(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped, export = "Bun__randomUUIDv7")]
+pub(crate) fn bun_random_uuid_v7<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_undef::<2>();
+) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<2>(scope);
 
-    let mut encoding_value: JSValue = JSValue::UNDEFINED;
+    let mut encoding_value: Local<'s> = scope.undefined();
 
     let encoding: Encoding = 'brk: {
         if arguments.len > 0 {
             if !arguments.ptr[0].is_undefined() {
                 if arguments.ptr[0].is_string() {
                     encoding_value = arguments.ptr[0];
-                    break 'brk match Encoding::from_js(encoding_value, global)? {
+                    break 'brk match Encoding::from_js(encoding_value.unscoped(), global)? {
                         Some(e) => e,
                         None => {
-                            return Err(global
+                            return Err(scope
                                 .err(
                                     bun_jsc::ErrorCode::UNKNOWN_ENCODING,
                                     format_args!(
@@ -162,12 +165,12 @@ pub(crate) fn bun_random_uuid_v7(
     };
 
     let (timestamp, timestamp_source): (u64, uuid::TimestampSource) = 'brk: {
-        let timestamp_value: JSValue = if arguments.len > 1 {
+        let timestamp_value: Local<'s> = if arguments.len > 1 {
             arguments.ptr[1]
         } else if arguments.len == 1 && encoding_value.is_undefined() {
             arguments.ptr[0]
         } else {
-            JSValue::UNDEFINED
+            scope.undefined()
         };
 
         if !timestamp_value.is_undefined() {
@@ -182,16 +185,16 @@ pub(crate) fn bun_random_uuid_v7(
             if timestamp_value.is_date() {
                 let date = timestamp_value.get_unix_timestamp();
                 if !date.is_finite() || date < 0.0 || date > MAX_TIMESTAMP as f64 {
-                    return Err(global.throw_range_error(date, range_opts));
+                    return Err(scope.throw_range_error(date, range_opts));
                 }
                 break 'brk (date as u64, uuid::TimestampSource::Explicit);
             }
             if timestamp_value.is_number() && timestamp_value.as_number().is_nan() {
-                return Err(global.throw_range_error(f64::NAN, range_opts));
+                return Err(scope.throw_range_error(f64::NAN, range_opts));
             }
             break 'brk (
                 u64::try_from(global.validate_integer_range::<i64>(
-                    timestamp_value,
+                    timestamp_value.unscoped(),
                     0,
                     bun_jsc::IntegerRange {
                         min: 0,
@@ -212,7 +215,7 @@ pub(crate) fn bun_random_uuid_v7(
     };
 
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
+    let entropy = scope.bun_vm().as_mut().rare_data().entropy_slice(10);
 
     let uuid = UUID7::init(
         timestamp,
@@ -227,21 +230,24 @@ pub(crate) fn bun_random_uuid_v7(
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        return str.transfer_to_js(global);
+        return str.transfer_to_js(global).map(|v| scope.local(v));
     }
 
-    encoding.encode_with_max_size(global, 32, &uuid.bytes)
+    encoding
+        .encode_with_max_size(global, 32, &uuid.bytes)
+        .map(|v| scope.local(v))
 }
 
-#[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]
-pub(crate) fn bun_random_uuid_v5(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped, export = "Bun__randomUUIDv5")]
+pub(crate) fn bun_random_uuid_v5<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_undef::<3>();
+) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<3>(scope);
 
     if arguments.len == 0 || arguments.ptr[0].is_undefined_or_null() {
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"name\" argument must be specified"),
@@ -250,7 +256,7 @@ pub(crate) fn bun_random_uuid_v5(
     }
 
     if arguments.len < 2 || arguments.ptr[1].is_undefined_or_null() {
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"namespace\" argument must be specified"),
@@ -261,10 +267,10 @@ pub(crate) fn bun_random_uuid_v5(
     let encoding: Encoding = 'brk: {
         if arguments.len > 2 && !arguments.ptr[2].is_undefined() {
             if arguments.ptr[2].is_string() {
-                break 'brk match Encoding::from_js(arguments.ptr[2], global)? {
+                break 'brk match Encoding::from_js(arguments.ptr[2].unscoped(), global)? {
                     Some(e) => e,
                     None => {
-                        return Err(global
+                        return Err(scope
                             .err(
                                 bun_jsc::ErrorCode::UNKNOWN_ENCODING,
                                 format_args!(
@@ -286,15 +292,15 @@ pub(crate) fn bun_random_uuid_v5(
     // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
     let name: bun_core::ZigStringSlice = 'brk: {
         if name_value.is_string() {
-            let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);
+            let name_str = bun_core::OwnedString::new(name_value.to_bun_string(scope)?);
             let result = name_str.to_utf8();
 
             break 'brk result;
-        } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
+        } else if let Some(array_buffer) = name_value.unscoped().as_array_buffer(global) {
             let bytes: &[u8] = array_buffer.byte_slice();
             break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
         } else {
-            return Err(global
+            return Err(scope
                 .err(
                     bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                     format_args!("The \"name\" argument must be of type string or BufferSource"),
@@ -306,7 +312,7 @@ pub(crate) fn bun_random_uuid_v5(
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {
-            let namespace_str = bun_core::OwnedString::new(namespace_value.to_bun_string(global)?);
+            let namespace_str = bun_core::OwnedString::new(namespace_value.to_bun_string(scope)?);
             let namespace_slice = namespace_str.to_utf8();
 
             if namespace_slice.slice().len() != 36 {
@@ -314,7 +320,7 @@ pub(crate) fn bun_random_uuid_v5(
                     break 'brk *namespace;
                 }
 
-                return Err(global
+                return Err(scope
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Invalid UUID format for namespace"),
@@ -323,7 +329,7 @@ pub(crate) fn bun_random_uuid_v5(
             }
 
             let Ok(parsed_uuid) = UUID::parse(namespace_slice.slice()) else {
-                return Err(global
+                return Err(scope
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Invalid UUID format for namespace"),
@@ -331,10 +337,10 @@ pub(crate) fn bun_random_uuid_v5(
                     .throw());
             };
             break 'brk parsed_uuid.bytes;
-        } else if let Some(array_buffer) = namespace_value.as_array_buffer(global) {
+        } else if let Some(array_buffer) = namespace_value.unscoped().as_array_buffer(global) {
             let slice: &[u8] = array_buffer.byte_slice();
             if slice.len() != 16 {
-                return Err(global
+                return Err(scope
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!("Namespace must be exactly 16 bytes"),
@@ -344,7 +350,7 @@ pub(crate) fn bun_random_uuid_v5(
             break 'brk <[u8; 16]>::try_from(&slice[0..16]).unwrap();
         }
 
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"namespace\" argument must be a string or buffer"),
@@ -361,10 +367,12 @@ pub(crate) fn bun_random_uuid_v5(
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        return str.transfer_to_js(global);
+        return str.transfer_to_js(global).map(|v| scope.local(v));
     }
 
-    encoding.encode_with_max_size(global, 32, &uuid.bytes)
+    encoding
+        .encode_with_max_size(global, 32, &uuid.bytes)
+        .map(|v| scope.local(v))
 }
 
 #[unsafe(no_mangle)]

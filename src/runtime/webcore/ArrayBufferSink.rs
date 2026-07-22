@@ -162,43 +162,43 @@ impl ArrayBufferSink {
             return Ok(value);
         }
 
-        // Take ownership of the bytes, leaving an empty Vec in place.
+        // Take ownership of the bytes, leaving an empty Vec in place;
+        // ownership of the allocation transfers to JSC.
         let mut bytes = core::mem::take(&mut self.bytes);
-        // `to_js_unchecked`, not `to_js`: `to_js`'s `mi_is_in_heap_region`
-        // probe skips the deallocator when the global allocator isn't mimalloc.
-        let owned = bytes.to_owned_slice();
-        ArrayBuffer::from_owned_bytes(
-            owned,
+        bun_jsc::array_buffer::js_from_owned_slice(
+            global_this,
             if as_uint8array {
                 JSType::Uint8Array
             } else {
                 JSType::ArrayBuffer
             },
+            bytes.to_owned_slice(),
         )
-        .to_js_unchecked(global_this)
     }
 
-    pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<ArrayBuffer> {
+    pub fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         if self.done {
-            return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
+            return Ok(
+                ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, b"")
+                    .unwrap_or(JSValue::ZERO),
+            );
         }
 
         self.done = true;
         self.signal.close(None);
-        // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
+        // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty;
+        // ownership of the allocation transfers to JSC.
         let mut bytes = core::mem::take(&mut self.bytes);
-        // Ownership transfers to JSC; the caller wraps the returned
-        // `ArrayBuffer` in `.to_js()` which installs `MarkedArrayBuffer_deallocator`
-        // (frees via `mi_free` on GC). See `to_js` above.
-        let owned = bytes.to_owned_slice();
-        Ok(ArrayBuffer::from_owned_bytes(
-            owned,
+        Ok(bun_jsc::array_buffer::js_from_owned_slice(
+            global_this,
             if self.as_uint8array {
                 JSType::Uint8Array
             } else {
                 JSType::ArrayBuffer
             },
-        ))
+            bytes.to_owned_slice(),
+        )
+        .unwrap_or(JSValue::ZERO))
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -241,13 +241,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         Self::end(self, err)
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        match Self::end_from_js(self, global) {
-            bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(global) {
-                Ok(v) => v,
-                Err(_) => JSValue::ZERO,
-            }),
-            bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
-        }
+        Self::end_from_js(self, global)
     }
     fn flush(&mut self) -> bun_sys::Result<()> {
         Self::flush(self)

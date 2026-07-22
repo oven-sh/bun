@@ -53,6 +53,57 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
     unsafe { ZigString__toExternalU16(ptr, len, global) }
 }
 
+/// Safe [`to_external_u16`]: consumes an owned UTF-16 buffer, handing it to
+/// JSC as an external string without copying. Throws `STRING_TOO_LONG`
+/// (returning `Err`) past `BunString::max_length`.
+pub fn external_string_from_utf16(
+    global: &JSGlobalObject,
+    buf: Box<[u16]>,
+) -> crate::JsResult<JSValue> {
+    if buf.is_empty() {
+        // For `len == 0` the raw path returns `jsEmptyString` without ever
+        // freeing — this drop is what releases the (dangling, allocation-
+        // free) box cleanly.
+        return crate::bun_string_jsc::create_utf8_for_js(global, b"");
+    }
+    let len = buf.len();
+    let ptr = Box::into_raw(buf).cast::<u16>();
+    // SAFETY: the just-leaked `Box<[u16]>` is a default-allocator
+    // allocation; ownership transfers to JSC (or is freed on the too-long
+    // path) per the raw function's contract.
+    let v = unsafe { to_external_u16(ptr, len, global) };
+    if v.is_empty() {
+        Err(crate::JsError::Thrown)
+    } else {
+        Ok(v)
+    }
+}
+
+/// [`external_string_from_utf16`] for a `Vec` with possible excess
+/// capacity: no shrink, no copy — the finalizer frees by pointer, which
+/// releases the whole allocation. Prefer this on decode hot paths where
+/// `into_boxed_slice` would realloc.
+pub fn external_string_from_utf16_vec(
+    global: &JSGlobalObject,
+    buf: Vec<u16>,
+) -> crate::JsResult<JSValue> {
+    if buf.is_empty() {
+        // Dropping releases any reserved capacity; the raw path would
+        // strand it (`to_external_u16` never frees for `len == 0`).
+        return crate::bun_string_jsc::create_utf8_for_js(global, b"");
+    }
+    let len = buf.len();
+    let ptr = buf.leak().as_mut_ptr();
+    // SAFETY: the just-leaked `Vec<u16>` is a default-allocator allocation;
+    // ownership transfers to JSC per the raw function's contract.
+    let v = unsafe { to_external_u16(ptr, len, global) };
+    if v.is_empty() {
+        Err(crate::JsError::Thrown)
+    } else {
+        Ok(v)
+    }
+}
+
 /// # Safety
 /// `raw` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]

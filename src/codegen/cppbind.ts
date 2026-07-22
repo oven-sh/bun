@@ -41,6 +41,25 @@ To run manually:
    ```
    Rust usage: `bun_jsc::cpp::process_data(global_this)?;`
 
+### Flags
+
+Effect classification for `bun_jsc::cpp::scoped`. A scoped variant is
+generated **only** for explicitly classified throwing functions — verify the
+implementation before annotating, and leave unclassified functions alone
+(they stay reachable through the unscoped wrappers only):
+
+- **reenters_js** - The function can run user JavaScript (coercions, getters,
+  Proxy traps, thenable resolution). The scoped variant takes `&mut Scope`
+  (exclusive: no JS-heap borrow can be held across the call):
+  ```cpp
+  extern "C" [[ZIG_EXPORT(null_is_throw, reenters_js)]] JSString* to_string(JSValue v, JSGlobalObject* g);
+  ```
+- **no_user_js** - Verified to never run user JavaScript (may still throw /
+  allocate). The scoped variant takes `&Scope`, so it can be called while a
+  JS-heap borrow is live.
+
+The two flags are mutually exclusive, and neither combines with `nothrow`.
+
 ### Parameters
 
 - **[[ZIG_NONNULL]]** - Mark pointer parameters as non-nullable:
@@ -98,6 +117,10 @@ type CppFn = {
   parameters: CppParameter[];
   position: Srcloc;
   tag: ExportTag;
+  /** `[[ZIG_EXPORT(tag, reenters_js)]]` — the function can run user JavaScript. */
+  reentersJs: boolean;
+  /** `[[ZIG_EXPORT(tag, no_user_js)]]` — verified to never run user JavaScript. */
+  noUserJs: boolean;
 };
 type CppParameter = {
   type: CppType;
@@ -353,7 +376,13 @@ function processDeclarator(
   return { type: rootmostType, final: declarator };
 }
 
-function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): CppFn {
+function processFunction(
+  ctx: ParseContext,
+  node: SyntaxNode,
+  tag: ExportTag,
+  reentersJs: boolean,
+  noUserJs: boolean,
+): CppFn {
   // `node` is a FunctionDefinition
   const declarator = processDeclarator(ctx, node);
   const final = declarator.final;
@@ -394,6 +423,8 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
     parameters,
     position: nodePosition(nameNode, ctx),
     tag,
+    reentersJs,
+    noUserJs,
   };
 }
 
@@ -739,6 +770,72 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   );
 }
 
+// Scope-branded variant, emitted into `pub mod scoped`. Only explicitly
+// classified functions get one: `reenters_js` → `&mut Scope`, `no_user_js` →
+// `&Scope`. Unclassified throwing functions are reachable only through the
+// unscoped wrappers, so a missing classification can never produce an
+// unsound `&Scope` signature.
+function generateScopedFn(fn: CppFn, rustScoped: string[]): void {
+  if (fn.tag === "nothrow") return;
+  if (!fn.reentersJs && !fn.noUserJs) return;
+  const globalArg = fn.parameters.find(p => isGlobalObjectPtr(p.type));
+  if (!globalArg) return; // generateRustFn already reported the error
+
+  let needsUnsafe = false;
+  const params: string[] = [`scope: &${fn.reentersJs ? "mut " : ""}crate::scope::Scope<'s>`];
+  const callArgs: string[] = [];
+  for (const p of fn.parameters) {
+    if (p === globalArg) {
+      callArgs.push("scope.unscoped_global()");
+      continue;
+    }
+    const ident = rustIdent(p.name);
+    const handle = opaqueHandleRustType(p.type);
+    const t = generateRustType(p.type, null);
+    if (handle) {
+      params.push(`${ident}: &${handle}`);
+      callArgs.push(ident);
+    } else if (t === "crate::JSValue") {
+      params.push(`${ident}: crate::scope::Local<'s>`);
+      callArgs.push(`${ident}.unscoped()`);
+    } else {
+      if (p.type.type === "pointer" || p.type.type === "fn") needsUnsafe = true;
+      params.push(`${ident}: ${t}`);
+      callArgs.push(ident);
+    }
+  }
+
+  let okType: string;
+  let okExpr: string;
+  if (fn.tag === "zero_is_throw") {
+    okType = `crate::scope::Local<'s>`;
+    okExpr = `scope.local(__r)`;
+  } else if (fn.tag === "false_is_throw") {
+    okType = `()`;
+    okExpr = `__r`;
+  } else if (fn.tag === "null_is_throw") {
+    okType = `core::ptr::NonNull<${generateRustType((fn.returnType as CppType & { type: "pointer" }).child, fn.returnType)}>`;
+    okExpr = `__r`;
+  } else if (fn.tag === "check_slow") {
+    okType = generateRustType(fn.returnType, null);
+    okExpr = `__r`;
+  } else {
+    assertNever(fn.tag);
+  }
+
+  const safeKw = needsUnsafe ? "unsafe " : "";
+  const call = needsUnsafe
+    ? `unsafe { super::${fn.name}(${callArgs.join(", ")}) }`
+    : `super::${fn.name}(${callArgs.join(", ")})`;
+  rustScoped.push(
+    `    #[inline(always)]`,
+    `    pub ${safeKw}fn ${fn.name}<'s>(${params.join(", ")}) -> crate::JsResult<${okType}> {`,
+    `        let __r = ${call}?;`,
+    `        Ok(${okExpr})`,
+    `    }`,
+  );
+}
+
 function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
   while (node) {
     if (node.name === type) return node;
@@ -799,6 +896,7 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       const fnNode = nodeRef.node;
       let zigExportAttr: SyntaxNode | null = null;
       let tagIdentifier: SyntaxNode | null = null;
+      let flagIdentifiers: SyntaxNode[] = [];
 
       for (const attr of fnNode.getChildren("Attribute")) {
         const attrNameNode = attr.getChild("AttributeName");
@@ -806,7 +904,9 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
           zigExportAttr = attr;
           const args = attr.getChild("AttributeArgs");
           if (args) {
-            tagIdentifier = args.getChild("Identifier");
+            const identifiers = args.getChildren("Identifier");
+            tagIdentifier = identifiers[0] ?? null;
+            flagIdentifiers = identifiers.slice(1);
           }
           break;
         }
@@ -814,6 +914,31 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
 
       if (!zigExportAttr || !tagIdentifier) {
         return false; // Not an exported function, prune search
+      }
+
+      let reentersJs = false;
+      let noUserJs = false;
+      for (const flag of flagIdentifiers) {
+        const flagStr = text(flag, ctx);
+        if (flagStr === "reenters_js") {
+          if (reentersJs) {
+            appendError(nodePosition(flag, ctx), "duplicate reenters_js flag");
+          }
+          reentersJs = true;
+        } else if (flagStr === "no_user_js") {
+          if (noUserJs) {
+            appendError(nodePosition(flag, ctx), "duplicate no_user_js flag");
+          }
+          noUserJs = true;
+        } else {
+          appendError(
+            nodePosition(flag, ctx),
+            "unknown ZIG_EXPORT flag (expected reenters_js or no_user_js): " + flagStr,
+          );
+        }
+      }
+      if (reentersJs && noUserJs) {
+        appendError(nodePosition(zigExportAttr, ctx), "reenters_js and no_user_js are mutually exclusive");
       }
 
       queryFoundLines.add(lineInfo.get(zigExportAttr.from).line);
@@ -852,7 +977,19 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       }
 
       try {
-        const result = processFunction(ctx, fnNode, tag);
+        if (reentersJs && tag === "nothrow") {
+          appendError(
+            nodePosition(tagIdentifier, ctx),
+            "reenters_js requires a throwing tag: a function that can run user JS can throw",
+          );
+        }
+        if (noUserJs && tag === "nothrow") {
+          appendError(
+            nodePosition(tagIdentifier, ctx),
+            "no_user_js is only meaningful on throwing tags (nothrow functions get no scoped variant)",
+          );
+        }
+        const result = processFunction(ctx, fnNode, tag, reentersJs, noUserJs);
         allFunctions.push(result);
       } catch (e) {
         appendErrorFromCatch(e, nodePosition(fnNode, ctx));
@@ -952,9 +1089,11 @@ async function main() {
 
   const rustRaw: string[] = [];
   const rustWrap: string[] = [];
+  const rustScoped: string[] = [];
   for (const fn of allFunctions) {
     try {
       generateRustFn(fn, rustRaw, rustWrap);
+      generateScopedFn(fn, rustScoped);
     } catch (e) {
       appendErrorFromCatch(e, fn.position);
     }
@@ -979,7 +1118,14 @@ async function main() {
     rustRaw.join("\n") +
     "\n    }\n}\n\n" +
     rustWrap.join("\n") +
-    "\n";
+    "\n\n" +
+    "/// `Scope`-branded variants of the throwing wrappers above: functions\n" +
+    "/// marked `reenters_js` take `&mut Scope` (they can run user JS), the rest\n" +
+    "/// take `&Scope`; by-value `EncodedJSValue`s become `Local`.\n" +
+    "pub mod scoped {\n" +
+    "    #[allow(unused_imports)] use super::*;\n" +
+    rustScoped.join("\n") +
+    "\n}\n";
   if ((await readFileOrEmpty(rustFilePath)) !== rustContents) {
     await Bun.write(rustFilePath, rustContents);
   }

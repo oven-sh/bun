@@ -138,14 +138,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     #[inline]
     fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_io::EventLoopCtx {
-        // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
-        // it from `bun_vm_ptr()` (the FFI `*mut VirtualMachine`) rather than
-        // `bun_vm()`'s `&VirtualMachine`, so the stored pointer carries write
-        // provenance instead of being
-        // laundered through a shared-ref `*const _ as *mut` hop — the vtable
-        // slots (`file_polls`, `set_after_event_loop_callback`) write through
-        // it.
-        unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm_ptr()) }
+        // `loop_ctx` sources the stored owner pointer from the per-thread VM
+        // singleton, so it carries write provenance for the vtable slots
+        // (`file_polls`, `set_after_event_loop_callback`) that write through it.
+        global_this.bun_vm().loop_ctx()
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {

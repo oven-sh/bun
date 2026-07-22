@@ -2,8 +2,8 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
-    RangeErrorOptions,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, Local, MarkedArgumentBuffer,
+    RangeErrorOptions, Scope,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
@@ -112,39 +112,43 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
 /// shrink the parser's block-metadata cap so its `TooManyBlocks` error is
 /// testable without 4 GiB of input. Returns the previous limit.
-#[bun_jsc::host_fn]
-pub(crate) fn set_max_markdown_block_bytes_for_testing(
-    global_this: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn set_max_markdown_block_bytes_for_testing<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [limit_value] = callframe.arguments_as_array::<1>();
+) -> JsResult<Local<'s>> {
+    let limit_value = callframe.scoped_argument(scope, 0);
     if !limit_value.is_number() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
+        return Err(scope.throw_invalid_arguments(format_args!(
             "setMaxMarkdownBlockBytesForTesting expects a number"
         )));
     }
-    let limit = usize::try_from(limit_value.coerce_to_int64(global_this)?.max(0))
+    let limit = usize::try_from(limit_value.coerce::<i64>(scope)?.max(0))
         .expect("non-negative i64 fits usize");
     let prev = bun_md::parser::set_max_block_bytes_for_testing(limit);
-    Ok(JSValue::js_number(prev as f64))
+    Ok(scope.number(prev as f64))
 }
 
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
 /// light?, columns? }`. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
-#[bun_jsc::host_fn]
-pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, theme_value] = callframe.arguments_as_array::<2>();
+#[bun_jsc::host_fn(scoped)]
+pub fn render_to_ansi<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global_this = scope.unscoped_global();
+    let args = callframe.scoped_arguments::<2>(scope);
+    let (input_value, theme_value) = (args.ptr[0], args.ptr[1]);
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    if input_value.is_undefined_or_null() {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.unscoped())? else {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
@@ -163,21 +167,21 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
         image_base_dir: None,
     };
     if theme_value.is_object() {
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "colors")? {
             theme.colors = v;
         }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "hyperlinks")? {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "hyperlinks")? {
             theme.hyperlinks = v;
         }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "kittyGraphics")? {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "kittyGraphics")? {
             theme.kitty_graphics = v;
         }
-        if let Some(v) = theme_value.get_boolean_loose(global_this, "light")? {
+        if let Some(v) = theme_value.get_boolean_loose(scope, "light")? {
             theme.light = v;
         }
-        if let Some(cols) = theme_value.get(global_this, "columns")? {
+        if let Some(cols) = theme_value.get(scope, "columns")? {
             if cols.is_number() {
-                let n = cols.to_int32();
+                let n = cols.to_int32(scope);
                 theme.columns = if n <= 0 {
                     0
                 } else {
@@ -193,29 +197,33 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             // The parser can only return null via JSError / JSTerminated
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
-            return Err(global_this.throw_out_of_memory());
+            return Err(scope.throw_out_of_memory());
         }
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    Ok(scope.local(create_utf8_for_js(global_this, &result)?))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn render_to_html(
-    global_this: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn render_to_html<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [input_value, opts_value] = callframe.arguments_as_array::<2>();
+) -> JsResult<Local<'s>> {
+    let global_this = scope.unscoped_global();
+    let args = callframe.scoped_arguments::<2>(scope);
+    let (input_value, opts_value) = (args.ptr[0], args.ptr[1]);
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    if input_value.is_undefined_or_null() {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.unscoped())? else {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
@@ -224,14 +232,14 @@ pub(crate) fn render_to_html(
         None => buffer.slice(),
     };
 
-    let options = parse_options(global_this, opts_value)?;
+    let options = parse_options(global_this, opts_value.unscoped())?;
 
     let result = match md::render_to_html_with_options(input, options) {
         Ok(r) => r,
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    Ok(scope.local(create_utf8_for_js(global_this, &result)?))
 }
 
 fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
@@ -307,18 +315,22 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 /// Each callback receives the accumulated children as a string plus an optional
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
-#[bun_jsc::host_fn]
-pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn render<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global_this = scope.unscoped_global();
+    let args = callframe.scoped_arguments::<3>(scope);
+    let (input_value, callbacks_value, opts_value) = (args.ptr[0], args.ptr[1], args.ptr[2]);
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    if input_value.is_undefined_or_null() {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value.unscoped())? else {
+        return Err(
+            scope.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+        );
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
@@ -328,17 +340,17 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
 
     // Parse parser options from 3rd argument
-    let options = parse_options(global_this, opts_value)?;
+    let options = parse_options(global_this, opts_value.unscoped())?;
 
     // Create JS callback renderer
     let mut js_renderer = match JsCallbackRenderer::init(global_this, input, options.heading_ids) {
         Ok(r) => r,
-        Err(_) => return Err(global_this.throw_out_of_memory()),
+        Err(_) => return Err(scope.throw_out_of_memory()),
     };
 
     // Extract callbacks from 2nd argument
     js_renderer.extract_callbacks(if callbacks_value.is_object() {
-        callbacks_value
+        callbacks_value.unscoped()
     } else {
         JSValue::UNDEFINED
     })?;
@@ -350,19 +362,23 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     // Return accumulated result
     let result = js_renderer.get_result();
-    create_utf8_for_js(global_this, result)
+    Ok(scope.local(create_utf8_for_js(global_this, result)?))
 }
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
 // The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
-#[bun_jsc::host_fn]
-pub(crate) fn render_react(
-    global_this: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn render_react<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
+) -> JsResult<Local<'s>> {
+    let global_this = scope.unscoped_global();
+    let v = MarkedArgumentBuffer::new(|marked_args| {
+        render_react_impl(global_this, callframe, marked_args)
+    })?;
+    Ok(scope.local(v))
 }
 
 unsafe extern "C" {

@@ -7,8 +7,8 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Local, MarkedArgumentBuffer, Scope,
+    StringJsc, SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -814,12 +814,13 @@ impl UDPSocket {
         event_loop.exit();
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn set_broadcast(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_broadcast<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global_this = scope.unscoped_global();
         if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -830,15 +831,15 @@ impl UDPSocket {
             ));
         }
 
-        let arguments = callframe.arguments();
-        if arguments.len() < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+        let arguments = callframe.scoped_arguments::<1>(scope);
+        let Some(arg) = arguments.get(0) else {
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Expected 1 argument, got {}",
-                arguments.len()
+                arguments.len
             )));
-        }
+        };
 
-        let enabled = arguments[0].to_boolean();
+        let enabled = arg.to_boolean();
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -855,15 +856,16 @@ impl UDPSocket {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        Ok(arguments[0])
+        Ok(arg)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn set_multicast_loopback(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_multicast_loopback<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global_this = scope.unscoped_global();
         if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -874,15 +876,15 @@ impl UDPSocket {
             ));
         }
 
-        let arguments = callframe.arguments();
-        if arguments.len() < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+        let arguments = callframe.scoped_arguments::<1>(scope);
+        let Some(arg) = arguments.get(0) else {
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Expected 1 argument, got {}",
-                arguments.len()
+                arguments.len
             )));
-        }
+        };
 
-        let enabled = arguments[0].to_boolean();
+        let enabled = arg.to_boolean();
         // On Windows we can observe
         // `closed=false && socket=None` here (panic seen in
         // test-dgram-multicast-loopback.js). Throw EBADF to match the
@@ -903,7 +905,7 @@ impl UDPSocket {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        Ok(arguments[0])
+        Ok(arg)
     }
 
     fn set_membership(
@@ -977,22 +979,24 @@ impl UDPSocket {
         Ok(JSValue::TRUE)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn add_membership(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn add_membership<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::set_membership(this, global_this, callframe, false)
+    ) -> JsResult<Local<'s>> {
+        let v = Self::set_membership(this, scope.unscoped_global(), callframe, false)?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn drop_membership(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn drop_membership<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::set_membership(this, global_this, callframe, true)
+    ) -> JsResult<Local<'s>> {
+        let v = Self::set_membership(this, scope.unscoped_global(), callframe, true)?;
+        Ok(scope.local(v))
     }
 
     fn set_source_specific_membership(
@@ -1101,30 +1105,35 @@ impl UDPSocket {
         Ok(JSValue::TRUE)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn add_source_specific_membership(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn add_source_specific_membership<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::set_source_specific_membership(this, global_this, callframe, false)
+    ) -> JsResult<Local<'s>> {
+        let v =
+            Self::set_source_specific_membership(this, scope.unscoped_global(), callframe, false)?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn drop_source_specific_membership(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn drop_source_specific_membership<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::set_source_specific_membership(this, global_this, callframe, true)
+    ) -> JsResult<Local<'s>> {
+        let v =
+            Self::set_source_specific_membership(this, scope.unscoped_global(), callframe, true)?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn set_multicast_interface(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_multicast_interface<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global_this = scope.unscoped_global();
         if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -1135,13 +1144,13 @@ impl UDPSocket {
             ));
         }
 
-        let arguments = callframe.arguments();
-        if arguments.len() < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!(
+        let arguments = callframe.scoped_arguments::<1>(scope);
+        let Some(arg) = arguments.get(0) else {
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "Expected 1 argument, got {}",
-                arguments.len()
+                arguments.len
             )));
-        }
+        };
 
         // `parse_addr` only writes the leading sockaddr_in/in6 prefix (≤28
         // bytes), leaving the remaining 100+ bytes uninitialized; producing a
@@ -1155,14 +1164,14 @@ impl UDPSocket {
         if !this.parse_addr(
             global_this,
             JSValue::js_number(0.0),
-            arguments[0],
+            arg.unscoped(),
             &mut addr,
         )? {
-            return Ok(JSValue::FALSE);
+            return Ok(scope.boolean(false));
         }
 
         let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
+            return Err(scope.throw(format_args!("Socket is closed")));
         };
 
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
@@ -1172,35 +1181,37 @@ impl UDPSocket {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        Ok(JSValue::TRUE)
+        Ok(scope.boolean(true))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn set_ttl(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_ttl<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::set_any_ttl(
+    ) -> JsResult<Local<'s>> {
+        let v = Self::set_any_ttl(
             this,
-            global_this,
+            scope.unscoped_global(),
             callframe,
             uws::udp::Socket::set_unicast_ttl,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn set_multicast_ttl(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_multicast_ttl<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::set_any_ttl(
+    ) -> JsResult<Local<'s>> {
+        let v = Self::set_any_ttl(
             this,
-            global_this,
+            scope.unscoped_global(),
             callframe,
             uws::udp::Socket::set_multicast_ttl,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
     fn set_any_ttl(
@@ -1241,12 +1252,13 @@ impl UDPSocket {
         Ok(JSValue::js_number(ttl as f64))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn send_many(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn send_many<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global_this = scope.unscoped_global();
         // Iterating the input array can run arbitrary user JS: `iter.next()`'s
         // slow path hits `JSObject.getIndex`, and `parseAddr` calls
         // `port.coerceToInt32()` / `address.toBunString()`. That JS can drop
@@ -1283,7 +1295,7 @@ impl UDPSocket {
             result: Ok(JSValue::UNDEFINED),
         };
         MarkedArgumentBuffer::run(&mut ctx, run);
-        ctx.result
+        ctx.result.map(|v| scope.local(v))
     }
 
     fn send_many_impl(
@@ -1456,14 +1468,15 @@ impl UDPSocket {
         Ok(JSValue::js_number(res as f64))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn send(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn send<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global_this = scope.unscoped_global();
         if this.closed.get() {
-            return Err(global_this.throw(format_args!("Socket is closed")));
+            return Err(scope.throw(format_args!("Socket is closed")));
         }
         let arguments = callframe.arguments_old::<3>();
         let dst: Option<Destination> = 'brk: {
@@ -1472,17 +1485,17 @@ impl UDPSocket {
                     break 'brk None;
                 }
                 if arguments.len == 3 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
+                    return Err(scope.throw_invalid_arguments(format_args!(
                         "Cannot specify destination on connected socket"
                     )));
                 }
-                return Err(global_this.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected 1 argument, got {}",
                     arguments.len
                 )));
             } else {
                 if arguments.len != 3 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
+                    return Err(scope.throw_invalid_arguments(format_args!(
                         "Expected 3 arguments, got {}",
                         arguments.len
                     )));
@@ -1505,9 +1518,7 @@ impl UDPSocket {
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
                 if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {
-                    return Err(
-                        global_this.throw_invalid_arguments(format_args!("Invalid address"))
-                    );
+                    return Err(scope.throw_invalid_arguments(format_args!("Invalid address")));
                 }
                 break 'brk (&raw const addr).cast::<c_void>();
             } else {
@@ -1536,14 +1547,14 @@ impl UDPSocket {
                 payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
                 break 'brk payload_str.slice();
             } else {
-                return Err(global_this.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "Expected ArrayBufferView or string as first argument"
                 )));
             }
         };
 
         let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
+            return Err(scope.throw(format_args!("Socket is closed")));
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         let res = uws::udp::Socket::opaque_mut(socket).send(
@@ -1555,7 +1566,7 @@ impl UDPSocket {
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
-        Ok(JSValue::from(res > 0))
+        Ok(scope.boolean(res > 0))
     }
 
     fn parse_addr(
@@ -1676,14 +1687,13 @@ impl UDPSocket {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let _ = global_this;
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn ref_<'s>(this: &Self, scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {
         if !this.closed.get() {
             this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     /// Codegen calls `UDPSocket::r#ref` (raw-ident lowering of JS `ref`).
@@ -1696,19 +1706,18 @@ impl UDPSocket {
         Self::ref_(this, global_this, frame)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn unref(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let _ = global_this;
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn unref<'s>(this: &Self, scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn close<'s>(this: &Self, scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {
         if !this.closed.get() {
             let Some(socket) = this.socket.take() else {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(scope.undefined());
             };
             // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
             // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
@@ -1726,52 +1735,53 @@ impl UDPSocket {
             uws::udp::Socket::opaque_mut(socket).close();
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn reload(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn reload<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
+    ) -> JsResult<Local<'s>> {
+        let global_this = scope.unscoped_global();
+        let args = callframe.scoped_arguments::<1>(scope);
 
-        if args.len < 1 {
-            return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument")));
-        }
-
-        let options = args.ptr[0];
-        let Some(this_value) = this.this_value.get().try_get() else {
-            return Ok(JSValue::UNDEFINED);
+        let Some(options) = args.get(0) else {
+            return Err(scope.throw_invalid_arguments(format_args!("Expected 1 argument")));
         };
-        let config = UDPSocketConfig::from_js(global_this, options, this_value)?;
+
+        let Some(this_value) = this.this_value.get().try_get() else {
+            return Ok(scope.undefined());
+        };
+        let config = UDPSocketConfig::from_js(global_this, options.unscoped(), this_value)?;
 
         let _ = this.config.replace(config);
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_closed(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.closed.get())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_closed<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.boolean(this.closed.get()))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_hostname(this: &Self, _: &JSGlobalObject) -> JsResult<JSValue> {
-        this.config.get().hostname.to_js(this.global_this.get())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_hostname<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = this.config.get().hostname.to_js(this.global_this.get())?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_port(this: &Self, _: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_port<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         }
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
+        Ok(scope.number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64))
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
@@ -1782,13 +1792,13 @@ impl UDPSocket {
         sockaddr.into_dto(global_this).unwrap_or(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_address<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         }
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1798,23 +1808,24 @@ impl UDPSocket {
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         let port = socket.bound_port();
-        Self::create_sock_addr(
-            global_this,
+        let v = Self::create_sock_addr(
+            scope.unscoped_global(),
             address_bytes,
             u16::try_from(port).expect("int cast"),
-        )
+        );
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_remote_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_remote_address<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         }
         let Some(connect_info) = this.connect_info.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1822,17 +1833,20 @@ impl UDPSocket {
         uws::udp::Socket::opaque_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
-        Self::create_sock_addr(global_this, address_bytes, connect_info.port)
+        let v = Self::create_sock_addr(scope.unscoped_global(), address_bytes, connect_info.port);
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_binary_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(match this.config.get().binary_type {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_binary_type<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let global_this = scope.unscoped_global();
+        let v = match this.config.get().binary_type {
             BinaryType::Buffer => global_this.common_strings().buffer(),
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
             BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
             _ => panic!("Invalid binary type"),
-        })
+        };
+        Ok(scope.local(v))
     }
 
     pub fn finalize(self: Box<Self>) {

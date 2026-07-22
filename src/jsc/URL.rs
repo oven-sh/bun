@@ -118,7 +118,8 @@ impl URL {
     }
 
     // Kept as explicit destroy (not Drop) — URL is an opaque #[repr(C)] FFI
-    // handle constructed/destroyed across the C++ boundary.
+    // handle constructed/destroyed across the C++ boundary. Prefer
+    // [`OwnedUrl`], which pairs construction with destruction.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` is a valid *URL from C++; freed exactly once
         unsafe { URL__deinit(this) }
@@ -126,5 +127,36 @@ impl URL {
 
     pub fn pathname(&self) -> String {
         URL__pathname(self)
+    }
+}
+
+/// Owning handle to a C++ `URL`; destroyed exactly once on drop. Replaces
+/// hand-rolled `URL::destroy` scope guards at parse sites.
+pub struct OwnedUrl(NonNull<URL>);
+
+impl OwnedUrl {
+    pub fn parse(input: &[u8]) -> Option<OwnedUrl> {
+        URL::from_utf8(input).map(OwnedUrl)
+    }
+
+    /// Adopt an owned `*URL` returned by `URL::from_js`/`from_string`.
+    pub fn adopt(ptr: NonNull<URL>) -> OwnedUrl {
+        OwnedUrl(ptr)
+    }
+}
+
+impl core::ops::Deref for OwnedUrl {
+    type Target = URL;
+
+    fn deref(&self) -> &URL {
+        // SAFETY: `self.0` is the live, exclusively-owned C++ URL.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl Drop for OwnedUrl {
+    fn drop(&mut self) {
+        // SAFETY: exclusively owned; freed exactly once.
+        unsafe { URL::destroy(self.0.as_ptr()) }
     }
 }

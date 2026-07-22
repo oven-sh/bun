@@ -2,7 +2,9 @@ use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
 use bun_js_parser::lexer;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope, wtf,
+};
 use bun_parsers::json5;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -15,37 +17,40 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     )
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [value, replacer, space_value] = frame.arguments_as_array::<3>();
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn stringify<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let [value, replacer, space_value] = frame.scoped_arguments::<3>(scope).ptr;
 
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "JSON5.stringify does not support the replacer argument"
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let mut stringifier = Stringifier::init(global, space_value.unscoped())?;
 
-    if let Err(err) = stringifier.stringify_value(global, value) {
+    if let Err(err) = stringifier.stringify_value(global, value.unscoped()) {
         return match err {
             StringifyError::Js(js_err) => Err(js_err),
             StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
         };
     }
 
-    stringifier.builder.to_string(global)
+    let v = stringifier.builder.to_string(global)?;
+    Ok(scope.local(v))
 }
 
-#[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(
+#[bun_jsc::host_fn(scoped)]
+pub fn parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let v = super::with_text_format_source(
         global,
         frame,
         b"input.json5",
@@ -76,7 +81,8 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
             super::expr_to_js(root, global)
         },
-    )
+    )?;
+    Ok(scope.local(v))
 }
 
 struct Stringifier {

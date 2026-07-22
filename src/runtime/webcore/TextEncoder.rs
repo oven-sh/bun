@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_core::strings;
 use bun_jsc::js_string::Iterator as JSStringIterator;
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSString, JSType, JSValue, JsResult};
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
 
@@ -102,10 +102,15 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         return uint8array;
     }
 
+    // The Vec's capacity exceeds its length (transcoding over-reserves);
+    // `from_vec` transfers the whole allocation with no shrink or owner box.
     let bytes = strings::to_utf8_alloc_with_type(slice);
-    ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
-        .to_js_unchecked(global_this)
-        .unwrap_or(JSValue::ZERO)
+    bun_jsc::array_buffer::typed_array_from_vec(
+        global_this,
+        JSType::Uint8Array.to_typed_array_type(),
+        bytes,
+    )
+    .unwrap_or(JSValue::ZERO)
 }
 
 /// # Safety

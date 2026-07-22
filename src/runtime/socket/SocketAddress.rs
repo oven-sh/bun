@@ -11,7 +11,9 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{OwnedString, String as BunString, ZStr};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, Local, Scope, StringJsc, URL,
+};
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the one
@@ -212,12 +214,8 @@ impl SocketAddress {
         let Some(url_ptr) = URL::from_string(url_str.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: URL::from_string returns an owned C++ heap pointer; freed exactly once via destroy().
-        let _url_guard = scopeguard::guard(url_ptr, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_url_guard` keeps the C++ allocation live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let url = bun_ptr::BackRef::from(url_ptr);
+        // Owns the C++ URL; destroyed exactly once on drop (early returns included).
+        let url = bun_jsc::url::OwnedUrl::adopt(url_ptr);
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();
@@ -572,17 +570,18 @@ unsafe extern "C" {
 // =============================================================================
 
 impl SocketAddress {
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_address(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_address<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // toJS increments ref count
         let addr_ = this.address();
         Ok(match addr_.tag() {
             bun_core::Tag::Dead => unreachable!(),
             bun_core::Tag::Empty => match this.family() {
-                AF::INET => global.common_strings().in4_loopback(),
-                AF::INET6 => global.common_strings().in6_any(),
+                AF::INET => scope.local(global.common_strings().in4_loopback()),
+                AF::INET6 => scope.local(global.common_strings().in6_any()),
             },
-            _ => addr_.to_js(global)?,
+            _ => scope.local(addr_.to_js(global)?),
         })
     }
 
@@ -617,18 +616,19 @@ impl SocketAddress {
     ///
     /// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
     /// use `"IPv4"` and `"IPv6"`. This is annoying.
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_family(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_family<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         Ok(match this.family() {
-            AF::INET => global.common_strings().ipv4_lower(),
-            AF::INET6 => global.common_strings().ipv6_lower(),
+            AF::INET => scope.local(global.common_strings().ipv4_lower()),
+            AF::INET6 => scope.local(global.common_strings().ipv6_lower()),
         })
     }
 
     /// `sockaddr.addrfamily`
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_addr_family(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(this.family().int()))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_addr_family<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(f64::from(this.family().int())))
     }
 
     /// NOTE: this returns whatever address-family value the system uses,
@@ -646,9 +646,9 @@ impl SocketAddress {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(this.port()))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_port<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(f64::from(this.port())))
     }
 
     /// Get the port number in host byte order.
@@ -657,9 +657,9 @@ impl SocketAddress {
         u16::from_be(self._addr.port_raw())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_flow_label(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(this.flow_label().unwrap_or(0)))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_flow_label<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(f64::from(this.flow_label().unwrap_or(0))))
     }
 
     /// Returns `None` for non-IPv6 addresses.
@@ -674,8 +674,13 @@ impl SocketAddress {
         mem::size_of::<SocketAddress>() + self._presentation.get().estimated_size()
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn to_json<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         // `jsc.JSObject.create` requires a `PojoFields` impl, so use a local
         // struct.
         struct ToJson {
@@ -704,7 +709,7 @@ impl SocketAddress {
             port: JSValue::js_number(f64::from(this.port())),
             flowlabel: JSValue::js_number(f64::from(this.flow_label().unwrap_or(0))),
         };
-        Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
+        Ok(scope.local(bun_jsc::JSObject::create(&pojo, global)?.to_js()))
     }
 }
 

@@ -657,6 +657,19 @@ impl JSValue {
             )
         }
     }
+    /// Safe form of [`JSValue::create_buffer_with_ctx`]: the [`ForeignBytes`]
+    /// carries the (already-audited) ownership contract, so this call is just
+    /// the hand-off. JSC's finalizer runs `free(ptr, ctx)` exactly once; the
+    /// `ForeignBytes` `Drop` is suppressed here. The underlying binding
+    /// asserts the no-throw contract on the C++ side, so there is no error
+    /// path on which the bytes could be double-freed or leaked.
+    pub fn create_buffer_from_foreign(global: &JSGlobalObject, bytes: ForeignBytes) -> JSValue {
+        let bytes = core::mem::ManuallyDrop::new(bytes);
+        // SAFETY: `ForeignBytes::new`'s contract is exactly
+        // `create_buffer_with_ctx`'s (live allocation, freed exactly once by
+        // `free(ptr, ctx)`); `ManuallyDrop` suppresses the second free.
+        unsafe { Self::create_buffer_with_ctx(global, bytes.ptr, bytes.ctx, bytes.free) }
+    }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
     }
@@ -705,6 +718,61 @@ impl JSValue {
         }
     }
 }
+
+/// Bytes owned by a foreign (C) allocator: freed exactly once by `free`
+/// when dropped, unless ownership is handed to JSC first (see
+/// [`JSValue::create_buffer_from_foreign`]). Constructing it is the single
+/// audited unsafe step; everything downstream is safe.
+///
+/// The `free` callback matches `JSTypedArrayBytesDeallocator`:
+/// `free(bytes_ptr, ctx)`.
+pub struct ForeignBytes {
+    ptr: core::ptr::NonNull<[u8]>,
+    ctx: *mut c_void,
+    free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+}
+
+impl ForeignBytes {
+    /// Adopt a foreign allocation.
+    ///
+    /// # Safety
+    /// - `ptr` is a live allocation valid for reads and writes of its full
+    ///   length until `free` runs, and no other owner frees it.
+    /// - `free(ptr.as_ptr(), ctx)` releases the allocation, is sound to call
+    ///   exactly once, and is thread-safe: JSC may collect the wrapping
+    ///   object (and a transferred ArrayBuffer's contents may die) on
+    ///   another thread, so the deallocator must not rely on the
+    ///   constructing thread. This is what backs the `Send` impl.
+    /// - `ctx` remains valid until `free` runs.
+    pub unsafe fn new(
+        ptr: core::ptr::NonNull<[u8]>,
+        ctx: *mut c_void,
+        free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    ) -> Self {
+        Self { ptr, ctx, free }
+    }
+
+    /// The owned byte window. Suitable as the `view` callback body for
+    /// `array_buffer::typed_array_from_owner` and friends: the target of
+    /// `ptr` is heap-stable for the owner's lifetime.
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: `new`'s contract — live, uniquely owned, valid for
+        // reads/writes until `free` runs.
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
+impl Drop for ForeignBytes {
+    fn drop(&mut self) {
+        // SAFETY: `new`'s contract — `free(ptr, ctx)` releases the allocation
+        // and this is its only call (JSC hand-off suppresses this Drop).
+        unsafe { (self.free)(self.ptr.as_ptr().cast::<c_void>(), self.ctx) }
+    }
+}
+
+// SAFETY: `new` requires `free` (and `ctx`) to be thread-safe, and the bytes
+// are uniquely owned — no shared mutable state.
+unsafe impl Send for ForeignBytes {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Conversions.

@@ -5068,7 +5068,7 @@ it("fs.mkdirSync recursive: false should error when the directory already exists
 
 it("fs.statfsSync should work", () => {
   const stats = statfsSync(import.meta.path);
-  ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
+  ["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeNumber();
   });
@@ -5084,7 +5084,7 @@ it("fs.statfsSync should work", () => {
   }
 
   const bigIntStats = statfsSync(import.meta.path, { bigint: true });
-  ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
+  ["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(bigIntStats).toHaveProperty(k);
     expect(bigIntStats[k]).toBeTypeOf("bigint");
   });
@@ -5092,6 +5092,27 @@ it("fs.statfsSync should work", () => {
     expect(bigIntStats.bsize > 0n).toBe(true);
     expect(bigIntStats.blocks > 0n).toBe(true);
   }
+});
+
+it("fs.statfsSync .frsize is populated", () => {
+  const stats = statfsSync(import.meta.path);
+  expect(stats.frsize).toBeNumber();
+  expect(stats.frsize).toBeGreaterThan(0);
+  // POSIX says block counts are in units of f_frsize; this must be finite.
+  expect(Number.isFinite(Number(stats.bavail) * Number(stats.frsize))).toBe(true);
+  if (!isLinux) {
+    expect(stats.frsize).toBe(stats.bsize);
+  }
+
+  const big = statfsSync(import.meta.path, { bigint: true });
+  expect(big.frsize).toBeTypeOf("bigint");
+  expect(big.frsize > 0n).toBe(true);
+  if (!isLinux) {
+    expect(big.frsize).toBe(big.bsize);
+  }
+
+  expect(Object.keys(stats)).toEqual(["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"]);
+  expect(Object.keys(big)).toEqual(["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"]);
 });
 
 it("fs.promises.statfs should work", async () => {
@@ -5121,7 +5142,7 @@ it("fs.statfs (callback) should work with bigint", async () => {
   });
   const stats = await promise;
   expect(stats).toBeDefined();
-  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
+  for (const k of ["type", "bsize", "frsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeTypeOf("bigint");
   }

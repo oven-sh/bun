@@ -21,6 +21,7 @@ macro_rules! define_statfs_type {
             // Common fields between Linux and macOS
             pub _fstype: $Int,
             pub _bsize: $Int,
+            pub _frsize: $Int,
             pub _blocks: $Int,
             pub _bfree: $Int,
             pub _bavail: $Int,
@@ -40,6 +41,7 @@ macro_rules! define_statfs_type {
                             global,
                             self._fstype as i64,
                             self._bsize as i64,
+                            self._frsize as i64,
                             self._blocks as i64,
                             self._bfree as i64,
                             self._bavail as i64,
@@ -53,6 +55,7 @@ macro_rules! define_statfs_type {
                     global,
                     self._fstype as i64,
                     self._bsize as i64,
+                    self._frsize as i64,
                     self._blocks as i64,
                     self._bfree as i64,
                     self._bavail as i64,
@@ -78,6 +81,12 @@ macro_rules! define_statfs_type {
                     statfs_.f_files,
                     statfs_.f_ffree,
                 );
+                // Only Linux's `struct statfs` has a distinct `f_frsize`; on other
+                // platforms libuv (and Node) report `f_bsize` for this field.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                let frsize_ = statfs_.f_frsize;
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let frsize_ = bsize_;
                 #[cfg(target_arch = "wasm32")]
                 compile_error!("Unsupported OS");
 
@@ -87,6 +96,7 @@ macro_rules! define_statfs_type {
                 Self {
                     _fstype: (fstype_ as i64) as $Int,
                     _bsize: (bsize_ as i64) as $Int,
+                    _frsize: (frsize_ as i64) as $Int,
                     _blocks: (blocks_ as i64) as $Int,
                     _bfree: (bfree_ as i64) as $Int,
                     _bavail: (bavail_ as i64) as $Int,
@@ -103,6 +113,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         fstype: i64,
         bsize: i64,
+        frsize: i64,
         blocks: i64,
         bfree: i64,
         bavail: i64,
@@ -114,6 +125,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         fstype: i64,
         bsize: i64,
+        frsize: i64,
         blocks: i64,
         bfree: i64,
         bavail: i64,

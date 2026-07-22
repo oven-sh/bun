@@ -733,11 +733,95 @@ function asyncWrap(fn: any, name: string) {
       return this.close();
     }
 
-    readableWebStream(_options = kEmptyObject) {
-      const fd = this[kFd];
-      throwEBADFIfNecessary("readableWebStream", fd);
+    readableWebStream(options = kEmptyObject) {
+      if (this[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
+      if (this[kClosePromise]) throw $ERR_INVALID_STATE("The FileHandle is closing");
+      if (this[kLocked]) throw $ERR_INVALID_STATE("The FileHandle is locked");
 
-      return Bun.file(fd).stream();
+      validateObject(options, "options");
+      const { type = "bytes", autoClose = false } = options;
+
+      validateBoolean(autoClose, "options.autoClose");
+
+      if (type !== "bytes") {
+        process.emitWarning(
+          'A non-"bytes" options.type has no effect. A byte-oriented steam is ' + "always created.",
+          "ExperimentalWarning",
+        );
+      }
+
+      this[kLocked] = true;
+
+      const handle = this;
+      let done = false;
+      let streamController;
+
+      const ondone = async () => {
+        if (done) return;
+        done = true;
+        handle.removeListener("close", onClose);
+        handle[kUnref]();
+        if (autoClose) await handle.close();
+      };
+
+      const readable = new ReadableStream({
+        type: "bytes",
+        autoAllocateChunkSize: 16384,
+
+        start(controller) {
+          streamController = controller;
+        },
+
+        async pull(controller) {
+          if (done) return;
+          try {
+            const view = controller.byobRequest.view;
+            const { bytesRead } = await handle.read(view, 0, view.byteLength);
+
+            if (done) {
+              // fh.close() fired while the read was in flight; onClose already
+              // closed the controller. Settle any pending BYOB read (the
+              // buffer is now unpinned, so this succeeds where onClose's
+              // attempt may have thrown).
+              try {
+                controller.byobRequest?.respond(0);
+              } catch {}
+              return;
+            }
+
+            if (bytesRead === 0) {
+              controller.close();
+              await ondone();
+            }
+
+            controller.byobRequest.respond(bytesRead);
+          } catch (err) {
+            await ondone();
+            throw err;
+          }
+        },
+
+        async cancel() {
+          await ondone();
+        },
+      });
+
+      // close() emits 'close' before the fd is released (the stream holds a
+      // ref); end the stream here so kUnref lets the pending close resolve.
+      function onClose() {
+        if (done) return;
+        done = true;
+        try {
+          streamController.close();
+          streamController.byobRequest?.respond(0);
+        } catch {}
+        handle[kUnref]();
+      }
+
+      this[kRef]();
+      this.once("close", onClose);
+
+      return readable;
     }
 
     createReadStream(options = kEmptyObject) {

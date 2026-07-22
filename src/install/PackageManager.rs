@@ -2159,7 +2159,7 @@ pub fn init(
             holder::ABS_CA_FILE_NAME.set(abs_ca_file_name.into_vec_with_nul().into_boxed_slice());
         holder::ABS_CA_FILE_NAME.get().map(|b| &**b).unwrap_or(b"")
     };
-    http::http_thread::init(&http::http_thread::InitOpts {
+    http::http_thread::init_or_crash(&http::http_thread::InitOpts {
         ca: ca_ptrs,
         abs_ca_file_name: abs_ca_file_name_static,
         on_init_error: http_thread_on_init_error,

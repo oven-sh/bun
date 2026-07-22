@@ -460,8 +460,11 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
     // real errno name so resolve.test.ts sees `EACCES` not `Unexpected`). Keep
     // both sides byte-identical or the `Result` layout diverges.
     //
-    // Idempotent.
-    bun_http::http_thread::init(&Default::default());
+    // Idempotent. EAGAIN mirrors the errno pthread_create/CreateThread report
+    // under resource exhaustion, the only way init() fails.
+    if bun_http::http_thread::init(&Default::default()).is_err() {
+        return Err(bun_errno::SystemErrno::EAGAIN);
+    }
 
     // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.

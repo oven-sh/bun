@@ -377,7 +377,17 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     // fields) if `fetch.preconnect()` is the process's first HTTP operation.
     // `init` is idempotent (`Once`) and every other JS-side entry point
     // (`send_sync`, `FetchTasklet::start`, S3) passes default opts too.
-    crate::http_thread::init(&Default::default());
+    if crate::http_thread::init(&Default::default()).is_err() {
+        // Preconnect is a best-effort hint; drop it silently if the HTTP
+        // client thread could not be started. The first real fetch() will
+        // surface the error to JS.
+        if is_url_owned {
+            // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
+            // global-allocator `Box<[u8]>` we now own.
+            unsafe { free_owned_href(url.href) };
+        }
+        return;
+    }
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
@@ -624,7 +634,9 @@ fn send_sync_callback(
 
 impl<'a> AsyncHTTP<'a> {
     pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
-        crate::http_thread::init(&Default::default());
+        if crate::http_thread::init(&Default::default()).is_err() {
+            return Err(crate::Error::FailedToStartHTTPClientThread);
+        }
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once

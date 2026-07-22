@@ -838,7 +838,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if preconnect.is_empty() {
             return;
         }
-        bun_http::http_thread::init(&Default::default());
+        if bun_http::http_thread::init(&Default::default()).is_err() {
+            // Preconnect is a best-effort hint; the first real fetch() will
+            // surface the spawn failure to JS.
+            return;
+        }
 
         for url_str in preconnect {
             // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
@@ -3248,7 +3252,10 @@ impl RunCommand {
             return;
         }
 
-        bun_http::http_thread::init(&Default::default());
+        if bun_http::http_thread::init(&Default::default()).is_err() {
+            // Best-effort prefetch; markdown renders with alt-text fallback.
+            return;
+        }
 
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).

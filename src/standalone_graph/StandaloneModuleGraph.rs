@@ -1524,7 +1524,7 @@ pub(crate) fn download_to_path(
     env: &mut bun_dotenv::Loader<'_>,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
-    bun_http::http_thread::init(&Default::default());
+    bun_http::http_thread::init_or_crash(&Default::default());
     let mut refresher = bun_core::Progress::Progress::default();
 
     {

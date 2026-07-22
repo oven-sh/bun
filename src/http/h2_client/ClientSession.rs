@@ -1109,7 +1109,10 @@ impl ClientSession {
         if stream.remote_closed() {
             stream.client = None;
             client.h2 = None;
-            client.state.flags.received_last_chunk = true;
+            if let Err(err) = client.state.finalize_body_on_eof() {
+                client.h2_fail(err);
+                return true;
+            }
             return self.finish_stream(stream, client);
         }
 

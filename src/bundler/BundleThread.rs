@@ -371,9 +371,26 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // singleton. `Release` pairs with `enqueue_or_spawn`'s `AcqRel`.
                 unsafe { (*instance_ptr.0).scheduled.fetch_sub(1, Ordering::Release) };
                 // `init_and_run` lazily created this thread's uws loop (via
-                // `MiniEventLoop::init`); free it and its 512 KiB recv buffer.
-                // Mimalloc reclaims this thread's arena pool on thread teardown.
-                bun_uws::on_thread_exit();
+                // `MiniEventLoop::init`); free its 512 KiB recv buffer and the
+                // cork buffers. Mimalloc reclaims this thread's arena pool on
+                // thread teardown; the resolver's per-thread scratch-buffer
+                // boxes free themselves via their `thread_local!` `Drop` slots.
+                #[cfg(not(windows))]
+                {
+                    bun_uws::on_thread_exit();
+                }
+                #[cfg(windows)]
+                {
+                    // `WindowsLoop::get()` passes a non-null `uv_loop_t` hint,
+                    // so `uWS::Loop::get` leaves `cleanMe` false and
+                    // `on_thread_exit` would skip the free. Free the wrapper
+                    // explicitly (queues uv_pre/uv_check/timer/async close
+                    // callbacks and releases recv/send/cork buffers), then
+                    // close this thread's `uv_loop_t` to flush those callbacks
+                    // and release its IOCP handle.
+                    bun_uws::free_loop_wrapper_at_thread_exit();
+                    bun_sys::windows::libuv::Loop::shutdown();
+                }
             })?;
         Ok(())
     }

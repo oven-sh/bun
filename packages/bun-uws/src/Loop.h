@@ -133,6 +133,17 @@ public:
         }
     }
 
+    /* Frees this thread's loop wrapper if one was created, regardless of
+     * cleanMe. Callers that passed a non-null hint to get() (which leaves
+     * cleanMe false) use this to release the wrapper before closing the
+     * native loop they own. */
+    static void freeLoopWrapperAtThreadExit() {
+        if (getLazyLoop().loop) {
+            getLazyLoop().cleanMe = false;
+            getLazyLoop().loop->free();
+        }
+    }
+
     /* Freeing the default loop should be done once */
     void free() {
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);

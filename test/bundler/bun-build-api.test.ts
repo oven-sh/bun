@@ -1590,9 +1590,7 @@ describe("Bun.build concurrency", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("outer done\nlater done\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "outer done\nlater done\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("nested Bun.build inside an onResolve plugin does not deadlock", async () => {
@@ -1632,9 +1630,7 @@ describe("Bun.build concurrency", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("outer done\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "outer done\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("independent Bun.build is not blocked behind another build's slow onLoad", async () => {
@@ -1689,9 +1685,7 @@ describe("Bun.build concurrency", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("fast done\nslow done\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "fast done\nslow done\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("later Bun.build whose plugin awaits an earlier build still completes", async () => {
@@ -1743,8 +1737,6 @@ describe("Bun.build concurrency", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("shared done\napp done\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "shared done\napp done\n", stderr: "", exitCode: 0 });
   });
 });

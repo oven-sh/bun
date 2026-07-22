@@ -11,10 +11,10 @@ use bun_install::lockfile::{
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
     tree,
 };
+use bun_install::package_manager::Options::NodeLinker;
 use bun_install::package_manager_real::{
     PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
 };
-use bun_install::package_manager::Options::NodeLinker;
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
     PackageID, PackageManager, Resolution, ResolutionTag,

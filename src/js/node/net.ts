@@ -848,7 +848,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self.alpnProtocol = socket.alpnProtocol;
     // The native verifier reports a non-OK code when there is no peer certificate,
     // which is the normal case for plain TLS servers.
-    if (self._requestCert) {
+    // Client-cert policy (authorized / auto-reject) only applies to sockets accepted
+    // by a tls.Server: Node wires onServerSocketSecure in tlsConnectionListener, so a
+    // standalone `new TLSSocket(socket, { isServer: true })` never auto-destroys.
+    if (server && self._requestCert) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
@@ -859,7 +862,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           // no tlsClientError - Node's onServerSocketSecure never emits it
           // there and test-tls-sni-option asserts mustNotCall on it for the
           // authorized=false cases.
-          server?.emit("tlsClientError", verifyError, self);
+          server.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)
@@ -910,7 +913,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         // Emit error
         data._emitTLSError(error);
         this.emit("_tlsError", error);
-        this.server.emit("tlsClientError", error, data);
+        // A standalone `new TLSSocket(socket, { isServer: true })` has no
+        // owning server to report to.
+        this.server?.emit("tlsClientError", error, data);
         SocketHandlers.error(socket, error, true);
         return;
       }
@@ -2157,7 +2162,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   // pulled off the fd into the connection's readable buffer; hand them to the
   // TLS engine so the handshake doesn't stall.
   const pending = connection.read();
-  const result = socket.upgradeTLS({
+  // The deferred entry point: like the client path, node:tls keeps
+  // verification policy (authorized / auto-reject) in this JS layer.
+  const result = upgradeTLSDeferred(socket, {
     data: this,
     tls,
     socket: serverHandlersFor(this),

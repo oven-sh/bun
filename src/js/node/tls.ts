@@ -745,6 +745,7 @@ function TLSSocket(socket?, options?) {
   this[ksession] = undefined;
   this.alpnProtocol = null;
   this._secureEstablished = false;
+  this._requestCert = undefined;
   this._rejectUnauthorized = rejectUnauthorizedDefault();
   this._securePending = true;
   this._newSessionPending = undefined;
@@ -797,6 +798,14 @@ function TLSSocket(socket?, options?) {
       }
       this._ALPNCallback = alpnCallback;
     }
+    // Server-side verify settings, applied per socket like Node's
+    // TLSWrap::SetVerifyMode: without these, [buntls] hands
+    // requestCert: undefined to the native layer and the client is never
+    // asked for a certificate. An omitted rejectUnauthorized stays false on
+    // this path (Node only defaults it to true in tls.Server).
+    const requestCert = options.requestCert;
+    if (requestCert) this._requestCert = requestCert;
+    this._rejectUnauthorized = !!options.rejectUnauthorized;
   }
 
   this.ciphers = options.ciphers;
@@ -1093,8 +1102,11 @@ TLSSocket.prototype[buntls] = function (port, host) {
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],
     session: this[ksession],
-    rejectUnauthorized: this._rejectUnauthorized,
-    requestCert: this._requestCert,
+    // Booleans, not undefined: the native config defaults an absent
+    // rejectUnauthorized to the process-wide default, which is wrong for a
+    // server-side wrap where an omitted option means "do not enforce".
+    rejectUnauthorized: !!this._rejectUnauthorized,
+    requestCert: !!this._requestCert,
     ciphers: this.ciphers,
     // Hand the native SSL_CTX wrapper to upgradeTLS so it can up_ref instead
     // of rebuilding from raw cert/key bytes.

@@ -3482,8 +3482,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers.vm;
 
         let cfg = ssl_opts.as_ref();
-        let reject_unauthorized =
-            upgrade_reject_policy(vm, cfg, is_server, owned_ctx.as_ref().map(|c| c.as_ptr()));
+        // node:tls (the deferred entry point) keeps server-side client-cert
+        // policy in its JS layer: a bare `new tls.TLSSocket({ isServer })`
+        // never auto-rejects (Node wires that only in tls.Server's connection
+        // listener), so native enforcement must stay off for it.
+        let reject_unauthorized = !(defers_server_identity && is_server)
+            && upgrade_reject_policy(vm, cfg, is_server, owned_ctx.as_ref().map(|c| c.as_ptr()));
         let mut initial_flags = Flags::initial(reject_unauthorized);
         initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
         initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
@@ -3588,6 +3592,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         tls.socket
             .set(SocketHandler::<true>::from(new_raw.as_ptr()));
         tls.ref_();
+
+        // `requestCert` is a per-socket option in Node (TLSWrap::SetVerifyMode):
+        // a SecureContext built without it carries no server verify mode, so
+        // install one on this SSL before any handshake byte is processed or
+        // the server never sends CertificateRequest.
+        if is_server {
+            if let Some(cfg) = cfg {
+                if cfg.request_cert != 0 {
+                    tls_socket_functions::set_ssl_verify_mode(
+                        tls.get(),
+                        true,
+                        cfg.reject_unauthorized != 0,
+                    );
+                }
+            }
+        }
 
         // The `raw` half — same `us_socket_t*`, ORIGINAL pre-upgrade
         // *Handlers, writes bypass SSL. Dispatch reaches it via the
@@ -4501,12 +4521,17 @@ pub fn js_upgrade_duplex_to_tls(
         default_data.ensure_still_alive();
     }
 
-    let reject_unauthorized = upgrade_reject_policy(
-        handlers.vm,
-        socket_config,
-        is_server,
-        owned_ctx.as_ref().map(|c| c.as_ptr()),
-    );
+    // Server-side duplex upgrades only come from node:tls (a standalone
+    // `new tls.TLSSocket(duplex, { isServer })`, which Node never auto-rejects)
+    // and node:http2, whose socketHandshake enforces rejectUnauthorized in JS.
+    // Native enforcement stays off for them, like the deferred fd path.
+    let reject_unauthorized = !is_server
+        && upgrade_reject_policy(
+            handlers.vm,
+            socket_config,
+            is_server,
+            owned_ctx.as_ref().map(|c| c.as_ptr()),
+        );
     // Client duplex upgrades come from net.ts, whose JS layer owns
     // server-identity policy; http2's server upgrade also lands here, where
     // the deferral is meaningless.

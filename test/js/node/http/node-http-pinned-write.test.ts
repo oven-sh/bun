@@ -340,11 +340,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(exitCode).toBe(0);
   });
 
-  // In Node.js res.write() and socket.end() share one Writable queue, so the
-  // FIN is ordered after every byte already handed to write(). The pinned tail
-  // sits outside AsyncSocketData::buffer; socket.end() must spill it there and
-  // hand the close to onWritable so the full body reaches the client before
-  // the FIN.
+  // In Node res.write() and socket.end() share one Writable, so FIN is ordered
+  // after every queued byte. The pinned tail sits outside AsyncSocketData::buffer;
+  // socket.end() must spill it so the full body reaches the client before FIN.
   describe.each([
     ["with Content-Length", { "Content-Length": String(RESIZABLE_CHUNK_SIZE) }],
     ["chunked", {}],
@@ -388,10 +386,8 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const result = JSON.parse(stdout.trim());
-      // Chunked framing adds a hex size line and a trailing CRLF around the
-      // payload (no terminating 0 chunk since res.end() was never called);
-      // the Content-Length case delivers exactly the payload. Node.js matches
-      // on both the payload byte count and the absence of extra body bytes.
+      // Chunked adds a hex size + CRLF around the payload (no 0 chunk, since
+      // res.end() was never called); Content-Length delivers exactly the payload.
       expect({ as: result.as, exitCode, stderr }).toEqual({
         as: RESIZABLE_CHUNK_SIZE,
         exitCode: 0,

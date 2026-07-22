@@ -246,11 +246,9 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
     if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
     }
-    /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
-     * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
-     * is sequenced after the response bytes (like Node's destroySoon).
-     * HTTP_NODE_SOCKET_ENDED lets that gate fire even when res.end() was never
-     * called (so HTTP_RESPONSE_PENDING is still set). */
+    /* HttpContext<SSL>::onWritable shuts the socket down once the buffer has
+     * flushed (like Node's destroySoon). HTTP_NODE_SOCKET_ENDED lets that gate
+     * fire even when res.end() never cleared HTTP_RESPONSE_PENDING. */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE
         | uWS::HttpResponseData<SSL>::HTTP_NODE_SOCKET_ENDED;

@@ -101,7 +101,7 @@ file write. Works from any OS.
 1. `.buildkite/ci.mjs` (running on `queue=build-image`, which holds the
    cloud credentials) computes `imageName(key)` for all 8 images, asks each
    image's cloud whether that exact name exists (`existence.ts`), prints the
-   table into the `:pipeline:` job log, and emits a **`ensure image`** step
+   table into the `:pipeline:` job log, and emits a **`build image`** step
    **only for the missing ones**, plus `image-name=<name>` on every agent
    block. A push that changes nothing emits no bake steps at all.
 2. `scripts/machine.mjs create-image --image=<key>` re-checks the exact

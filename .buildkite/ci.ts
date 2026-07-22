@@ -855,8 +855,8 @@ function getEnsureImageStep(platform) {
   ];
 
   return {
-    key: `${getImageKey(platform)}-ensure-image`,
-    label: `${getImageLabel(platform)} - ensure image`,
+    key: `${getImageKey(platform)}-build-image`,
+    label: `${getImageLabel(platform)} - build image`,
     agents: {
       queue: "build-image",
     },
@@ -1413,7 +1413,7 @@ async function getPipeline(options = {}) {
 
   if (imagePlatforms.size) {
     steps.push({
-      key: "ensure-images",
+      key: "build-images",
       group: getBuildkiteEmoji("aws"),
       steps: [...imagePlatforms.values()].map(platform => getEnsureImageStep(platform)),
     });
@@ -1447,7 +1447,7 @@ async function getPipeline(options = {}) {
         const imageKey = getImageKey(buildHostPlatform);
         const dependsOn = [];
         if (imagePlatforms.has(imageKey)) {
-          dependsOn.push(`${imageKey}-ensure-image`);
+          dependsOn.push(`${imageKey}-build-image`);
         }
 
         const steps = [];
@@ -1460,7 +1460,7 @@ async function getPipeline(options = {}) {
           // on the step itself so build-cpp/build-bun don't wait for it.
           const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
           const verifyDeps =
-            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-ensure-image`] : [];
+            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
           steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
         }
 
@@ -1492,7 +1492,7 @@ async function getPipeline(options = {}) {
           // Test shards run on their native platform image; on [build images]
           // runs they must wait for that freshly-baked image before starting.
           const imageKey = getImageKey(target);
-          const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-ensure-image`] : [];
+          const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
           return getStepWithDependsOn(
             {
               key: getPlatformKey(target),
@@ -1524,7 +1524,7 @@ async function getPipeline(options = {}) {
       steps.push(
         getStepWithDependsOn(
           getWindowsSignStep(windowsPlatforms, options),
-          imagePlatforms.has("windows-x64-2019") ? "windows-x64-2019-ensure-image" : undefined,
+          imagePlatforms.has("windows-x64-2019") ? "windows-x64-2019-build-image" : undefined,
         ),
       );
     }

@@ -56,18 +56,21 @@ async function installGcc(ctx: LinuxContext, version: string): Promise<void> {
   const triplet = gnuTriplet(image.arch);
   const llvm = String(image.llvm.major);
 
-  await sudo(["add-apt-repository", "-y", "ppa:ubuntu-toolchain-r/test"]);
+  // gcc-<version> ships in the release's own archive; the toolchain PPA
+  // publishes for LTS releases (a no-op source elsewhere) and covers a
+  // version the archive doesn't carry.
+  await sudo(["add-apt-repository", "-y", "ppa:ubuntu-toolchain-r/test"], { allowFailure: true });
   await sudo(["apt-get", "update", "-y"], { env: { DEBIAN_FRONTEND: "noninteractive" } });
+  // The sanitizer runtimes (libasan/libtsan/liblsan/libubsan) are NOT named
+  // here: their SONAMEs bump between gcc majors (libasan6 -> libasan8, ...)
+  // and libgcc-<version>-dev depends on exactly the ones matching this gcc,
+  // so the right runtimes arrive transitively for whichever version this is.
   await installPackages(ctx, [
     `gcc-${version}`,
     `g++-${version}`,
     `libgcc-${version}-dev`,
     `libstdc++-${version}-dev`,
-    "libasan6",
-    "libubsan1",
     "libatomic1",
-    "libtsan0",
-    "liblsan0",
     "libgfortran5",
     "libc6-dev",
   ]);

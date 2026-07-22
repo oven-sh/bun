@@ -48,12 +48,15 @@ const LINUX_ONLY = new Set([
   "scripts/build/ci/components/system-linux.ts",
   "scripts/build/ci/components/cross-linux.ts",
   "scripts/build/ci/components/browsers-linux.ts",
+  "scripts/build/ci/components/environment.ts",
+  "scripts/build/ci/components/gcc.ts",
 ]);
 const WINDOWS_ONLY = new Set([
   "scripts/build/ci/bootstrap/ops-windows.ts",
   "scripts/build/ci/components/system-windows.ts",
   "scripts/build/ci/components/scoop.ts",
   "scripts/build/ci/components/toolchain-windows.ts",
+  "scripts/build/ci/packer.ts",
 ]);
 
 /** Every file under scripts/build/ci, walked from disk — so a NEW

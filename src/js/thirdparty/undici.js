@@ -77,7 +77,7 @@ function fetch(input, init) {
     // WHATWG fetch never throws synchronously from option conversion; match
     // Bun.fetch and upstream undici by converting any wrapper-side throw
     // (throwing getters, Proxy traps) into a rejection.
-    return Promise.reject(e);
+    return Promise.$reject(e);
   }
 }
 fetch.preconnect = nativeFetch.preconnect;

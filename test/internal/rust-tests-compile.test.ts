@@ -20,9 +20,13 @@ const repo = join(import.meta.dir, "..", "..");
 const CRATES = ["bun_parsers", "bun_sys"];
 
 const cargo = Bun.which("cargo");
-// `cargo check` resolves the workspace, which requires the codegen dir that
-// `bun bd` / `bun run build --configure-only` populates.
-const workspaceReady = existsSync(join(repo, "build", "debug", "codegen", "build_options.rs"));
+// `cargo check` needs a resolvable workspace: the codegen dir from
+// `bun bd` / `bun run build --configure-only`, and vendor/lolhtml (a path dep
+// in the root Cargo.toml). Test-only lanes run a prebuilt binary and have
+// neither; see scripts/rust-miri.ts for the same prerequisite check.
+const workspaceReady =
+  existsSync(join(repo, "build", "debug", "codegen", "build_options.rs")) &&
+  existsSync(join(repo, "vendor", "lolhtml", "Cargo.toml"));
 
 test.skipIf(!cargo || !workspaceReady)(
   `cargo check --tests compiles: ${CRATES.join(", ")}`,
@@ -31,13 +35,13 @@ test.skipIf(!cargo || !workspaceReady)(
       cmd: [cargo!, "check", ...CRATES.flatMap(c => ["-p", c]), "--tests", "--keep-going", "--message-format=short"],
       cwd: repo,
       env: { ...process.env, CARGO_TERM_COLOR: "never" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     const errors = stderr
       .split("\n")
-      .filter(l => l.includes(": error[") || l.includes(": error:"))
+      .filter(l => /^error(\[|:)|: error[[:]/.test(l))
       .join("\n");
     expect(errors).toBe("");
     expect(exitCode).toBe(0);

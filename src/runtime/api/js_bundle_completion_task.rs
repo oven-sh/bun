@@ -145,16 +145,16 @@ pub(crate) fn create_and_schedule_completion_task(
     // dereferences worker-owned memory (a worker terminated mid-bundle frees
     // its VM's loader). `did_load_process` is set so `run_env_loader`'s
     // `load_process()` early-returns instead of re-walking OS environ and
-    // clobbering JS-set values that differ from it.
-    let env_map = match global_this.bun_vm().env_loader().map.clone_with_allocator() {
-        Ok(m) => bun_core::heap::into_raw(Box::new(m)),
-        Err(e) => {
-            if let Some(p) = plugins {
-                Plugin::destroy(p.as_ptr());
-            }
-            return Err(e.into());
-        }
-    };
+    // clobbering JS-set values that differ from it. The `plugins` argument is
+    // owned for `Bun.build` but borrowed for `HTMLBundle::Route`, so on OOM
+    // release is the caller's responsibility.
+    let env_map = bun_core::heap::into_raw(Box::new(
+        global_this
+            .bun_vm()
+            .env_loader()
+            .map
+            .clone_with_allocator()?,
+    ));
     let env = {
         // SAFETY: `env_map` is a fresh heap allocation owned by this task; the
         // `'static` borrow is the lifetime erasure for the task-lifetime map.

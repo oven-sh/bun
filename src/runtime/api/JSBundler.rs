@@ -1349,7 +1349,14 @@ pub mod js_bundler {
                 plugins.and_then(core::ptr::NonNull::new),
                 global_this,
             )
-            .map_err(|_| JsError::OutOfMemory)?;
+            .map_err(|_| {
+                // `Bun.build` owns its plugin (unlike `HTMLBundle::Route`, which
+                // borrows the server's); release on the one fallible early return.
+                if let Some(p) = plugins {
+                    Plugin::destroy(p);
+                }
+                JsError::OutOfMemory
+            })?;
         // SAFETY: `completion` is the freshly-boxed allocation returned above;
         // sole owner on the JS thread until enqueued task runs.
         unsafe {

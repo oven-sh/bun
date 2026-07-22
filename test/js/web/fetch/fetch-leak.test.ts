@@ -890,7 +890,10 @@ test("aborting in-flight streaming fetch() responses does not retain the buffere
     env: {
       ...bunEnv,
       ITERATIONS: "60",
-      MAX_GROWTH_MB: isASAN || isDebug ? "55" : "30",
+      // Unfixed, every held iteration retains its multi-MB buffered body
+      // (>100MB total); 55 absorbs allocator noise (Windows release measured
+      // 32.8MB of it) while staying far below the leak.
+      MAX_GROWTH_MB: "55",
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
         .filter(Boolean)
         .join(":"),

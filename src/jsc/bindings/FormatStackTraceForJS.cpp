@@ -455,11 +455,25 @@ WTF::String formatStackTrace(
 
         WTF::String locationString = locationStrings[i];
         if (locationString.isEmpty()) {
-            if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
-                locationString = "native"_s;
-            } else {
-                locationString = "unknown"_s;
+            WTF::StringBuilder fallback;
+            fallback.append(flags & static_cast<unsigned int>(FunctionNameFlags::Builtin) ? "native"_s : "unknown"_s);
+            if (frame.hasLineAndColumnInfo()) {
+                OrdinalNumber displayLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
+                OrdinalNumber displayColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
+                if (remappedFrame.remapped) {
+                    displayLine = remappedFrame.position.line();
+                    displayColumn = remappedFrame.position.column();
+                }
+                if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+                    fallback.append(':');
+                    fallback.append(displayLine.oneBasedInt());
+                    if (displayColumn.zeroBasedInt() > 0) {
+                        fallback.append(':');
+                        fallback.append(displayColumn.oneBasedInt());
+                    }
+                }
             }
+            locationString = fallback.toString();
         }
 
         sb.append("    at "_s);

@@ -1305,10 +1305,15 @@ it("tls.connect honors secureOptions when negotiating the protocol version", asy
 });
 
 describe("pausing a TLS socket before the handshake does not stall it", () => {
-  // Before the fix Socket.prototype.pause() stopped native reads unconditionally,
-  // so a pre-handshake pause() starved the TLS engine of the ClientHello and the
-  // handshake never completed. Node's TLSWrap keeps reading the underlying fd
-  // regardless of the TLSSocket's stream state; these tests match that.
+  // Socket.prototype.pause() previously stopped native reads unconditionally,
+  // starving the TLS engine of the ClientHello. The Node-matching observable
+  // is that the handshake completes; where the post-handshake readable state
+  // diverges from Node (Bun hands the same TLSSocket to 'connection' and
+  // 'secureConnection', Node delivers separate objects) the test says so.
+
+  async function waitFor(cond: () => boolean) {
+    for (let i = 0; !cond() && i < 2000; i++) await new Promise<void>(r => setImmediate(r));
+  }
 
   it("server: s.pause() inside the 'connection' handler", async () => {
     const server: Server = createServer(COMMON_CERT);
@@ -1332,6 +1337,9 @@ describe("pausing a TLS socket before the handshake does not stall it", () => {
       // and the TLS engine never saw the ClientHello.
       await once(cli, "secureConnect");
       srv = await accepted.promise;
+      // Bun delivers the same TLSSocket to 'connection' and 'secureConnection',
+      // so the pause() is visible here; in Node `srv` is a separate object
+      // with readableFlowing === null and these assertions would not hold.
       expect({ paused: srv.isPaused(), flowing: srv.readableFlowing }).toEqual({ paused: true, flowing: false });
 
       let stopped = true;
@@ -1341,10 +1349,9 @@ describe("pausing a TLS socket before the handshake does not stall it", () => {
         got += d;
       });
       cli.write("hello");
-      // Round-trip the other way so we know the client's write has traversed
-      // the event loop on the server side while still paused.
-      srv.write("ack");
-      expect((await once(cli, "data"))[0].toString()).toBe("ack");
+      // Await the actual observable; a reverse round-trip is not a barrier
+      // because kqueue/IOCP do not order ready-fd dispatch within a batch.
+      await waitFor(() => srv!.readableLength >= 5);
       expect({ got, flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
         got: "",
         flowing: false,
@@ -1382,15 +1389,51 @@ describe("pausing a TLS socket before the handshake does not stall it", () => {
       await once(cli, "secureConnect");
       const { paused, flowing, socket } = await accepted.promise;
       srv = socket;
+      // Node also reports paused:true / flowing:false here
+      // (test-tls-server-parent-constructor-options).
       expect({ paused, flowing }).toEqual({ paused: true, flowing: false });
 
       cli.write("hello");
-      srv.write("ack");
-      expect((await once(cli, "data"))[0].toString()).toBe("ack");
+      await waitFor(() => srv!.readableLength >= 5);
       expect({ flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
         flowing: false,
         readableLength: 5,
       });
+      srv.resume();
+      expect((await once(srv, "data"))[0].toString()).toBe("hello");
+    } finally {
+      cli?.destroy();
+      srv?.destroy();
+      server.close();
+    }
+    await once(server, "close");
+  });
+
+  it("server: s.pause() inside the 'secureConnection' handler", async () => {
+    // Exercises the readableFlowing === null gate in ServerHandlers.handshake:
+    // the post-emit resume() must not stomp a pause() made inside the handler.
+    const server: Server = createServer(COMMON_CERT);
+    const accepted = Promise.withResolvers<TLSSocket>();
+    server.on("secureConnection", s => {
+      s.pause();
+      accepted.resolve(s);
+    });
+    server.on("tlsClientError", accepted.reject);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let cli: TLSSocket | undefined;
+    let srv: TLSSocket | undefined;
+    try {
+      const port = (server.address() as AddressInfo).port;
+      cli = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      cli.on("error", () => {});
+      await once(cli, "secureConnect");
+      srv = await accepted.promise;
+      // Before the fix the post-emit resume() flipped this back to
+      // paused:false / flowing:true.
+      expect({ paused: srv.isPaused(), flowing: srv.readableFlowing }).toEqual({ paused: true, flowing: false });
+
+      cli.write("hello");
       srv.resume();
       expect((await once(srv, "data"))[0].toString()).toBe("hello");
     } finally {
@@ -1414,15 +1457,14 @@ describe("pausing a TLS socket before the handshake does not stall it", () => {
       const port = (server.address() as AddressInfo).port;
       cli = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, pauseOnConnect: true });
       cli.on("error", () => {});
-      // Before the fix SocketHandlers2.open called self.pause() -> native
-      // pause and the handshake never completed.
+      // Before the fix SocketHandlers2.open's self.pause() stopped native
+      // reads and the handshake never completed.
       await once(cli, "secureConnect");
       srv = await accepted.promise;
-      // Sanity: data flows both ways. The client side is resumed explicitly
-      // because Node leaves the TLSSocket at readableFlowing === null here
-      // (pauseOnConnect applies to the underlying net.Socket, which is a
-      // separate object in Node) while Bun preserves the pause() on the same
-      // TLSSocket instance; resuming makes the observable match either way.
+      // Bun pauses the returned TLSSocket here (isPaused()===true); Node leaves
+      // it at readableFlowing===null (pauseOnConnect applies to the separate
+      // underlying net.Socket). Pre-existing divergence; this PR fixes only
+      // the handshake stall, so resume explicitly and assert data flows.
       cli.resume();
       srv.write("from-server");
       expect((await once(cli, "data"))[0].toString()).toBe("from-server");

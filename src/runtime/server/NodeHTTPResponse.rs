@@ -1901,11 +1901,25 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // Finish any zero-copy write before telling JS we're drained.
+        // Partial pinned progress: return false so onWritable's close gate
+        // waits (bufferedAmount does not count the pinned tail). Zero progress
+        // after the peer's FIN is handed to the buffered path (spill) so the
+        // sibling `flushed == 0 && RECEIVED_FIN` close in HttpContext::
+        // onWritable decides; without FIN (SSL WANT_READ, ENOBUFS) retries.
+        let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
+            if self.pending_pinned_write.get().remaining.len() < pinned_before {
+                return false;
+            }
+            if response.state().is_node_received_fin() {
+                self.spill_pending_pinned_write(self.server.global_this());
+            }
             return true;
         }
 
+        // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see
+        // a stale shim (callOnWritable would restore it); writes re-arm.
+        response.clear_on_writable();
         response.corked(|| self.on_drain_corked(offset));
         // return true means we may have something to drain
         true

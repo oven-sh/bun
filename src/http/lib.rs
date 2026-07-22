@@ -2088,29 +2088,14 @@ impl<'a> HTTPClient<'a> {
             self.do_redirect::<IS_SSL>(ctx, socket);
             return;
         }
-        if in_progress {
-            if self.state.is_chunked_encoding() {
-                // Match the spec exactly: only the two trailer states mean
-                // "all chunks consumed"; CHUNKED_IN_CHUNK_SIZE/EXT/CRLF mean
-                // the body was truncated mid-stream and must fail.
-                // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-                if matches!(self.state.chunked_decoder._state, 4 | 5) {
-                    // ignore failure if we are in the middle of trailer headers, since we processed all the chunks and trailers are ignored
-                    self.state.flags.received_last_chunk = true;
-                    let ctx = self.get_ssl_ctx::<IS_SSL>();
-                    self.progress_update::<IS_SSL>(ctx, socket);
-                    return;
-                }
-                // here we are in the middle of a chunk so ECONNRESET is expected
-            } else if self.state.content_length.is_none()
-                && self.state.response_stage == ResponseStage::Body
-            {
-                // no content length informed so we are done here
-                self.state.flags.received_last_chunk = true;
-                let ctx = self.get_ssl_ctx::<IS_SSL>();
-                self.progress_update::<IS_SSL>(ctx, socket);
+        if in_progress && self.state.is_body_complete_on_close() {
+            if let Err(err) = self.state.finalize_body_on_eof() {
+                self.fail(err);
                 return;
             }
+            let ctx = self.get_ssl_ctx::<IS_SSL>();
+            self.progress_update::<IS_SSL>(ctx, socket);
+            return;
         }
 
         // `in_progress` also keeps a client whose final result was already

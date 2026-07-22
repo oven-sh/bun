@@ -693,9 +693,18 @@ private:
         size_t bufferedAmount = asyncSocket->getBufferedAmount();
         if (bufferedAmount > 0) {
             /* Try to flush pending data from the socket's buffer to the network */
-            asyncSocket->flush();
+            size_t flushed = asyncSocket->flush();
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
+                if constexpr (IsNodeHttp) {
+                    /* onEnd deferred close for these bytes; a writable event that
+                     * moves nothing (EPIPE) means the peer is gone and this would
+                     * otherwise spin onWritable/onEnd until idle timeout. */
+                    if (flushed == 0
+                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
+                        return asyncSocket->close();
+                    }
+                }
                 /* Socket buffer is not completely empty yet
                 * - Reset the timeout to prevent premature connection closure
                 * - This allows time for another writable event or new request
@@ -752,14 +761,24 @@ private:
 
         /* Should we close this connection after a response - and is this response really done? */
         if (httpResponseData->shouldCloseConnection()) {
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                if (asyncSocket->getBufferedAmount() == 0) {
-
-                    asyncSocket->shutdown();
-                    /* We need to force close after sending FIN since we want to hinder
-                     * clients from keeping to send their huge data */
-                    asyncSocket->close();
+            bool responseDone = (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0;
+            if constexpr (IsNodeHttp) {
+                /* Node's socketOnEnd (!httpAllowHalfOpen) issues socket.end():
+                 * once already-queued bytes have drained the connection shuts
+                 * down regardless of whether res.end() was ever called. A
+                 * re-armed onWritable (a 'drain' listener wrote again) means a
+                 * fresh pinned write that bufferedAmount does not count. */
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && !httpContextData->flags.httpAllowHalfOpen
+                    && httpResponseData->onWritable == nullptr) {
+                    responseDone = true;
                 }
+            }
+            if (responseDone && asyncSocket->getBufferedAmount() == 0) {
+                asyncSocket->shutdown();
+                /* We need to force close after sending FIN since we want to hinder
+                 * clients from keeping to send their huge data */
+                asyncSocket->close();
             }
         }
 
@@ -804,15 +823,20 @@ private:
                 }
             }
 
-            /* Node's socketOnEnd: if !server.httpAllowHalfOpen (the default),
-             * end the socket right away — an in-flight response is dropped
-             * exactly like Node does. If httpAllowHalfOpen is set, keep the
-             * connection open so in-flight and queued responses can still be
-             * written; it is shut down once the pipeline has drained (the
-             * shouldCloseConnection() checks on response completion). */
-            if (httpContextData->flags.httpAllowHalfOpen
-                && (httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                    || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING))) {
+            /* Node's socketOnEnd: with httpAllowHalfOpen, in-flight and queued
+             * responses keep writing (Node marks the last one `_last` so
+             * resOnFinish destroySoon()s after it). Without it, Node does
+             * `socket.end()`, which drains bytes already handed to the socket
+             * before FIN. Either way, response bytes already queued
+             * (AsyncSocketData::buffer, or a pinned write an onWritable
+             * callback is still draining) must not be discarded by the close()
+             * below; the connection shuts down from the shouldCloseConnection()
+             * gates once they have flushed. */
+            bool hasQueuedOutgoing = asyncSocket->getBufferedAmount() > 0
+                || httpResponseData->onWritable != nullptr;
+            bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
+                || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+            if (hasQueuedOutgoing || (httpContextData->flags.httpAllowHalfOpen && responseInFlight)) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
                 return s;
             }

@@ -3645,7 +3645,9 @@ function addTest(
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
       if (mode === "skip" || options.skip) {
-        reportDirectiveOnlyNode(child, "skip");
+        // Report at execution turn (on the same chain as non-skip siblings)
+        // so the event stream keeps declaration order.
+        runningNode.subtestChain = runningNode.subtestChain.then(() => reportDirectiveOnlyNode(child, "skip"));
         return Promise.resolve(undefined);
       }
       if (mode === "todo") child.todoFlag = true;
@@ -3768,7 +3770,8 @@ function addSuite(
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
     if (mode === "skip" || options.skip) {
-      reportDirectiveOnlyNode(suite, "skip");
+      // Report at execution turn so the event stream keeps declaration order.
+      runningNode.subtestChain = runningNode.subtestChain.then(() => reportDirectiveOnlyNode(suite, "skip"));
       return Promise.resolve(undefined);
     }
     if (mode === "todo") suite.todoFlag = true;

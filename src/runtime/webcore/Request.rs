@@ -1451,6 +1451,15 @@ impl Request {
             bail!(Err(JsError::Thrown));
         }
 
+        // https://fetch.spec.whatwg.org/#dom-request step 31
+        if req.flags.cache == FetchCacheMode::OnlyIfCached
+            && req.flags.mode != FetchRequestMode::SameOrigin
+        {
+            bail!(Err(global_this.throw_type_error(format_args!(
+                "'only-if-cached' can be set only with 'same-origin' mode"
+            ))));
+        }
+
         if req.url.get().is_empty() {
             bail!(Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': url is required."

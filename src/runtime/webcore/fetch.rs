@@ -51,6 +51,8 @@ use crate::webcore::jsc::{
 use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
+use bun_http_types::FetchCacheMode::FetchCacheMode;
+use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
@@ -932,6 +934,86 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    // cache: "default" | "no-store" | "reload" | "no-cache" | "force-cache" | "only-if-cached"
+    let cache_mode: FetchCacheMode = 'extract_cache_mode: {
+        let mut cache_mode = FetchCacheMode::Default;
+        if let Some(req) = request_mut!() {
+            cache_mode = req.flags.cache;
+        }
+
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
+                    Err(_) => {
+                        return Ok(JSValue::ZERO);
+                    }
+                    Ok(Some(cache_value)) => {
+                        break 'extract_cache_mode cache_value;
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+
+        break 'extract_cache_mode cache_mode;
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // mode: "same-origin" | "no-cors" | "cors" | "navigate"
+    let request_mode: FetchRequestMode = 'extract_request_mode: {
+        let mut request_mode = FetchRequestMode::Cors;
+        if let Some(req) = request_mut!() {
+            request_mode = req.flags.mode;
+        }
+
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
+                    Err(_) => {
+                        return Ok(JSValue::ZERO);
+                    }
+                    Ok(Some(mode_value)) => {
+                        break 'extract_request_mode mode_value;
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+
+        break 'extract_request_mode request_mode;
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // https://fetch.spec.whatwg.org/#dom-request step 31 — fetch_impl parses init
+    // directly rather than constructing a Request, so replicate the check here.
+    if cache_mode == FetchCacheMode::OnlyIfCached && request_mode != FetchRequestMode::SameOrigin {
+        let err = global_this.create_type_error_instance(format_args!(
+            "'only-if-cached' can be set only with 'same-origin' mode"
+        ));
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
+
     // keepalive: boolean | undefined;
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
@@ -1643,6 +1725,44 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         ));
+    }
+
+    // https://fetch.spec.whatwg.org/#http-network-or-cache-fetch steps 15-17.
+    // Bun has no local HTTP cache, but the cache mode is still observable on the
+    // wire (shared caches / CDNs read Cache-Control and Pragma).
+    {
+        let mut effective_cache_mode = cache_mode;
+        if effective_cache_mode == FetchCacheMode::Default
+            && let Some(h) = headers.as_ref()
+            && (h.get(b"if-modified-since").is_some()
+                || h.get(b"if-none-match").is_some()
+                || h.get(b"if-unmodified-since").is_some()
+                || h.get(b"if-match").is_some()
+                || h.get(b"if-range").is_some())
+        {
+            effective_cache_mode = FetchCacheMode::NoStore;
+        }
+
+        match effective_cache_mode {
+            FetchCacheMode::NoCache => {
+                let h = headers.get_or_insert_default();
+                if h.get(b"cache-control").is_none() {
+                    h.append(b"Cache-Control", b"max-age=0");
+                }
+            }
+            FetchCacheMode::NoStore | FetchCacheMode::Reload => {
+                let h = headers.get_or_insert_default();
+                if h.get(b"pragma").is_none() {
+                    h.append(b"Pragma", b"no-cache");
+                }
+                if h.get(b"cache-control").is_none() {
+                    h.append(b"Cache-Control", b"no-cache");
+                }
+            }
+            FetchCacheMode::Default
+            | FetchCacheMode::ForceCache
+            | FetchCacheMode::OnlyIfCached => {}
+        }
     }
 
     // `body` is mutated in place for the sendfile/readfile paths and then

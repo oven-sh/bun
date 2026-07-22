@@ -377,8 +377,15 @@ WTF::String formatStackTrace(
             size_t callerIdx = findEvalCallerIndex(stackTrace, idx, frame.codeBlock());
             bool foundCaller = callerIdx < framesCount;
             WTF::String callerName;
-            if (foundCaller)
-                callerName = Zig::functionName(vm, lexicalGlobalObject, stackTrace.at(callerIdx), errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, nullptr);
+            if (foundCaller) {
+                auto& callerFrame = stackTrace.at(callerIdx);
+                JSC::JSGlobalObject* callerGlobalObject = lexicalGlobalObject;
+                if (auto* callee = callerFrame.callee()) {
+                    if (auto* object = callee->getObject())
+                        callerGlobalObject = object->globalObject();
+                }
+                callerName = Zig::functionName(vm, callerGlobalObject, callerFrame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, nullptr);
+            }
             auto origin = buildEvalOriginText(foundCaller, callerName, foundCaller ? locationStrings[callerIdx] : String(), evalOrigins[idx].callerURL);
             loc.append(origin);
             loc.append(", <anonymous>"_s);

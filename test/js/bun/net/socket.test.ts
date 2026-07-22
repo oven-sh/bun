@@ -812,11 +812,7 @@ describe.concurrent("socket", () => {
       tls: { rejectUnauthorized: false },
       socket: {
         open() {},
-        handshake(socket, success, authorizationError) {
-          if (!success) {
-            handshake.reject(authorizationError);
-            return;
-          }
+        handshake(socket) {
           handshake.resolve();
           socket.write("ping");
         },
@@ -1199,8 +1195,8 @@ it("writing to an established TLS socket from another TLS client's open() does n
               // outbound socket's own handshake has not been flushed to the wire yet.
               inbound.write("hello-from-proxy\n");
             },
-            handshake(_socket, success) {
-              inbound.write(success ? "upstream-ready\n" : "upstream-handshake-failed\n");
+            handshake() {
+              inbound.write("upstream-ready\n");
             },
             data() {},
             close() {},
@@ -2142,6 +2138,76 @@ ijlBfSKvj17k9aaZj8NI7cU/f1DhdxDutQgxZyikanCO3hOzoaNc6CiSQacYgEOm
 Reo=
 -----END CERTIFICATE-----`;
 
+  // Leaf signed by a test CA but carrying an unknown *critical* extension
+  // (OID 1.2.3.4.5.6.7.8). BoringSSL's verifier rejects this with
+  // X509_V_ERR_UNHANDLED_CRITICAL_EXTENSION (34), which the short X509-code
+  // table used to report as "UNSPECIFIED".
+  const CRIT_EXT_CA_CRT = `-----BEGIN CERTIFICATE-----
+MIIC8jCCAdqgAwIBAgIUIBZ51q4PqANcT2HNMV0ZUhn8scEwDQYJKoZIhvcNAQEL
+BQAwETEPMA0GA1UEAwwGVGVzdENBMB4XDTI2MDcyMjIwMzQxOFoXDTM2MDcxOTIw
+MzQxOFowETEPMA0GA1UEAwwGVGVzdENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
+MIIBCgKCAQEA3UAzYKMQfOXNfQmfmhrOF+KE2cHGUHA8/g/5EZX3N6TPoSLvd30P
+a1e4DDqhL5e7N0uKj9s178FnwKjJTW9ouUkF8sXdH4/U9lpwtZYGzIC6TaVYbMc6
+BABheScX0/s3BrIGMHtiy6sQg/BCOzh5soKfJxQRx2+46FmWFkvrnWBJkpGvuO8U
+qyjrX5Z0qlqmF/MjpoiwMD5gkjQB6TKf3MS/PWXxfU6Vt8E17a9PzBAg1hGHAEum
+oAszc1v0HmTznhpurNYhckr4tFc8o49ROn4zsdhxH7L2/dV8Zp04rONvF1yuL2Yf
+xXudFcpppLDKqaaYuqup7LaNo7vUBawqaQIDAQABo0IwQDAPBgNVHRMBAf8EBTAD
+AQH/MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUidZ9CD+kY+J8rpuWIqdF/jE+
+1CEwDQYJKoZIhvcNAQELBQADggEBABN/2d8e5KsA2dNCAYDSYzcs44DdXFoucWb3
+ZGf+vlCK0hdUXQrCWq4r/L8llT5YBSKFF3qYv5mnOP2wfGU6Vkgo0y1FDuQ39mK4
+PZq4qMARRU366HHm6fcp0KreyVzpg5Ewkn+vHNKDxRKxeCrxchL5/FZlIvISYemO
+SKagkaCnBFiBLExihntnhEUIhFLdhUxQ6mzPbKAFdglSKmZaNViX6M/IdzOMrZxX
+hEVQaKSZj+5VtiTCpc8lt1S0VET9O156qMGtjGAxPbITLgHnNoQ4ebJRbKTcCN/Z
+AB1nzb/X8gD4xjorU6CrGxNqrLMBxS4gdalHNeGZpbf5wW/NKis=
+-----END CERTIFICATE-----`;
+  const CRIT_EXT_LEAF_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDrs6/vNDm6+Lyi
+bjDf+Bn+a/vuoREgrAv34o7yNMvLerhto3Plt0Ya4PAxa6OylJmdAOqQaPp46OEz
+cnMKs6P+saSkrMBIm8uX1tFjYXaNqQ7XF7O+ecW55jYKOT75hDVe9gff/Bsa1vNN
+XUJPVt5Z3LHUxIv9aEG3Z1zkPbaIRvYI1fjUwgc9yr1PZzmkwGHEnxJNDYwRHcQD
+irlElDjIm89q91ElZJbI3D2DZLR6pQSmdDIHsWH95hX7GLjyNLyCwlt54FmNGWNS
+L/G5rCsMODB6m+7x9CrrAPKO2jo4PzJW4IPzfgFSagk7TTpHvKp9n9q0ugrZ5qQy
+Z1LoArzdAgMBAAECggEADr/GwZwuBKIuA6gLjOhUkBQnxq3ziWzart9RfJyLKCd8
+xPeWeAh47ZOn1B/dNX6RAj8dbn3zNn+0H+kIg+Hr4DMzj050FdcR7WV24tYlegXb
+NOB50fCCy/g453jflPON92xD3+NBuvM6dFvim15fOZZS1nKaI/hTLGveZzXpZyuS
+2YGLuyRNCrSgW7Bk1Z75bCl8VEdp08BboGw8z8ilOCBA8gkfJNbarHkhW2Vrk76w
+VH79wDSpNcKbrJLzJI3ilfHr3HLuYCM+yzqE+lupa33SdCJe5AnavCBUas4dTDId
+2jm0/XTX9DqPgWB6iUoceCHcl1f88/XqV+NeDFQOQQKBgQD3NHdsKMFLho8UL9g+
+AFV65oTQRoB6o4JWAComA1LzjunW5Df9o50/DW13gHIQXTHvMtrScNoEdOkVgEC8
+f8S5CvJsaC9ey/VxDZ6qtiKSfONM7WcFbVjpeWBlKVNrBpMXlXGzeQqOzTsiT+ys
+BEMYA0EzGq8uR02Dklq514UsrQKBgQD0FnOSTz014PPuhNNN6ngSDmygbNE6bihL
+8YhTFPfMIzFvjOxSkrIWKq8knPYTeAKHbQZJmo+dTlI+5G0CaIKrZg1e+MwVF87t
+7lc12twSVtKtHuowd+NOjdazx1+5w2fvSYtUHrLIKUNkxQzJ1JHevqQGWSXfYopA
+aUJZSUom8QKBgHQIso2YS7LRxFMragsgSP9ZOLoyfZgTK9iGV0JkiQk96dEuaoGp
+zOONv/Y52lCIDipC6qegxRUWc1neS4SvTH22/7eW57VNczXPuMxUlcHA0UiInrTT
+cMqWaILTdQ5llaGaSjZ9+FCzULB4Z5UOoxegX3hHbDcCzQWXKvLUkPQ5AoGAFATP
+X72N+KBFgVd1eRt0045JTHMASfmE5o2dr6q1lBGC2XJGY5NSdcz0Zl1VNU2Pb4n6
+jQjXJICq8CuN4TevF92b1SE0o7o7J3p3vpv/lqV2S+qQLH94rhWl+UKt0C99k7uF
+aNXHtfDkbRxYKyl6+TjLfRXMrGCJlDTN00LWiRECgYAnkXt8qPfsw7+eAZ3LdTGJ
+kRpN6BLcUWrEiVD4g5b6WOcIcFlx5IdWmMP9UWihw+dDARE0Fs1Z+/sbduzGzNk1
+4JA8leS5nYF4es4aVhmz9eLx5NniTYICMham4/en56ABvU4MtH1l4ZcmFeG1fzko
+F477fm4i8Ka9QSGPInttmg==
+-----END PRIVATE KEY-----`;
+  const CRIT_EXT_LEAF_CRT = `-----BEGIN CERTIFICATE-----
+MIIDKDCCAhCgAwIBAgIUZstbjXNoZe+XSZRgHeZ7Mb3u+1MwDQYJKoZIhvcNAQEL
+BQAwETEPMA0GA1UEAwwGVGVzdENBMB4XDTI2MDcyMjIwMzQxOFoXDTM2MDcxOTIw
+MzQxOFowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEFAAOC
+AQ8AMIIBCgKCAQEA67Ov7zQ5uvi8om4w3/gZ/mv77qERIKwL9+KO8jTLy3q4baNz
+5bdGGuDwMWujspSZnQDqkGj6eOjhM3JzCrOj/rGkpKzASJvLl9bRY2F2jakO1xez
+vnnFueY2Cjk++YQ1XvYH3/wbGtbzTV1CT1beWdyx1MSL/WhBt2dc5D22iEb2CNX4
+1MIHPcq9T2c5pMBhxJ8STQ2MER3EA4q5RJQ4yJvPavdRJWSWyNw9g2S0eqUEpnQy
+B7Fh/eYV+xi48jS8gsJbeeBZjRljUi/xuawrDDgwepvu8fQq6wDyjto6OD8yVuCD
+834BUmoJO006R7yqfZ/atLoK2eakMmdS6AK83QIDAQABo3UwczAaBgNVHREEEzAR
+gglsb2NhbGhvc3SHBH8AAAEwFQYHKgMEBQYHCAEB/wQHDAVib2d1czAdBgNVHQ4E
+FgQUIePLUi5bomPCoxLGHVacy8mjM3EwHwYDVR0jBBgwFoAUidZ9CD+kY+J8rpuW
+IqdF/jE+1CEwDQYJKoZIhvcNAQELBQADggEBAHQokd/w8CH0ogikc+OUVnYt328X
+Rqpv8ZyS/jAiM79tyhZxwKy3OhSiq/HErXbPWU7Krw4NuBNooPEZDQPpAE14iaVq
+QQGpwikFsDGZn8IoJ33mSqI1wghRVI9ZugmBPCAmZLyUYdE5TQ0q/uSs/GXkETmP
+bnoTHHxdlWWWBKcJrfAL2IhPk10oPxs4V/QCWaRq01pgSgrgaL2G5eCTWRHv+UBT
+2uXkXEt814oKE4WiBlD5nHRi0wG6L2bUgrNupvP5iMbcU3Fjqa9vXGrV6m/G5z4n
+m+VE5F+vgFL9cxozCtCU3a1B/l9BvTkQ5SqHSodvZaNIotaAMqoRMOu1Hx0=
+-----END CERTIFICATE-----`;
+
   const UNTRUSTED_MESSAGE = "unable to verify the first certificate";
 
   // https://github.com/oven-sh/bun/issues/33846
@@ -2230,7 +2296,7 @@ Reo=
     it("closes a connection whose server certificate is not trusted", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT });
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2244,7 +2310,7 @@ Reo=
     it("closes an untrusted connection with tls: true", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2256,7 +2322,7 @@ Reo=
     it("reports authorized=false but keeps the connection with rejectUnauthorized: false", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT, rejectUnauthorized: false });
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2505,6 +2571,87 @@ Reo=
         "Hostname/IP does not match certificate's altnames: Host: wrong.example.com. is not in the cert's altnames: DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
       );
       expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    });
+
+    // The handshake callback's `success` argument and `socket.authorized` must
+    // agree. A chain-verify failure used to leave the callback's argument
+    // `true` (the raw protocol result) while the getter already reported
+    // `false`.
+    it("reports handshake success consistent with socket.authorized for a chain failure", async () => {
+      using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT, rejectUnauthorized: false });
+      const hs = await t.handshake.promise;
+      expect(hs.authorizedArg).toBe(hs.authorizedGetter);
+      expect(hs.authorizedArg).toBe(false);
+    });
+
+    // The X509-error-code table that feeds `authorizationError.code` must cover
+    // every X509_V_ERR_* BoringSSL can produce, so Bun.connect / tls.connect
+    // report the same code string fetch already does.
+    it("reports the specific X509 error code for an unhandled critical extension", async () => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: CRIT_EXT_LEAF_KEY, cert: CRIT_EXT_LEAF_CRT },
+        socket: { open() {}, handshake() {}, data() {}, close() {}, error() {} },
+      });
+      const handshake = Promise.withResolvers<{
+        authorizedArg: boolean;
+        authorizedGetter: boolean;
+        code: string | undefined;
+        getterCode: string | undefined;
+        message: string | undefined;
+      }>();
+      using client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CRIT_EXT_CA_CRT, serverName: "localhost", rejectUnauthorized: false },
+        socket: {
+          open() {},
+          handshake(socket, authorized, authorizationError) {
+            handshake.resolve({
+              authorizedArg: authorized,
+              authorizedGetter: socket.authorized,
+              code: (authorizationError as any)?.code,
+              getterCode: (socket.getAuthorizationError() as any)?.code,
+              message: authorizationError?.message,
+            });
+          },
+          data() {},
+          close() {},
+          error(_s, err) {
+            handshake.reject(err);
+          },
+          connectError(_s, err) {
+            handshake.reject(err);
+          },
+        },
+      });
+      expect(await handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        code: "UNHANDLED_CRITICAL_EXTENSION",
+        getterCode: "UNHANDLED_CRITICAL_EXTENSION",
+        message: "unhandled critical extension",
+      });
+
+      // tls.connect over the same server must report the same code string.
+      const tlsResult = await new Promise<{ authorized: boolean; authorizationError: unknown }>((resolve, reject) => {
+        const sock = tlsConnect(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            ca: CRIT_EXT_CA_CRT,
+            servername: "localhost",
+            rejectUnauthorized: false,
+          },
+          () => {
+            resolve({ authorized: sock.authorized, authorizationError: sock.authorizationError });
+            sock.end();
+          },
+        );
+        sock.on("error", reject);
+      });
+      expect(tlsResult).toEqual({ authorized: false, authorizationError: "UNHANDLED_CRITICAL_EXTENSION" });
     });
 
     // node:tls sockets own server-identity policy in JS: an accepting
@@ -2789,7 +2936,7 @@ Reo=
     it("closes a connection whose client certificate is not trusted", async () => {
       using t = await acceptFrom({ ca: CA_CRT, requestCert: true }, { key: ROGUE_KEY, cert: ROGUE_CRT });
       expect(await t.handshake.promise).toEqual({
-        successArg: true,
+        successArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2820,7 +2967,7 @@ Reo=
         { key: ROGUE_KEY, cert: ROGUE_CRT },
       );
       expect(await t.handshake.promise).toEqual({
-        successArg: true,
+        successArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -3091,7 +3238,7 @@ Reo=
     it("reports authorized=false on a server that never requested a client certificate", async () => {
       using t = await acceptFrom({});
       expect(await t.handshake.promise).toEqual({
-        successArg: true,
+        successArg: false,
         authorizedGetter: false,
         callbackError: "unable to get issuer certificate",
         getterError: "unable to get issuer certificate",

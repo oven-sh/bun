@@ -386,13 +386,14 @@ async function worker(w: number) {
         else if (rr.crashSig?.boundary === "system-module") outcome = "system-crash";
         else outcome = "CRASH";
       } else if (fired === 0) outcome = "no-fire";
-      // The leak oracle: named handles (file/pipe/socket/key) still open at
-      // exit that the baseline closed - a quiet resource-leak no crash or
-      // hang reveals. Judged ONLY when the run reached the same completion
-      // as the baseline (same exit code): bun fast-exits without closing, so
-      // a run that died or errored EARLIER simply stopped at a different
-      // point - its open handles mark where it died, not what leaked.
-      else if (rr.exitCode === base.exitCode && (leaked = newLeaks(tr?.leaksByProc ?? [])).length) outcome = "leak";
+      // NOTE: exit-time handle leaks are RECORDED (leaked, below - the L
+      // records ride on the trace as context) but are not an outcome: bun
+      // fast-exits without cleanup by design, so the set of handles open at
+      // exit tracks where/when the process stopped, not correctness. Six
+      // classes of "leak" card were all that fact in different masks
+      // (interrupted operations, exit racing async closes, lazy sourcemaps).
+      // A real handle-leak oracle must watch growth DURING a run, not the
+      // exit set.
       // A run that got slow because a test TIMED OUT is the hang class in
       // disguise: some awaited operation never completed and the runner's
       // per-test timeout rescued it. That is a finding ('stalled'). A run
@@ -483,9 +484,7 @@ for (const k of ["HANG", "CRASH", "slow", "expected-abort", "error-exit", "diver
   if (counts.has(k)) console.log(`  ${k.padEnd(15)} ${counts.get(k)}`);
 
 const findingsPath = join(workRoot, "findings.md");
-const rawFindings = results.filter(
-  r => r.outcome === "CRASH" || r.outcome === "HANG" || r.outcome === "stalled" || r.outcome === "leak",
-);
+const rawFindings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HANG" || r.outcome === "stalled");
 // Verification budget with clustering: 46 near-identical HANGs must not
 // cost 46 x 3 replays. Cluster findings by (outcome, syscall, mode, crash
 // signature) and verify one REPRESENTATIVE per cluster - crashes first,

@@ -119,18 +119,6 @@ struct PicoHeaders {
 // positive on opaque-token forwarding through an unsafe extern call.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl FetchHeaders {
-    pub fn create_value(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &ZigString,
-        count_: u32,
-    ) -> JSValue {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only — C++ never dereferences it as Rust data.
-        unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
-    }
-
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -221,11 +209,6 @@ impl FetchHeaders {
             std::ptr::from_ref(&out).cast::<c_void>(),
         ))
         .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
-    }
-
-    pub fn create_from_pico_headers_(pico_headers: *const c_void) -> NonNull<FetchHeaders> {
-        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers))
-            .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
     pub fn append(&mut self, name_: &ZigString, value: &ZigString, global: &JSGlobalObject) {

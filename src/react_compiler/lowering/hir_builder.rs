@@ -309,12 +309,6 @@ pub struct HirBuilder<'h> {
     /// reach `Environment::resolve_module_type`) when `Symbol::namespace_alias`
     /// is absent — which it is for plain `import {x} from 'm'` outside HMR.
     import_bindings: IndexMap<Ref, VariableBinding>,
-    /// Set of scope ids matched to synthetic blocks/functions.
-    #[allow(
-        clippy::disallowed_types,
-        reason = "vendored react_compiler_hir HashSet<ScopeId> contract"
-    )]
-    claimed_synthetic_scopes: std::collections::HashSet<usize>,
 }
 
 impl<'h> HirBuilder<'h> {
@@ -354,11 +348,6 @@ impl<'h> HirBuilder<'h> {
             scope_stack: vec![function_scope],
             context_identifiers,
             import_bindings: IndexMap::new(),
-            #[allow(
-                clippy::disallowed_types,
-                reason = "vendored react_compiler_hir HashSet<ScopeId> contract"
-            )]
-            claimed_synthetic_scopes: std::collections::HashSet::new(),
         }
     }
 
@@ -368,11 +357,6 @@ impl<'h> HirBuilder<'h> {
 
     pub fn environment_mut(&mut self) -> &mut Environment {
         self.env
-    }
-
-    pub fn make_type(&mut self) -> Type {
-        let type_id = self.env.make_type();
-        Type::TypeVar { id: type_id }
     }
 
     pub fn host(&self) -> &'h dyn Host {
@@ -450,14 +434,6 @@ impl<'h> HirBuilder<'h> {
 
     pub fn add_context_identifier(&mut self, ref_: Ref) {
         self.context_identifiers.insert(self.resolve_ref(ref_));
-    }
-
-    pub fn claim_synthetic_scope(&mut self, scope_id: usize) {
-        self.claimed_synthetic_scopes.insert(scope_id);
-    }
-
-    pub fn is_synthetic_scope_claimed(&self, scope_id: usize) -> bool {
-        self.claimed_synthetic_scopes.contains(&scope_id)
     }
 
     pub fn host_and_env_mut(&mut self) -> (&'h dyn Host, &mut Environment) {
@@ -552,38 +528,6 @@ impl<'h> HirBuilder<'h> {
         new_block(id, kind)
     }
 
-    pub fn complete(&mut self, block: WipBlock, terminal: Terminal) {
-        let block_id = block.id;
-        self.completed.insert(
-            block_id,
-            BasicBlock {
-                kind: block.kind,
-                id: block_id,
-                instructions: block.instructions,
-                terminal,
-                preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
-            },
-        );
-    }
-
-    pub fn enter_reserved(&mut self, wip: WipBlock, f: impl FnOnce(&mut Self) -> Terminal) {
-        let prev = std::mem::replace(&mut self.current, wip);
-        let terminal = f(self);
-        let completed_wip = std::mem::replace(&mut self.current, prev);
-        self.completed.insert(
-            completed_wip.id,
-            BasicBlock {
-                kind: completed_wip.kind,
-                id: completed_wip.id,
-                instructions: completed_wip.instructions,
-                terminal,
-                preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
-            },
-        );
-    }
-
     pub fn try_enter_reserved(
         &mut self,
         wip: WipBlock,
@@ -606,17 +550,6 @@ impl<'h> HirBuilder<'h> {
         Ok(())
     }
 
-    pub fn enter(
-        &mut self,
-        kind: BlockKind,
-        f: impl FnOnce(&mut Self, BlockId) -> Terminal,
-    ) -> BlockId {
-        let wip = self.reserve(kind);
-        let wip_id = wip.id;
-        self.enter_reserved(wip, |this| f(this, wip_id));
-        wip_id
-    }
-
     pub fn try_enter(
         &mut self,
         kind: BlockKind,
@@ -626,12 +559,6 @@ impl<'h> HirBuilder<'h> {
         let wip_id = wip.id;
         self.try_enter_reserved(wip, |this| f(this, wip_id))?;
         Ok(wip_id)
-    }
-
-    pub fn enter_try_catch(&mut self, handler: BlockId, f: impl FnOnce(&mut Self)) {
-        self.exception_handler_stack.push(handler);
-        f(self);
-        self.exception_handler_stack.pop();
     }
 
     pub fn try_enter_try_catch(
@@ -812,33 +739,12 @@ impl<'h> HirBuilder<'h> {
         id
     }
 
-    pub fn set_identifier_loc(&mut self, id: IdentifierId, loc: Option<SourceLocation>) {
-        self.env.identifiers[id.0 as usize].loc = loc;
-    }
-
     pub fn record_error(&mut self, error: CompilerErrorDetail) -> Result<(), CompilerError> {
         self.env.record_error(error)
     }
 
     pub fn record_diagnostic(&mut self, diagnostic: CompilerDiagnostic) {
         self.env.record_diagnostic(diagnostic);
-    }
-
-    /// Check if a name has a local binding (non-module-level) in the
-    /// compiled function. Used for fbt/fbs JSX tag checks.
-    pub fn has_local_binding(&self, name: &[u8]) -> bool {
-        fn walk(scope: &ast::Scope, name: &[u8]) -> bool {
-            if scope.members.get(name).is_some() {
-                return true;
-            }
-            for child in scope.children.iter() {
-                if walk(child, name) {
-                    return true;
-                }
-            }
-            false
-        }
-        walk(self.component_scope, name)
     }
 
     pub fn current_block_kind(&self) -> BlockKind {

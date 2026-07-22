@@ -1135,13 +1135,13 @@ class ChildProcess extends EventEmitter {
 
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
-      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
+      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
         this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
-      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
+      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
     }

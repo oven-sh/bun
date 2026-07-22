@@ -36,8 +36,6 @@ use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as May
 
 define_scoped_log!(log, Glob, visible);
 
-// The bun_string Cursor stores `c: i32`; cast at the assignment sites.
-type Codepoint = u32;
 fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
@@ -91,7 +89,6 @@ pub trait Accessor {
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     fn close(handle: Self::Handle) -> Option<SysError>;
-    fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]>;
 }
 
 pub trait AccessorDirIter {
@@ -208,11 +205,6 @@ impl Accessor for SyscallAccessor {
     fn close(handle: SyscallHandle) -> Option<SysError> {
         handle.value.close_allowing_bad_file_descriptor(None)
     }
-
-    fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]> {
-        let len = Syscall::getcwd(&mut path_buf[..])?;
-        Ok(&path_buf[..len])
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,15 +247,11 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     /// not owned by this struct
     pub pattern: Box<[u8]>,
 
-    /// If the pattern contains "./" or "../"
-    pub has_relative_components: bool,
-
     pub end_byte_of_basename_excluding_special_syntax: u32,
     pub basename_excluding_special_syntax_component_idx: u32,
 
     pub pattern_components: Vec<Component>,
     pub matched_paths: MatchedMap,
-    pub i: u32,
 
     pub dot: bool,
     pub absolute: bool,
@@ -283,8 +271,6 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
 
     _accessor: core::marker::PhantomData<A>,
 }
-
-pub type Result_ = Maybe<()>;
 
 /// Array hashmap used as a set (values are the keys)
 /// to store matched paths and prevent duplicates
@@ -367,14 +353,11 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub walker: &'a mut GlobWalker<A, SENTINEL>,
     pub iter_state: IterState<A>,
     pub cwd_fd: A::Handle,
-    pub empty_dir_path: [u8; 1], // [0:0]u8 — single NUL byte
     /// This is to make sure in debug/tests that we are closing file descriptors
     /// We should only have max 2 open at a time. One for the cwd, and one for the
     /// directory being iterated on.
     #[cfg(debug_assertions)]
     pub fds_open: usize,
-    #[cfg(not(debug_assertions))]
-    pub fds_open: u8, // unused in release; smallest Rust int
 
     #[cfg(windows)]
     pub nt_filter_buf: [u16; 256],
@@ -391,10 +374,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             walker,
             iter_state: IterState::GetNext,
             cwd_fd: A::Handle::EMPTY,
-            empty_dir_path: [0],
             #[cfg(debug_assertions)]
-            fds_open: 0,
-            #[cfg(not(debug_assertions))]
             fds_open: 0,
             #[cfg(windows)]
             nt_filter_buf: [0; 256],
@@ -408,16 +388,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         );
         let mut was_absolute = false;
         let root_work_item: WorkItem<A> = 'brk: {
-            let mut use_posix = cfg!(unix);
             let is_absolute = if cfg!(unix) {
                 bun_paths::is_absolute(&self.walker.pattern)
             } else {
-                bun_paths::is_absolute(&self.walker.pattern) || {
-                    use_posix = true;
-                    bun_paths::is_absolute_posix(&self.walker.pattern)
-                }
+                bun_paths::is_absolute(&self.walker.pattern)
+                    || bun_paths::is_absolute_posix(&self.walker.pattern)
             };
-            let _ = use_posix;
 
             if !is_absolute {
                 break 'brk WorkItem::new(
@@ -1368,10 +1344,6 @@ pub struct Component {
 
     pub syntax_hint: SyntaxHint,
     pub trailing_sep: bool,
-    pub is_ascii: bool,
-
-    /// Only used when component is not ascii
-    pub unicode_set: bool,
 }
 
 impl Default for Component {
@@ -1381,8 +1353,6 @@ impl Default for Component {
             len: 0,
             syntax_hint: SyntaxHint::None,
             trailing_sep: false,
-            is_ascii: false,
-            unicode_set: false,
         }
     }
 }
@@ -1491,10 +1461,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             only_files,
             basename_excluding_special_syntax_component_idx: 0,
             end_byte_of_basename_excluding_special_syntax: 0,
-            has_relative_components: false,
             pattern_components: Vec::new(),
             matched_paths: MatchedMap::default(),
-            i: 0,
             path_buf: Box::new(PathBuffer::uninit()),
             workbuf: Vec::new(),
             followed_links: Vec::new(),
@@ -1505,7 +1473,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Self::build_pattern_components(
             &mut this.pattern_components,
             &this.pattern,
-            &mut this.has_relative_components,
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
@@ -1627,7 +1594,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     // NOTE you must check that the pattern at `idx` has `syntax_hint == .Double` first
     fn collapse_successive_double_wildcards(&self, idx: u32) -> u32 {
         let mut component_idx = idx;
-        let _pattern = &self.pattern_components[idx as usize];
         // Collapse successive double wildcards
         while ((component_idx + 1) as usize) < self.pattern_components.len()
             && self.pattern_components[(component_idx + 1) as usize].syntax_hint
@@ -2105,12 +2071,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         strings::index_of_any(pattern, Self::SYNTAX_TOKENS).is_some()
     }
 
-    fn make_component(
-        pattern: &[u8],
-        start_byte: u32,
-        end_byte: u32,
-        has_relative_patterns: &mut bool,
-    ) -> Option<Component> {
+    fn make_component(pattern: &[u8], start_byte: u32, end_byte: u32) -> Option<Component> {
         let mut component = Component {
             start: start_byte,
             len: end_byte - start_byte,
@@ -2125,12 +2086,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 &pattern[component.start as usize..(component.start + component.len) as usize];
             if comp_slice == b"." {
                 component.syntax_hint = SyntaxHint::Dot;
-                *has_relative_patterns = true;
                 break 'out;
             }
             if comp_slice == b".." {
                 component.syntax_hint = SyntaxHint::DotBack;
-                *has_relative_patterns = true;
                 break 'out;
             }
 
@@ -2188,18 +2147,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             }
         }
 
-        if component.syntax_hint != SyntaxHint::Single
-            && component.syntax_hint != SyntaxHint::Double
-        {
-            if strings::is_all_ascii(
-                &pattern[component.start as usize..(component.start + component.len) as usize],
-            ) {
-                component.is_ascii = true;
-            }
-        } else {
-            component.is_ascii = true;
-        }
-
         let last_idx = (component.start + component.len).saturating_sub(1) as usize;
         if pattern[last_idx] == b'/' {
             component.trailing_sep = true;
@@ -2213,31 +2160,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Some(component)
     }
 
-    /// Build an ad-hoc glob pattern. Useful when you don't need to traverse
-    /// a directory.
-    pub fn build_pattern(
-        pattern_components: &mut Vec<Component>,
-        pattern: &[u8],
-        has_relative_patterns: &mut bool,
-        end_byte_of_basename_excluding_special_syntax: Option<&mut u32>,
-        basename_excluding_special_syntax_component_idx: Option<&mut u32>,
-    ) -> Result<(), AllocError> {
-        // in case the consumer doesn't care about some outputs.
-        let mut scratchpad: [u32; 3] = [0; 3];
-        let (s1, rest) = scratchpad.split_at_mut(2);
-        Self::build_pattern_components(
-            pattern_components,
-            pattern,
-            has_relative_patterns,
-            end_byte_of_basename_excluding_special_syntax.unwrap_or(&mut s1[1]),
-            basename_excluding_special_syntax_component_idx.unwrap_or(&mut rest[0]),
-        )
-    }
-
     fn build_pattern_components(
         pattern_components: &mut Vec<Component>,
         pattern: &[u8],
-        has_relative_patterns: &mut bool,
         end_byte_of_basename_excluding_special_syntax: &mut u32,
         basename_excluding_special_syntax_component_idx: &mut u32,
     ) -> Result<(), AllocError> {
@@ -2258,9 +2183,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 if (i + width) as usize == pattern.len() {
                     end_byte += width;
                 }
-                if let Some(component) =
-                    Self::make_component(pattern, start_byte, end_byte, has_relative_patterns)
-                {
+                if let Some(component) = Self::make_component(pattern, start_byte, end_byte) {
                     saw_special = saw_special || component.syntax_hint.is_special_syntax();
                     if !saw_special {
                         *basename_excluding_special_syntax_component_idx =
@@ -2290,7 +2213,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             pattern,
             start_byte,
             u32::try_from(pattern.len()).expect("int cast"),
-            has_relative_patterns,
         ) {
             saw_special = saw_special || component.syntax_hint.is_special_syntax();
             if !saw_special {
@@ -2319,14 +2241,6 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Free functions
 // ─────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn is_separator(c: Codepoint) -> bool {
-    // Thin u32 shim over `bun_paths::is_sep_native` (PathChar covers u8/u16
-    // only). Separators are ASCII, so the truncating cast is exact when in
-    // range; out-of-range codepoints are never separators.
-    c <= 0xFF && bun_paths::is_sep_native(c as u8)
-}
 
 pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     let needle = &glob[1..];

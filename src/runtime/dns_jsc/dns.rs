@@ -536,16 +536,8 @@ impl CacheConfig {
         self.0 & 0x0001 != 0
     }
     #[inline]
-    pub const fn entry_cache(self) -> bool {
-        self.0 & 0x0002 != 0
-    }
-    #[inline]
     pub const fn pos_in_pending(self) -> u8 {
         ((self.0 >> 2) & 0x1F) as u8
-    }
-    #[inline]
-    pub const fn name_len(self) -> u16 {
-        (self.0 >> 7) & 0x1FF
     }
     #[inline]
     pub const fn new(
@@ -1284,10 +1276,7 @@ pub mod get_addr_info_request {
             });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
-            *self =
-                LibcBackend::Success(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe {
-                    &*addrinfo
-                })));
+            *self = LibcBackend::Success(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
         }
     }
 
@@ -1600,7 +1589,7 @@ impl GetAddrInfoRequest {
             let result_any = if addrinfo.is_null() {
                 GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
             } else {
-                let list = GetAddrInfoResult::to_list(&*addrinfo).unwrap_or_default();
+                let list = GetAddrInfoResult::to_list(&*addrinfo);
                 libuv::uv_freeaddrinfo(addrinfo.cast());
                 GetAddrInfoResultAny::List(list)
             };

@@ -1065,7 +1065,7 @@ booga"
 
       doTest(
         `{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`,
-        "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
+        "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 {17}",
       );
     });
 
@@ -1151,6 +1151,25 @@ booga"
     test("cd -", async () => {
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
       expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
+    });
+
+    test("cd with no args goes to $HOME", async () => {
+      const { stdout, stderr, exitCode } = await $`pwd && cd && pwd`
+        .env({ ...bunEnv, HOME: temp_dir, USERPROFILE: temp_dir })
+        .quiet()
+        .nothrow();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe(`${process.cwd().replaceAll("\\", "/")}\n${temp_dir}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("cd with no args and HOME unset errors", async () => {
+      const env: Record<string, string | undefined> = { ...bunEnv, HOME: "", USERPROFILE: "" };
+      delete env.HOME;
+      delete env.USERPROFILE;
+      const { stderr, exitCode } = await $`cd`.env(env).quiet().nothrow();
+      expect(stderr.toString()).toBe("cd: HOME not set\n");
+      expect(exitCode).toBe(1);
     });
 
     // Overflowing the 4096-byte threadlocal join_buf used by changeCwdImpl would

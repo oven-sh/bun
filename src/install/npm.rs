@@ -932,22 +932,11 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.7\n";
         const HEADER_BYTES: &'static str =
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
-        pub const SIZES_FIELDS: &'static [&'static str] = &[
-            "pkg",
-            "string_buf",
-            "versions",
-            "external_strings",
-            "external_strings_for_versions",
-            "package_versions",
-            "extern_strings_bin_entries",
-            "bundled_deps_buf",
-        ];
     }
 
     const _: () = assert!(
@@ -1472,32 +1461,6 @@ pub mod package_manifest {
 impl PackageManifest {
     pub fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
         external.slice(&self.string_buf)
-    }
-
-    pub fn report_size(&self) {
-        bun_core::pretty_errorln!(
-            " Versions count:            {}\n \
-             External Strings count:    {}\n \
-             Package Versions count:    {}\n\n \
-             Bytes:\n\n  \
-             Versions:   {}\n  \
-             External:   {}\n  \
-             Packages:   {}\n  \
-             Strings:    {}\n  \
-             Total:      {}",
-            self.versions.len(),
-            self.external_strings.len(),
-            self.package_versions.len(),
-            core::mem::size_of_val(&*self.versions),
-            core::mem::size_of_val(&*self.external_strings),
-            core::mem::size_of_val(&*self.package_versions),
-            core::mem::size_of_val(&*self.string_buf),
-            core::mem::size_of_val(&*self.versions)
-                + core::mem::size_of_val(&*self.external_strings)
-                + core::mem::size_of_val(&*self.package_versions)
-                + core::mem::size_of_val(&*self.string_buf),
-        );
-        Output::flush();
     }
 }
 
@@ -2081,9 +2044,7 @@ impl PackageManifest {
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(parsed_version.valid);
-                }
+                debug_assert!(parsed_version.valid);
                 if !parsed_version.valid {
                     log.add_error_fmt(
                         Some(&source),
@@ -2365,21 +2326,17 @@ impl PackageManifest {
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(parsed_version.valid);
-                }
+                debug_assert!(parsed_version.valid);
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
                     sliced_version = version_string.sliced(string_builder.allocated_slice());
                     parsed_version = Semver::Version::parse(sliced_version);
-                    if cfg!(debug_assertions) {
-                        debug_assert!(parsed_version.valid);
-                        debug_assert!(
-                            parsed_version.version.tag.has_build()
-                                || parsed_version.version.tag.has_pre()
-                        );
-                    }
+                    debug_assert!(parsed_version.valid);
+                    debug_assert!(
+                        parsed_version.version.tag.has_build()
+                            || parsed_version.version.tag.has_pre()
+                    );
                 }
                 if !parsed_version.valid {
                     continue;

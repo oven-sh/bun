@@ -202,7 +202,6 @@ pub mod linker_context {
 // modules above.
 // ---------------------------------------------------------------------------
 
-pub use Graph::Graph as GraphStruct;
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
 /// See `chunk` module.
@@ -247,12 +246,10 @@ pub mod options {
     /// `OutputFile.init` argument struct.
     pub use super::output_file::Options as OutputFileInit;
     pub use super::output_file::OptionsData as OutputFileData;
-    pub use super::output_file::Value as OutputValue;
     pub use super::output_file::Value as OutputFileValue;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
-    pub type Options<'a> = super::BundleOptions<'a>;
 
     /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///
@@ -311,10 +308,9 @@ pub mod options {
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
 /// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled`/`set_disabled`
-/// live on `RuntimeTranspilerCacheExt`.
+/// is canonical in `bun_js_parser`; the bundler-tier `disabled` lives on
+/// `RuntimeTranspilerCacheExt`.
 pub use cache::RuntimeTranspilerCacheExt;
-pub use cache::Set as Cache;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from

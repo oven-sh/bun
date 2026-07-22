@@ -116,10 +116,12 @@ without *requiring* a postinstall script.
       postinstall: "node install.js",
     },
     optionalDependencies: Object.fromEntries(
-      platforms.map(({ bin }) => [
-        `${owner}/${bin}`,
-        dryRun ? `file:./oven-${bin.replaceAll("/", "-") + "-" + version + ".tgz"}` : version,
-      ]),
+      platforms
+        .filter(p => !p.alias)
+        .map(({ bin }) => [
+          `${owner}/${bin}`,
+          dryRun ? `file:./oven-${bin.replaceAll("/", "-") + "-" + version + ".tgz"}` : version,
+        ]),
     ),
     bin: {
       bun: "bin/bun.exe",

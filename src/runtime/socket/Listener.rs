@@ -131,10 +131,6 @@ pub enum UnixOrHost {
     Fd(Fd),
 }
 
-impl UnixOrHost {
-    // Note: deinit() deleted — Box<[u8]> fields auto-drop.
-}
-
 impl Listener {
     #[bun_jsc::host_fn(method)]
     pub fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -261,14 +257,51 @@ impl Listener {
                                 .expect("listen returns a non-null heap pointer"),
                         ));
                     }
-                    Err(_) => {
+                    Err(e) => {
                         this_ref.strong_data.with_mut(|s| s.deinit());
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and the handlers `Rc`.
                         drop(unsafe { bun_core::heap::take(this) });
+                        // Surface coded syscall failures the way node:net
+                        // does (EADDRINUSE vs EACCES need different caller
+                        // handling) rather than an invalid-arguments TypeError.
+                        if let ListenPipeError::Sys(sys_err) = &e {
+                            // get_error_code_tag_name does not reject EUNKNOWN /
+                            // UV_EAI_* (>=3000); neither is a node-style code, so
+                            // route those through the generic error below.
+                            if let Some((name, se)) = sys_err.get_error_code_tag_name() {
+                                if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
+                                    let err = jsc::SystemError {
+                                        // Negated errno per fill_system_error_common.
+                                        errno: -(se as c_int),
+                                        code: bun_core::String::static_(name),
+                                        message: bun_core::String::clone_utf8(
+                                            format!(
+                                                "listen {}: {}",
+                                                name,
+                                                bstr::BStr::new(&pipe_buf[..pipe_len])
+                                            )
+                                            .as_bytes(),
+                                        ),
+                                        syscall: bun_core::String::static_("listen"),
+                                        fd: -1,
+                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
+                                        hostname: bun_core::String::empty(),
+                                        dest: bun_core::String::empty(),
+                                    };
+                                    return Err(global.throw_value(err.to_error_instance(global)));
+                                }
+                            }
+                        }
+                        let detail = match &e {
+                            ListenPipeError::Other(err) => err.name(),
+                            // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
+                            ListenPipeError::Sys(_) => "UNKNOWN",
+                        };
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "Failed to listen at {}",
-                            bstr::BStr::new(&pipe_buf[..pipe_len])
+                            "Failed to listen at {}: {}",
+                            bstr::BStr::new(&pipe_buf[..pipe_len]),
+                            detail
                         )));
                     }
                 }
@@ -862,11 +895,6 @@ impl Listener {
         // connection / protos / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.active_connections.get() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1607,6 +1635,15 @@ pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
+/// `Sys` keeps the structured uv error so the JS error carries its real
+/// code/errno; `Other` covers the non-syscall setup failures, whose payload
+/// names the failure in the caller's generic invalid-arguments message.
+#[cfg(windows)]
+pub(crate) enum ListenPipeError {
+    Sys(bun_sys::Error),
+    Other(crate::Error),
+}
+
 #[cfg(windows)]
 impl WindowsNamedPipeListeningContext {
     fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
@@ -1653,7 +1690,7 @@ impl WindowsNamedPipeListeningContext {
     /// Only ever invoked by libuv (coerces to the `uv_connection_cb` fn-pointer
     /// type at the `Pipe::listen_named_pipe` call site); body wraps its derefs
     /// explicitly — matches the `extern "C" fn` callback convention used in
-    /// `udp_socket.rs` / `bun_io::PipeReader`.
+    /// `udp_socket.rs` / `bun_io::BufferedReader`.
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
         let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
@@ -1687,7 +1724,7 @@ impl WindowsNamedPipeListeningContext {
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
         listener: *mut Listener,
-    ) -> crate::Result<*mut WindowsNamedPipeListeningContext> {
+    ) -> Result<*mut WindowsNamedPipeListeningContext, ListenPipeError> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
@@ -1721,13 +1758,13 @@ impl WindowsNamedPipeListeningContext {
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
                 Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
-                None => return Err(crate::Error::InvalidOptions),
+                None => return Err(ListenPipeError::Other(crate::Error::InvalidOptions)),
             }
         }
 
         let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
-            return Err(crate::Error::FailedToInitPipe);
+            return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }
         cleanup.1 = true;
 
@@ -1753,7 +1790,15 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
-            return Err(crate::Error::FailedToBindPipe);
+            // Surface the real error code: EADDRINUSE (name taken) vs
+            // EACCES (pipe namespace denied) need different caller
+            // handling, and a generic bind failure hides that.
+            use bun_sys::ReturnCodeExt as _;
+            return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
+                Some(err) => ListenPipeError::Sys(err),
+                // Unreachable in practice: the uv→errno mapping is total.
+                None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
+            });
         }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {

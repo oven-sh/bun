@@ -688,9 +688,12 @@ fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
             global.throw_invalid_arguments(format_args!("Bun.cron: options must be an object"))
         );
     }
-    let Some(tz_val) = opts.get_truthy(global, "tz")? else {
+    let Some(tz_val) = opts.get(global, "tz")? else {
         return Ok(CronTz::Local);
     };
+    if tz_val.is_undefined_or_null() {
+        return Ok(CronTz::Local);
+    }
     if !tz_val.is_string() {
         return Err(
             global.throw_invalid_arguments(format_args!("Bun.cron: options.tz must be a string"))
@@ -698,13 +701,18 @@ fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
     }
     let tz_str = bun_core::OwnedString::new(tz_val.to_bun_string(global)?);
     let tz_slice = tz_str.to_utf8();
-    match JSGlobalObject::resolve_time_zone_id(tz_slice.slice()) {
-        Some(id) => Ok(CronTz::Named(id)),
-        None => Err(global.throw_invalid_arguments(format_args!(
-            "Bun.cron: unknown time zone '{}'",
-            bstr::BStr::new(tz_slice.slice())
-        ))),
+    let tz_bytes = tz_slice.slice();
+    // IANA names are ASCII; rejecting here keeps the Latin-1 StringView cast in
+    // Bun__resolveTimeZoneID sound for non-ASCII UTF-8 input.
+    if tz_bytes.is_ascii()
+        && let Some(id) = JSGlobalObject::resolve_time_zone_id(tz_bytes)
+    {
+        return Ok(CronTz::Named(id));
     }
+    Err(global.throw_invalid_arguments(format_args!(
+        "Bun.cron: unknown time zone '{}'",
+        bstr::BStr::new(tz_bytes)
+    )))
 }
 
 // -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)

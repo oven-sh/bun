@@ -211,6 +211,33 @@ describe.concurrent("Bun.cron.parse — { tz } option", () => {
     expect(next).toBe("2025-11-03T06:30:00.000Z");
   });
 
+  test("DST via tz option (fall-back, wildcard hour fires through both occurrences)", async () => {
+    const out = await evalInTZ(
+      "UTC",
+      `let t = new Date("2025-11-02T03:59:00Z");
+       const seq = [];
+       for (let i = 0; i < 4; i++) { t = Bun.cron.parse("0 * * * *", t, {tz: "America/New_York"}); seq.push(t.toISOString()); }
+       process.stdout.write(JSON.stringify(seq))`,
+    );
+    expect(JSON.parse(out)).toEqual([
+      "2025-11-02T04:00:00.000Z", // 0:00 EDT
+      "2025-11-02T05:00:00.000Z", // 1st 1:00 EDT
+      "2025-11-02T06:00:00.000Z", // 2nd 1:00 EST
+      "2025-11-02T07:00:00.000Z", // 2:00 EST
+    ]);
+  });
+
+  test("empty-string tz throws (not silently falling back to local)", () => {
+    expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: "" })).toThrow(/unknown time zone ''/);
+    expect(() => Bun.cron("* * * * *", () => {}, { tz: "" })).toThrow(/unknown time zone ''/);
+  });
+
+  test("non-ASCII tz throws", () => {
+    expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: "Europe/Zürich" })).toThrow(
+      /unknown time zone 'Europe\/Zürich'/,
+    );
+  });
+
   test("unknown tz throws", () => {
     expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: "Mars/Olympus" })).toThrow(
       /unknown time zone 'Mars\/Olympus'/,

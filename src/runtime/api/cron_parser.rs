@@ -178,21 +178,40 @@ impl CronExpression {
         tz: CronTz,
         dt: GregorianDateTime,
         from_ms: f64,
+        from_dt: GregorianDateTime,
     ) -> JsResult<Option<f64>> {
         let result =
             tz.gregorian_to_ms(global_object, dt.year, dt.month, dt.day, dt.hour, dt.minute)?;
         // During fall-back, `result` is the FORMER occurrence and the wall-clock
         // walk steps over the second one. For schedules with `*` minute or `*`
         // hour, scan real-time minutes (capped at the largest DST shift) for an
-        // earlier match in the repeated window.
+        // earlier match in the repeated window. The scan can only find a match
+        // when more real minutes elapsed than wall-clock minutes (i.e. a
+        // fall-back transition lies in (from_ms, result]); the UTC-distance of
+        // the two local breakdowns gives the wall-clock delta without a TZ
+        // lookup.
         if self.minutes == ALL_MINUTES || self.hours == ALL_HOURS {
-            let mut probe = ((from_ms / MINUTE_MS).floor() + 1.0) * MINUTE_MS;
-            let cap = result.min(from_ms + (MAX_DST_SHIFT_MIN + 1.0) * MINUTE_MS);
-            while probe < cap {
-                if self.matches_instant(global_object, tz, probe) {
-                    return Ok(Some(probe));
+            let wall_from = global_object.gregorian_date_time_to_ms_utc(
+                from_dt.year,
+                from_dt.month,
+                from_dt.day,
+                from_dt.hour,
+                from_dt.minute,
+                0,
+                0,
+            )?;
+            let wall_dt = global_object.gregorian_date_time_to_ms_utc(
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0,
+            )?;
+            if result - from_ms > wall_dt - wall_from {
+                let mut probe = ((from_ms / MINUTE_MS).floor() + 1.0) * MINUTE_MS;
+                let cap = result.min(from_ms + (MAX_DST_SHIFT_MIN + 1.0) * MINUTE_MS);
+                while probe < cap {
+                    if self.matches_instant(global_object, tz, probe) {
+                        return Ok(Some(probe));
+                    }
+                    probe += MINUTE_MS;
                 }
-                probe += MINUTE_MS;
             }
         }
         Ok(if result > from_ms { Some(result) } else { None })
@@ -207,8 +226,9 @@ impl CronExpression {
         from_ms: f64,
         tz: CronTz,
     ) -> JsResult<Option<f64>> {
-        let mut dt = tz.ms_to_gregorian(global_object, from_ms);
-        let start_year = dt.year;
+        let from_dt = tz.ms_to_gregorian(global_object, from_ms);
+        let start_year = from_dt.year;
+        let mut dt = from_dt;
         dt.minute += 1;
 
         while dt.year - start_year <= 8 {
@@ -256,7 +276,7 @@ impl CronExpression {
                 continue;
             }
 
-            if let Some(r) = self.resolve_local_match(global_object, tz, dt, from_ms)? {
+            if let Some(r) = self.resolve_local_match(global_object, tz, dt, from_ms, from_dt)? {
                 return Ok(Some(r));
             }
             dt.minute += 1;

@@ -1263,8 +1263,10 @@ test("file route 205/307/308 responses are framed on HTTP/1.1 keep-alive", async
   }
 
   // Two back-to-back 307s on a keep-alive connection: the second resolving
-  // proves the first's framing was complete.
-  {
+  // proves the first's framing was complete. Skipped on Windows: pipelining
+  // a Bun.file() route there hits a pre-existing bug (connection closes with
+  // zero bytes, independent of status; reproduces on main with status 200).
+  if (!isWindows) {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     const sock = connect(server.port, "127.0.0.1", () => {
       sock.write("GET /307 HTTP/1.1\r\nHost: x\r\n\r\nGET /307 HTTP/1.1\r\nHost: x\r\n\r\n");

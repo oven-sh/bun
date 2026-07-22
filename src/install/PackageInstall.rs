@@ -2309,7 +2309,10 @@ impl<'a> PackageInstall<'a> {
                     // The entry name itself is attacker-predictable
                     // (name@version@@@N), so refuse a symlink planted there
                     // before looking for package.json beneath it.
-                    if !crate::package_manager_real::directories::cache_entry_is_dir(self.cache_dir, self.cache_dir_subpath) {
+                    if !crate::package_manager_real::directories::cache_entry_is_dir(
+                        self.cache_dir,
+                        self.cache_dir_subpath,
+                    ) {
                         break 'brk true;
                     }
                     let exists = match resolution_tag {
@@ -2370,7 +2373,10 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written above.
                 let subpath =
                     ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
-                let exists = crate::package_manager_real::directories::cache_entry_is_dir(self.cache_dir, subpath);
+                let exists = crate::package_manager_real::directories::cache_entry_is_dir(
+                    self.cache_dir,
+                    subpath,
+                );
                 if exists {
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }
@@ -2384,7 +2390,10 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
     ) -> bool {
-        let exists = crate::package_manager_real::directories::cache_entry_is_dir(self.cache_dir, self.cache_dir_subpath);
+        let exists = crate::package_manager_real::directories::cache_entry_is_dir(
+            self.cache_dir,
+            self.cache_dir_subpath,
+        );
         if exists {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }

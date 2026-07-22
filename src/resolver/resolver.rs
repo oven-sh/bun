@@ -2843,6 +2843,7 @@ impl<'a> Resolver<'a> {
                 let Some(abs_path) = self
                     .fs_ref()
                     .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))
+                    .filter(|p| bun_paths::is_absolute(p))
                 else {
                     continue;
                 };
@@ -2887,9 +2888,13 @@ impl<'a> Resolver<'a> {
                 ),
             ] {
                 let Some(base) = base else { continue };
+                // Loose-mode join treats a Windows `C:\...` import_path as
+                // absolute even on posix and discards the base; skip probes
+                // whose result is not native-absolute (dir_info asserts it).
                 let Some(abs_path) = self
                     .fs_ref()
                     .abs_buf_checked(&[base, suffix, import_path], bufs!(node_modules_check))
+                    .filter(|p| bun_paths::is_absolute(p))
                 else {
                     continue;
                 };

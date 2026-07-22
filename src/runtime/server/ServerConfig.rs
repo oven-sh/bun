@@ -1149,12 +1149,29 @@ impl ServerConfig {
         }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
-            let p = u16::try_from(
-                (port_.coerce::<i32>(global)?)
-                    .max(0)
-                    .min(i32::from(u16::MAX)),
-            )
-            .unwrap();
+            let number = port_.to_number(global)?;
+            if !number.is_finite() || number.fract() != 0.0 {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        field_name: b"options.port",
+                        msg: b"an integer",
+                        ..Default::default()
+                    },
+                ));
+            }
+            if !(0.0..=65535.0).contains(&number) {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        min: 0,
+                        max: 65535,
+                        field_name: b"options.port",
+                        ..Default::default()
+                    },
+                ));
+            }
+            let p = number as u16;
             if let Address::Tcp { port: tp, .. } = &mut args.address {
                 *tp = p;
             }

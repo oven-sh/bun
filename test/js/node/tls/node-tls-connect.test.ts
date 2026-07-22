@@ -777,34 +777,42 @@ describe("rejectUnauthorized fails closed for anything other than an explicit fa
     });
   });
 
-  it("server {requestCert: true, rejectUnauthorized: null} rejects an unverified client certificate", async () => {
-    const events: string[] = [];
-    const server = tls.createServer(
-      { cert: COMMON_CERT_.cert, key: COMMON_CERT_.key, requestCert: true, rejectUnauthorized: null as any },
-      s => {
-        events.push(`handler authorized=${s.authorized}`);
-        s.end();
-      },
-    );
-    server.on("tlsClientError", e => events.push(`tlsClientError ${(e as any).code ?? e.message}`));
-    server.on("secureConnection", s => events.push(`secureConnection authorized=${s.authorized}`));
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    try {
-      const c = tls.connect({
-        port: (server.address() as AddressInfo).port,
-        host: "127.0.0.1",
-        cert: COMMON_CERT_.cert,
-        key: COMMON_CERT_.key,
-        rejectUnauthorized: false,
+  it.each([
+    ["null", null],
+    ["0", 0],
+  ] as const)(
+    "server {requestCert: true, rejectUnauthorized: %s} rejects an unverified client certificate",
+    async (_label, value) => {
+      const events: string[] = [];
+      const server = tls.createServer(
+        { cert: COMMON_CERT_.cert, key: COMMON_CERT_.key, requestCert: true, rejectUnauthorized: value as any },
+        s => {
+          events.push(`handler authorized=${s.authorized}`);
+          s.end();
+        },
+      );
+      server.on("tlsClientError", e => events.push(`tlsClientError ${(e as any).code ?? e.message}`));
+      server.on("secureConnection", s => events.push(`secureConnection authorized=${s.authorized}`));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const c = tls.connect({
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          cert: COMMON_CERT_.cert,
+          key: COMMON_CERT_.key,
+          rejectUnauthorized: false,
+        });
+        c.on("error", () => {});
+        await once(c, "close");
+      } finally {
+        server.close();
+      }
+      expect({ events, normalized: (server as any)._rejectUnauthorized }).toEqual({
+        events: ["tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT"],
+        normalized: true,
       });
-      c.on("error", () => {});
-      await once(c, "close");
-    } finally {
-      server.close();
-    }
-    expect(events).toEqual(["tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT"]);
-    expect(server._rejectUnauthorized).toBe(true);
-  });
+    },
+  );
 });
 
 it("https.request reports an impossible version window as a TLS error, not a certificate error", async () => {

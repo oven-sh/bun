@@ -958,7 +958,7 @@ function onconnection(err, clientHandle) {
   }
   clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
-  const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+  const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert } = options;
   // Propagate the server's half-open/highWaterMark settings to the accepted
   // socket so the Duplex's allowHalfOpen matches what the native layer was
   // configured with in kRealListen; without this, net.createServer({
@@ -971,9 +971,10 @@ function onconnection(err, clientHandle) {
   }) as NetSocket | TLSSocket;
   _socket.isServer = true;
   _socket._requestCert = requestCert;
-  // The raw options object only has rejectUnauthorized when the user passed it explicitly;
-  // fall back to the server's normalized value (defaults to true for tls.Server).
-  _socket._rejectUnauthorized = rejectUnauthorized ?? self._rejectUnauthorized;
+  // tls.Server's setSecureContext has already normalized this via `!== false`,
+  // so read the server field, not the raw option (which may be a falsy
+  // non-boolean like 0 that `??` would let through).
+  _socket._rejectUnauthorized = self._rejectUnauthorized;
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
 

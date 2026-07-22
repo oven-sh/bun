@@ -13,6 +13,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
 
+// Absolute argv[0] so PATH lookup (which_for_spawn) is skipped; on musl that
+// lookup fails under EMFILE before the event loop is created and turns the
+// failure into ENOENT instead of exercising us_create_loop.
 const fixture = /* js */ `
   import * as fs from "node:fs";
   // Warm anything lazily opened on first use so the fd fill below leaves zero
@@ -24,7 +27,7 @@ const fixture = /* js */ `
 
   let first;
   try {
-    Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "ignore", "ignore"] });
+    Bun.spawnSync({ cmd: ["/bin/sh", "-c", ":"], stdio: ["ignore", "ignore", "ignore"] });
     first = { ok: false, msg: "UNEXPECTED: spawnSync succeeded" };
   } catch (e) {
     first = { ok: true, code: e?.code, msg: String(e?.message ?? e) };
@@ -37,7 +40,7 @@ const fixture = /* js */ `
 
   // Descriptors are free again: the isolated loop was not cached on failure,
   // so this call creates it successfully and runs the child.
-  const retry = Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "ignore", "ignore"] });
+  const retry = Bun.spawnSync({ cmd: ["/bin/sh", "-c", ":"], stdio: ["ignore", "ignore", "ignore"] });
   console.error("retry exit:", retry.exitCode);
   console.error("SURVIVED");
 `;

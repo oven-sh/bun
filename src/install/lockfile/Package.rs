@@ -2092,11 +2092,13 @@ impl Package<u64> {
             }
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
-                for (_, value, _) in rows {
-                    if let Some(value) = value {
-                        string_builder.count(value);
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                    for (_, value, _) in rows {
+                        if let Some(value) = value {
+                            string_builder.count(value);
+                        }
                     }
                 }
             }
@@ -2440,28 +2442,30 @@ impl Package<u64> {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
-                lockfile
-                    .patched_dependencies
-                    .ensure_total_capacity(rows.len())
-                    .expect("unreachable");
-                for (key, value, _) in rows {
-                    let Some(value) = value else {
-                        continue;
-                    };
-                    let keyhash = semver::string::Builder::string_hash(key);
-                    let patch_path = string_builder.append::<String>(value);
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
                     lockfile
                         .patched_dependencies
-                        .put(
-                            keyhash,
-                            PatchedDep {
-                                path: patch_path,
-                                ..Default::default()
-                            },
-                        )
+                        .ensure_total_capacity(rows.len())
                         .expect("unreachable");
+                    for (key, value, _) in rows {
+                        let Some(value) = value else {
+                            continue;
+                        };
+                        let keyhash = semver::string::Builder::string_hash(key);
+                        let patch_path = string_builder.append::<String>(value);
+                        lockfile
+                            .patched_dependencies
+                            .put(
+                                keyhash,
+                                PatchedDep {
+                                    path: patch_path,
+                                    ..Default::default()
+                                },
+                            )
+                            .expect("unreachable");
+                    }
                 }
             }
         }

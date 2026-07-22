@@ -138,7 +138,7 @@ export class BunTestController implements vscode.Disposable {
   private isTestFile(document: vscode.TextDocument): boolean {
     if (document?.uri?.scheme !== "file") return false;
     const basename = document.uri.fsPath.replace(/^.*[/\\]/, "");
-    return /^(?:test|test-.*|.*[._-](?:test|spec))\.(?:js|jsx|ts|tsx|cjs|mjs|mts|cts)$/i.test(basename);
+    return /^(?:test|test-.*|.*[._-]test|.*[._]spec)\.(?:js|jsx|ts|tsx|cjs|mjs|mts|cts)$/i.test(basename);
   }
 
   private async discoverInitialTests(

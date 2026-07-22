@@ -2692,7 +2692,7 @@ function isJavaScript(path: string): boolean {
 
 function isTestJavaScript(path: string): boolean {
   const basename = path.replace(/^.*[/\\]/, "");
-  return /^(?:test|test-.*|.*[._-](?:test|spec))\.[cm]?[jt]sx?$/i.test(basename);
+  return /^(?:test|test-.*|.*[._-]test|.*[._]spec)\.[cm]?[jt]sx?$/i.test(basename);
 }
 
 function isSyntaxError(remoteObject: JSC.Runtime.RemoteObject): boolean {

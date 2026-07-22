@@ -752,53 +752,290 @@ function receiveMessageOnPort(port: MessagePort) {
   };
 }
 
-// TODO: parent port emulation is not complete
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);
+
+  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
+  // Adjust the worker event loop's concurrent ref count by the given delta. Used to implement
+  // Node's ref/unref/close semantics on top of the WorkerGlobalScope auto-ref (see
+  // BunWorkerGlobalScope.cpp), which takes one ref while any "message" listener is installed on
+  // `self` and can't express "deliver messages but don't keep the loop alive".
+  const incEventLoopRef = $newCppFunction("Worker.cpp", "jsFunctionNodeWorkerIncRef", 1);
+
+  // Node: parentPort starts unref'd; adding a "message" listener or calling ref() refs it.
+  let hasRefFlag = false;
+  let closed = false;
+
+  // For each event type parentPort forwards ("message", "messageerror"), we keep our own
+  // listener list and install a single forwarder on `self`. Installing a "message" listener on
+  // `self` contributes one auto-ref via WorkerGlobalScope; we cancel it out so the ref is purely
+  // driven by hasRefFlag/closed below.
+  const listeners: { message: Function[]; messageerror: Function[] } = {
+    message: [],
+    messageerror: [],
+  };
+  // onmessage/onmessageerror are stored in the same arrays so dispatch preserves registration
+  // order relative to addEventListener, matching Node. Each slot holds the user's handler (for
+  // the getter) and the wrapper we pushed into the list (for removal). The wrapper gives the
+  // entry distinct identity so addEventListener's dedup and removeEventListener's lookup never
+  // collide with a bare addEventListener(fn) of the same function — the DOM registers IDL on*
+  // handlers via an internal wrapper, not the user's callback.
+  const onmessageEntry: {
+    message: { handler: Function; entry: Function } | null;
+    messageerror: { handler: Function; entry: Function } | null;
+  } = {
+    message: null,
+    messageerror: null,
+  };
+  const forwarderInstalled: { message: boolean; messageerror: boolean } = {
+    message: false,
+    messageerror: false,
+  };
+  const forwarders = {
+    message(event: MessageEvent) {
+      dispatch("message", event);
+    },
+    messageerror(event: MessageEvent) {
+      dispatch("messageerror", event);
+    },
+  };
+
+  // Adjustment we've applied on top of the WorkerGlobalScope auto-ref. In steady state this is
+  // (hasRefFlag && !closed ? 1 : 0) - (message forwarder installed ? 1 : 0).
+  let refAdjustment = 0;
+
+  function syncRef() {
+    const want = hasRefFlag && !closed ? 1 : 0;
+    const auto = forwarderInstalled.message ? 1 : 0;
+    const target = want - auto;
+    const delta = target - refAdjustment;
+    if (delta !== 0) {
+      incEventLoopRef(delta);
+      refAdjustment = target;
+    }
+  }
+
+  function ensureForwarder(type: "message" | "messageerror") {
+    if (closed || forwarderInstalled[type] || listeners[type].length === 0) return;
+    // Install first (auto-ref +1 for "message"), then cancel it in syncRef(); the concurrent ref
+    // never dips below its prior value.
+    self.addEventListener(type, forwarders[type]);
+    forwarderInstalled[type] = true;
+    syncRef();
+  }
+
+  function dropForwarder(type: "message" | "messageerror") {
+    if (!forwarderInstalled[type]) return;
+    // Undo our -1 adjustment first so removing the listener (auto-ref -1) doesn't momentarily
+    // take the concurrent ref negative.
+    forwarderInstalled[type] = false;
+    syncRef();
+    self.removeEventListener(type, forwarders[type]);
+  }
+
+  function invoke(entry, event: MessageEvent) {
+    if (typeof entry === "function") {
+      entry.$call(fake, event);
+    } else {
+      // { handleEvent } listener-object form.
+      entry.handleEvent.$call(entry, event);
+    }
+  }
+
+  function dispatch(type: "message" | "messageerror", event: MessageEvent) {
+    if (closed) return;
+    // Snapshot so listeners added during dispatch don't run this round (DOM §2.9). Listeners
+    // removed mid-dispatch before being reached must be skipped, so re-check the live list
+    // before each invocation.
+    const live = listeners[type];
+    const list = live.slice();
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      if (live.indexOf(entry) === -1) continue;
+      // Isolate exceptions per listener: pre-PR each listener was a separate native
+      // EventTarget registration (which does this), and Node's NodeEventTarget does the same.
+      // A throw from one handler must not prevent later handlers from running. Re-throw on
+      // nextTick so it surfaces as an uncaught exception after the whole batch has run
+      // (reportError() inside a worker currently terminates the worker synchronously, so it
+      // can't be used here).
+      try {
+        invoke(entry, event);
+      } catch (e) {
+        process.nextTick(err => {
+          throw err;
+        }, e);
+      }
+    }
+  }
+
+  function addEventListener(type: string, listener, options?) {
+    if (type !== "message" && type !== "messageerror") {
+      // Non-message events ("close", etc.) go straight to `self`; they don't touch the auto-ref.
+      self.addEventListener(type, listener, options);
+      return;
+    }
+    if (closed) return;
+    if (typeof listener !== "function") {
+      if (listener == null || typeof listener !== "object" || typeof listener.handleEvent !== "function") return;
+    }
+    // DOM EventTarget dedup: (type, callback, capture) is the key regardless of `once`, so a
+    // second add of the same listener — in either once or non-once form — is a no-op. Check
+    // before creating a once-wrapper so we don't overwrite listener[kOnceWrapper] and orphan
+    // the first wrapper. (.on() from injectFakeEmitter wraps every call in a fresh closure so
+    // it never hits this path — Node EventEmitter-style duplicates still work.)
+    const list = listeners[type];
+    const existingWrapper = listener[kOnceWrapper];
+    if (
+      list.lastIndexOf(listener) !== -1 ||
+      (existingWrapper !== undefined && list.lastIndexOf(existingWrapper) !== -1)
+    ) {
+      return;
+    }
+    let entry = listener;
+    if (options && typeof options === "object" && options.once) {
+      entry = function (event) {
+        removeEventListener(type, entry);
+        invoke(listener, event);
+      };
+      // Remember the wrapper so removeEventListener(listener) before it fires still works.
+      listener[kOnceWrapper] = entry;
+    }
+    list.push(entry);
+    // Node: adding a 'message' or 'messageerror' listener refs the port.
+    hasRefFlag = true;
+    ensureForwarder(type);
+    syncRef();
+  }
+
+  function removeEventListener(type: string, listener?) {
+    if (type !== "message" && type !== "messageerror") {
+      self.removeEventListener(type, listener);
+      return;
+    }
+    // DOM §2.8: a null/undefined callback is a no-op. Pre-PR this went through the native
+    // EventTarget which enforced that; don't treat it as "clear all".
+    if (listener == null) return;
+    const list = listeners[type];
+    const wrapper = listener[kOnceWrapper];
+    let idx = wrapper !== undefined ? list.lastIndexOf(wrapper) : -1;
+    if (idx === -1) idx = list.lastIndexOf(listener);
+    if (idx !== -1) {
+      list.splice(idx, 1);
+      // Drop the stale wrapper reference so re-adding the same function without {once} and
+      // then removing it resolves to the right entry. Only clear on a successful removal so
+      // a no-op remove (e.g. wrong event type) doesn't orphan a still-live wrapper.
+      if (wrapper !== undefined) listener[kOnceWrapper] = undefined;
+    }
+    if (list.length === 0) dropForwarder(type);
+    afterListenerRemoved();
+  }
+
+  function afterListenerRemoved() {
+    // Node: once no 'message'/'messageerror' listeners remain, the port is implicitly unref'd
+    // (regardless of any prior explicit ref()).
+    if (listeners.message.length === 0 && listeners.messageerror.length === 0) hasRefFlag = false;
+    syncRef();
+  }
+
+  const kOnceWrapper = Symbol("kOnceWrapper");
+
+  function setOnHandler(type: "message" | "messageerror", value) {
+    const old = onmessageEntry[type];
+    if (old !== null) {
+      const idx = listeners[type].lastIndexOf(old.entry);
+      if (idx !== -1) listeners[type].splice(idx, 1);
+    }
+    if (typeof value === "function") {
+      // Wrap so this entry never identity-matches a direct addEventListener(value) — per DOM
+      // the IDL attribute registers an internal algorithm, not the user's callback.
+      const entry = function (event) {
+        value.$call(fake, event);
+      };
+      onmessageEntry[type] = { handler: value, entry };
+      if (!closed) {
+        listeners[type].push(entry);
+        hasRefFlag = true;
+        ensureForwarder(type);
+      }
+      syncRef();
+    } else {
+      onmessageEntry[type] = null;
+      if (listeners[type].length === 0) dropForwarder(type);
+      afterListenerRemoved();
+    }
+  }
+
   Object.defineProperty(fake, "onmessage", {
     get() {
-      return self.onmessage;
+      const e = onmessageEntry.message;
+      return e !== null ? e.handler : null;
     },
     set(value) {
-      self.onmessage = value;
+      setOnHandler("message", value);
     },
   });
 
   Object.defineProperty(fake, "onmessageerror", {
     get() {
-      return self.onmessageerror;
+      const e = onmessageEntry.messageerror;
+      return e !== null ? e.handler : null;
     },
     set(value) {
-      self.onmessageerror = value;
+      setOnHandler("messageerror", value);
     },
   });
 
-  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
+      if (closed) return;
       return postMessage.$apply(null, args);
     },
   });
 
   Object.defineProperty(fake, "close", {
-    value() {},
+    value(cb) {
+      if (typeof cb === "function") this.once("close", cb);
+      if (closed) return;
+      closed = true;
+      closedMessagePorts.add(this);
+      // Schedule the 'close' event before tearing down forwarders so it runs on this tick's
+      // nextTick queue even if removing the "message" forwarder drops the last loop ref.
+      process.nextTick(() => {
+        self.dispatchEvent(new Event("close"));
+      });
+      listeners.message.length = 0;
+      listeners.messageerror.length = 0;
+      onmessageEntry.message = null;
+      onmessageEntry.messageerror = null;
+      dropForwarder("message");
+      dropForwarder("messageerror");
+      syncRef();
+    },
   });
 
   Object.defineProperty(fake, "start", {
     value() {},
   });
 
-  Object.defineProperty(fake, "unref", {
-    value() {},
+  Object.defineProperty(fake, "ref", {
+    value() {
+      if (hasRefFlag) return;
+      hasRefFlag = true;
+      syncRef();
+    },
   });
 
-  Object.defineProperty(fake, "ref", {
-    value() {},
+  Object.defineProperty(fake, "unref", {
+    value() {
+      if (!hasRefFlag) return;
+      hasRefFlag = false;
+      syncRef();
+    },
   });
 
   Object.defineProperty(fake, "hasRef", {
     value() {
-      return false;
+      return hasRefFlag;
     },
   });
 
@@ -807,22 +1044,16 @@ function fakeParentPort() {
   });
 
   Object.defineProperty(fake, "addEventListener", {
-    value: self.addEventListener.bind(self),
+    value: addEventListener,
   });
 
   Object.defineProperty(fake, "removeEventListener", {
-    value: self.removeEventListener.bind(self),
+    value: removeEventListener,
   });
 
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
-  });
-
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
-    enumerable: false,
-  });
+  // addListener/removeListener/on/off/once/removeAllListeners are inherited from
+  // MessagePort.prototype's NodeEventTarget-style emitter prototype (injectFakeEmitter)
+  // and route through the addEventListener/removeEventListener own-properties above.
 
   return fake;
 }

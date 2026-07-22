@@ -27,6 +27,7 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 extern X509_STORE *us_get_default_ca_store(void);
+extern int us_verified_chain_has_weak_signature(X509_STORE_CTX *ctx);
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
@@ -1108,7 +1109,8 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     int ok = 0;
     if (X509_STORE_CTX_init(vctx, store, leaf, chain) == 1) {
         X509_STORE_CTX_set_default(vctx, "ssl_server");
-        ok = X509_verify_cert(vctx) == 1;
+        ok = X509_verify_cert(vctx) == 1 &&
+             !us_verified_chain_has_weak_signature(vctx);
     }
     X509_STORE_CTX_free(vctx);
     if (!ok) return ssl_verify_invalid;

@@ -728,3 +728,87 @@ describe("tls ciphers should work", () => {
     );
   });
 });
+
+// Node.js (OpenSSL 3 at security level 2) and every browser refuse certificate
+// chains containing a SHA-1 signature. BoringSSL has no security levels and
+// only hard-blocks MD4/MD5, so without an explicit check a sha1WithRSAEncryption
+// leaf under a trusted root would verify as authorized.
+//
+// Fixtures regenerated with (10-year validity):
+//   openssl req -x509 -newkey rsa:2048 -nodes -keyout root-key.pem -out weak-sig-root-cert.pem \
+//     -subj "/CN=Weak Sig Test Root" -days 3650 -sha256 \
+//     -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign"
+//   printf "subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n" > ext.cnf
+//   for md in sha256 sha1; do
+//     openssl req -newkey rsa:2048 -nodes -keyout weak-sig-$md-key.pem -out $md.csr -subj "/CN=localhost"
+//     openssl x509 -req -in $md.csr -CA weak-sig-root-cert.pem -CAkey root-key.pem -CAcreateserial \
+//       -out weak-sig-$md-cert.pem -days 3650 -$md -extfile ext.cnf
+//   done
+describe("weak certificate signature digests", () => {
+  const root = readFileSync(join(import.meta.dir, "fixtures", "weak-sig-root-cert.pem"), "utf8");
+  const leaf = (md: string) => ({
+    key: readFileSync(join(import.meta.dir, "fixtures", `weak-sig-${md}-key.pem`), "utf8"),
+    cert: readFileSync(join(import.meta.dir, "fixtures", `weak-sig-${md}-cert.pem`), "utf8"),
+  });
+
+  async function verifyLeaf(md: string) {
+    const server = tls.createServer(leaf(md), c => c.end());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        authorized: boolean;
+        authorizationError: unknown;
+      }>();
+      const socket = tls.connect(
+        {
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          servername: "localhost",
+          ca: [root],
+          rejectUnauthorized: false,
+        },
+        () => {
+          resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+          socket.end();
+        },
+      );
+      socket.on("error", reject);
+      return await promise;
+    } finally {
+      server.close();
+    }
+  }
+
+  it("accepts a SHA-256-signed leaf under a trusted root", async () => {
+    const result = await verifyLeaf("sha256");
+    expect(result.authorized).toBe(true);
+    expect(result.authorizationError ?? null).toBeNull();
+  });
+
+  it("rejects a SHA-1-signed leaf under a trusted root", async () => {
+    const result = await verifyLeaf("sha1");
+    expect(result.authorized).toBe(false);
+    expect(result.authorizationError).toBe("CERT_SIGNATURE_FAILURE");
+  });
+
+  it("rejectUnauthorized aborts a SHA-1-signed connection", async () => {
+    const server = tls.createServer(leaf("sha1"), c => c.end());
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const socket = tls.connect(
+        { port: (server.address() as AddressInfo).port, host: "127.0.0.1", servername: "localhost", ca: [root] },
+        () => {
+          socket.end();
+          reject(new Error("handshake unexpectedly succeeded for SHA-1-signed certificate"));
+        },
+      );
+      socket.on("error", err => resolve(err));
+      const err = await promise;
+      expect(err.code).toBe("CERT_SIGNATURE_FAILURE");
+    } finally {
+      server.close();
+    }
+  });
+});

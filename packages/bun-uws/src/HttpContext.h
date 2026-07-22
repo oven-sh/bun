@@ -358,7 +358,7 @@ private:
              * cannot switch the in-flight response into tunnel handling. */
             if constexpr (!IsNodeHttp) {
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_PIPELINED_DROP;
                     httpResponseData->isConnectRequest = false;
                     /* HttpResponse::pause() also does timeout(0); re-arm after. */
                     ((HttpResponse<SSL> *) s)->pause();
@@ -595,6 +595,19 @@ private:
             }
             if(httpContextData->onClientError) {
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
+            }
+            /* A parse error in bytes trailing a dropped pipelined request must
+             * not overwrite the in-flight response: its bytes have not reached
+             * the wire yet, so a 4xx here would be read as the answer to the
+             * first (valid) request. The drop path already marked the
+             * connection for close-after-drain and paused reads; leave the
+             * in-flight response to finish and close. */
+            if constexpr (!IsNodeHttp) {
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_PIPELINED_DROP) {
+                    us_socket_unref(s);
+                    ((AsyncSocket<SSL> *) s)->uncork();
+                    return s;
+                }
             }
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());

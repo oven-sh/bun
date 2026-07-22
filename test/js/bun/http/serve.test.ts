@@ -3117,6 +3117,21 @@ describe("pipelined request behind an async fetch handler", () => {
     expect(wire).not.toContain("SECOND");
     expect(calls).toBe(1);
   });
+
+  // A parse error in the dropped request's bytes (here, an invalid chunked
+  // size) must not write a 4xx ahead of the in-flight response: its bytes have
+  // not reached the wire yet, so a 4xx would be read as the first request's
+  // answer and onClose would abort it.
+  it("still delivers the in-flight response when the dropped request's bytes are malformed", async () => {
+    const { wire, calls } = await pipelined(
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\n",
+    );
+    expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(wire).toContain("FIRST");
+    expect(wire).not.toMatch(/HTTP\/1\.1 4\d\d/);
+    expect(calls).toBe(1);
+  });
 });
 
 it("only serves /bun:info to loopback clients in development mode", async () => {

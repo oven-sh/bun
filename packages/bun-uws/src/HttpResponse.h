@@ -126,14 +126,12 @@ public:
             /* We can only write the header once */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
 
-                /* RFC 9112 9.6: a server that does not support persistence
-                 * SHOULD send Connection: close in its final response. The
-                 * HTTP_CONNECTION_CLOSE bit alone does not mean the client
-                 * already knows (the pipelined-drop path sets it on a
-                 * keep-alive client), so write the header whenever headers
-                 * have not been terminated yet. END_CALLED above is the
-                 * write-once guard. */
-                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                /* HTTP 1.1 must send this back unless the client already sent it to us.
+                * It is a connection close when either of the two parties say so but the
+                * one party must tell the other one so.
+                *
+                * This check also serves to limit writing the header only once. */
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
                     writeHeader("Connection", "close");
                 }
 

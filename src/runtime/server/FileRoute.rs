@@ -508,6 +508,14 @@ impl FileRoute {
         // Content-Range. FileResponseStream ships via sendfile/write(), so a
         // null-body status must never start it; 307/308 routes skip it too.
         if HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308) {
+            // 205/307/308 are not self-terminating under RFC 9112 §6.3, so a
+            // keep-alive client needs Content-Length. 1xx/204/304 are, and
+            // stay header-only.
+            if matches!(status_code, 205 | 307 | 308)
+                && !resp.state().has_written_content_length_header()
+            {
+                resp.write_header_int(b"content-length", 0);
+            }
             resp.end_without_body(resp.should_close_connection());
             return;
         }

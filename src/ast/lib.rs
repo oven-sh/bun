@@ -419,19 +419,6 @@ type Str = &'static [u8];
 // faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
 // ───────────────────────────────────────────────────────────────────────────
 pub mod api {
-    /// `MessageLevel` — u32 enum, 1-based; `None` = 0.
-    #[repr(u32)]
-    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-    pub enum MessageLevel {
-        #[default]
-        None = 0,
-        Err = 1,
-        Warn = 2,
-        Note = 3,
-        Info = 4,
-        Debug = 5,
-    }
-
     #[derive(Clone, Default, Debug)]
     pub struct Log {
         pub warnings: u32,

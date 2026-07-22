@@ -298,11 +298,6 @@ fn is_valid_gating_identifier(s: &[u8]) -> bool {
 // hardcoded test defaults when given without a value.
 // -----------------------------------------------------------------------
 
-/// Outcome of [`parse_fixture_pragmas`].
-#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-#[derive(Debug, Default)]
-pub struct PragmaParseResult {}
-
 /// Iterator over `(key, value)` pairs in a pragma string. Mirrors upstream's
 /// `splitPragma`: split on `@`, then split each entry on the first `:` (or
 /// `(` for the `@key(value)` form).
@@ -398,9 +393,8 @@ fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
 pub(crate) fn parse_fixture_pragmas(
     source: &[u8],
     opts: &mut ReactCompilerOptions,
-) -> PragmaParseResult {
+) {
     let pragma = leading_comment_pragma(source);
-    let mut skip: Option<&'static str> = None;
     // Match upstream snap harness defaults (compiler/packages/snap/src/compiler.ts
     // makePluginOptions + Utils/TestUtils.ts parseConfigPragmaForTests):
     //   - panicThreshold: 'all_errors'
@@ -453,7 +447,6 @@ pub(crate) fn parse_fixture_pragmas(
                     import_specifier_name: "isForgetEnabled_Fixtures".to_owned(),
                 });
                 if val.is_some_and(|v| v.first() == Some(&b'{')) {
-                    skip.get_or_insert("gating");
                 }
             }
             b"dynamicGating" => {
@@ -470,7 +463,6 @@ pub(crate) fn parse_fixture_pragmas(
                 if let Some(source) = parsed {
                     opts.dynamic_gating = Some(source);
                 } else {
-                    skip.get_or_insert("dynamicGating");
                 }
             }
             b"ignoreUseNoForget" => {
@@ -478,16 +470,13 @@ pub(crate) fn parse_fixture_pragmas(
                     opts.ignore_use_no_forget = b
                 }
             }
-            b"eslintSuppressionRules" => skip = Some("eslintSuppressionRules"),
             b"loggerTestOnly" => {
                 opts.logger_test_only = true;
-                skip.get_or_insert("loggerTestOnly");
             }
             b"expectNothingCompiled" => {
                 opts.expect_nothing_compiled = true;
             }
-            b"debug" => skip = Some("debug"),
-            b"flow" | b"script" => {} // language/sourceType markers, handled by the runner
+            b"flow" | b"script" | b"eslintSuppressionRules" | b"debug" => {} // recognized; handled by the runner
 
             // ---- EnvironmentConfig: Option<bool> ----------------------------
             b"enableResetCacheOnSourceFileChanges" => {
@@ -581,14 +570,12 @@ pub(crate) fn parse_fixture_pragmas(
                 env.validate_no_capitalized_calls = Some(Vec::new());
             }
             b"validateBlocklistedImports" => {
-                skip.get_or_insert("validateBlocklistedImports");
             }
             b"customMacros" => {
                 if let Some(v) = val.and_then(pragma_string_value) {
                     let head = v.split('.').next().unwrap_or(&v).to_owned();
                     env.custom_macros = Some(vec![head]);
                 } else {
-                    skip.get_or_insert("customMacros");
                 }
             }
             b"enableEmitHookGuards" => {
@@ -611,13 +598,10 @@ pub(crate) fn parse_fixture_pragmas(
                 });
             }
             b"hookPattern" | b"customHooks" | b"moduleTypeProvider" => {
-                skip.get_or_insert("hookPattern/customHooks/moduleTypeProvider");
             }
             _ => {}
         }
     }
-
-    PragmaParseResult {}
 }
 
 // -----------------------------------------------------------------------

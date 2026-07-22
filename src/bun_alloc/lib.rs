@@ -56,13 +56,13 @@ struct MaxAlignT {
     _p: *const (),
 }
 #[cfg(windows)]
-pub const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
+pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
 // On AArch64
 // AAPCS64 `long double` is IEEE binary128, 16-byte aligned. The `libc` crate
 // only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
 // for the aarch64 port.
 #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
-pub const MAX_ALIGN_T: usize = 16;
+pub(crate) const MAX_ALIGN_T: usize = 16;
 #[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
 pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
 
@@ -349,7 +349,7 @@ pub mod default_alloc {
 
     #[cfg(bun_asan)]
     #[inline]
-    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+    pub(crate) fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
             return unsafe { libc::malloc(size) };
         }
@@ -398,7 +398,7 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
     #[cfg(bun_asan)]
     #[inline]
-    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+    pub(crate) unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
             return unsafe { libc::realloc(ptr, new_size) };
         }

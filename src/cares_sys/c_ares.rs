@@ -67,7 +67,7 @@ impl EAI {
     #[cfg(target_os = "linux")]
     const ADDRFAMILY: Self = Self(-9);
     #[cfg(not(target_os = "linux"))]
-    pub const ADDRFAMILY: Self = Self(1);
+    const ADDRFAMILY: Self = Self(1);
 
     const BADFLAGS: Self = Self(libc::EAI_BADFLAGS);
     const FAIL: Self = Self(libc::EAI_FAIL);
@@ -78,7 +78,7 @@ impl EAI {
     #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly")))]
     const NODATA: Self = Self(libc::EAI_NODATA);
     #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-    pub const NODATA: Self = Self(7);
+    const NODATA: Self = Self(7);
     pub const NONAME: Self = Self(libc::EAI_NONAME);
     pub const SERVICE: Self = Self(libc::EAI_SERVICE);
     pub const SOCKTYPE: Self = Self(libc::EAI_SOCKTYPE);

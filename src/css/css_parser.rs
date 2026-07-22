@@ -2161,8 +2161,7 @@ mod rule_parsers {
     }
 } // mod rule_parsers
 
-/// A result returned from `to_css`, including the serialized CSS and other
-/// metadata depending on the input options.
+/// The serialized CSS returned from `to_css`.
 pub struct ToCssResult {
     /// Serialized CSS code.
     pub code: Vec<u8>,

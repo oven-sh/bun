@@ -3310,7 +3310,7 @@ function Server(options?, connectionListener?) {
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
-  this.listeningId = 1;
+  this._listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
@@ -3354,7 +3354,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
-  this.listeningId++;
+  this._listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3583,7 +3583,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
 
   // Invalidate the previous call's pending cluster reply, matching Node's
   // Server.prototype.listen `_listeningId++`.
-  this.listeningId++;
+  this._listeningId++;
 
   if (onListen != null) {
     this.once("listening", onListen);
@@ -3844,9 +3844,9 @@ function listenInCluster(
     port >= 0 &&
     isIP(address) === 0
   ) {
-    const lookupListeningId = server.listeningId;
+    const lookupListeningId = server._listeningId;
     require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server.listeningId) return;
+      if (lookupListeningId !== server._listeningId) return;
       if (err) {
         setTimeout(emitErrorNextTick, 1, server, err);
         return;
@@ -3905,11 +3905,11 @@ function listenInCluster(
     ...options,
     sharedOnly: tls ? true : undefined,
   };
-  const listeningId = server.listeningId;
+  const listeningId = server._listeningId;
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
     // A later listen() invalidated this reply; release the handle so the
     // primary drops its round-robin entry (Node's listeningId check).
-    if (listeningId !== server.listeningId) {
+    if (listeningId !== server._listeningId) {
       handle?.close?.();
       return;
     }

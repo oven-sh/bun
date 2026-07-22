@@ -16,12 +16,12 @@ const {
   validateInteger,
   validateFunction,
   validateOneOf,
+  validatePort,
 } = require("internal/validators");
 const { ConnResetException, ExceptionWithHostPort, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { validatePort } = require("internal/validators");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,

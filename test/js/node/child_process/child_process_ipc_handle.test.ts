@@ -412,7 +412,7 @@ child.on('message', m => {
   // queue when the SIGKILL lands in this same tick. Node settles accepted
   // plain sends with null even when the peer dies before reading them
   // (req.oncomplete ignores the write status); none may be dropped.
-  const big = 'x'.repeat(8 * 1024 * 1024);
+  const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
   const results = [];
   const total = 3;
   for (let i = 0; i < total; i++) {
@@ -441,7 +441,7 @@ setInterval(() => {}, 1 << 30);
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
     expect(stdout.trim()).toBe("CALLBACKS:null,null,null");
     expect(exitCode).toBe(0);
   });
@@ -458,7 +458,7 @@ server.listen(0, '127.0.0.1', () => {
   // 8MB plain write saturates the pipe, so the handle send below is still
   // queued (never written, no ack pending) when the SIGKILL lands. Node
   // settles both callbacks with null in this shape (verified v26.3.0).
-  const big = 'x'.repeat(8 * 1024 * 1024);
+  const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
   child.send(big, err => { a = err === null ? 'null' : err.code; });
   child.send('withhandle', server, err => { h = err === null ? 'null' : err.code; });
   child.kill('SIGKILL');
@@ -478,7 +478,7 @@ server.listen(0, '127.0.0.1', () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
     expect(JSON.parse(stdout.trim())).toEqual({ a: "null", h: "null" });
     expect(exitCode).toBe(0);
   });
@@ -518,7 +518,7 @@ setTimeout(() => process.exit(0), 5000);
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
     expect(stdout.trim()).toBe("RESULT:ERR_INVALID_HANDLE_TYPE");
     expect(exitCode).toBe(0);
   });
@@ -557,7 +557,7 @@ setInterval(() => {}, 1 << 30);
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
       // Same routing as real node: the NODE_-prefixed message fires
       // 'internalMessage' on the child handle; the other one is a normal message.
       expect(JSON.parse(stdout.trim())).toEqual([

@@ -179,6 +179,9 @@ cluster.fork = function (env) {
   // so a cluster command whose '$internal' send option was lost (a user
   // wrapper around process.send that truncates arguments) arrives external
   // and is classified by cmd on the receive side - route it like node does.
+  // Limitation: only the act-bearing half is recoverable here; {ack: N}
+  // replies resolve per-seq callbacks that live in the native internal-frame
+  // queue, which this JS path cannot reach.
   worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
     if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
       onmessage.$call(worker, message, handle);
@@ -394,17 +397,31 @@ class ReusePortHandle {
   }
 
   add(worker, send) {
-    this.workers.set(worker.id, worker);
+    // Refcount per server, not per worker: N http.Servers from one worker on
+    // the same port must each hold the claim until their own close.
+    this.workers.set(worker.id, (this.workers.get(worker.id) ?? 0) + 1);
     const { pending } = this;
     if (pending) pending.push(send);
     else send(this.errno);
   }
 
   remove(worker) {
+    const count = this.workers.get(worker.id);
+    if (count === undefined) return this.workers.size === 0;
+    if (count > 1) {
+      this.workers.set(worker.id, count - 1);
+      return false;
+    }
     this.workers.delete(worker.id);
     if (this.workers.size !== 0) return false;
     this.server?.close();
     this.server = null;
+    if (this.pending !== null) {
+      // The close() above suppressed the probe's 'listening' callback, which
+      // was #settle()'s only trigger - settle the parked repliers now so no
+      // worker's listen() waits forever on a dead probe.
+      this.#settle();
+    }
     return true;
   }
 }

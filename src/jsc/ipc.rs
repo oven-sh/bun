@@ -532,7 +532,9 @@ mod json {
         let deserialized = match parsed {
             Ok(v) => v,
             Err(JsError::Thrown) | Err(JsError::Terminated) => {
-                global_this.clear_exception();
+                // Don't erase a pending TerminationException - clearing it
+                // would resurrect a terminated worker's execution.
+                global_this.clear_exception_except_termination();
                 return Err(IPCDecodeError::InvalidFormat);
             }
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1194,14 +1196,20 @@ impl SendQueue {
         // (req.oncomplete ignores the write status in
         // lib/internal/child_process.js) — while messages parked in
         // _handleQueue behind a pending NODE_HANDLE ack are discarded without
-        // their callbacks ever firing. Our queue parks behind the ack exactly
-        // when waiting_for_ack is occupied.
-        let parked_behind_ack = this.waiting_for_ack.is_some();
+        // their callbacks ever firing. Node opens that window the moment a
+        // handle send is *initiated* (_handleQueue is created synchronously
+        // inside _send), so everything queued after the first handle-bearing
+        // item is parked - not just items queued after its write completed.
+        let mut parked = this.waiting_for_ack.is_some();
         if let Some(item) = this.waiting_for_ack.take() {
             item.complete(&global, &mut this.close_handle_fn);
         }
         for item in std::mem::take(&mut this.queue) {
-            if parked_behind_ack {
+            let was_parked = parked;
+            if item.handle.is_some() {
+                parked = true;
+            }
+            if was_parked {
                 item.abort_parked(&global, &mut this.close_handle_fn);
             } else {
                 item.complete(&global, &mut this.close_handle_fn);
@@ -2019,7 +2027,7 @@ fn handle_ipc_message(
             if msg_data.is_object() {
                 let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
                     Err(_) => {
-                        global_this.clear_exception();
+                        global_this.clear_exception_except_termination();
                         break 'handle_message;
                     }
                     Ok(None) => break 'handle_message,

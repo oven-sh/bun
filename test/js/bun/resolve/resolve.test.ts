@@ -616,6 +616,8 @@ describe("package.json exports/imports array target fallback", () => {
           "./nul": [null, "./real.js"],
           "./ctl": ["./real.js", "./other.js"],
           "./cond": [{ "no-such-condition": "./other.js" }, "./real.js"],
+          "./condinv": [{ "default": "not-relative" }, "./real.js"],
+          "./condnul": [{ "default": null }, "./real.js"],
           "./miss": ["./does-not-exist.js", "./real.js"],
           "./allinv": ["also-not-relative", "not-relative-invalid-target"],
           "./allnul": [null, null],
@@ -627,7 +629,7 @@ describe("package.json exports/imports array target fallback", () => {
         import { createRequire } from "node:module";
         const req = createRequire(import.meta.url);
         const out = {};
-        for (const s of ["arrpkg/inv", "arrpkg/nul", "arrpkg/ctl", "arrpkg/cond", "#inv", "#nul", "#ctl"]) {
+        for (const s of ["arrpkg/inv", "arrpkg/nul", "arrpkg/ctl", "arrpkg/cond", "arrpkg/condinv", "arrpkg/condnul", "#inv", "#nul", "#ctl"]) {
           try { out["import " + s] = (await import(s)).default; }
           catch (e) { out["import " + s] = "THREW " + (e.code || e.name); }
           try { const v = req(s); out["require " + s] = v?.default ?? v; }
@@ -653,6 +655,8 @@ describe("package.json exports/imports array target fallback", () => {
       nul: Bun.resolveSync("arrpkg/nul", root),
       ctl: Bun.resolveSync("arrpkg/ctl", root),
       cond: Bun.resolveSync("arrpkg/cond", root),
+      condinv: Bun.resolveSync("arrpkg/condinv", root),
+      condnul: Bun.resolveSync("arrpkg/condnul", root),
       "#inv": Bun.resolveSync("#inv", root),
       "#nul": Bun.resolveSync("#nul", root),
       "#ctl": Bun.resolveSync("#ctl", root),
@@ -661,6 +665,8 @@ describe("package.json exports/imports array target fallback", () => {
       nul: real,
       ctl: real,
       cond: real,
+      condinv: real,
+      condnul: real,
       "#inv": imp,
       "#nul": imp,
       "#ctl": imp,
@@ -707,6 +713,10 @@ describe("package.json exports/imports array target fallback", () => {
       "require arrpkg/ctl": "real.js",
       "import arrpkg/cond": "real.js",
       "require arrpkg/cond": "real.js",
+      "import arrpkg/condinv": "real.js",
+      "require arrpkg/condinv": "real.js",
+      "import arrpkg/condnul": "real.js",
+      "require arrpkg/condnul": "real.js",
       "import #inv": "imp.mjs",
       "require #inv": "imp.mjs",
       "import #nul": "imp.mjs",

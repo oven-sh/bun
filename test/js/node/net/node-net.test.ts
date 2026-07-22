@@ -1140,19 +1140,20 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 // writer saw 'drain' against a peer that would receive nothing after resume().
 // Runs in a subprocess so nothing in the test runner touches the stream's
 // flowing state.
-it("accepted socket honors pause() made inside the 'connection' handler", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "net-server-accepted-socket-pause-fixture.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+describe.each([
+  ["net.createServer 'connection'", "net-server-accepted-socket-pause-fixture.js", "drainsWhilePaused 0 backpressured true"],
+  ["tls.createServer 'secureConnection'", "tls-server-accepted-socket-pause-fixture.js", "backpressured true"],
+])("accepted socket honors pause() made inside the %s handler", (_, fixture, backpressureLine) => {
+  it("leaves readableFlowing false and delivers every byte after resume()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, fixture)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["flowing false", backpressureLine, "delivered true"]);
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual([
-    "flowing false",
-    "drainsWhilePaused 0 backpressured true",
-    "delivered true",
-  ]);
-  expect(exitCode).toBe(0);
 });

@@ -238,7 +238,6 @@ pub(crate) fn compile_fn(
             ) {
                 compiled_outlined.push(OutlinedFunction {
                     func: compiled,
-                    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
                     fn_type: Some(fn_type),
                 });
             }

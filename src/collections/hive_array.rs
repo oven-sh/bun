@@ -63,7 +63,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         (self.masks[index / WORD_BITS].get() >> (index % WORD_BITS)) & 1 != 0
     }
 
-    /// `pub(crate)` — toggling occupancy from outside `HiveArray` while a
+    /// Toggling occupancy from outside `HiveArray` while a
     /// `HiveSlot`/`HiveBox` for the same index is alive would let a
     /// re-`claim()` alias it. Use [`HiveArray::claim`]/[`alloc`](HiveArray::alloc)/
     /// [`put`](HiveArray::put)/[`box_at`](HiveArray::box_at).
@@ -74,7 +74,6 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         self.masks[w].set(self.masks[w].get() | (1usize << (index % WORD_BITS)));
     }
 
-    /// `pub(crate)` — see [`set`](Self::set).
     #[inline]
     fn unset(&self, index: usize) {
         debug_assert!(index < CAPACITY);

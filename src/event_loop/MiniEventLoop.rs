@@ -34,14 +34,14 @@ use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 use crate::EventLoopHandle;
 
 // ─── Upward link-time externs (LAYERING) ────────────────────────────────────
-// The bodies live in `bun_runtime` (which
-// owns `webcore::Blob` / `jsc::VirtualMachine`) as `#[no_mangle]` Rust-ABI
-// fns; the linker resolves them. No `AtomicPtr`, no init-order hazard.
+// The bodies live in `bun_runtime` (which owns `webcore::Blob`) as
+// `#[no_mangle]` Rust-ABI fns; the linker resolves them. No `AtomicPtr`, no
+// init-order hazard.
 unsafe extern "Rust" {
     /// Constructs a `webcore::blob::Store` for stdout/stderr/stdin.
     /// Return value is an erased
-    /// `*mut blob::Store` with intrusive refcount = 2; this crate only
-    /// stores/forwards it. Defined in `bun_runtime::webcore::blob`.
+    /// `*mut blob::Store` with intrusive refcount = 2; re-exported for
+    /// `bun_jsc::rare_data`. Defined in `bun_runtime::webcore::blob`.
     /// No caller-side preconditions (by-value args, allocates fresh).
     pub safe fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
 }
@@ -121,8 +121,7 @@ pub fn init_global(
     // raw ptr.
     let global = unsafe { &mut *global_ptr };
 
-    // `InternalLoopData::set_parent_event_loop` (typed) lives in a
-    // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
+    // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
     // tag 2 = mini (`EventLoopHandle` discriminant + 1).
     {
         let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
@@ -201,9 +200,9 @@ impl<'a> MiniEventLoop<'a> {
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
     /// a `&mut`-returning accessor is provided: the loader may be shared via
     /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
-    /// other safe paths (`GlobalMini::create_null_delimited_env_map`,
-    /// `EventLoopHandle::create_null_delimited_env_map`, `interpreter.rs`)
-    /// materialize `&mut DotEnvLoader` from the same allocation via raw deref.
+    /// other safe paths (`EventLoopHandle::create_null_delimited_env_map`,
+    /// `interpreter.rs`) materialize `&mut DotEnvLoader` from the same
+    /// allocation via raw deref.
     /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
     /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers
     /// deref the returned `NonNull` for a tightly-scoped borrow under their

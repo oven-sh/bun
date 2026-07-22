@@ -222,7 +222,7 @@ pub enum EventLoopHandle {
 }
 
 /// Single `unsafe` deref site for the `EventLoopHandle::Mini` arm — collapses
-/// the half-dozen identical `unsafe { mini.get_mut() }` dispatch sites below.
+/// the identical `unsafe { mini.get_mut() }` dispatch sites below.
 ///
 /// Soundness: the `MiniEventLoop` behind every `EventLoopHandle::Mini` is the
 /// per-thread `!Send` singleton (see [`EventLoopHandle::init_mini`] /

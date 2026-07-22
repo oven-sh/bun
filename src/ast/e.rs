@@ -1833,7 +1833,6 @@ impl EString {
 
 // ── EString surface ────────────────────────────────────────────────────────
 // Ordering / equality / const-literal / rope-mutation helpers.
-// `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
     pub const EMPTY: EString = EString::from_static(b"");
 

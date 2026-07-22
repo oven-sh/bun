@@ -5323,7 +5323,7 @@ pub fn parse_http_date(value: &[u8]) -> Option<u64> {
 
 /// `bun_event_loop::__bun_stdio_blob_store_new` body.
 /// Returns an erased `*mut webcore::blob::Store` with intrusive `ref_count = 2`
-/// (one for `RareData`/`MiniEventLoop`, one for the eventual `Blob` consumer).
+/// (one for `RareData`, one for the eventual `Blob` consumer).
 /// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]

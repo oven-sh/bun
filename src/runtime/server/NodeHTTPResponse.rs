@@ -1820,22 +1820,16 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // Finish any zero-copy write before telling JS we're drained. While
-        // bytes are still outstanding return `false` (the uWS onWritable
-        // contract's "write failed") so HttpContext::onWritable waits for the
-        // next writable event instead of evaluating its close gate against a
-        // bufferedAmount that does not count the pinned tail. Zero progress on
-        // a writable event means send() is failing (EPIPE): returning `false`
-        // would spin this callback, so fall through to the close gate instead.
+        // Partial pinned progress: return false so onWritable's close gate
+        // waits (bufferedAmount does not count the pinned tail). Zero progress
+        // on a writable event is EPIPE: fall through so the gate can close.
         let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
             return self.pending_pinned_write.get().remaining.len() >= pinned_before;
         }
 
-        // Drained (or nothing was pinned): disarm the native callback so
-        // HttpContext::onEnd's `onWritable != nullptr` check does not mistake
-        // this stale shim for a pending write. callOnWritable borrowed the slot
-        // and would otherwise restore it; a later backpressured write re-arms.
+        // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see
+        // a stale shim (callOnWritable would restore it); writes re-arm.
         response.clear_on_writable();
         response.corked(|| self.on_drain_corked(offset));
         // return true means we may have something to drain

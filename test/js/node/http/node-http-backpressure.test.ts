@@ -165,6 +165,7 @@ describe("backpressure", () => {
         }
       });
       socket.on("end", () => (ended = true));
+      socket.on("error", () => {});
       await once(socket, "connect");
       socket.end("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
       await once(socket, "close");

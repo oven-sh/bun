@@ -310,6 +310,8 @@ async function worker(w: number) {
         // Crash-on-OOM is by design; only an absurdly LARGE allocation
         // (oom-large: unvalidated size / runaway growth) is a real bug.
         else if (rr.crashSig?.kind === "oom") outcome = "expected-abort";
+        // A debug-only asset load (source-tree file) is not user-facing.
+        else if (rr.crashSig?.kind === "debug-only") outcome = "expected-abort";
         else if (rr.crashSig?.boundary === "system-module") outcome = "system-crash";
         else outcome = "CRASH";
       } else if (fired === 0) outcome = "no-fire";

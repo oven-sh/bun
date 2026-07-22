@@ -121,6 +121,10 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // it is LARGE - an absurd requested size means an unvalidated length
       // or runaway growth (a real bug), not an exhausted environment.
       let k = kind;
+      // Debug-build-only: a debug bun reads certain assets live from the
+      // source tree (release embeds them). "Failed to load '<src path>'" is
+      // an asset the user's binary never reads from disk - not user-facing.
+      if (/Failed to load '[^']*[\\/]src[\\/][^']*'/.test(detail)) k = "debug-only";
       if (k === "oom") {
         const bytes = /memory allocation of (\d+) bytes failed/i.exec(text)?.[1];
         if (bytes && Number(bytes) >= 256 * 1024 * 1024) k = "oom-large";

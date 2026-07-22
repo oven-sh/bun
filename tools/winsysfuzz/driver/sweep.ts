@@ -234,6 +234,10 @@ for (const c of candidates) {
       // pause only slows startup and yields marginal timeout-grazing
       // "stalls" on slow targets. Delay closes deeper in, never the first.
       if (c.sysName === "NtClose" && f.mode === "delay" && hit === 1) continue;
+      // The first event/semaphore creations are WTF/JSC threading
+      // primitives created at init: failing them parks the main thread
+      // forever (a by-design init fatal), never a bun logic bug.
+      if ((c.sysName === "NtCreateEvent" || c.sysName === "NtCreateSemaphore") && hit === 1) continue;
       plan.push({ id: plan.length, coord: c, status: f.status, mode: f.mode, expect: f.expect ?? "must-handle", hit });
     }
 }

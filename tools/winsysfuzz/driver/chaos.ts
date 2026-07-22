@@ -154,7 +154,14 @@ function drawSchedule(): string[] {
     const c = pickCoord();
     const f = pick(FAULTS[c.sysName]);
     // hit biased deep: sqrt of a uniform skews toward the late end
-    const hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
+    let hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
+    // The first event/semaphore creations are WTF/JSC threading primitives
+    // made at init - failing them parks the process by design, not a bun
+    // logic bug. Never fault their hit 1 (draw deeper, or skip if no depth).
+    if ((c.sysName === "NtCreateEvent" || c.sysName === "NtCreateSemaphore") && hit === 1) {
+      if (c.hits < 2) continue;
+      hit = 2;
+    }
     rules.add(`${c.sysName} ${c.key} ${hit} ${f.mode} ${f.status}`);
   }
   return [...rules];

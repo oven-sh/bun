@@ -83,7 +83,7 @@ for (const { label, arg, file } of [
     // Entrypoint goes away; the watcher restarts into a process that cannot
     // resolve it. Previously this killed the whole watch session with exit 1.
     unlinkSync(entry);
-    expect(await nextMatching(stderr, "Module not found")).toContain(arg);
+    expect(await nextMatching(stderr, "Module not found")).toContain(JSON.stringify(arg));
     expect(watchee.exitCode).toBeNull();
 
     writeFileSync(entry, `console.log("BOOT 2"); setInterval(() => {}, 1000);`);

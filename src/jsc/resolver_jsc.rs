@@ -32,9 +32,8 @@ pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObje
     node_module_paths_js_value(in_str, global, false)
 }
 
-/// Node.js "global folders" list for `Module.globalPaths` /
-/// `Module._resolveLookupPaths`: the NODE_PATH entries followed by
-/// `$HOME/.node_modules`, `$HOME/.node_libraries` and `$PREFIX/lib/node`.
+/// `Module.globalPaths` / `_resolveLookupPaths` global folders: NODE_PATH
+/// entries, then `$HOME/.node_modules`, `$HOME/.node_libraries`, `$PREFIX/lib/node`.
 /// https://nodejs.org/api/modules.html#loading-from-the-global-folders
 #[unsafe(export_name = "Resolver__globalPathsJSValue")]
 pub(crate) extern "C" fn global_paths_js_value(global: &JSGlobalObject) -> JSValue {
@@ -83,7 +82,7 @@ pub(crate) extern "C" fn global_paths_js_value(global: &JSGlobalObject) -> JSVal
 }
 
 fn strip_trailing_sep(mut p: &[u8]) -> &[u8] {
-    while p.len() > 1 && Platform::AUTO.is_separator(p[p.len() - 1]) {
+    while !p.is_empty() && Platform::AUTO.is_separator(p[p.len() - 1]) {
         p = &p[..p.len() - 1];
     }
     p

@@ -30,7 +30,7 @@ Received: 2
 Expected: 3
 Received: 2
 
-      at <dir>/comprehensive.test.js:31:27
+      at comprehensive.test.js:31:27
 </failure>
       </testcase>
       <testcase name="basic skipped test" classname="comprehensive test suite" file="comprehensive.test.js" line="34" assertions="0">

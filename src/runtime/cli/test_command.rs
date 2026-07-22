@@ -358,12 +358,26 @@ impl JunitReporter {
                 continue;
             }
             body.extend_from_slice(b"      at ");
-            let name_fmt = frame.name_formatter(false);
-            let url_fmt = frame.source_url_formatter(file, None, false, false);
-            if func.slice().is_empty() {
-                let _ = write!(body, "{}", url_fmt);
-            } else {
-                let _ = write!(body, "{} ({})", name_fmt, url_fmt);
+            if !func.slice().is_empty() {
+                let _ = write!(body, "{} (", frame.name_formatter(false));
+            }
+            let file_start = body.len();
+            body.extend_from_slice(file);
+            if cfg!(windows) {
+                for b in &mut body[file_start..] {
+                    if *b == b'\\' {
+                        *b = b'/';
+                    }
+                }
+            }
+            let pos = frame.position;
+            if pos.line.is_valid() && pos.column.is_valid() {
+                let _ = write!(body, ":{}:{}", pos.line.one_based(), pos.column.one_based());
+            } else if pos.line.is_valid() {
+                let _ = write!(body, ":{}", pos.line.one_based());
+            }
+            if !func.slice().is_empty() {
+                body.push(b')');
             }
             body.push(b'\n');
         }

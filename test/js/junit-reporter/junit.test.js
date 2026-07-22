@@ -255,7 +255,7 @@ describe("junit reporter", () => {
     await proc1.exited;
 
     const xmlContent1 = await file(junitPath1).text();
-    expect(filterJunitXmlOutput(xmlContent1, tmpDir)).toMatchSnapshot();
+    expect(filterJunitXmlOutput(xmlContent1)).toMatchSnapshot();
     const result1 = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent1, (err, result) => {
         if (err) reject(err);
@@ -283,7 +283,7 @@ describe("junit reporter", () => {
     await proc2.exited;
 
     const xmlContent2 = await file(junitPath2).text();
-    expect(filterJunitXmlOutput(xmlContent2, tmpDir)).toMatchSnapshot();
+    expect(filterJunitXmlOutput(xmlContent2)).toMatchSnapshot();
     const result2 = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent2, (err, result) => {
         if (err) reject(err);
@@ -366,12 +366,15 @@ describe("junit reporter", () => {
     expect(flakyEntries).toHaveLength(1);
     expect(flakyEntries[0][0]).not.toContain("<failure");
 
-    // A test that fails every retry attempt is reported once, as a failure.
+    // A test that fails every retry attempt is reported once, as a failure,
+    // and the failure message reflects the final attempt (not the first).
     const exhaustedEntries = [
       ...xmlContent.matchAll(/<testcase[^>]*name="exhausted test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g),
     ];
     expect(exhaustedEntries).toHaveLength(1);
     expect(exhaustedEntries[0][0]).toContain("<failure");
+    expect(exhaustedEntries[0][0]).toContain("always fails 3");
+    expect(exhaustedEntries[0][0]).not.toContain("always fails 1");
 
     expect(xmlContent).toContain('name="stable test"');
 
@@ -517,13 +520,6 @@ describe("junit reporter", () => {
   });
 });
 
-function filterJunitXmlOutput(xmlContent, dir) {
-  let out = xmlContent.replaceAll(/ (time|hostname)=".*?"/g, "");
-  if (dir) {
-    out = out.replaceAll(String(dir), "<dir>");
-    out = out.replaceAll(String(dir).replaceAll("\\", "/"), "<dir>");
-  }
-  // <failure> bodies render stack-frame paths with the platform separator.
-  out = out.replaceAll(/(<dir>)[\\\/]/g, "$1/");
-  return out;
+function filterJunitXmlOutput(xmlContent) {
+  return xmlContent.replaceAll(/ (time|hostname)=".*?"/g, "");
 }

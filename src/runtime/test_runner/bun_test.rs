@@ -1322,7 +1322,12 @@ impl BunTest {
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
             match unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
-                Some(junit) => (junit as *mut crate::cli::test_command::JunitReporter).cast(),
+                Some(junit) => {
+                    // Each top-level exception starts a fresh capture so a retried
+                    // test reports the final attempt rather than accumulating.
+                    junit.last_failure = None;
+                    (junit as *mut crate::cli::test_command::JunitReporter).cast()
+                }
                 None => core::ptr::null_mut(),
             }
         };

@@ -3,9 +3,9 @@
 Bun's WHATWG Streams implementation (`ReadableStream`, `WritableStream`, `TransformStream`,
 their controllers/readers/writers, `TextEncoderStream`/`TextDecoderStream`, and the
 `ByteLength`/`Count` queuing strategies) is written entirely in C++ under
-`src/jsc/bindings/webcore/streams/` — 33 translation units, zero JavaScript builtins.
+`src/jsc/bindings/webcore/streams/` — 35 `.cpp` files, zero JavaScript builtins.
 
-Each TU owns one spec object or one spec algorithm group. Public classes
+Each file owns one spec object or one spec algorithm group. Public classes
 (`JSReadableStream.cpp`, `JSWritableStream.cpp`, …) hold the per-instance state and the
 prototype/constructor tables; the abstract-operation files (`ReadableStreamOperations.cpp`,
 `WritableStreamOperations.cpp`, `TransformStreamOperations.cpp`, `WebStreamsMisc.cpp`) hold

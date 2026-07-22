@@ -252,6 +252,25 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     // legitimate exit-time handles. Crash and hang stand alone here.
   }
   onFate(rr.fired, outcome ?? (rr.outcome === "hang" ? "HANG" : "exit"), rr.exitCode);
+  // A test whose OWN PURPOSE is to crash (crash-handler tests deliberately
+  // segfault - one uses 0xDEADBEEF as its poison address) produces this
+  // signature by design. With no per-file baseline the pass can't know that
+  // in advance, so on a crash hit run the file once UNFAULTED: if the
+  // control crashes with the same signature, the crash is the test's
+  // intent, not a finding. One extra run per (rare) hit, none per file.
+  if (outcome === "CRASH") {
+    const ctrlDir = join(dir, "control");
+    const ctrl = await replayCoordinate({ bun: bun!, args: ["test", file], schedule: "", dir: ctrlDir, timeoutMs, capture: false }).catch(
+      () => null,
+    );
+    const ctrlCrash = ctrl ? (ctrl.crashSig ?? detectCrash(ctrl.stdout, ctrl.stderr)) : null;
+    try {
+      rmSync(ctrlDir, { recursive: true, force: true });
+    } catch {}
+    if (ctrlCrash && ctrlCrash.signature === (rr.crashSig ?? detectCrash(rr.stdout, rr.stderr))?.signature) {
+      outcome = null; // the test crashes on purpose: its baseline IS this crash
+    }
+  }
   if (!outcome || rr.fired === 0) {
     try {
       rmSync(dir, { recursive: true, force: true });

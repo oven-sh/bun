@@ -1,11 +1,7 @@
 "use strict";
-// A pause() made inside the 'connection' handler must be honored after the
-// handler returns. onconnection previously called resume() unconditionally
-// after emit("connection"), which flipped readableFlowing from false back to
-// true with no 'data' listener: inbound bytes were emitted into the void, the
-// kernel receive buffer drained, TCP signalled "go ahead" to the writer, and
-// the writer saw 'drain' (and bytesWritten reported success) against a peer
-// that would receive nothing after resume().
+// onconnection's post-emit resume() previously stomped a pause() made inside
+// the 'connection' handler: flowing went back to true with no listener, bytes
+// were discarded, and the writer saw 'drain' against a paused peer.
 const net = require("node:net");
 const { once } = require("node:events");
 

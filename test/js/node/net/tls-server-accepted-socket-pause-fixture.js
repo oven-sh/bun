@@ -1,8 +1,7 @@
 "use strict";
-// TLS sibling of net-server-accepted-socket-pause-fixture.js: a pause() made
-// inside the 'secureConnection' handler must be honored after the handshake
-// handler returns (ServerHandlers.handshake gates its post-emit resume() on
-// readableFlowing === null the same way onconnection does).
+// TLS sibling of net-server-accepted-socket-pause-fixture.js: pause() inside
+// 'secureConnection' must be honored by ServerHandlers.handshake's post-emit
+// resume() gate.
 const tls = require("node:tls");
 const fs = require("node:fs");
 const path = require("node:path");

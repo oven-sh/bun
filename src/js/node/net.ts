@@ -1065,14 +1065,10 @@ function onconnection(err, clientHandle) {
   }
 
   self.emit("connection", _socket);
-  // The handler may have paused (readableFlowing === false) or attached
-  // 'data'/'readable' (true/false). Forcing resume() over a handler's pause()
-  // put the stream into flowing mode with no listener: inbound bytes were
-  // emitted into the void and the writer saw 'drain' against a paused peer.
-  // null means the handler left the stream untouched; keep resuming there so
-  // a write-only handler's peer-close still tears the socket down (Node
-  // leaves it null and relies on libuv's UV_EOF readStop to release the loop,
-  // which would require accepted sockets to hold the loop on their own).
+  // Honor a pause()/'data'/'readable' touched inside the handler. null (the
+  // handler left flowing untouched) still resumes so a write-only handler's
+  // peer-close tears down; Node would leave it null and release the loop via
+  // UV_EOF readStop, which needs accepted sockets to hold the loop themselves.
   if (!pauseOnConnect && !isTLS && _socket.readableFlowing === null) {
     _socket.resume();
   }

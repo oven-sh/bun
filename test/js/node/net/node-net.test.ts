@@ -1133,13 +1133,9 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   }
 });
 
-// A pause() made inside the 'connection' handler must be honored after the
-// handler returns. onconnection previously called resume() unconditionally
-// after emit("connection"), which overrode the handler's pause(): inbound
-// bytes were emitted into the void, the kernel receive buffer drained, and the
-// writer saw 'drain' against a peer that would receive nothing after resume().
-// Runs in a subprocess so nothing in the test runner touches the stream's
-// flowing state.
+// onconnection / ServerHandlers.handshake previously resume()d after emit,
+// stomping a pause() made inside the handler. Subprocess-isolated so nothing
+// in the test runner touches readableFlowing.
 describe.each([
   [
     "net.createServer 'connection'",

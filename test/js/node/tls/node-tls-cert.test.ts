@@ -669,10 +669,14 @@ it("tls.connect with ca: [] replaces the default trust store (rejects NODE_EXTRA
   expect(result.control).toEqual({ ok: true, authorized: true });
   // `ca: []` -> empty trust store, chain verification fails closed.
   expect(result.caEmpty.ok).toBe(false);
-  expect(result.caEmpty.code).toMatch(/SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT/);
+  expect(result.caEmpty.code).toMatch(
+    /SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT/,
+  );
   // Same via createSecureContext({ ca: [] }).
   expect(result.ctxEmpty.ok).toBe(false);
-  expect(result.ctxEmpty.code).toMatch(/SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT/);
+  expect(result.ctxEmpty.code).toMatch(
+    /SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT/,
+  );
   expect(exitCode).toBe(0);
 });
 

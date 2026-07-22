@@ -1297,8 +1297,7 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
 async function ensurePacker(version) {
   // Reuse an existing packer only if it is the pinned version; a stale
   // system or cached binary must not shadow the spec pin.
-  const isPinned = (bin: string) =>
-    spawnSync(bin, ["version"], { encoding: "utf8" }).stdout.includes(`v${version}`);
+  const isPinned = (bin: string) => spawnSync(bin, ["version"], { encoding: "utf8" }).stdout.includes(`v${version}`);
   const packerPath = which("packer");
   if (packerPath && isPinned(packerPath)) {
     console.log("[packer] Found:", packerPath);

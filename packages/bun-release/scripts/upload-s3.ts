@@ -71,45 +71,31 @@ async function setPaths(revision: string, isCanary: boolean) {
   console.log("Found paths:", paths);
 }
 
+// The profile zip for the local platform contains features.json alongside
+// bun-profile (see scripts/build/ci.ts). Non-canary release builds do not
+// bundle `bun:internal-for-testing`, so spawning the stripped binary to
+// regenerate the payload no longer works for stable releases; read the
+// packaged file instead.
+const localProfile = local.replace(/\.zip$/, "-profile.zip");
+
 async function getFeaturesJSON(body: ArrayBuffer) {
-  // extract feature data using the local build
   const temp = tmp();
-  await Bun.write(join(temp, "bun.zip"), body);
-  let unzip = Bun.spawnSync({
-    cmd: ["unzip", join(temp, "bun.zip")],
+  await Bun.write(join(temp, "bun-profile.zip"), body);
+  const unzip = Bun.spawnSync({
+    cmd: ["unzip", join(temp, "bun-profile.zip")],
     cwd: temp,
   });
   if (!unzip.success) throw new Error("Failed to unzip");
-  let data = Bun.spawnSync({
-    cmd: [
-      join(temp, local.replace(".zip", ""), "bun"),
-      "--print",
-      'JSON.stringify(require("bun:internal-for-testing").crash_handler.getFeatureData())',
-    ],
-    cwd: temp,
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-      BUN_GARBAGE_COLLECTOR_LEVEL: "0",
-      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-    },
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  return data.stdout.toString("utf8").trim();
+  return (await Bun.file(join(temp, localProfile.replace(".zip", ""), "features.json")).text()).trim();
 }
 
-// Make the first asset the local build
-for (let i = 0; i < release.assets.length; i++) {
-  const asset = release.assets[i];
-  if (asset.name === local) {
-    release.assets.splice(i, 1);
-    release.assets.unshift(asset);
-    break;
-  }
-}
-
-if (release?.assets?.[0]?.name !== local) {
-  throw new Error("Expected local build to be the first asset");
+// Make the first asset the local profile build so features.json is read
+// (and paths set) before any other asset is uploaded.
+{
+  const i = release.assets.findIndex(a => a.name === localProfile);
+  if (i < 0) throw new Error(`Expected release asset: ${localProfile}`);
+  const [asset] = release.assets.splice(i, 1);
+  release.assets.unshift(asset);
 }
 
 for (const asset of release.assets) {
@@ -135,7 +121,7 @@ for (const asset of release.assets) {
   console.log("Downloading asset:", name);
   const body = await response.arrayBuffer();
 
-  if (name == local) {
+  if (name == localProfile) {
     const text = await getFeaturesJSON(body);
     const features = JSON.parse(text);
     const sha = features.revision;
@@ -152,8 +138,8 @@ for (const asset of release.assets) {
         key,
         body: new TextEncoder().encode(text).buffer,
         headers: {
-          "Content-Type": contentType,
-          "Content-Disposition": `attachment; filename="${name}"`,
+          "Content-Type": "application/json",
+          "Content-Disposition": `attachment; filename="features.json"`,
         },
       });
     }

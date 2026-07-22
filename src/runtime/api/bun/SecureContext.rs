@@ -45,6 +45,7 @@ pub struct SecureContext {
 
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
+#[allow(dead_code)] // only caller is generated (absent in non-canary release builds)
 #[bun_jsc::host_fn]
 pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
     // `us_ssl_ctx_live_count` is declared `safe fn` (reads a global atomic

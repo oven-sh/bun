@@ -1515,12 +1515,16 @@ async function getPipeline(options = {}) {
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
+  // Non-canary release builds do not bundle `bun:internal-for-testing`, which
+  // the test suite and test/harness.ts require, so tests cannot run against
+  // them; the same commit already ran the suite as a canary build on main.
   const relevantTestPlatforms = includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan");
   /** @type {string[]} */
   const testStepKeys = [];
   {
     const { skipTests, forceTests, testFiles } = options;
-    if (!skipTests || forceTests) {
+    const canaryRev = typeof options.canary === "number" ? options.canary : 1;
+    if ((!skipTests || forceTests) && canaryRev !== 0) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });

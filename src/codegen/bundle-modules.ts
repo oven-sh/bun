@@ -23,12 +23,17 @@ import { define } from "./replacements";
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
+// bun:internal-for-testing is only bundled for debug and canary builds. Non-canary release
+// builds omit it so the module source and every native TestingAPIs binding it references are
+// absent from the shipped binary.
+const canary = process.argv[4] !== "--canary=OFF";
+const includeInternalForTesting = debug || canary;
 
 const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production");
 console.time(timeString);
 
 if (!CMAKE_BUILD_ROOT) {
-  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR>");
+  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> [--canary=[OFF|ON]]");
   process.exit(1);
 }
 
@@ -52,7 +57,7 @@ function markVerbose(log: string) {
 const mark = silent ? (log: string) => {} : markVerbose;
 
 const { moduleList, nativeModuleIds, nativeModuleEnumToId, nativeModuleEnums, requireTransformer, nativeStartIndex } =
-  createInternalModuleRegistry(BASE);
+  createInternalModuleRegistry(BASE, { includeInternalForTesting });
 globalThis.requireTransformer = requireTransformer;
 
 // these logs surround a very weird issue where writing files and then bundling sometimes doesn't

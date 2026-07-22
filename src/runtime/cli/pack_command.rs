@@ -4028,6 +4028,7 @@ pub mod bindings {
         CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
     };
 
+    #[allow(dead_code)] // only caller is generated (absent in non-canary release builds)
     #[bun_jsc::host_fn]
     pub(crate) fn js_read_tarball(
         global: &JSGlobalObject,

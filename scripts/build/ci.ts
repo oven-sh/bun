@@ -378,15 +378,15 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   const bunTriplet = computeBunTriplet(cfg);
 
   // ─── features.json ───
-  // Run the built bun with features.mjs to dump its feature flags.
-  // Env vars match cmake's (BuildBun.cmake ~1462).
-  // No setarch wrapper — cmake doesn't use one for features.mjs either
-  // (only for the --revision smoke test).
-  // Binaries that can't run on this host: every field is a build-time
-  // constant, so generate the same payload host-side instead (the feature
-  // list is parsed out of src/analytics/lib.rs; see features-json.ts).
-  if (!cfg.canRunOnHost) {
-    console.log("Generating features.json (host-side; cross-compiled binary cannot run here)...");
+  // Every field is a build-time constant, so generate the payload host-side
+  // (the feature list is parsed out of src/analytics/lib.rs; see
+  // features-json.ts, pinned against crash_handler.getFeatureData() by
+  // test/internal/macos-cross-config.test.ts). features.mjs needs
+  // `bun:internal-for-testing`, which non-canary release builds do not
+  // bundle, and cross-compiled binaries cannot run on the host anyway.
+  const hasInternalForTesting = cfg.debug || cfg.canary;
+  if (!cfg.canRunOnHost || !hasInternalForTesting) {
+    console.log("Generating features.json (host-side)...");
     writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
   } else {
     console.log("Generating features.json...");

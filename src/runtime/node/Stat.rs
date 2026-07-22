@@ -211,6 +211,7 @@ pub type StatsBig = StatType<true>;
 /// Test-only: build a Stats/BigIntStats from a raw u64 ino via the real
 /// statToJS path, so regression tests can exercise high-inode values without
 /// a filesystem that hands them out.
+#[allow(dead_code)] // only caller is generated (absent in non-canary release builds)
 #[bun_jsc::host_fn]
 pub(crate) fn create_stats_for_ino(
     global: &JSGlobalObject,

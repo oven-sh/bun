@@ -119,15 +119,41 @@ for (const f of ["triaged.jsonl", "queue.jsonl"]) {
   }
 }
 
-// Leak-set diff needs a per-file baseline we don't take (one run per file
-// is the whole point) - so the wide pass detects leaks by an ABSOLUTE rule:
-// more than a handful of leaked named workload-I/O handles is worth a look.
+// Leak judgment needs a baseline of STANDING handles: every bun test process
+// holds the crypto devices (KsecDD/CNG), COM/OLE and winsock-catalog
+// registry keys and the test-tree directory handles at exit by design - an
+// absolute count fires on all of them. One unfaulted probe run supplies the
+// standing set for the whole wide pass; only surpluses over it can leak.
 const harnessPath = /\\runs\\|\\cwd\b|\\wsf-\d+\.log|\\(stdout|stderr)\.txt|\bwsfwide\b/i;
 const notWorkloadIo = /(Local\\|Global\\|BaseNamedObjects|WilError|\\SM0:|\.mui\b|\.dll\b|\.nls\b|\.(ts|tsx|js|mjs|cjs|mts|cts|jsx)$)/i;
+const normLeak = (l: string) =>
+  l
+    .trim()
+    .replace(/(\\pipe\\uv\\\d+)-\d+/i, "$1-<pid>")
+    .replace(/^([fpks]) .*\\(test|node_modules)\\.*$/i, "$1 <tree-dir>"); // any dir under the test tree
 const workloadLeaks = (leaks: string[]) =>
-  leaks
-    .map(l => l.trim().replace(/(\\pipe\\uv\\\d+)-\d+/i, "$1-<pid>"))
-    .filter(l => !harnessPath.test(l) && !notWorkloadIo.test(l));
+  leaks.map(normLeak).filter(l => !harnessPath.test(l) && !notWorkloadIo.test(l));
+const countKinds = (leaks: string[]) => {
+  const m = new Map<string, number>();
+  for (const l of workloadLeaks(leaks)) m.set(l, (m.get(l) ?? 0) + 1);
+  return m;
+};
+// The standing set: one clean run of the first file, no schedule.
+const probeDir = join(workRoot, "runs", "standing-probe");
+await replayCoordinate({ bun, args: ["test", files[0]], schedule: "", dir: probeDir, timeoutMs, capture: false }).catch(
+  () => null,
+);
+const standingTrace = await readTraceDir(probeDir, { faultsOnly: true }).catch(() => null);
+const standing = countKinds(standingTrace?.leaks ?? []);
+console.log(`  standing handle kinds at exit (from probe): ${standing.size}`);
+const leakSurplus = (leaks: string[]): string[] => {
+  const out: string[] = [];
+  for (const [k, n] of countKinds(leaks)) {
+    const over = n - (standing.get(k) ?? 0);
+    if (over > 0) out.push(over > 1 ? `${k} x${over}` : k);
+  }
+  return out;
+};
 
 // --- one file, one schedule -------------------------------------------------
 type Hit = { file: string; schedule: string[]; outcome: string; key: string; detail: string; stacks: string[] };
@@ -156,10 +182,12 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
       detail = crash.signature;
     } else {
       const t = await readTraceDir(dir, { faultsOnly: true }).catch(() => null);
-      const leaks = t ? workloadLeaks(t.leaks) : [];
-      if (leaks.length >= 3) {
+      const surplus = t ? leakSurplus(t.leaks) : [];
+      // Even against the standing set, one surplus kind is often just this
+      // test's legit data file - require a real excess before flagging.
+      if (surplus.length >= 2) {
         outcome = "leak";
-        detail = leaks.slice(0, 6).join(", ");
+        detail = surplus.slice(0, 6).join(", ");
       }
     }
   }

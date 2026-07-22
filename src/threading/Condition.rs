@@ -57,7 +57,7 @@ use crate::guarded::GuardedLock;
 
 #[derive(Default)]
 pub struct Condition {
-    pub impl_: Impl,
+    pub(crate) impl_: Impl,
 }
 
 /// `parking_lot::Condvar` drop-in alias. Same type, different spelling so
@@ -205,7 +205,7 @@ mod windows_impl {
         safe fn WakeAllConditionVariable(cv: &core::cell::UnsafeCell<windows::CONDITION_VARIABLE>);
     }
 
-    pub struct WindowsImpl {
+    pub(crate) struct WindowsImpl {
         condition: core::cell::UnsafeCell<windows::CONDITION_VARIABLE>,
     }
 
@@ -302,7 +302,7 @@ use windows_impl::WindowsImpl;
 
 #[cfg(not(windows))]
 #[derive(Default)]
-pub struct FutexImpl {
+pub(crate) struct FutexImpl {
     state: AtomicU32,
     epoch: AtomicU32,
 }

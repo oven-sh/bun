@@ -133,14 +133,11 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     };
     let mut path: &[u8] = &decoded_pathname[1.min(path_end)..path_end];
 
-    if extname == b"map" && path.len() > b".map".len() {
-        if let Some(j) = path[0..path.len() - b".map".len()]
-            .iter()
-            .rposition(|&b| b == b'.')
-        {
-            let backup_extname = &path[j + 1..path.len() - b".map".len()];
-            path = &path[0..j + backup_extname.len() + 1];
-        }
+    if extname == b"map"
+        && path.len() > b".map".len()
+        && path[..path.len() - b".map".len()].iter().rposition(|&b| b == b'.').is_some()
+    {
+        path = &path[..path.len() - b".map".len()];
     }
 
     // TODO: lifetime — see struct-level note. `extend` launders the borrow

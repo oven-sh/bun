@@ -1620,9 +1620,7 @@ unsafe extern "C" {
     // safe: by-value `u32` in; bool out.
     safe fn ScriptExecutionContext__isAlive(id: u32) -> bool;
     // safe: `&JSGlobalObject` is a live opaque handle; returns the context's id.
-    safe fn ScriptExecutionContextIdentifier__forGlobalObject(
-        global: &JSGlobalObject,
-    ) -> u32;
+    safe fn ScriptExecutionContextIdentifier__forGlobalObject(global: &JSGlobalObject) -> u32;
 }
 
 impl JSGlobalObject {

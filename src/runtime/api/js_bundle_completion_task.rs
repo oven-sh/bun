@@ -771,7 +771,10 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
         // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
         // passed through from the bundler vtable.
         let task = unsafe { core::ptr::NonNull::new_unchecked(task) };
-        if !from_completion_handle(c).context_id.post_concurrent_task(task) {
+        if !from_completion_handle(c)
+            .context_id
+            .post_concurrent_task(task)
+        {
             // Target context is gone or terminating (worker was terminated
             // mid-bundle). The queue would never drain this task; reclaim the
             // heap `ConcurrentTaskItem` ourselves.

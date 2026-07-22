@@ -1535,8 +1535,7 @@ test(
     const lines: string[] = [];
     for (let i = 0; i < modules; i++) {
       files[`m${i}.ts`] =
-        `export const v${i}: number = ${i};\n` +
-        `export function f${i}(x: number) { return x + ${i}; }\n`;
+        `export const v${i}: number = ${i};\n` + `export function f${i}(x: number) { return x + ${i}; }\n`;
       lines.push(`import * as m${i} from "./m${i}.ts"; globalThis.k${i} = m${i};`);
     }
     files["entry.ts"] = lines.join("\n");

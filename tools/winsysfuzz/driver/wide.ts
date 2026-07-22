@@ -93,25 +93,67 @@ const genericNames = manifestNames.filter(n => !(n in FAULTS) && !NEVER_FAULT.ha
 const curatedMenu: [string, typeof GENERIC_FAULTS][] = Object.entries(FAULTS);
 const drawSyscall = (): [string, typeof GENERIC_FAULTS] =>
   rnd() < 0.7 ? pick(curatedMenu) : [pick(genericNames), GENERIC_FAULTS];
+// Startup floor - derived from evidence, not a hand-picked list. A
+// callsite-agnostic rule "<sys> * <hit>" counts occurrences from process
+// start, and the first dozens of occurrences of nearly EVERY syscall are
+// bootstrap (loader, JSC bring-up, the test runner's own init) - a low hit
+// kills or cripples the process before the test's own code runs, so the run
+// tests NOTHING; and again inside each spawned child, whose counter restarts
+// at its own startup. The floor is measured: run the test runner on a
+// trivial test (the startup every wide-pass run incurs) and a plain
+// process (the startup each spawned child incurs), count each syscall's
+// occurrences, take the max. Every rule's hit index must exceed its
+// syscall's startup count; a syscall that occurs during startup never gets
+// '*' (every occurrence necessarily includes the init ones).
+const startupFloor = new Map<string, number>();
+{
+  const maskDir = join(workRoot, "runs", "startup-floor");
+  ensureDir(maskDir);
+  const trivial = join(maskDir, "wsf-trivial.test.ts");
+  await Bun.write(trivial, `import { test, expect } from "bun:test";\ntest("wsf-trivial", () => { expect(1).toBe(1); });\n`);
+  const probes: string[][] = [
+    ["test", trivial], // the test runner's own bring-up
+    ["-e", "0"], // a plain child process's bring-up
+  ];
+  for (const [i, args] of probes.entries()) {
+    const d = join(maskDir, `p${i}`);
+    await replayCoordinate({ bun: bun!, args, schedule: "", dir: d, timeoutMs, capture: false }).catch(() => null);
+    const t = await readTraceDir(d).catch(() => null);
+    // Occurrences across the whole probe run (all its processes merged) is
+    // a safe upper bound for any one process's startup count.
+    const counts = new Map<string, number>();
+    for (const r of t?.recs ?? []) {
+      if (r.entryOnly) continue;
+      const sys = manifestNames[r.sys];
+      if (sys) counts.set(sys, (counts.get(sys) ?? 0) + 1);
+    }
+    for (const [sys, n] of counts) startupFloor.set(sys, Math.max(startupFloor.get(sys) ?? 0, n));
+  }
+  console.log(
+    `  startup floor: ${startupFloor.size} syscall(s) occur during bring-up (worst: ` +
+      [...startupFloor.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([s, n]) => `${s}=${n}`)
+        .join(", ") +
+      ")",
+  );
+}
 function drawSchedule(): string[] {
   const rules = new Set<string>();
   let guard = 0;
   while (rules.size < nRules && guard++ < nRules * 6) {
     const [sysName, faults] = drawSyscall();
     const f = pick(faults);
-    const r = rnd();
-    let hit: string | number = r < 0.15 ? "*" : 1 + Math.floor(rnd() * (r < 0.6 ? 4 : 24));
-    // The first event/semaphore creations and the first closes are process
-    // init (JSC/WTF primitives, loader) - by-design init fatals, not bugs.
-    // With no baseline there is no mask, so floor the hit index instead.
-    // Process-startup infrastructure: the first event/semaphore/thread
-    // creations, handle duplications, closes and section maps are JSC/WTF
-    // bring-up - failing them is a by-design init fatal (isSuccessful
-    // release-assert, CRASH() on a missing helper thread), never a bun bug.
-    // With no baseline mask, floor the hit index and forbid '*' (every
-    // occurrence necessarily includes the init ones).
-    if (/^(NtCreateEvent|NtCreateSemaphore|NtCreateThreadEx|NtDuplicateObject|NtClose|NtCreateSection|NtMapViewOfSection)$/.test(sysName)) {
-      if (hit === "*" || (typeof hit === "number" && hit < 4)) hit = 4 + Math.floor(rnd() * 20);
+    const floor = startupFloor.get(sysName) ?? 0;
+    let hit: string | number;
+    if (floor === 0 && rnd() < 0.15) {
+      hit = "*"; // never occurs at startup: every-occurrence is safe
+    } else {
+      // Land past the bootstrap - startup count + 1 .. + spread - in the
+      // program's own execution (and past a spawned child's startup too).
+      const spread = rnd() < 0.6 ? 5 : 30;
+      hit = floor + 1 + Math.floor(rnd() * spread);
     }
     rules.add(`${sysName} * ${hit} ${f.mode} ${f.status}`);
   }

@@ -32,6 +32,63 @@ pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObje
     node_module_paths_js_value(in_str, global, false)
 }
 
+/// Node.js "global folders" list for `Module.globalPaths` /
+/// `Module._resolveLookupPaths`: the NODE_PATH entries followed by
+/// `$HOME/.node_modules`, `$HOME/.node_libraries` and `$PREFIX/lib/node`.
+/// https://nodejs.org/api/modules.html#loading-from-the-global-folders
+#[unsafe(export_name = "Resolver__globalPathsJSValue")]
+pub(crate) extern "C" fn global_paths_js_value(global: &JSGlobalObject) -> JSValue {
+    crate::mark_binding!();
+    let mut list: Vec<OwnedString> = Vec::new();
+    let env = global.bun_vm().env_loader_opt();
+
+    if let Some(node_path) = env.and_then(|e| e.get(b"NODE_PATH")) {
+        let delim = if cfg!(windows) { b';' } else { b':' };
+        for entry in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
+            list.push(OwnedString::new(BunString::clone_utf8(entry)));
+        }
+    }
+
+    let home_key = bun_core::env_var::HOME.key().as_bytes();
+    if let Some(home) = env.and_then(|e| e.get(home_key)).filter(|h| !h.is_empty()) {
+        let home = strip_trailing_sep(home);
+        for suffix in [".node_modules", ".node_libraries"] {
+            list.push(OwnedString::new(BunString::create_format(format_args!(
+                "{}{}{}",
+                BStr::new(home),
+                SEP_STR,
+                suffix,
+            ))));
+        }
+    }
+
+    if let Ok(exe) = bun_core::self_exe_path() {
+        let bin = resolve_path::dirname::<bun_paths::platform::Auto>(exe.as_bytes());
+        let prefix = if cfg!(windows) {
+            bin
+        } else {
+            resolve_path::dirname::<bun_paths::platform::Auto>(bin)
+        };
+        let prefix = strip_trailing_sep(prefix);
+        list.push(OwnedString::new(BunString::create_format(format_args!(
+            "{}{sep}lib{sep}node",
+            BStr::new(prefix),
+            sep = SEP_STR,
+        ))));
+    }
+
+    OwnedString::as_raw_slice(&list)
+        .to_js_array(global)
+        .unwrap_or(JSValue::ZERO)
+}
+
+fn strip_trailing_sep(mut p: &[u8]) -> &[u8] {
+    while p.len() > 1 && Platform::AUTO.is_separator(p[p.len() - 1]) {
+        p = &p[..p.len() - 1];
+    }
+    p
+}
+
 // C++ callers pass `in_str` by value without transferring a ref:
 // `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
 // never releases the caller's ref.

@@ -2864,6 +2864,53 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        // try resolve from the legacy "global folders": $HOME/.node_modules,
+        // $HOME/.node_libraries and $PREFIX/lib/node, in that order.
+        // https://nodejs.org/api/modules.html#loading-from-the-global-folders
+        {
+            let home_key = bun_core::env_var::HOME.key().as_bytes();
+            let home = self
+                .env_loader()
+                .and_then(|env| env.get(home_key))
+                .filter(|h| !h.is_empty());
+            let exe = bun_core::self_exe_path().ok().map(|z| z.as_bytes());
+            for (base, suffix) in [
+                (home, b".node_modules" as &[u8]),
+                (home, b".node_libraries"),
+                (
+                    exe,
+                    if cfg!(windows) {
+                        b"../lib/node"
+                    } else {
+                        b"../../lib/node"
+                    },
+                ),
+            ] {
+                let Some(base) = base else { continue };
+                let Some(abs_path) = self
+                    .fs_ref()
+                    .abs_buf_checked(&[base, suffix, import_path], bufs!(node_modules_check))
+                else {
+                    continue;
+                };
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug.add_note_fmt(format_args!(
+                        "Checking for a package in the global folder \"{}\"",
+                        bstr::BStr::new(abs_path)
+                    ));
+                }
+                if self
+                    .load_as_file_or_directory(abs_path, kind, out)
+                    .is_success()
+                {
+                    if let Some(d) = self.debug_logs.as_mut() {
+                        d.decrease_indent();
+                    }
+                    return MatchStatus::Success;
+                }
+            }
+        }
+
         dir_info = source_dir_info;
 
         // this is the magic!

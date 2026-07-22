@@ -409,6 +409,113 @@ describe("NODE_PATH test", () => {
   });
 });
 
+// https://nodejs.org/api/modules.html#loading-from-the-global-folders
+describe("global folders resolution", () => {
+  const homeVar = isWindows ? "USERPROFILE" : "HOME";
+
+  const prepare = () => {
+    const dir = tempDirWithFiles("global-folders", {
+      "home/.node_modules/gp-from-nm/index.js": "module.exports = 'FROM_HOME_NODE_MODULES';",
+      "home/.node_libraries/gp-from-lib/index.js": "module.exports = 'FROM_HOME_NODE_LIBRARIES';",
+      "home/.node_modules/gp-both/index.js": "module.exports = 'NM_WINS';",
+      "home/.node_libraries/gp-both/index.js": "module.exports = 'LIB_LOSES';",
+      "np/gp-from-np/index.js": "module.exports = 'FROM_NODE_PATH';",
+      "np/gp-from-nm/index.js": "module.exports = 'NODE_PATH_WINS';",
+      "proj/package.json": JSON.stringify({ name: "proj", type: "commonjs" }),
+      "proj/node_modules/gp-local/index.js": "module.exports = 'LOCAL_WINS';",
+      "home/.node_modules/gp-local/index.js": "module.exports = 'GLOBAL_LOSES';",
+      "proj/app.js": `
+        const M = require("node:module");
+        let result = {};
+        for (const name of ["gp-from-nm", "gp-from-lib", "gp-both", "gp-from-np", "gp-local"]) {
+          try { result[name] = require(name); } catch (e) { result[name] = "THREW:" + e.code; }
+        }
+        result.globalPaths = M.globalPaths;
+        result.resolvePaths = require.resolve.paths("gp-from-nm");
+        result.lookupPaths = M._resolveLookupPaths("gp-from-nm", module);
+        console.log(JSON.stringify(result));
+      `,
+    });
+    return { dir, home: joinP(dir, "home"), proj: joinP(dir, "proj"), np: joinP(dir, "np") };
+  };
+
+  it("resolves bare specifiers from $HOME/.node_modules and $HOME/.node_libraries", () => {
+    const { home, proj, np } = prepare();
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "--no-install", "app.js"],
+      env: { ...bunEnv, [homeVar]: home, NODE_PATH: np },
+      cwd: proj,
+    });
+    const out = stdout.toString().trim();
+    expect(stderr.toString()).toBe("");
+    const result = JSON.parse(out);
+
+    // require() resolution
+    expect(result["gp-from-nm"]).toBe("NODE_PATH_WINS"); // NODE_PATH before $HOME/.node_modules
+    expect(result["gp-from-lib"]).toBe("FROM_HOME_NODE_LIBRARIES");
+    expect(result["gp-both"]).toBe("NM_WINS"); // .node_modules before .node_libraries
+    expect(result["gp-from-np"]).toBe("FROM_NODE_PATH");
+    expect(result["gp-local"]).toBe("LOCAL_WINS"); // local node_modules before global folders
+
+    // Module.globalPaths is populated
+    expect(result.globalPaths).toContain(np);
+    expect(result.globalPaths).toContain(joinP(home, ".node_modules"));
+    expect(result.globalPaths).toContain(joinP(home, ".node_libraries"));
+    // Node orders globalPaths as [...NODE_PATH, .node_modules, .node_libraries, $PREFIX/lib/node]
+    expect(result.globalPaths.indexOf(np)).toBeLessThan(result.globalPaths.indexOf(joinP(home, ".node_modules")));
+    expect(result.globalPaths.indexOf(joinP(home, ".node_modules"))).toBeLessThan(
+      result.globalPaths.indexOf(joinP(home, ".node_libraries")),
+    );
+    // $PREFIX/lib/node is the last entry
+    expect(result.globalPaths[result.globalPaths.length - 1]).toEndWith(joinP("lib", "node"));
+
+    // require.resolve.paths() and Module._resolveLookupPaths() append the global folders
+    // after the per-directory node_modules entries.
+    for (const paths of [result.resolvePaths, result.lookupPaths]) {
+      expect(paths).toContain(joinP(proj, "node_modules"));
+      expect(paths).toContain(joinP(home, ".node_modules"));
+      expect(paths).toContain(joinP(home, ".node_libraries"));
+      expect(paths.indexOf(joinP(proj, "node_modules"))).toBeLessThan(paths.indexOf(joinP(home, ".node_modules")));
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  it("resolves from $HOME/.node_modules when NODE_PATH is unset", () => {
+    const { home, proj } = prepare();
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "--no-install", "app.js"],
+      env: { ...bunEnv, [homeVar]: home, NODE_PATH: "" },
+      cwd: proj,
+    });
+    expect(stderr.toString()).toBe("");
+    const result = JSON.parse(stdout.toString().trim());
+    expect(result["gp-from-nm"]).toBe("FROM_HOME_NODE_MODULES");
+    expect(result["gp-from-lib"]).toBe("FROM_HOME_NODE_LIBRARIES");
+    expect(result["gp-from-np"]).toBe("THREW:MODULE_NOT_FOUND");
+    expect(result.globalPaths).toContain(joinP(home, ".node_modules"));
+    expect(exitCode).toBe(0);
+  });
+
+  it("returns MODULE_NOT_FOUND when HOME is unset and no global folder matches", () => {
+    const { proj } = prepare();
+    const env = { ...bunEnv, NODE_PATH: "" };
+    delete env[homeVar];
+    const { exitCode, stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "--no-install", "app.js"],
+      env,
+      cwd: proj,
+    });
+    const result = JSON.parse(stdout.toString().trim());
+    expect(result["gp-from-nm"]).toBe("THREW:MODULE_NOT_FOUND");
+    expect(result["gp-from-lib"]).toBe("THREW:MODULE_NOT_FOUND");
+    expect(result["gp-local"]).toBe("LOCAL_WINS");
+    // globalPaths still has $PREFIX/lib/node even without HOME
+    expect(result.globalPaths.length).toBeGreaterThanOrEqual(1);
+    expect(result.globalPaths[result.globalPaths.length - 1]).toEndWith(joinP("lib", "node"));
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("can resolve with source directories that do not exist", () => {
   // In Nuxt/Vite, the following call happens:
   // `require("module").createRequire("file:///Users/clo/my-nuxt-app/@vue/server-renderer")("vue")`

@@ -1210,4 +1210,155 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/31929
+  describe("lowering temps do not collide between chains", () => {
+    test("decorated class expression nested in another decorated class's static initializer", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const C = class Outer {
+          @dec static s = (class { @dec static x = 42; }).x;
+        };
+        console.log(C.name, C.s);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Outer 42\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("sibling decorated class expressions with instance fields", async () => {
+      // Constructors read the chain's _init array at construction time,
+      // after the sibling chain has already evaluated.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function double(v, c) { return x => x * 2; }
+        function triple(v, c) { return x => x * 3; }
+        const A = class { @double a = 1; };
+        const B = class { @triple b = 1; };
+        console.log(new A().a, new B().b);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("sibling decorated class statements with instance fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function double(v, c) { return x => x * 2; }
+        function triple(v, c) { return x => x * 3; }
+        class A { @double a = 1; }
+        class B { @triple b = 1; }
+        console.log(new A().a, new B().b);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("sibling classes with decorated private methods", async () => {
+      // Private method calls read the extracted _m_fn temp at call time.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function firstDec(v, c) { return function () { return "first"; }; }
+        function secondDec(v, c) { return function () { return "second"; }; }
+        const A = class { @firstDec #m() { return "a"; } call() { return this.#m(); } };
+        const B = class { @secondDec #m() { return "b"; } call() { return this.#m(); } };
+        console.log(new A().call(), new B().call());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("first second\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("sibling decorated classes with computed keys", async () => {
+      // Instance field assignment reads the chain's _computedKey temp inside
+      // the constructor.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const ka = "a", kb = "b";
+        const A = class { @dec [ka] = 1; };
+        const B = class { @dec [kb] = 2; };
+        console.log(JSON.stringify(Object.keys(new A())), JSON.stringify(Object.keys(new B())));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["a"] ["b"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor storage temp name is sanitized for non-identifier keys", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        class A { @dec accessor "x y" = 1; }
+        class B { @dec m() {} accessor "a b" = 2; }
+        console.log(new A()["x y"], new B()["a b"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class statement named like a lowering temp", async () => {
+      // Statement lowering captures the inner class binding in a "_" + name
+      // temp (here "_init"), which must not alias an expression chain's _init.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        function addX(v, c) { return x => 42; }
+        @dec class init { @dec m() { return init; } }
+        const C = class { @addX x = 1; };
+        console.log(new init().m() === init, new C().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true 42\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // https://github.com/oven-sh/bun/issues/29837
+    test("auto-accessor in subclass does not collide with base class storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor name = "A"
+        }
+        class B extends A {
+          accessor name = "B"
+          logName() {
+            console.log(this.name)
+            console.log(super.name)
+          }
+        }
+        new B().logName()
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // https://github.com/oven-sh/bun/issues/28010
+    test("field decorators in a subclass do not remap base class initializers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function decorate(name) {
+          return function (_value, context) {
+            return function (initialValue) {
+              console.log(name, String(context.name), initialValue);
+              return initialValue;
+            }
+          }
+        }
+        class Parent {
+          @decorate('Parent.foo') foo = 'parent_foo';
+          @decorate('Parent.shared') shared = 'parent_shared';
+        }
+        class Child extends Parent {
+          @decorate('Child.foo') foo = 'child_foo';
+          @decorate('Child.childOnly') childOnly = 'child_childOnly';
+        }
+        new Child();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "Parent.foo foo parent_foo\n" +
+          "Parent.shared shared parent_shared\n" +
+          "Child.foo foo child_foo\n" +
+          "Child.childOnly childOnly child_childOnly\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+  });
 });

@@ -267,9 +267,7 @@ impl Route {
             resp.end_without_body(true);
             return;
         };
-
-        if !server.has_listener() {
-            super::server_body::respond_stopped_503_any(resp);
+        if super::server_body::refuse_if_stopped_any(Some(server), resp) {
             return;
         }
 

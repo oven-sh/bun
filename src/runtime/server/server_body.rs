@@ -415,13 +415,27 @@ pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.end_without_body(!R::IS_H3);
 }
 
-/// [`respond_stopped_503`] for the `AnyResponse`-taking trampolines
-/// (StaticRoute / FileRoute / HTMLBundle). `AnyResponse` has no `RespLike`
-/// impl (its `IS_H3` is a runtime tag), so dispatch the close flag by variant.
+/// Shared `has_listener()` gate for the `AnyResponse`-taking route trampolines
+/// (StaticRoute / FileRoute / HTMLBundle): answer 503 + `Connection: close`
+/// and return `true` once the listener is gone, so a keep-alive socket that
+/// survived `stop()` cannot keep dispatching to a static route. `None` (no
+/// server bound yet) is left to the caller. Same gate as
+/// [`NewServer::js_value_for_new_request`].
 #[inline]
-pub(super) fn respond_stopped_503_any(resp: uws::AnyResponse) {
-    resp.write_status(b"503 Service Unavailable");
-    resp.end_without_body(!matches!(resp, uws::AnyResponse::H3(_)));
+pub(super) fn refuse_if_stopped_any(
+    server: Option<super::AnyServer>,
+    resp: uws::AnyResponse,
+) -> bool {
+    if let Some(server) = server {
+        if !server.has_listener() {
+            // `AnyResponse` has no `RespLike` impl (its IS_H3 is a runtime
+            // tag), so dispatch the close flag by variant.
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(!matches!(resp, uws::AnyResponse::H3(_)));
+            return true;
+        }
+    }
+    false
 }
 
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =

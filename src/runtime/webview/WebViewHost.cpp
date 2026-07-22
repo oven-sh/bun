@@ -351,30 +351,39 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
 // page-side via callAsyncJavaScript: — WebKit awaits the returned Promise.
 // One IPC roundtrip regardless of how many frames the poll takes.
 //
-// The predicate: attached + has size + in viewport + stable for 2 frames +
-// elementFromPoint at center returns the element or a descendant (not
-// obscured). Returns "cx,cy" on success; throws on timeout.
+// The predicate: attached + has size + in viewport + stable across two
+// distinct animation frames + elementFromPoint at center returns the element
+// or a descendant (not obscured). Returns "cx,cy" on success; throws on
+// timeout.
+//
+// Every sample is taken after an `await rAF`, and a match only counts when
+// the rAF timestamp advanced. Sampling synchronously before the first rAF
+// could coincide with the same rendering frame as the first rAF callback,
+// which made a just-started animation look stable at its from-keyframe.
+// Playwright's injected stable check (_checkElementIsStable) does the same
+// rAF-first plus <15ms-frame-drop guard.
 //
 // Arguments `sel` and `timeout` are passed via the arguments: NSDictionary,
 // not string-interpolated — the selector can contain any characters.
 static constexpr const char* kActionabilityJS = R"js(
 const deadline = performance.now() + timeout;
-let last;
+let last, lastT;
 for (;;) {
+  const t = await new Promise(f => requestAnimationFrame(f));
   const el = document.querySelector(sel);
   if (el) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-      if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
+      if (last && t !== lastT && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
         const hit = document.elementFromPoint(cx, cy);
         if (hit === el || el.contains(hit)) return cx + "," + cy;
       }
       last = { l: r.left, t: r.top, w: r.width, h: r.height };
     } else last = undefined;
   } else last = undefined;
+  lastT = t;
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
 }
 )js";
 

@@ -725,16 +725,31 @@ it("chrome: click(selector) waits for animation to stop", async () => {
     html(`
         <style>
           @keyframes slide { from { left: 0; } to { left: 100px; } }
-          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
-                   animation: slide 80ms linear forwards; }
+          #mover { position: fixed; top: 50px; left: 0; width: 60px; height: 60px; }
         </style>
-        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        <body style="margin:0" onclick="(window.__x ||= []).push(event.clientX)">
+          <div id=mover></div>
+        </body>
       `),
   );
-  // Stable-for-2-frames check — the click lands after the animation stops.
-  await view.click("#mover");
-  const left = Number(await view.evaluate("String(__hit)"));
-  expect(left).toBe(100);
+  // Restart the animation immediately before each click(). The style change
+  // leaves the animation play-pending: its start time is only assigned at
+  // the next rendering frame, so the element reads left=0 both before that
+  // frame (no animation effect) and at the first frame (from-keyframe, t=0).
+  // The actionability check must take its two stability samples from distinct
+  // rAF callbacks; a synchronous first sample compared against one post-rAF
+  // sample can land in the same rendering frame and dispatch the click at
+  // the from-position. Looping closes the remaining window across Chrome's
+  // frame scheduling.
+  for (let i = 0; i < 10; i++) {
+    await view.evaluate(
+      `(m => { m.style.animation = 'none'; void m.offsetHeight; m.style.animation = 'slide 200ms linear forwards'; })(document.getElementById('mover'))`,
+    );
+    await view.click("#mover");
+  }
+  // The animation ends at left=100; the element is 60px wide, so every click
+  // lands at clientX=130 once the slide has settled.
+  expect(await view.evaluate("__x")).toEqual(Array(10).fill(130));
 });
 
 // --- scrollTo variants -----------------------------------------------------

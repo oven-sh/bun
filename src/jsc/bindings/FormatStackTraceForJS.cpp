@@ -32,25 +32,22 @@ using namespace WebCore;
 
 namespace Bun {
 
-// Build the V8-style "eval at <name> (<location>)" origin string for a frame
-// whose code came from eval / new Function. JSC stores only the calling
-// script's URL on the eval's SourceProvider (sourceOrigin()); the caller's
-// line/column are recovered by walking outward past consecutive frames that
-// share the eval's SourceProvider until we reach the eval-code frame, then
-// taking the next outer frame's location. If the eval-created function was
-// called after the eval returned (no EvalCode frame on the stack), only the
-// URL is available.
-static WTF::String computeEvalOriginString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const Vector<StackFrame>& stackTrace, size_t frameIndex, const Zig::EvalOrigin& evalOrigin, const WTF::Vector<WTF::String, 8>& locationStrings)
+// JSC stores only the calling script's URL on an eval / new Function source
+// (sourceOrigin()); the caller's line/column are recovered by walking outward
+// past consecutive frames that share the eval's SourceProvider until we pass
+// the EvalCode frame, then taking the next outer frame. If the eval-created
+// function is called after the eval returned (no EvalCode frame on the stack),
+// frames.size() is returned and the origin falls back to the URL alone.
+template<typename Frames>
+static size_t findEvalCallerIndex(Frames& frames, size_t frameIndex, JSC::CodeBlock* codeBlock)
 {
-    auto* codeBlock = stackTrace.at(frameIndex).codeBlock();
+    size_t n = frames.size();
     if (!codeBlock)
-        return String();
+        return n;
     auto* provider = codeBlock->source().provider();
-
-    size_t callerIndex = stackTrace.size();
     bool sawEvalCodeFrame = codeBlock->codeType() == JSC::EvalCode;
-    for (size_t j = frameIndex + 1; j < stackTrace.size(); j++) {
-        auto* outerBlock = stackTrace.at(j).codeBlock();
+    for (size_t j = frameIndex + 1; j < n; j++) {
+        auto* outerBlock = frames.at(j).codeBlock();
         if (!outerBlock)
             continue;
         if (outerBlock->source().provider() == provider) {
@@ -58,27 +55,25 @@ static WTF::String computeEvalOriginString(JSC::VM& vm, JSC::JSGlobalObject* glo
                 sawEvalCodeFrame = true;
             continue;
         }
-        if (sawEvalCodeFrame)
-            callerIndex = j;
-        break;
+        return sawEvalCodeFrame ? j : n;
     }
+    return n;
+}
 
+static WTF::String buildEvalOriginText(bool foundCaller, const WTF::String& callerName, const WTF::String& callerLocation, const WTF::String& fallbackURL)
+{
     WTF::StringBuilder origin;
     origin.append("eval at "_s);
-    if (callerIndex < stackTrace.size()) {
-        auto callerName = Zig::functionName(vm, globalObject, stackTrace.at(callerIndex), Zig::FinalizerSafety::NotInFinalizer, nullptr);
+    if (foundCaller) {
         origin.append(callerName.isEmpty() ? "<anonymous>"_s : callerName);
         origin.append(" ("_s);
-        if (!locationStrings[callerIndex].isEmpty())
-            origin.append(locationStrings[callerIndex]);
-        else if (!evalOrigin.callerURL.isEmpty())
-            origin.append(evalOrigin.callerURL);
+        origin.append(callerLocation.isEmpty() ? fallbackURL : callerLocation);
         origin.append(')');
     } else {
         origin.append("<anonymous>"_s);
-        if (!evalOrigin.callerURL.isEmpty()) {
+        if (!fallbackURL.isEmpty()) {
             origin.append(" ("_s);
-            origin.append(evalOrigin.callerURL);
+            origin.append(fallbackURL);
             origin.append(')');
         }
     }
@@ -379,18 +374,14 @@ WTF::String formatStackTrace(
 
         WTF::StringBuilder loc;
         if (evalOrigins[idx].isEval && !evalOrigins[idx].hasSourceURL) {
-            if (errorInstance) {
-                auto origin = computeEvalOriginString(vm, lexicalGlobalObject, stackTrace, idx, evalOrigins[idx], locationStrings);
-                if (!origin.isEmpty()) {
-                    loc.append(origin);
-                    loc.append(", "_s);
-                }
-            } else if (!evalOrigins[idx].callerURL.isEmpty()) {
-                loc.append("eval at <anonymous> ("_s);
-                loc.append(evalOrigins[idx].callerURL);
-                loc.append("), "_s);
-            }
-            loc.append("<anonymous>"_s);
+            size_t callerIdx = findEvalCallerIndex(stackTrace, idx, frame.codeBlock());
+            bool foundCaller = callerIdx < framesCount;
+            WTF::String callerName;
+            if (foundCaller)
+                callerName = Zig::functionName(vm, lexicalGlobalObject, stackTrace.at(callerIdx), errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, nullptr);
+            auto origin = buildEvalOriginText(foundCaller, callerName, foundCaller ? locationStrings[callerIdx] : String(), evalOrigins[idx].callerURL);
+            loc.append(origin);
+            loc.append(", <anonymous>"_s);
             if (frame.hasLineAndColumnInfo()) {
                 loc.append(':');
                 loc.append(displayLine.oneBasedInt());
@@ -622,46 +613,17 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             auto* urlStr = urlValue.toStringOrNull(lexicalGlobalObject);
             bool isAnonymousEval = callsite->isEval() && (!urlStr || urlStr->length() == 0);
             if (isAnonymousEval) {
-                auto* provider = jscFrame.codeBlock() ? jscFrame.codeBlock()->source().provider() : nullptr;
-                int callerIdx = n;
-                bool sawEvalCodeFrame = jscFrame.codeBlock() && jscFrame.codeBlock()->codeType() == JSC::EvalCode;
-                for (int j = idx + 1; j < n && provider; j++) {
-                    auto* outerBlock = stackTrace.at(j).codeBlock();
-                    if (!outerBlock) continue;
-                    if (outerBlock->source().provider() == provider) {
-                        if (outerBlock->codeType() == JSC::EvalCode) sawEvalCodeFrame = true;
-                        continue;
-                    }
-                    if (sawEvalCodeFrame) callerIdx = j;
-                    break;
-                }
-
-                WTF::StringBuilder origin;
-                origin.append("eval at "_s);
-                if (callerIdx < n) {
+                size_t callerIdx = findEvalCallerIndex(stackTrace, static_cast<size_t>(idx), jscFrame.codeBlock());
+                bool foundCaller = callerIdx < static_cast<size_t>(n);
+                WTF::String callerName;
+                if (foundCaller) {
                     auto* callerSite = uncheckedDowncast<CallSite>(callSites.at(callerIdx));
-                    auto* callerName = callerSite->functionName().toStringOrNull(lexicalGlobalObject);
-                    if (callerName && callerName->length() > 0)
-                        origin.append(callerName->getString(lexicalGlobalObject));
-                    else
-                        origin.append("<anonymous>"_s);
-                    origin.append(" ("_s);
-                    if (!locationStrings[callerIdx].isEmpty())
-                        origin.append(locationStrings[callerIdx]);
-                    else if (!jscFrame.evalCallerURL().isEmpty())
-                        origin.append(jscFrame.evalCallerURL());
-                    origin.append(')');
-                } else {
-                    origin.append("<anonymous>"_s);
-                    if (!jscFrame.evalCallerURL().isEmpty()) {
-                        origin.append(" ("_s);
-                        origin.append(jscFrame.evalCallerURL());
-                        origin.append(')');
-                    }
+                    if (auto* name = callerSite->functionName().toStringOrNull(lexicalGlobalObject))
+                        callerName = name->getString(lexicalGlobalObject);
                 }
-                auto originStr = origin.toString();
-                callsite->setEvalOrigin(vm, jsString(vm, originStr));
-                loc.append(originStr);
+                auto origin = buildEvalOriginText(foundCaller, callerName, foundCaller ? locationStrings[callerIdx] : String(), jscFrame.evalCallerURL());
+                callsite->setEvalOrigin(vm, jsString(vm, origin));
+                loc.append(origin);
                 loc.append(", <anonymous>"_s);
             } else if (urlStr && urlStr->length() > 0) {
                 loc.append(urlStr->getString(lexicalGlobalObject));

@@ -1676,7 +1676,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     const pendingCallback = this.#pendingCallback;
     if (pendingCallback) {
       this.#pendingCallback = null;
-      pendingCallback($ERR_STREAM_WRITE_AFTER_END());
+      pendingCallback($ERR_STREAM_DESTROYED("write"));
     }
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests

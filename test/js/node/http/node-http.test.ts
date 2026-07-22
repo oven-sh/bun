@@ -4078,18 +4078,21 @@ describe("req.socket.write() interleaved with res.write()", () => {
     }
   }
 
-  it.each([true, false])("reaches the wire after the response head and in call order (flushHeaders=%p)", async flush => {
-    const { status, body } = await readWire((req, res) => {
-      res.setHeader("Content-Length", "9");
-      if (flush) res.flushHeaders();
-      res.write("AAA");
-      req.socket.write("RAW");
-      res.write("BBB");
-      res.end();
-    });
-    expect(status).toBe("HTTP/1.1 200 OK");
-    expect(body.toString()).toBe("AAARAWBBB");
-  });
+  it.each([true, false])(
+    "reaches the wire after the response head and in call order (flushHeaders=%p)",
+    async flush => {
+      const { status, body } = await readWire((req, res) => {
+        res.setHeader("Content-Length", "9");
+        if (flush) res.flushHeaders();
+        res.write("AAA");
+        req.socket.write("RAW");
+        res.write("BBB");
+        res.end();
+      });
+      expect(status).toBe("HTTP/1.1 200 OK");
+      expect(body.toString()).toBe("AAARAWBBB");
+    },
+  );
 
   // A >16KB res.write() takes the zero-copy path (the unwritten tail is held
   // in NodeHTTPResponse::pending_pinned_write, not the cork or AsyncSocket

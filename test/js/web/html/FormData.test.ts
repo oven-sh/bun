@@ -387,6 +387,10 @@ describe("FormData", () => {
         ["\0lead", "2"],
       ]);
     });
+
+    it('keeps an explicit name="" as an empty-key entry', async () => {
+      expect([...(await parse([`name=""`])).entries()]).toEqual([["", "V0"]]);
+    });
   });
 
   test("FormData.from (URLSearchParams)", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -9,21 +10,23 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
-5 |   const err2 = new Error("error 2", { cause: err });
+2 | import { bunEnv, bunExe } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
+6 |   const err2 = new Error("error 2", { cause: err });
                        ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:20)
+      at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
+2 | import { bunEnv, bunExe } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
                       ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:19)
+      at <anonymous> ([dir]/inspect-error.test.js:5:19)
 "
 `);
 });
@@ -35,15 +38,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"27 | "
-28 | \`);
-29 | });
-30 | 
-31 | test("Error", () => {
-32 |   const err = new Error("my message");
+"30 | "
+31 | \`);
+32 | });
+33 | 
+34 | test("Error", () => {
+35 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:19)
+      at <anonymous> ([dir]/inspect-error.test.js:35:19)
 "
 `);
 });
@@ -73,19 +76,11 @@ note: "duplicateConstDecl" was originally declared here
 
 const normalizeError = str => {
   // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
-
-  return str;
+  // like "at require (:1:21)" or "at require (51:24)"
+  return str
+    .split("\n")
+    .filter(line => !/^\s+at .+ \(:?\d+:\d+\)$/.test(line))
+    .join("\n");
 };
 
 test("Error inside minified file (no color) ", () => {
@@ -111,7 +106,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:92:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:87:7)"
     `);
   }
 });
@@ -140,7 +135,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:120:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:115:7)"
     `);
   }
 });
@@ -154,7 +149,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:149:19)"
+    at <anonymous> ([file]:144:19)"
 `);
 });
 
@@ -173,6 +168,50 @@ describe("observable properties", () => {
       expect(mock).not.toHaveBeenCalled();
     });
   }
+});
+
+describe("AggregateError", () => {
+  // Build the aggregate's message (and the expected header) at runtime so the
+  // source-line preview that the error printer emits cannot contain the
+  // assertion string by accident.
+  const mk = `["TOP","AGG","MESSAGE"].join("-")`;
+  const header = ["AggregateError", ["TOP", "AGG", "MESSAGE"].join("-")].join(": ");
+
+  test.concurrent.each([
+    ["Bun.inspect", `process.stderr.write(Bun.inspect(new AggregateError([new Error("m1"), new RangeError("m2")], ${mk})))`, 0],
+    ["console.error", `console.error(new AggregateError([new Error("m1"), new RangeError("m2")], ${mk}))`, 0],
+    ["uncaught throw", `throw new AggregateError([new Error("m1"), new RangeError("m2")], ${mk})`, 1],
+    ["unhandled rejection", `Promise.reject(new AggregateError([new Error("m1"), new RangeError("m2")], ${mk}))`, 1],
+  ])("%s prints the aggregate header and each member", async (_, code, wantExit) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = stdout + stderr;
+    expect(out).toContain(header);
+    expect(out).toContain("error: m1");
+    expect(out).toContain("RangeError: m2");
+    expect(out.indexOf(header)).toBeLessThan(out.indexOf("error: m1"));
+    expect(exitCode).toBe(wantExit);
+  });
+
+  test.concurrent("unhandled Promise.any rejection prints the aggregate header", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `Promise.any([Promise.reject(new Error("r1")), Promise.reject(new Error("r2"))])`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = stdout + stderr;
+    expect(out).toContain("AggregateError");
+    expect(out).toContain("r1");
+    expect(out).toContain("r2");
+    expect(exitCode).toBe(1);
+  });
 });
 
 test("error.stack throwing an error doesn't lead to a crash", () => {

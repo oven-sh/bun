@@ -4761,6 +4761,18 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
+        // Note: reborrow so the add-to-error-list tail can still see it after
+        // `print_error_from_maybe_private_data`.
+        let mut exception_list = exception_list;
+        let was_internal = self.print_error_from_maybe_private_data(
+            value,
+            exception_list.as_deref_mut(),
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
+
         if value.is_aggregate_error(global_ref) {
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
@@ -4797,6 +4809,7 @@ impl VirtualMachine {
                 // SAFETY: `ctx.writer` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };
+                let _ = writer.write_all(b"\n");
                 vm.print_errorlike_object(
                     next_value,
                     None,
@@ -4811,6 +4824,7 @@ impl VirtualMachine {
                 formatter: std::ptr::from_mut(formatter),
                 writer: std::ptr::from_mut(writer),
                 exception_list: exception_list
+                    .as_deref_mut()
                     .map(std::ptr::from_mut::<ExceptionList>)
                     .unwrap_or(core::ptr::null_mut()),
                 allow_ansi_color,
@@ -4823,18 +4837,6 @@ impl VirtualMachine {
             let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
             return;
         }
-
-        // Note: reborrow so the add-to-error-list tail can still see it after
-        // `print_error_from_maybe_private_data`.
-        let mut exception_list = exception_list;
-        let was_internal = self.print_error_from_maybe_private_data(
-            value,
-            exception_list.as_deref_mut(),
-            formatter,
-            writer,
-            allow_ansi_color,
-            allow_side_effects,
-        );
 
         if was_internal {
             if let Some(exception_) = exception {

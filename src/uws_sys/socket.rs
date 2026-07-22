@@ -635,17 +635,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn local_port(&self) -> i32 {
+    pub fn local_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).local_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
-    pub fn remote_port(&self) -> i32 {
+    pub fn remote_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).remote_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
@@ -945,7 +945,7 @@ impl AnySocket {
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);
         fn shutdown_read(&self);
-        fn local_port(&self) -> i32;
+        fn local_port(&self) -> Option<u16>;
         fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

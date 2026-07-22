@@ -2338,13 +2338,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_local_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
-        }
-
-        match u16::try_from(this.socket.get().local_port()) {
-            Ok(p) => JSValue::js_number_from_int32(p as i32),
-            Err(_) => JSValue::UNDEFINED,
+        match this.socket.get().local_port() {
+            Some(p) => JSValue::js_number_from_int32(p as i32),
+            None => JSValue::UNDEFINED,
         }
     }
 
@@ -2399,13 +2395,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_remote_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
-        }
-
-        match u16::try_from(this.socket.get().remote_port()) {
-            Ok(p) => JSValue::js_number_from_int32(p as i32),
-            Err(_) => JSValue::UNDEFINED,
+        match this.socket.get().remote_port() {
+            Some(p) => JSValue::js_number_from_int32(p as i32),
+            None => JSValue::UNDEFINED,
         }
     }
 

@@ -8,6 +8,7 @@ import {
   bunExe,
   expectMaxObjectTypeCount,
   getMaxFD,
+  isLinux,
   isWindows,
   libcPathForDlopen,
   tempDir,
@@ -3101,4 +3102,71 @@ Reo=
       expect(t.serverReceived.join("")).toBe("client-app-data\n");
     });
   });
+});
+
+// Linux-only: uses /proc/self/fd to find and close the connected socket's fd
+// so getsockname()/getpeername() fail with EBADF.
+it.skipIf(!isLinux)("socket.localPort / socket.remotePort return undefined when the underlying fd is gone", async () => {
+  const script = /* js */ `
+    import { readdirSync, readlinkSync, closeSync } from "node:fs";
+
+    function socketFds() {
+      const out = new Set();
+      for (const e of readdirSync("/proc/self/fd")) {
+        let link = "";
+        try { link = readlinkSync("/proc/self/fd/" + e); } catch {}
+        if (link.startsWith("socket:")) out.add(Number(e));
+      }
+      return out;
+    }
+
+    const opened = Promise.withResolvers();
+    const server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: { open() {}, data() {}, close() {} },
+    });
+
+    const before = socketFds();
+    const client = await Bun.connect({
+      port: server.port,
+      hostname: "127.0.0.1",
+      socket: { open: opened.resolve, data() {}, close() {} },
+    });
+    await opened.promise;
+
+    const after = socketFds();
+    const newFds = [...after].filter(fd => !before.has(fd));
+    if (newFds.length === 0) {
+      console.log(JSON.stringify({ skipped: true }));
+      server.stop(true);
+      process.exit(0);
+    }
+    for (const fd of newFds) closeSync(fd);
+
+    console.log(JSON.stringify({
+      localPort: client.localPort ?? null,
+      remotePort: client.remotePort ?? null,
+    }));
+    server.stop(true);
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  const out = JSON.parse(stdout.trim());
+  if (out.skipped) return;
+  expect(out).toEqual({ localPort: null, remotePort: null });
 });

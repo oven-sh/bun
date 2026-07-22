@@ -440,8 +440,7 @@ impl Listener {
                 });
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    if let Ok(p) = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
-                    {
+                    if let Some(p) = bun_opaque::opaque_deref_mut(ls).get_local_port() {
                         *port = p;
                     }
                 }
@@ -1418,9 +1417,9 @@ impl Listener {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let address_js = ZigString::init(formatted).to_js(global);
-        let port_js = match u16::try_from(socket_ref.get_local_port()) {
-            Ok(p) => JSValue::js_number(p as f64),
-            Err(_) => JSValue::UNDEFINED,
+        let port_js = match socket_ref.get_local_port() {
+            Some(p) => JSValue::js_number(p as f64),
+            None => JSValue::UNDEFINED,
         };
 
         out.put(global, b"family", family_js);

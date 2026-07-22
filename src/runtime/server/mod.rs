@@ -505,19 +505,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut port = *port;
                 if let Some(listener) = self.listener {
                     // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                    if let Ok(p) =
-                        u16::try_from(bun_opaque::opaque_deref_mut(listener).get_local_port())
-                    {
-                        port = p;
-                    }
+                    port = bun_opaque::opaque_deref_mut(listener)
+                        .get_local_port()
+                        .unwrap_or(port);
                 } else if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
                         // S012: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                        if let Ok(p) =
-                            u16::try_from(bun_opaque::opaque_deref_mut(h3l).get_local_port())
-                        {
-                            port = p;
-                        }
+                        port = bun_opaque::opaque_deref_mut(h3l)
+                            .get_local_port()
+                            .unwrap_or(port);
                     }
                 }
                 URLFormatter {
@@ -1927,7 +1923,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
         let port = bun_opaque::opaque_deref_mut(socket).get_local_port();
         self.h3_listener = Some(socket);
-        if let Ok(port) = u16::try_from(port) {
+        if let Some(port) = port {
             self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
                 .into_bytes()
                 .into_boxed_slice();
@@ -2882,10 +2878,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             let h3_port: u16 = match this_ref.listener {
                                 // SAFETY: ls is a live uws ListenSocket FFI handle
                                 // (just set by on_listen).
-                                Some(ls) => {
-                                    u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
-                                        .unwrap_or(port)
-                                }
+                                Some(ls) => bun_opaque::opaque_deref_mut(ls)
+                                    .get_local_port()
+                                    .unwrap_or(port),
                                 None => port,
                             };
                             // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.

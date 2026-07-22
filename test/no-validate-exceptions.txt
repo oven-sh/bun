@@ -202,3 +202,4 @@ test/js/third_party/vitest/vitest.test.ts
 # still run here, just without validateExceptionChecks.
 test/js/node/test/parallel/test-inspector-*
 test/js/node/test/parallel/test-process-env-sideeffects.js
+test/js/node/test/parallel/test-esm-loader-hooks-inspect-brk.js

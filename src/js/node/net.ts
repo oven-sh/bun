@@ -1968,14 +1968,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Tear down a wrapped generic duplex with this socket: the native handle's
-  // close only flushes close_notify and lets the wrapper drain; without an
-  // explicit destroy here a late RST on the underlying transport can surface
-  // as an unhandled error after this socket is gone.
   const upgraded = this[kupgraded];
-  if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
-    upgraded.destroy?.();
-  }
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2038,6 +2031,13 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   } else {
     callback(err);
     process.nextTick(emitCloseNT, this, !!err);
+  }
+
+  // Tear down the wrapped transport (tls.connect({ socket })) so its 'close'
+  // fires on a failed handshake too. After this._handle's close so terminate()
+  // stays first-close on the shared us_socket_t; the raw twin's close no-ops.
+  if (upgraded && !upgraded.destroyed) {
+    upgraded.destroy?.();
   }
 
   const server = this.server;

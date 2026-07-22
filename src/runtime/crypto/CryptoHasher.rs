@@ -599,18 +599,16 @@ impl CryptoHasher {
                     .throw());
             }
         }
-        let buffer =
-            match BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)? {
-                Some(b) => b,
-                None => {
-                    if !global.has_exception() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected blob, string or buffer"
-                        )));
-                    }
-                    return Err(JsError::Thrown);
+        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)? {
+            Some(b) => b,
+            None => {
+                if !global.has_exception() {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
                 }
-            };
+                return Err(JsError::Thrown);
+            }
+        };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
             return Err(global.throw(format_args!(

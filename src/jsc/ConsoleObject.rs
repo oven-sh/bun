@@ -421,6 +421,12 @@ fn forward_write_error(global: &JSGlobalObject, is_stderr: bool) {
             Some(e) => e,
         }
     };
+    // A pending JS exception (thrown by the caller's formatting path) takes
+    // precedence; don't call into JS under it. The sticky errno was cleared
+    // above and the next `console.*` call hits the dead pipe again.
+    if global.has_exception() {
+        return;
+    }
     // Transient: Node/libuv retry these internally and never emit `'error'`.
     if errno == bun_sys::E::EAGAIN as i32 || errno == bun_sys::E::EINTR as i32 {
         return;
@@ -448,27 +454,14 @@ pub extern "C" fn message_with_type_and_level(
     let is_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
         || message_type == MessageType::Assert;
     if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
-        // A JS exception is pending; don't call into JS to forward the write
-        // error. Clear the recorded errno so the pending exception is what
-        // the caller observes; the next `console.*` call will hit the dead
-        // pipe again and forward then.
-        {
-            // SAFETY: single-JS-thread; no other `&mut` is live in this arm.
-            let console = unsafe { vm_console_mut(global) };
-            if is_stderr {
-                let _ = console.error_writer_backing.take_err();
-            } else {
-                let _ = console.writer_backing.take_err();
-            }
-        }
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
         if matches!(err, jsc::JsError::OutOfMemory) {
             global.throw_out_of_memory_value();
         }
         debug_assert!(global.has_exception());
-        return;
     }
+    // Safe with a pending exception: clears the sticky errno and returns early.
     forward_write_error(global, is_stderr);
 }
 
@@ -5908,6 +5901,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
         let _ = writeln!(writer, "{}: {}", bstr::BStr::new(slice), current);
     }
     let _ = writer.flush();
+    forward_write_error(global_this, false);
 }
 
 #[unsafe(no_mangle)]
@@ -6051,6 +6045,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     }
     let _ = bun_io::Write::write_all(&mut writer, b"\n");
     let _ = bun_io::Write::flush(&mut writer);
+    forward_write_error(global, true);
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

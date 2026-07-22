@@ -229,8 +229,13 @@ for (const c of candidates) {
     continue;
   }
   for (const f of FAULTS[c.sysName])
-    for (const hit of spreadHits(c.hits, maxHits))
+    for (const hit of spreadHits(c.hits, maxHits)) {
+      // A delayed CLOSE at hit 1 is always a process-startup close: the
+      // pause only slows startup and yields marginal timeout-grazing
+      // "stalls" on slow targets. Delay closes deeper in, never the first.
+      if (c.sysName === "NtClose" && f.mode === "delay" && hit === 1) continue;
       plan.push({ id: plan.length, coord: c, status: f.status, mode: f.mode, expect: f.expect ?? "must-handle", hit });
+    }
 }
 
 const estSec = Math.round(((plan.length * base.ms) / jobs / 1000) * 1.3);

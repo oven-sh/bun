@@ -337,9 +337,9 @@ fn handle_file_array(
     global: &JSGlobalObject,
     elements: &[jsc::generated::SSLConfigSingleFile],
 ) -> Result<CStrSlice, ReadFromBlobError> {
-    if elements.is_empty() {
-        return Ok(None);
-    }
+    // An explicit empty array must stay `Some([])` (not `None`): `ca: []`
+    // means "replace the trust store with nothing" in Node, so `as_usockets`
+    // must see a non-null `ca` pointer with `ca_count == 0`.
     let mut result: Vec<*const c_char> = Vec::with_capacity(elements.len());
     // Error path: free_sensitive each, then drop result — need zeroing on error:
     let mut guard = scopeguard::guard(&mut result, |r| {

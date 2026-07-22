@@ -620,6 +620,66 @@ it("tls.connect should use NODE_EXTRA_CA_CERTS even if the used CA is not first 
   expect(await proc.exited).toBe(0);
 });
 
+it("tls.connect with ca: [] replaces the default trust store (rejects NODE_EXTRA_CA_CERTS-signed peers)", async () => {
+  // In Node, passing `ca` replaces the trusted CA set. `ca: []` therefore
+  // means zero trust anchors: every peer fails chain verification, including
+  // one whose root is in NODE_EXTRA_CA_CERTS.
+  const caPath = join(tmpdirSync(), "ca.pem");
+  await Bun.write(caPath, serverTls.ca);
+
+  await using server = await createTLSServer({
+    key: serverTls.key,
+    cert: serverTls.cert,
+    passphrase: "123123123",
+  });
+
+  const fixture = `
+    const tls = require("node:tls");
+    const port = Number(process.env.SERVER_PORT);
+    const connect = extra => new Promise(resolve => {
+      const s = tls.connect({
+        host: "127.0.0.1",
+        port,
+        checkServerIdentity: () => undefined,
+        ...extra,
+      }, () => { resolve({ ok: true, authorized: s.authorized }); s.end(); });
+      s.on("error", e => resolve({ ok: false, code: e.code }));
+    });
+    (async () => {
+      const control = await connect({});
+      const caEmpty = await connect({ ca: [] });
+      const ctxEmpty = await connect({ secureContext: tls.createSecureContext({ ca: [] }) });
+      console.log(JSON.stringify({ control, caEmpty, ctxEmpty }));
+    })();
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      SERVER_PORT: server.address.port.toString(),
+      NODE_EXTRA_CA_CERTS: caPath,
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  // Control: no `ca` given -> NODE_EXTRA_CA_CERTS applies, connection authorized.
+  expect(result.control).toEqual({ ok: true, authorized: true });
+  // `ca: []` -> empty trust store, chain verification fails closed.
+  expect(result.caEmpty.ok).toBe(false);
+  expect(result.caEmpty.code).toMatch(
+    /SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT/,
+  );
+  // Same via createSecureContext({ ca: [] }).
+  expect(result.ctxEmpty.ok).toBe(false);
+  expect(result.ctxEmpty.code).toMatch(
+    /SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT/,
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
   await using server = await createTLSServer({
     key: serverTls.key,

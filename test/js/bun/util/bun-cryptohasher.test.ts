@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
+import { createHash } from "node:crypto";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
@@ -14,6 +15,32 @@ test("CryptoHasher update should throw when no parameter/null/undefined is passe
   expect(() => new Bun.CryptoHasher("sha1").update(undefined)).toThrow();
   // @ts-expect-error
   expect(() => new Bun.CryptoHasher("sha1").update(null)).toThrow();
+});
+test("CryptoHasher.update(str, 'hex') rejects odd-length hex like node:crypto", () => {
+  // Odd-length hex strings must throw instead of silently hashing the longest valid even prefix.
+  for (const s of ["abc", "SGVsbG8", "deadbee", "ff\nff", "a"]) {
+    for (const alg of ["sha1", "sha3-256"] as const) {
+      expect(() => new Bun.CryptoHasher(alg).update(s, "hex"), `input ${JSON.stringify(s)} alg ${alg}`).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: `The argument 'encoding' is invalid for data of length ${s.length}. Received 'hex'`,
+        }),
+      );
+      expect(() => new Bun.CryptoHasher(alg, "key").update(s, "hex")).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    }
+  }
+
+  // Even-length hex decodes and matches node:crypto (including truncation at the first invalid char).
+  for (const s of ["ab", "deadbeef", "ffzz"]) {
+    expect(new Bun.CryptoHasher("sha1").update(s, "hex").digest("hex")).toBe(
+      createHash("sha1").update(s, "hex").digest("hex"),
+    );
+  }
+
+  // Buffers are unaffected by the input encoding parameter.
+  expect(() => new Bun.CryptoHasher("sha1").update(Buffer.from("abc"), "hex")).not.toThrow();
 });
 test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", () => {
   // @ts-expect-error

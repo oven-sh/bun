@@ -579,6 +579,23 @@ impl CryptoHasher {
             );
         }
         let encoding = arguments.ptr[1];
+        if input.is_string()
+            && encoding.is_cell()
+            && Encoding::from_js(encoding, global)? == Some(Encoding::Hex)
+        {
+            let length = input.to_js_string(global)?.length();
+            if length % 2 != 0 {
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The argument 'encoding' is invalid for data of length {}. Received 'hex'",
+                            length
+                        ),
+                    )
+                    .throw());
+            }
+        }
         let buffer =
             match BlobOrStringOrBuffer::from_js_with_encoding_value(global, input, encoding)? {
                 Some(b) => b,

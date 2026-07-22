@@ -1709,6 +1709,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
 
+        // An X509 verify result is only meaningful when the protocol handshake
+        // completed. A positive `error_no` on a failed handshake is the
+        // verifier's no-peer-certificate default and does not describe a
+        // presented certificate; drop it so the JS handler reads this as a
+        // protocol failure (`verifyError == null`) rather than a verification
+        // result on an established session. Negative `error_no` values
+        // (EPROTO/ECONNRESET from the openssl.c transport) are preserved.
+        let ssl_error = if success == 0 && ssl_error.error_no > 0 {
+            uws::us_bun_verify_error_t::default()
+        } else {
+            ssl_error
+        };
         let verify_failed = SSL && ssl_error.error_no != 0;
         // The `success` argument delivered to JS is the same verdict as the
         // `socket.authorized` getter: protocol handshake completed AND the

@@ -153,7 +153,8 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
+            BIO_write, ERR_clear_error, ERR_error_string_n, ERR_peek_last_error, SSL, SSL_CTX,
+            SSL_CTX_free, SSL_CTX_get_verify_mode,
             SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_NONE,
             SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio,
@@ -879,6 +880,11 @@ pub mod ssl_wrapper {
             if result <= 0 {
                 // SAFETY: ssl is still valid.
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
+                // Peek the last OpenSSL reason before clearing the queue so a
+                // fatal protocol failure can be reported to JS as EPROTO with
+                // the OpenSSL reason string, matching openssl.c's
+                // `ssl_park_fatal_reason` / `ssl_dispatch_parked_reason`.
+                let packed = boring_sys::ERR_peek_last_error();
                 boring_sys::ERR_clear_error();
                 if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                     // Remotely-Initiated Shutdown
@@ -892,15 +898,33 @@ pub mod ssl_wrapper {
                 // as far as I know these are the only errors we want to handle
                 if err != boring_sys::SSL_ERROR_WANT_READ && err != boring_sys::SSL_ERROR_WANT_WRITE
                 {
+                    let is_fatal =
+                        err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
                     // clear per thread error queue if it may contain something
-                    Self::r(this).flags.set_fatal_error(
-                        err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL,
-                    );
+                    Self::r(this).flags.set_fatal_error(is_fatal);
 
                     Self::r(this)
                         .flags
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
-                    let verify = Self::r(this).get_verify_error();
+                    let mut reason_buf = [0u8; 256];
+                    let verify = if is_fatal && packed != 0 {
+                        // SAFETY: `reason_buf` is a 256-byte buffer;
+                        // ERR_error_string_n NUL-terminates within `len` bytes.
+                        unsafe {
+                            boring_sys::ERR_error_string_n(
+                                packed,
+                                reason_buf.as_mut_ptr().cast(),
+                                reason_buf.len(),
+                            );
+                        }
+                        us_bun_verify_error_t {
+                            error_no: -71,
+                            code: c"EPROTO".as_ptr(),
+                            reason: reason_buf.as_ptr().cast(),
+                        }
+                    } else {
+                        Self::r(this).get_verify_error()
+                    };
                     Self::r(this).trigger_handshake_callback(false, verify);
 
                     if Self::r(this).flags.fatal_error() {

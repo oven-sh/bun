@@ -14,7 +14,8 @@ import {
   tls,
 } from "harness";
 import net from "node:net";
-import { createSecureContext, connect as tlsConnect } from "node:tls";
+import { PassThrough } from "node:stream";
+import { createSecureContext, TLSSocket, connect as tlsConnect } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -2652,6 +2653,33 @@ m+VE5F+vgFL9cxozCtCU3a1B/l9BvTkQ5SqHSodvZaNIotaAMqoRMOu1Hx0=
         sock.on("error", reject);
       });
       expect(tlsResult).toEqual({ authorized: false, authorizationError: "UNHANDLED_CRITICAL_EXTENSION" });
+    });
+
+    // A server-side TLSSocket wrapping a generic Duplex runs over the
+    // SSLWrapper transport (not the openssl.c native-fd path). A protocol
+    // failure there must still surface as tlsClientError rather than
+    // `secureConnection` on a never-established session.
+    it("reports a protocol failure as tlsClientError on a TLSSocket wrapping a Duplex", async () => {
+      const events: string[] = [];
+      const done = Promise.withResolvers<void>();
+      const duplex = new PassThrough();
+      const tlsSock = new TLSSocket(duplex, { isServer: true, key: SERVER_KEY, cert: SERVER_CRT } as any);
+      tlsSock.on("secure", () => events.push("secure"));
+      tlsSock.on("secureConnect", () => events.push("secureConnect"));
+      tlsSock.on("_tlsError", (err: NodeJS.ErrnoException) => {
+        events.push(`_tlsError:${err?.code}`);
+        done.resolve();
+      });
+      tlsSock.on("close", () => done.resolve());
+      // Feed plain HTTP into the TLS engine; SSL_do_handshake fails with
+      // SSL_ERROR_SSL and an HTTP_REQUEST reason on the OpenSSL error queue.
+      // Defer the write so the TLSSocket has attached its 'data' listener
+      // to the duplex first.
+      setImmediate(() => duplex.write(Buffer.from("GET / HTTP/1.1\r\nHost: x\r\n\r\n")));
+      await done.promise;
+      tlsSock.destroy();
+      expect(events).toEqual(["_tlsError:ERR_SSL_HTTP_REQUEST"]);
+      expect((tlsSock as any)._secureEstablished).toBe(false);
     });
 
     // node:tls sockets own server-identity policy in JS: an accepting

@@ -340,12 +340,15 @@ impl Error {
 
     /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
     /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
-    /// and returns the looked-up `(code, label)` so each caller can build its own
-    /// `message` (shell: static label; node: formatted stack buffer).
+    /// and returns the looked-up `(code, system_errno, label)` so each caller can
+    /// build its own `message` (shell: static label; node: formatted stack buffer).
     fn fill_system_error_common(
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
-    ) -> (SystemError, Option<(&'static str, &'static str)>) {
+    ) -> (
+        SystemError,
+        Option<(&'static str, SystemErrno, &'static str)>,
+    ) {
         let mut err = SystemError {
             errno: c_int::from(self.errno).wrapping_neg(),
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
@@ -356,7 +359,7 @@ impl Error {
         // both maps are total (`initFull("unknown error")`).
         let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
             err.code = BunString::static_(code.as_bytes());
-            (code, map[system_errno])
+            (code, system_errno, map[system_errno])
         });
 
         if !self.path.is_empty() {
@@ -386,7 +389,7 @@ impl Error {
     pub fn to_shell_system_error(&self) -> SystemError {
         let (mut err, looked_up) =
             self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
-        if let Some((_, label)) = looked_up {
+        if let Some((_, _, label)) = looked_up {
             err.message = BunString::static_(label.as_bytes());
         }
         err
@@ -397,6 +400,13 @@ impl Error {
     pub fn to_system_error(&self) -> SystemError {
         let (mut err, looked_up) = self.fill_system_error_common(&libuv_error_map::LIBUV_ERROR_MAP);
 
+        // Node surfaces libuv's UV_E* as err.errno. POSIX -(discriminant) already is
+        // that; Windows' discriminant is Linux-style (ENOENT=2) so remap (-> -4058).
+        #[cfg(windows)]
+        if let Some((_, system_errno, _)) = looked_up {
+            err.errno = bun_errno::system_errno_to_uv_err(system_errno);
+        }
+
         // format taken from Node.js 'exceptions.cc'
         // search keyword: `Local<Value> UVException(Isolate* isolate,`
         let mut message_buf = [0u8; 4096];
@@ -404,7 +414,7 @@ impl Error {
             use std::io::Write as _;
             let mut cursor = std::io::Cursor::new(&mut message_buf[..]);
             'brk: {
-                if let Some((code, _)) = looked_up {
+                if let Some((code, _, _)) = looked_up {
                     if cursor.write_all(code.as_bytes()).is_err() {
                         break 'brk;
                     }
@@ -412,7 +422,7 @@ impl Error {
                         break 'brk;
                     }
                 }
-                let label = looked_up.map(|(_, l)| l).unwrap_or("Unknown Error");
+                let label = looked_up.map(|(_, _, l)| l).unwrap_or("Unknown Error");
                 if cursor.write_all(label.as_bytes()).is_err() {
                     break 'brk;
                 }

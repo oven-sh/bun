@@ -1037,7 +1037,7 @@ it("promises.readFile", async () => {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("ENOENT: no such file or directory, open '/i-dont-exist'");
       expect(e.code).toBe("ENOENT");
-      expect(e.errno).toBe(-2);
+      expect(e.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(e.path).toBe("/i-dont-exist");
     }
   }
@@ -1428,7 +1428,7 @@ it("mkdtempSync() non-exist dir #2568", () => {
   try {
     expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
-    expect(err?.errno).toBe(-2);
+    expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
   }
 });
 
@@ -1436,7 +1436,7 @@ it("mkdtemp() non-exist dir #2568", done => {
   const path = join(tmpdirSync(), "does", "not", "exist");
   mkdtemp(path, (err, folder) => {
     try {
-      expect(err?.errno).toBe(-2);
+      expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(folder).toBeUndefined();
       done();
     } catch (e) {

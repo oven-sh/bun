@@ -41,7 +41,11 @@ pub const UV_ENOTSUP: core::ffi::c_int = -4049;
 pub const UV_EREMOTEIO: core::ffi::c_int = -4030;
 #[cfg(not(windows))]
 pub const UV_EFTYPE: core::ffi::c_int = -4028;
-#[cfg(not(windows))]
+// uv/errno.h: FreeBSD libc++ defines ENODATA=9919 in <errno.h> (C++ only), and
+// libuv hardcodes -9919 there; everywhere else the synthetic fallback is -4024.
+#[cfg(target_os = "freebsd")]
+pub const UV_ENODATA: core::ffi::c_int = -9919;
+#[cfg(not(any(windows, target_os = "freebsd")))]
 pub const UV_ENODATA: core::ffi::c_int = -4024;
 #[cfg(not(windows))]
 pub const UV_EUNATCH: core::ffi::c_int = -4023;

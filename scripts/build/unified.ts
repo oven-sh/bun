@@ -95,10 +95,9 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
   "src/jsc/bindings/webcrypto/SubtleCrypto.cpp",
 
-  // Redefines ~80 errno/EAI_* macros (the EAI_* ones unconditionally, the
-  // rest via `#if !defined`) and uses them to build a switch. The defines
-  // leak forward; an earlier sibling pulling <netdb.h>/<errno.h> changes
-  // which conditional branches fire.
+  // Includes <uv/errno.h> whose `#if defined(E*) && !defined(_WIN32)`
+  // branches decide each UV__E* value. An earlier sibling redefining an
+  // errno macro would silently change which branch fires.
   "src/jsc/bindings/ProcessBindingUV.cpp",
 
   // Uses `#ifdef S_IFBLK` / `#ifdef S_IFSOCK` etc. to decide which constants

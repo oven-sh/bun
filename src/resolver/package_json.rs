@@ -1138,8 +1138,7 @@ impl<'a> Visitor<'a> {
                 json_parser::ValueLocation::Property(prop.key_loc),
             );
 
-            // safe to use "/" on windows. exports in package.json does not use "\\"
-            if strings::ends_with(&key, b"/") || strings::contains_char(&key, b'*') {
+            if strings::contains_char(&key, b'*') {
                 expansion_keys.push(MapEntry {
                     value: value.clone(),
                     key: key.clone(),
@@ -1156,9 +1155,9 @@ impl<'a> Visitor<'a> {
 
         // this leaks a lil, but it's fine.
 
-        // Let expansionKeys be the list of keys of matchObj either ending in "/"
-        // or containing only a single "*", sorted by the sorting function
-        // PATTERN_KEY_COMPARE which orders in descending order of specificity.
+        // Let expansionKeys be the list of keys of matchObj containing only a
+        // single "*", sorted by the sorting function PATTERN_KEY_COMPARE which
+        // orders in descending order of specificity.
         expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
 
         Entry {
@@ -1304,7 +1303,6 @@ pub enum Status {
     Null,
     Exact,
     ExactEndsWithStar,
-    Inexact, // This means we may need to try CommonJS-style extension suffixes
 
     /// Module specifier is an invalid URL, package name or package subpath specifier.
     InvalidModuleSpecifier,
@@ -1587,10 +1585,7 @@ impl<'a> ESModule<'a> {
 
     pub fn finalize(result_: Resolution) -> Resolution {
         let mut result = result_;
-        if result.status != Status::Exact
-            && result.status != Status::ExactEndsWithStar
-            && result.status != Status::Inexact
-        {
+        if result.status != Status::Exact && result.status != Status::ExactEndsWithStar {
             return result;
         }
 
@@ -1737,49 +1732,31 @@ impl<'a> ESModule<'a> {
         if let EntryData::Map(map) = &match_obj.data {
             let expansion_keys = &map.expansion_keys;
             for expansion in expansion_keys.iter() {
-                // If expansionKey contains "*", set patternBase to the substring of
-                // expansionKey up to but excluding the first "*" character
-                if let Some(star) = strings::index_of_char(&expansion.key, b'*') {
-                    let star = star as usize;
-                    let pattern_base = &expansion.key[0..star];
-                    // If patternBase is not null and matchKey starts with but is not equal
-                    // to patternBase, then
-                    if strings::starts_with(match_key, pattern_base) {
-                        // Let patternTrailer be the substring of expansionKey from the index
-                        // after the first "*" character.
-                        let pattern_trailer = &expansion.key[star + 1..];
+                // expansion_keys only contains keys with a "*" (trailing-slash
+                // "./dir/" subpath folder mappings were removed from Node.js in
+                // v17 / DEP0148 and are no longer treated as patterns).
+                let Some(star) = strings::index_of_char(&expansion.key, b'*') else {
+                    debug_assert!(false, "expansion_keys must contain '*'");
+                    continue;
+                };
+                let star = star as usize;
+                let pattern_base = &expansion.key[0..star];
+                // If matchKey starts with but is not equal to patternBase, then
+                if strings::starts_with(match_key, pattern_base) {
+                    // Let patternTrailer be the substring of expansionKey from the index
+                    // after the first "*" character.
+                    let pattern_trailer = &expansion.key[star + 1..];
 
-                        // If patternTrailer has zero length, or if matchKey ends with
-                        // patternTrailer and the length of matchKey is greater than or
-                        // equal to the length of expansionKey, then
-                        if pattern_trailer.is_empty()
-                            || (strings::ends_with(match_key, pattern_trailer)
-                                && match_key.len() >= expansion.key.len())
-                        {
-                            let target = &expansion.value;
-                            let subpath = &match_key
-                                [pattern_base.len()..match_key.len() - pattern_trailer.len()];
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
-                                log.add_note_fmt(format_args!(
-                                    "The key \"{}\" matched with \"{}\" left over",
-                                    bstr::BStr::new(&expansion.key),
-                                    bstr::BStr::new(subpath)
-                                ));
-                            }
-                            return self.resolve_target::<true>(
-                                package_url,
-                                target,
-                                subpath,
-                                is_imports,
-                            );
-                        }
-                    }
-                } else {
-                    // Otherwise if patternBase is null and matchKey starts with
-                    // expansionKey, then
-                    if strings::starts_with(match_key, &expansion.key) {
+                    // If patternTrailer has zero length, or if matchKey ends with
+                    // patternTrailer and the length of matchKey is greater than or
+                    // equal to the length of expansionKey, then
+                    if pattern_trailer.is_empty()
+                        || (strings::ends_with(match_key, pattern_trailer)
+                            && match_key.len() >= expansion.key.len())
+                    {
                         let target = &expansion.value;
-                        let subpath = &match_key[expansion.key.len()..];
+                        let subpath =
+                            &match_key[pattern_base.len()..match_key.len() - pattern_trailer.len()];
                         if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The key \"{}\" matched with \"{}\" left over",
@@ -1787,15 +1764,12 @@ impl<'a> ESModule<'a> {
                                 bstr::BStr::new(subpath)
                             ));
                         }
-                        let mut result =
-                            self.resolve_target::<false>(package_url, target, subpath, is_imports);
-                        if result.status == Status::Exact
-                            || result.status == Status::ExactEndsWithStar
-                        {
-                            // Return the object { resolved, exact: false }.
-                            result.status = Status::Inexact;
-                        }
-                        return result;
+                        return self.resolve_target::<true>(
+                            package_url,
+                            target,
+                            subpath,
+                            is_imports,
+                        );
                     }
                 }
 

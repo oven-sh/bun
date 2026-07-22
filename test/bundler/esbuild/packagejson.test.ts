@@ -1339,8 +1339,8 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
         {
           "exports": {
-            "./": "./1/",
-            "./foo/": "./2/"
+            "./*": "./1/*",
+            "./foo/*": "./2/*"
           }
         }
       `,
@@ -1349,8 +1349,8 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg2/package.json": /* json */ `
         {
           "exports": {
-            "./foo/": "./1/",
-            "./": "./2/"
+            "./foo/*": "./1/*",
+            "./*": "./2/*"
           }
         }
       `,
@@ -1359,6 +1359,24 @@ describe("bundler", () => {
     },
     run: {
       stdout: "SUCCESS\nSUCCESS",
+    },
+  });
+  // Node.js removed trailing-slash subpath folder mappings (DEP0148) in v17.
+  // A "./dir/" key must not act as a prefix pattern anymore.
+  itBundled("packagejson/ExportsTrailingSlashNotSupported", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar.js'`,
+      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "./foo/": "./dir/"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/pkg1/dir/bar.js": `console.log('FAILURE')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar.js". Maybe you need to "bun install"?`],
     },
   });
   itBundled("packagejson/ExportsWildcard", {
@@ -1443,8 +1461,8 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg1/dir/bar.js": `console.log('SUCCESS')`,
     },
-    run: {
-      stdout: "SUCCESS",
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
     },
   });
   itBundled("packagejson/ExportsNotExactMissingExtensionPattern", {
@@ -1626,7 +1644,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
         {
           "exports": {
-            "./apples/": ["./good-apples/", "./bad-apples/"],
+            "./apples/*": ["./good-apples/*", "./bad-apples/*"],
             "./books/*": ["./good-books/*-book.js", "./bad-books/*-book.js"]
           }
         }
@@ -1649,25 +1667,22 @@ describe("bundler", () => {
         import '#top-level'
         import '#nested/path.js'
         import '#star/c.js'
-        import '#slash/d.js'
       `,
       "/Users/user/project/src/package.json": /* json */ `
         {
           "imports": {
             "#top-level": "./a.js",
             "#nested/path.js": "./b.js",
-            "#star/*": "./some-star/*",
-            "#slash/": "./some-slash/"
+            "#star/*": "./some-star/*"
           }
         }
       `,
       "/Users/user/project/src/a.js": `console.log('a.js')`,
       "/Users/user/project/src/b.js": `console.log('b.js')`,
       "/Users/user/project/src/some-star/c.js": `console.log('c.js')`,
-      "/Users/user/project/src/some-slash/d.js": `console.log('d.js')`,
     },
     run: {
-      stdout: `a.js\nb.js\nc.js\nd.js`,
+      stdout: `a.js\nb.js\nc.js`,
     },
   });
   itBundled("packagejson/ImportsRemapToOtherPackage", {
@@ -1676,25 +1691,22 @@ describe("bundler", () => {
         import '#top-level'
         import '#nested/path.js'
         import '#star/c.js'
-        import '#slash/d.js'
       `,
       "/Users/user/project/src/package.json": /* json */ `
         {
           "imports": {
             "#top-level": "pkg/a.js",
             "#nested/path.js": "pkg/b.js",
-            "#star/*": "pkg/some-star/*",
-            "#slash/": "pkg/some-slash/"
+            "#star/*": "pkg/some-star/*"
           }
         }
       `,
       "/Users/user/project/src/node_modules/pkg/a.js": `console.log('a.js')`,
       "/Users/user/project/src/node_modules/pkg/b.js": `console.log('b.js')`,
       "/Users/user/project/src/node_modules/pkg/some-star/c.js": `console.log('c.js')`,
-      "/Users/user/project/src/node_modules/pkg/some-slash/d.js": `console.log('d.js')`,
     },
     run: {
-      stdout: `a.js\nb.js\nc.js\nd.js`,
+      stdout: `a.js\nb.js\nc.js`,
     },
   });
   itBundled("packagejson/ImportsErrorMissingRemappedPackage", {

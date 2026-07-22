@@ -3639,7 +3639,7 @@ impl<'a> Resolver<'a> {
         use crate::package_json::Status;
         if !((matches!(
             esm_resolution.status,
-            Status::Inexact | Status::Exact | Status::ExactEndsWithStar
+            Status::Exact | Status::ExactEndsWithStar
         )) && !esm_resolution.path.is_empty()
             && esm_resolution.path[0] == SEP)
         {
@@ -3817,23 +3817,6 @@ impl<'a> Resolver<'a> {
                     ..Default::default()
                 };
                 MatchStatus::Success
-            }
-            Status::Inexact => {
-                // If this was resolved against an expansion key ending in a "/"
-                // instead of a "*", we need to try CommonJS-style implicit
-                // extension and/or directory detection.
-                if self
-                    .load_as_file_or_directory(abs_esm_path, kind, out)
-                    .is_success()
-                {
-                    out.is_node_module = true;
-                    out.package_json = out
-                        .package_json
-                        .or_else(|| Some(std::ptr::from_ref(package_json)));
-                    return MatchStatus::Success;
-                }
-                esm_resolution.status = Status::ModuleNotFound;
-                MatchStatus::NotFound
             }
             _ => unreachable!(),
         }

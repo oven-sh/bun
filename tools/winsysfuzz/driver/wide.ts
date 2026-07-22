@@ -337,6 +337,43 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     } catch {}
     return null;
   }
+  // In-pass verification: a single crash/hang under 8-way load often will
+  // not replay solo later (timing-sensitive, or a false signature). Replay
+  // the schedule twice NOW, under the same load that produced it, and queue
+  // only what reproduces; the rest go to a lightweight ledger beside the
+  // queue so a signature RECURRING across passes stays visible.
+  if (outcome === "CRASH" || outcome === "HANG") {
+    const sched = schedule.join("\n");
+    const sig = outcome === "CRASH" ? (rr.crashSig ?? detectCrash(rr.stdout, rr.stderr))?.signature ?? "" : "HANG";
+    let repro = 0;
+    for (let v = 1; v <= 2; v++) {
+      const vdir = join(dir, `verify${v}`);
+      const vr = await replayCoordinate({ bun: bun!, args: ["test", file], schedule: sched, dir: vdir, timeoutMs, capture: false }).catch(
+        () => null,
+      );
+      const vsig = vr ? (vr.crashSig ?? detectCrash(vr.stdout, vr.stderr))?.signature ?? "" : "";
+      const bad = vr && (outcome === "CRASH" ? vsig === sig : vr.outcome === "hang");
+      try {
+        rmSync(vdir, { recursive: true, force: true });
+      } catch {}
+      if (bad) repro++;
+    }
+    if (repro === 0) {
+      try {
+        appendFileSync(
+          join(queueDir, "wide-unverified.log"),
+          `${new Date().toISOString()}\t${outcome}\t${basename(file)}\t${(sig || detail).slice(0, 120)}\t${schedule.join(" ; ")}\n`,
+        );
+      } catch {}
+      console.log(`  [${outcome} unverified 0/2 - dropped] ${basename(file)}: ${(sig || detail).slice(0, 70)}`);
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+      return null;
+    }
+    detail = `${detail}${outcome === "CRASH" ? "" : ""}`; // (signature unchanged)
+    console.log(`  [${outcome} verified ${repro}/2] ${basename(file)}`);
+  }
   // Retention: the schedule is the replay; strip the raw trace.
   try {
     for (const f of readdirSync(dir)) if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(join(dir, f), { force: true });
@@ -401,7 +438,7 @@ while (pass++ < passes) {
       const entry = {
         queuedAt: stamp,
         dedupeKey: h.key,
-        verdict: "wide-single", // one occurrence, unverified: the triager replays first
+        verdict: "wide-verified", // reproduced in-pass under load (>=1 of 2 immediate replays)
         outcome: h.outcome,
         boundary: null,
         crashKind: null,

@@ -1614,6 +1614,10 @@ impl VirtualMachine {
             // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
             // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
             // JSC `Strong`/`Weak` handles against a live HandleSet.
+            // Same gate the worker shutdown takes: in-flight work-pool fs
+            // completions post with no ScriptExecutionContext gate, so wait
+            // for them before the drain (a post after it leaks the task).
+            self.event_loop_mut().wait_for_concurrent_posters();
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
             Zig__GlobalObject__destructOnExit(self.global());

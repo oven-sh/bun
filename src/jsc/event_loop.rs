@@ -10,7 +10,7 @@
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use bun_io::{self as Async, Waker};
 use bun_uws as uws;
@@ -89,6 +89,11 @@ pub struct EventLoop {
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
+    /// Work-pool tasks that will post to `concurrent_tasks` when they finish
+    /// (counted on the JS thread before the pool hand-off, decremented on the
+    /// pool thread after the post). Shutdown waits for zero before the final
+    /// queue drain so a completion can't land after it and leak.
+    pub concurrent_posters: AtomicU32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
@@ -129,6 +134,7 @@ impl Default for EventLoop {
             uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
+            concurrent_posters: AtomicU32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
@@ -1003,6 +1009,30 @@ impl EventLoop {
         }
         self.concurrent_tasks.push(task);
         self.wakeup();
+    }
+
+    /// See `concurrent_posters`. Call on the JS thread before scheduling a
+    /// work-pool task whose completion posts via `enqueue_task_concurrent`.
+    pub fn concurrent_poster_begin(&self) {
+        let _ = self.concurrent_posters.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Pool-thread pair of [`Self::concurrent_poster_begin`]. Must be the
+    /// poster's last touch of this event loop: once the count hits zero the
+    /// shutdown thread may drain the queue and tear the VM down.
+    pub fn concurrent_poster_end(&self) {
+        let prev = self.concurrent_posters.fetch_sub(1, Ordering::Release);
+        debug_assert!(prev > 0);
+    }
+
+    /// Spin until every counted poster has finished its post. Called on the
+    /// JS thread during shutdown, after the last JS has run (nothing can
+    /// schedule new posters) and before the final queue drain. Each pending
+    /// fs operation is finite, so the wait is bounded by syscall latency.
+    pub fn wait_for_concurrent_posters(&self) {
+        while self.concurrent_posters.load(Ordering::Acquire) > 0 {
+            std::thread::yield_now();
+        }
     }
 
     pub fn ref_concurrently(&self) {

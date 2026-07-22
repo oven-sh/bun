@@ -1292,9 +1292,12 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            let _ = vm;
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
+            // Counted so shutdown's `wait_for_concurrent_posters` covers the
+            // work-pool completion post; paired in `work_pool_callback`.
+            // SAFETY: `event_loop()` is a value field of the live `vm`.
+            unsafe { (*vm.event_loop()).concurrent_poster_begin() };
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
             promise
         }
@@ -1318,6 +1321,11 @@ mod _async_tasks {
                 (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
                     std::ptr::from_mut::<Self>(this),
                 ));
+                // Pairs with `concurrent_poster_begin` in `create()`. The JS
+                // thread may free `this` the moment the task above is popped,
+                // and may tear the VM down once this count reaches zero — so
+                // this is the pool thread's last touch of `this` AND the loop.
+                (*(*vm).event_loop()).concurrent_poster_end();
             }
         }
 

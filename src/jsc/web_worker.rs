@@ -1319,6 +1319,12 @@ impl WebWorker {
             // ~JSEventListener Weak<> handles, and after teardownJSCVM the
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.
+            // Work-pool fs completions post straight into `concurrent_tasks`
+            // with no ScriptExecutionContext gate; wait for the in-flight ones
+            // so the drain below sees every post. A completion landing after
+            // the drain would sit in the queue past the raw VM dealloc and
+            // leak its ConcurrentTask + AsyncFSTask under LSan.
+            vm.event_loop_mut().wait_for_concurrent_posters();
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);

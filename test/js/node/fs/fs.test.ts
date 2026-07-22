@@ -5647,7 +5647,12 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
       `require("fs").symlink(${file}, ${dirLit} + "/l4", "file", () => { throw new Error("boom"); })`,
     ],
     ["dns.lookup", `require("dns").lookup("localhost", () => { throw new Error("boom"); })`],
-    ["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`],
+    // Windows has no 127.0.0.1 PTR entry in its hosts file, so reverse()
+    // there falls through to a real query (the vendored test-c-ares.js
+    // gates the identical call the same way).
+    ...(isWindows
+      ? []
+      : [["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`] as [string, string]]),
     ["crypto.pbkdf2", `require("crypto").pbkdf2("pw", "salt", 10, 16, "sha256", () => { throw new Error("boom"); })`],
   ];
 

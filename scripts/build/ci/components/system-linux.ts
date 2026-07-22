@@ -109,10 +109,6 @@ export const baseSystem: Component = {
               if (existsSync(pam)) await ensureLines(pam, ["session optional pam_limits.so"]);
             }
             await reloadServiceManager();
-            if (image.packages.manager === "apt") {
-              await ensureLines("/etc/dpkg/dpkg.cfg.d/01-ci-options", [...image.system.dpkgOptions]);
-              await ensureLines("/etc/apt/apt.conf.d/99-ci-options", [...image.system.aptOptions]);
-            }
           },
         },
         {

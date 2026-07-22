@@ -91,7 +91,7 @@ export const nodejs: NodejsSpec = {
 };
 
 export const bun: BunSpec = {
-  version: "1.3.13",
+  version: "1.3.14",
   releaseBase: "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases",
 };
 
@@ -247,15 +247,6 @@ const linuxSystem: LinuxImageBase["system"] = {
     "msgqueue",
   ],
   countedLimits: { nofile: 1048576, nproc: 1048576 },
-  dpkgOptions: ["force-unsafe-io", "no-debsig"],
-  aptOptions: [
-    'Acquire::Languages "none";',
-    'Acquire::GzipIndexes "true";',
-    'Acquire::CompressionTypes::Order:: "gz";',
-    'APT::Get::Install-Recommends "false";',
-    'APT::Get::Install-Suggests "false";',
-    'Dpkg::Options { "--force-confdef"; "--force-confold"; }',
-  ],
 };
 
 const aptCommon = [
@@ -702,7 +693,6 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     base: ubuntuAmi("25.04", "aarch64"),
     bake: linuxBake("aarch64"),
     packages: ubuntuPackages,
-    gcc: { version: "13" },
   },
   {
     ...linuxShared,
@@ -716,7 +706,6 @@ const linuxTestImages: readonly LinuxTestImage[] = [
     base: ubuntuAmi("25.04", "x64"),
     bake: linuxBake("x64"),
     packages: ubuntuPackages,
-    gcc: { version: "13" },
     chromeDebUrl,
   },
   {

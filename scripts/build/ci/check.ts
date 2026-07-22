@@ -9,13 +9,22 @@
 // Exits non-zero and names the failing image if any plan errors.
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { imageName } from "./naming.ts";
-import { images } from "./spec.ts";
+import { bun as bunPin, images } from "./spec.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const bootstrap = join(here, "bootstrap.ts");
+
+// The spec's bun pin must equal the repo's LATEST: the images ship the same
+// bun the release process considers current.
+const latest = readFileSync(join(here, "..", "..", "..", "LATEST"), "utf8").trim();
+if (bunPin.version !== latest) {
+  console.error(`spec bun.version ${bunPin.version} != LATEST ${latest}`);
+  process.exit(1);
+}
 
 console.log("Content-addressed image names:");
 for (const image of images) {

@@ -230,8 +230,6 @@ export type LinuxImageBase = {
     readonly limits: readonly string[];
     /** nofile/nproc can't be "unlimited"; everything else is. */
     readonly countedLimits: { readonly [limit: string]: number };
-    readonly dpkgOptions: readonly string[];
-    readonly aptOptions: readonly string[];
   };
 };
 

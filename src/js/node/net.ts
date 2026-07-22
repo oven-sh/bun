@@ -3999,20 +3999,12 @@ function listenInCluster(
           sharedFd,
         );
         handle.adopted = true;
-        if (path && (readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
-          let desired = 0;
-          if (readableAll) desired |= 0o44; // S_IRGRP | S_IROTH
-          if (writableAll) desired |= 0o22; // S_IWGRP | S_IWOTH
-          const fs = require("node:fs");
-          try {
-            const cur = fs.statSync(path).mode;
-            if ((cur & desired) !== desired) fs.chmodSync(path, cur | desired);
-          } catch (e) {
-            server._handle?.stop?.(true);
-            server._handle = null;
-            throw e;
-          }
-        }
+        // Node v26.3.0: SharedHandle ignores readableAll/writableAll and the
+        // worker's sync uv_pipe_chmod path in Server.prototype.listen returns
+        // early because _handle is null when listenInCluster returns async, so
+        // SCHED_NONE workers do not apply the mode. Matched here.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js#L13-L29
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2200-L2218
       } catch (err) {
         server[kClusterHandle] = null;
         handle[kClusterOwner] = null;

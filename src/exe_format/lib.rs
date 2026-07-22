@@ -103,11 +103,9 @@ pub fn detect_header(data: &[u8]) -> Option<DetectedHeader> {
             return None;
         }
         let e_machine = u16::from_le_bytes([data[18], data[19]]);
-        const EM_X86_64: u16 = 62;
-        const EM_AARCH64: u16 = 183;
         let arch = match e_machine {
-            EM_X86_64 => DetectedArch::X64,
-            EM_AARCH64 => DetectedArch::Arm64,
+            elf::EM_X86_64 => DetectedArch::X64,
+            elf::EM_AARCH64 => DetectedArch::Arm64,
             other => DetectedArch::Other(other as u32),
         };
         return Some(DetectedHeader {
@@ -119,15 +117,12 @@ pub fn detect_header(data: &[u8]) -> Option<DetectedHeader> {
     // Mach-O 64-bit: magic at 0, cputype (i32) at 4.
     if data.len() >= 8 {
         let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-        const MH_MAGIC_64: u32 = 0xfeed_facf;
-        if magic == MH_MAGIC_64 {
-            let cputype = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-            const CPU_TYPE_X86_64: u32 = 0x0100_0007;
-            const CPU_TYPE_ARM64: u32 = 0x0100_000C;
+        if magic == macho_types::MH_MAGIC_64 {
+            let cputype = i32::from_le_bytes([data[4], data[5], data[6], data[7]]);
             let arch = match cputype {
-                CPU_TYPE_X86_64 => DetectedArch::X64,
-                CPU_TYPE_ARM64 => DetectedArch::Arm64,
-                other => DetectedArch::Other(other),
+                macho_types::CPU_TYPE_X86_64 => DetectedArch::X64,
+                macho_types::CPU_TYPE_ARM64 => DetectedArch::Arm64,
+                other => DetectedArch::Other(other as u32),
             };
             return Some(DetectedHeader {
                 format: DetectedFormat::MachO,
@@ -141,14 +136,12 @@ pub fn detect_header(data: &[u8]) -> Option<DetectedHeader> {
     if data.len() >= 0x40 && &data[0..2] == b"MZ" {
         let e_lfanew =
             u32::from_le_bytes([data[0x3c], data[0x3d], data[0x3e], data[0x3f]]) as usize;
-        if let Some(pe) = data.get(e_lfanew..e_lfanew.checked_add(6)?) {
-            if &pe[0..4] == b"PE\0\0" {
-                let machine = u16::from_le_bytes([pe[4], pe[5]]);
-                const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
-                const IMAGE_FILE_MACHINE_ARM64: u16 = 0xAA64;
+        if let Some(coff) = data.get(e_lfanew..e_lfanew.checked_add(6)?) {
+            if &coff[0..4] == b"PE\0\0" {
+                let machine = u16::from_le_bytes([coff[4], coff[5]]);
                 let arch = match machine {
-                    IMAGE_FILE_MACHINE_AMD64 => DetectedArch::X64,
-                    IMAGE_FILE_MACHINE_ARM64 => DetectedArch::Arm64,
+                    pe::IMAGE_FILE_MACHINE_AMD64 => DetectedArch::X64,
+                    pe::IMAGE_FILE_MACHINE_ARM64 => DetectedArch::Arm64,
                     other => DetectedArch::Other(other as u32),
                 };
                 return Some(DetectedHeader {

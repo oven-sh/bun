@@ -666,7 +666,8 @@ const PF_W: u32 = 2;
 const SHT_NOBITS: u32 = 8;
 
 const EM_PPC64: u16 = 21;
-const EM_AARCH64: u16 = 183;
+pub(crate) const EM_X86_64: u16 = 62;
+pub(crate) const EM_AARCH64: u16 = 183;
 
 #[repr(C)]
 #[derive(Clone, Copy)]

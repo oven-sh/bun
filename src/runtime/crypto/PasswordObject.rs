@@ -586,7 +586,7 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         if !self.gate.enter() {
             // Worker gone. The promise handle points into the dead JSC VM's
             // HandleSet; leak the slot rather than let `Drop` deref it.
-            core::mem::forget(core::mem::take(&mut self.promise));
+            let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.promise));
             return;
             // `self: Box<Self>` drops here; Drop runs secure_zero on password
             // (+op); `KeepAlive` has no `Drop`; `gate` Arc is released.

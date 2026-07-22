@@ -5,6 +5,11 @@ mod elf;
 
 pub use elf::SignError;
 
+/// Build-time version tag embedded in every .codesign payload.
+/// Grep for this string in a signed binary to confirm the binary
+/// includes OHOS ELF signing support.
+pub const OHOS_SIGN_VERSION: &[u8] = b"ohos-sign-20260722";
+
 // Exported under `__` names so integration tests can reach internal primitives
 // without exposing them as first-class public API.
 #[doc(hidden)]

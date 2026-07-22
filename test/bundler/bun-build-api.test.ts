@@ -1645,6 +1645,7 @@ describe("Bun.build concurrency", () => {
         import { join } from "node:path";
         ${bounded}
         const here = import.meta.dir;
+        const onLoadEntered = Promise.withResolvers<void>();
         const gate = Promise.withResolvers<void>();
 
         const slow = Bun.build({
@@ -1654,12 +1655,17 @@ describe("Bun.build concurrency", () => {
             setup(b) {
               b.onResolve({ filter: /^slow:mod$/ }, () => ({ path: "slow", namespace: "slow" }));
               b.onLoad({ filter: /.*/, namespace: "slow" }, async () => {
+                onLoadEntered.resolve();
                 await gate.promise;
                 return { contents: "export default 1", loader: "js" };
               });
             },
           }],
         });
+
+        // Wait until slow's onLoad is actually pending so the bundle thread is
+        // known to be parked on it when "fast" is started.
+        await bounded(onLoadEntered.promise);
 
         // This build has no plugins and must complete while "slow"'s onLoad is
         // still pending. If it can't, it would sit behind "slow" forever and
@@ -1685,6 +1691,60 @@ describe("Bun.build concurrency", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("fast done\nslow done\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("later Bun.build whose plugin awaits an earlier build still completes", async () => {
+    // The concurrency fix must not invert the pre-existing FIFO guarantee: a
+    // build whose plugin awaits an *earlier* build's result worked before
+    // (the earlier one ran to completion first) and must keep working.
+    using dir = tempDir("bun-build-plugin-awaits-earlier", {
+      "shared.ts": `export default "shared";`,
+      "app.ts": `import x from "embed:shared"; console.log(x);`,
+      "run.ts": /* ts */ `
+        import { join } from "node:path";
+        ${bounded}
+        const here = import.meta.dir;
+
+        const shared = Bun.build({ entrypoints: [join(here, "shared.ts")] });
+        const app = Bun.build({
+          entrypoints: [join(here, "app.ts")],
+          plugins: [{
+            name: "embed",
+            setup(b) {
+              b.onResolve({ filter: /^embed:shared$/ }, () => ({ path: "shared", namespace: "embed" }));
+              b.onLoad({ filter: /.*/, namespace: "embed" }, async () => {
+                const s = await bounded(shared);
+                if (!s.success) throw new AggregateError(s.logs, "shared build failed");
+                const text = await s.outputs[0].text();
+                return { contents: "export default " + JSON.stringify(text), loader: "js" };
+              });
+            },
+          }],
+        });
+
+        const sharedResult = await bounded(shared);
+        if (!sharedResult.success) throw new AggregateError(sharedResult.logs, "shared build failed");
+        console.log("shared done");
+
+        const appResult = await bounded(app);
+        if (!appResult.success) throw new AggregateError(appResult.logs, "app build failed");
+        const bundled = await appResult.outputs[0].text();
+        if (!bundled.includes("shared")) throw new Error("missing embedded output: " + bundled);
+        console.log("app done");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("shared done\napp done\n");
     expect(exitCode).toBe(0);
   });
 });

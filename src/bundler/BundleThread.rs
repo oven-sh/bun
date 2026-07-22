@@ -1,20 +1,13 @@
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
-use bun_uws::Loop as UwsLoop;
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
 use crate::{BundleV2, Transpiler};
-
-thread_local! {
-    /// Set for the lifetime of `thread_main`. Gates [`singleton::drain_pending`]
-    /// so it is a no-op from any other thread (e.g. the CLI build path).
-    static ON_BUNDLE_THREAD: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-}
 
 /// Used to keep the bundle thread from spinning on Windows
 #[cfg(windows)]
@@ -57,12 +50,19 @@ pub struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub queue: UnboundedQueue<C>,
-    pub generation: bun_core::Generation,
-    /// The bundle thread's per-thread uws loop (shared by every per-build
-    /// `MiniEventLoop`). `enqueue` wakes this in addition to `waker` so a
-    /// `wait_for_parse` parked in `UwsLoop::tick()` returns to drain `queue`.
-    /// Published once in `thread_main` before `ready_event.set()`.
-    pub uws_loop: AtomicPtr<UwsLoop>,
+    /// Resolver cache-invalidation counter. Incremented by `thread_main` between
+    /// queue batches; read (possibly from an overflow thread) before each build.
+    /// Atomic only so the cross-thread read is well-defined; ordering is
+    /// irrelevant since concurrent builds legitimately share a generation.
+    pub generation: AtomicU16,
+    /// Builds scheduled via [`singleton::enqueue`] and not yet completed.
+    /// Incremented there, decremented after `generate_in_new_thread` returns
+    /// (on whichever thread ran it). The enqueue that observes the 0→1
+    /// transition uses the singleton thread; any other goes to an overflow
+    /// thread. This makes two `Bun.build` calls issued back-to-back on the JS
+    /// thread deterministic: the second always overflows, regardless of whether
+    /// `thread_main` has woken yet.
+    pub scheduled: AtomicU32,
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -137,9 +137,9 @@ impl<C: CompletionStruct> BundleThread<C> {
         Self {
             waker: Async::Waker::placeholder(),
             queue: UnboundedQueue::new(),
-            generation: 0,
+            generation: AtomicU16::new(0),
             ready_event: ResetEvent::default(),
-            uws_loop: AtomicPtr::new(core::ptr::null_mut()),
+            scheduled: AtomicU32::new(0),
         }
     }
 
@@ -189,41 +189,50 @@ impl<C: CompletionStruct> BundleThread<C> {
         unsafe {
             (*instance).queue.push(completion);
             (*instance).waker.wake();
-            // If a build is already in-flight the bundle thread is parked in
-            // `UwsLoop::tick()` (inside `wait_for_parse`), not on `waker`; wake
-            // that too so it returns to drain `queue`. `Relaxed` suffices: the
-            // store in `thread_main` happens-before `ready_event.set()`, and
-            // `spawn()` waits on that event before any caller can reach here.
-            // Raw `us_wakeup_loop` (not `Loop::wakeup(&mut self)`) so no
-            // `&mut UwsLoop` is formed while the bundle thread may hold one
-            // across `tick()`; `us_wakeup_loop` itself is thread-safe.
-            let uws = (*instance).uws_loop.load(Ordering::Relaxed);
-            if !uws.is_null() {
-                bun_uws::us_wakeup_loop(uws);
+        }
+    }
+
+    /// [`Self::enqueue`], except when another build is already scheduled: then
+    /// this build runs on its own short-lived thread instead of sitting in
+    /// `queue` behind it. See [`singleton::enqueue`] for why.
+    ///
+    /// # Safety
+    /// Same as [`Self::enqueue`].
+    pub unsafe fn enqueue_or_spawn(instance: *mut Self, completion: *mut C) {
+        // SAFETY: `completion` is a live, caller-owned task node (non-null).
+        let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
+        // SAFETY: atomic field projected via raw ptr. `AcqRel` so a caller that
+        // wins the 0→1 race has a happens-before edge with the `Release`
+        // `fetch_sub` of the previous build's completion.
+        let prev = unsafe { (*instance).scheduled.fetch_add(1, Ordering::AcqRel) };
+        if prev > 0 {
+            // SAFETY: atomic field projected via raw ptr.
+            let generation = unsafe { (*instance).generation.load(Ordering::Relaxed) };
+            // SAFETY: `completion` is live and transferred to the spawned thread;
+            // `spawn_overflow_thread` upholds the same ownership contract.
+            match unsafe { Self::spawn_overflow_thread(instance, completion, generation) } {
+                Ok(()) => return,
+                Err(_) => {
+                    // OS refused the thread; fall through to the queue so the
+                    // build still runs once the singleton thread frees up.
+                }
             }
+        }
+        // SAFETY: see `Self::enqueue`.
+        unsafe {
+            (*instance).queue.push(completion);
+            (*instance).waker.wake();
         }
     }
 
     unsafe fn thread_main(instance: *mut Self) {
         Output::Source::configure_named_thread(zstr!("Bundler"));
-        ON_BUNDLE_THREAD.set(true);
 
         // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
         // releases any thread that could call `enqueue` (which reads `waker`).
         unsafe {
             core::ptr::addr_of_mut!((*instance).waker)
                 .write(Async::Waker::init().unwrap_or_else(|_| panic!("Failed to create waker")));
-        }
-
-        // Publish this thread's uws loop so `enqueue` can wake a build parked in
-        // `wait_for_parse`. Every per-build `MiniEventLoop` on this thread
-        // shares it (`UwsLoop::get()` is a per-thread lazy singleton).
-        // SAFETY: raw-ptr field projection; store is before `ready_event.set()`
-        // so any thread that can call `enqueue` observes it.
-        unsafe {
-            (*instance)
-                .uws_loop
-                .store(UwsLoop::get(), Ordering::Relaxed);
         }
 
         // Unblock the calling thread so it can continue.
@@ -259,8 +268,9 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
                 // until complete_on_bundle_thread() signals completion.
                 let completion = unsafe { &mut *completion };
-                // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
+                // SAFETY: atomic field projected via raw ptr; overflow threads may
+                // read `generation` concurrently.
+                let generation = unsafe { (*instance).generation.load(Ordering::Relaxed) };
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
@@ -271,12 +281,15 @@ impl<C: CompletionStruct> BundleThread<C> {
                         completion.complete_on_bundle_thread();
                     }
                 }
+                // SAFETY: atomic field projected via raw ptr. `Release` pairs with
+                // the `AcqRel` `fetch_add` in `enqueue_or_spawn`.
+                unsafe { (*instance).scheduled.fetch_sub(1, Ordering::Release) };
                 has_bundled = true;
             }
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
+            // SAFETY: atomic field projected via raw ptr; only incremented here.
             unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
+                let g = &(*instance).generation;
+                g.store(g.load(Ordering::Relaxed).saturating_add(1), Ordering::Relaxed);
             }
 
             if has_bundled {
@@ -287,6 +300,59 @@ impl<C: CompletionStruct> BundleThread<C> {
             // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue` is by design.
             unsafe { (*instance).waker.wait() };
         }
+    }
+
+    /// Run one build to completion on a freshly spawned thread, then release
+    /// that thread's bundler-specific lazy state. Used by
+    /// [`singleton::enqueue`] when the singleton thread is already inside a
+    /// build (which parks in `wait_for_parse` and would not service `queue`
+    /// until done), so a `Bun.build` awaited from inside another build's
+    /// plugin callback, or started concurrently with one, makes progress
+    /// instead of deadlocking or head-of-line blocking behind it.
+    ///
+    /// # Safety
+    /// `instance` is the live singleton (same contract as [`Self::enqueue`]).
+    /// `completion` is a live owner-held task; the caller transfers it to the
+    /// spawned thread and must not touch it again until
+    /// `complete_on_bundle_thread` fires.
+    unsafe fn spawn_overflow_thread(
+        instance: *mut Self,
+        completion: NonNull<C>,
+        generation: bun_core::Generation,
+    ) -> std::io::Result<()> {
+        struct SendPtr<T>(*mut T);
+        // SAFETY: `C: Send` (via `CompletionStruct`'s `Send + 'static` bound) and
+        // `instance` is the leaked `'static` singleton; each pointer is dereferenced
+        // only on the spawned thread via raw projection / the documented contract.
+        unsafe impl<T> Send for SendPtr<T> {}
+        let completion_ptr = SendPtr(completion.as_ptr());
+        let instance_ptr = SendPtr(instance);
+        std::thread::Builder::new()
+            .name("Bundler".into())
+            .spawn(move || {
+                let completion_ptr = completion_ptr;
+                let instance_ptr = instance_ptr;
+                Output::Source::configure_named_thread(zstr!("Bundler"));
+                // SAFETY: `completion` is the live owner-held task the caller
+                // transferred; this thread is now its sole mutator until
+                // `complete_on_bundle_thread` hands it back to the JS thread.
+                let completion = unsafe { &mut *completion_ptr.0 };
+                match Self::generate_in_new_thread(completion, generation) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        completion.set_result(BundleV2Result::Err(err));
+                        completion.complete_on_bundle_thread();
+                    }
+                }
+                // SAFETY: atomic field projected via raw ptr on the `'static`
+                // singleton. `Release` pairs with `enqueue_or_spawn`'s `AcqRel`.
+                unsafe { (*instance_ptr.0).scheduled.fetch_sub(1, Ordering::Release) };
+                // `init_and_run` lazily created this thread's uws loop (via
+                // `MiniEventLoop::init`); free it and its 512 KiB recv buffer.
+                // Mimalloc reclaims this thread's arena pool on thread teardown.
+                bun_uws::on_thread_exit();
+            })?;
+        Ok(())
     }
 
     /// This is called from `Bun.build` in JavaScript.
@@ -395,61 +461,9 @@ pub mod singleton {
 
     static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
-    /// Type-erased "pop `queue` and run each build to completion" hook,
-    /// registered by [`load_once_impl`]. Lets [`drain_pending`] be called from
-    /// `BundleV2::wait_for_parse` (which does not know the concrete `C`) so a
-    /// `Bun.build` started from inside a plugin callback of another
-    /// `Bun.build` makes progress instead of sitting in `queue` forever.
-    static DRAIN_HOOK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
-
-    fn drain_impl<C: CompletionStruct>() {
-        let instance = get::<C>();
-        loop {
-            // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
-            // `enqueue` is the lock-free queue's intended use.
-            let completion = unsafe { (*instance).queue.pop() };
-            if completion.is_null() {
-                break;
-            }
-            // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner
-            // keeps it alive until complete_on_bundle_thread() signals completion.
-            let completion = unsafe { &mut *completion };
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
-            let generation = unsafe { (*instance).generation };
-            match BundleThread::<C>::generate_in_new_thread(completion, generation) {
-                Ok(()) => {}
-                Err(err) => {
-                    completion.set_result(BundleV2Result::Err(err));
-                    completion.complete_on_bundle_thread();
-                }
-            }
-        }
-    }
-
-    /// Run any builds sitting in `queue` to completion. Called from
-    /// `BundleV2::wait_for_parse` each time it wakes so a build enqueued while
-    /// another is waiting on a plugin callback (including a nested `Bun.build`
-    /// from inside that callback) is not blocked behind it.
-    ///
-    /// No-op off the bundle thread: `generate_in_new_thread` installs
-    /// bundle-thread-local state (`ASTMemoryAllocator::push`, the per-thread
-    /// uws loop) and must not run anywhere else.
-    pub fn drain_pending() {
-        if !ON_BUNDLE_THREAD.get() {
-            return;
-        }
-        if let Some(f) = DRAIN_HOOK.get() {
-            f();
-        }
-    }
-
     // Blocks the calling thread until the bun build thread is created.
     // OnceLock also blocks other callers of this function until the first caller is done.
     fn load_once_impl<C: CompletionStruct>() -> Instance {
-        // All singleton calls use the same `C` (see `get()` safety contract), so
-        // this races only against itself and `OnceLock::set` drops the loser.
-        let _ = DRAIN_HOOK.set(drain_impl::<C>);
-
         let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::<C>::uninitialized()));
 
         // 2. Spawn the bun build thread.
@@ -483,14 +497,22 @@ pub mod singleton {
             .cast::<BundleThread<C>>()
     }
 
+    /// Schedule one `Bun.build`. When the singleton bundle thread is idle this
+    /// queues onto it (so sequential builds share the long-lived thread and its
+    /// warm resolver cache). When it is already inside a build the new build
+    /// runs on a short-lived overflow thread instead, because the singleton
+    /// parks inside `wait_for_parse` for the whole build and would not touch
+    /// `queue` until done: a plugin `onLoad`/`onResolve` that awaits a nested
+    /// `Bun.build` would otherwise self-deadlock, and an independent
+    /// concurrent build would head-of-line block behind any slow plugin.
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
         // Validate the caller's pointer at the public boundary so the unsafe
         // path below never receives null.
         let completion = NonNull::new(completion).unwrap_or_else(|| {
             Output::panic(format_args!("BundleThread enqueue: null completion"))
         });
-        // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
-        // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-        unsafe { BundleThread::enqueue(get::<C>(), completion.as_ptr()) };
+        // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread
+        // is running; `enqueue_or_spawn` only performs raw-ptr field projections.
+        unsafe { BundleThread::enqueue_or_spawn(get::<C>(), completion.as_ptr()) };
     }
 }

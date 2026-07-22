@@ -135,7 +135,10 @@ const harnessPath = /\\runs\\|\\cwd\b|\\wsf-\d+\.log|\\(stdout|stderr)\.txt|\bws
 // bun's own module sources (a source file it keeps open/mapped for the
 // module's lifetime). Only handles bun opened for the workload's own I/O
 // (data files, pipes, sockets, keys) can be a leak worth reporting.
-const notWorkloadIo = /(Local\\|Global\\|BaseNamedObjects|WilError|\\SM0:|\.mui\b|\.dll\b|\.nls\b|\.(ts|tsx|js|mjs|cjs|mts|cts|jsx)$)/i;
+// Also by design: sourcemap files (opened lazily and held for stack-trace
+// symbolication - a run that errored under a fault symbolicates where the
+// baseline did not) and the debug build's source-override temp cache.
+const notWorkloadIo = /(Local\\|Global\\|BaseNamedObjects|WilError|\\SM0:|\.mui\b|\.dll\b|\.nls\b|\.map$|bun-debug-src|\.(ts|tsx|js|mjs|cjs|mts|cts|jsx)$)/i;
 // Normalize per-instance name components so the baseline diff compares
 // KINDS of handle, not instances: libuv names child-stdio pipes
 // "\pipe\uv\<sentinel>-<pid>" - the pid differs per child, so identity
@@ -384,9 +387,12 @@ async function worker(w: number) {
         else outcome = "CRASH";
       } else if (fired === 0) outcome = "no-fire";
       // The leak oracle: named handles (file/pipe/socket/key) still open at
-      // exit that the baseline closed. A quiet resource-leak bug no crash or
-      // hang would ever reveal; the leaked names ride onto the finding.
-      else if ((leaked = newLeaks(tr?.leaksByProc ?? [])).length) outcome = "leak";
+      // exit that the baseline closed - a quiet resource-leak no crash or
+      // hang reveals. Judged ONLY when the run reached the same completion
+      // as the baseline (same exit code): bun fast-exits without closing, so
+      // a run that died or errored EARLIER simply stopped at a different
+      // point - its open handles mark where it died, not what leaked.
+      else if (rr.exitCode === base.exitCode && (leaked = newLeaks(tr?.leaksByProc ?? [])).length) outcome = "leak";
       // A run that got slow because a test TIMED OUT is the hang class in
       // disguise: some awaited operation never completed and the runner's
       // per-test timeout rescued it. That is a finding ('stalled'). A run
@@ -570,7 +576,10 @@ async function queueFinding(r: Result, v: Verify) {
     boundary: r.crashSig?.boundary ?? null,
     crashKind: r.crashSig?.kind ?? null,
     crashDetail: r.crashSig?.detail ?? null,
-    expect: r.job.expect,
+    // A leak card is a lead to judge, never a must-handle: the oracle names
+    // handles, and only a human/robobun reading the error path can say
+    // whether the program leaked or merely stopped elsewhere.
+    expect: r.outcome === "leak" ? "judgment" : r.job.expect,
     target: progArgs.join(" "),
     schedule: `${r.job.coord.sysName} ${r.job.coord.key} ${r.job.hit} ${r.job.mode} ${r.job.status}`,
     symbol: ownerFrame(r.job.coord),

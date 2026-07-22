@@ -209,7 +209,11 @@ test(
         console.log("ok");
       `,
       ],
-      env: bunEnv,
+      // A completion that races terminate() is dropped and its task box
+      // (holding a JSPromiseStrong into the dead VM) is intentionally leaked,
+      // same as tasks left undrained in a terminated worker's queue; LSAN
+      // would flag that as a failure.
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
       stdout: "pipe",
       stderr: "pipe",
     });

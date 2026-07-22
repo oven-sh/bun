@@ -3106,7 +3106,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
      *
-     * @default false
+     * @default true
      */
     autoloadPackageJson?: boolean;
     windows?: {

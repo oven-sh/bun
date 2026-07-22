@@ -408,7 +408,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable"
         ),
         parse_param!(
-            "--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)"
+            "--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: true)"
         ),
         parse_param!(
             "--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable"
@@ -2094,7 +2094,8 @@ fn parse_build_command_options(
         }
     }
 
-    // Handle --compile-autoload-package-json flags (default: false, package.json not loaded at runtime)
+    // Handle --compile-autoload-package-json flags (default: true, so --external packages and
+    // runtime require()/import() of bare specifiers can resolve via node_modules)
     {
         let has_positive = args.flag(b"--compile-autoload-package-json");
         let has_negative = args.flag(b"--no-compile-autoload-package-json");

@@ -276,7 +276,7 @@ impl Default for BundlerOptions {
             compile_autoload_dotenv: true,
             compile_autoload_bunfig: true,
             compile_autoload_tsconfig: false,
-            compile_autoload_package_json: false,
+            compile_autoload_package_json: true,
             compile_executable_path: None,
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,

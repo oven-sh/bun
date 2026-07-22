@@ -261,7 +261,7 @@ pub mod js_bundler {
                 autoload_dotenv: true,
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
-                autoload_package_json: false,
+                autoload_package_json: true,
             }
         }
     }

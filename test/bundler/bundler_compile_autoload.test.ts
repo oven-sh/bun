@@ -486,7 +486,7 @@ console.log("PRELOAD");
     },
   });
 
-  // Test that package.json exports are NOT loaded when autoloadPackageJson: false (default)
+  // Test that package.json exports are NOT loaded when autoloadPackageJson: false
   // The import should fail because my-runtime-pkg/utils cannot be resolved without package.json exports
   itBundled("compile/AutoloadPackageJsonExportsDisabled", {
     compile: {
@@ -605,6 +605,98 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "tsconfig-helper package-utils",
+      setCwd: true,
+    },
+  });
+
+  // Regression test for #28275: Workers loading files from the filesystem at
+  // runtime must be able to resolve bare package specifiers via package.json
+  itBundled("compile/AutoloadPackageJsonWorkerRequire", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        import { Worker } from "worker_threads";
+        import { join } from "path";
+        const worker = new Worker(join(process.cwd(), "worker.js"));
+        worker.on("message", (msg) => {
+          console.log(msg);
+          worker.terminate();
+        });
+        worker.on("error", (err) => {
+          console.log("error: " + err.message);
+          worker.terminate();
+        });
+      `,
+    },
+    runtimeFiles: {
+      "/worker.js": /* js */ `
+        const { parentPort } = require("worker_threads");
+        const pkg = require("runtime-pkg");
+        parentPort.postMessage(pkg.value);
+      `,
+      "/node_modules/runtime-pkg/package.json": JSON.stringify({
+        name: "runtime-pkg",
+        main: "src/index.js",
+      }),
+      "/node_modules/runtime-pkg/src/index.js": `module.exports = { value: "resolved-via-main-field" };`,
+    },
+    run: {
+      stdout: "resolved-via-main-field",
+      setCwd: true,
+    },
+  });
+
+  // Regression test for #28275: package.json loading is enabled by default
+  // in compiled executables for runtime-resolved modules
+  itBundled("compile/AutoloadPackageJsonDefaultEnabled", {
+    compile: true,
+    files: {
+      "/entry.js": /* js */ `
+        const pkgName = "my-runtime-pkg";
+        import(pkgName)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/my-runtime-pkg/package.json": JSON.stringify({
+        name: "my-runtime-pkg",
+        main: "lib/index.js",
+      }),
+      "/node_modules/my-runtime-pkg/lib/index.js": `export default "resolved-via-main-field";`,
+    },
+    run: {
+      stdout: "resolved-via-main-field",
+      setCwd: true,
+    },
+  });
+
+  // `bun build --compile --external <pkg>` must produce a binary that can
+  // resolve <pkg> from the cwd's node_modules at runtime, via import(),
+  // require(), and createRequire() anchored on the real filesystem.
+  itBundled("compile/ExternalBareSpecifierFromNodeModules", {
+    compile: true,
+    backend: "cli",
+    external: ["pkgz"],
+    files: {
+      "/entry.ts": /* js */ `
+        import { createRequire } from "module";
+        const lines: string[] = [];
+        try { lines.push("import=" + (await import("pkgz")).default); }
+        catch (e: any) { lines.push("import THREW " + e.message); }
+        const req = createRequire(process.cwd() + "/anchor.js");
+        try { lines.push("createRequire=" + req("pkgz")); }
+        catch (e: any) { lines.push("createRequire THREW " + e.message); }
+        console.log(lines.join("\\n"));
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/pkgz/package.json": JSON.stringify({ name: "pkgz", main: "i.js" }),
+      "/node_modules/pkgz/i.js": `module.exports = "pkgz-from-real-node_modules";`,
+    },
+    run: {
+      stdout: "import=pkgz-from-real-node_modules\ncreateRequire=pkgz-from-real-node_modules",
       setCwd: true,
     },
   });

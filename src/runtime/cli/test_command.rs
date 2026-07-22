@@ -2093,6 +2093,7 @@ impl TestCommand {
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
+                total_test_files: 0,
                 summary: Summary::default(),
             },
             last_dot: 0,
@@ -2111,6 +2112,10 @@ impl TestCommand {
         // valid for the process lifetime.
         unsafe {
             jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
+        }
+        // SAFETY: same single-thread / process-lifetime invariant as `RUNNER`.
+        unsafe {
+            REPORTER.write(Some(core::ptr::NonNull::from(&mut *reporter)));
         }
         // `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
@@ -2544,6 +2549,7 @@ impl TestCommand {
                 }
             }
 
+            reporter.jest.total_test_files = test_files.len() as u32;
             if ctx.test_options.parallel > 0 {
                 ran_parallel = ParallelRunner::run_as_coordinator(
                     &mut reporter,
@@ -2911,6 +2917,10 @@ impl TestCommand {
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
+        // SAFETY: same single-thread shutdown path as `RUNNER` above.
+        unsafe {
+            REPORTER.write(None);
+        }
         drop(reporter);
         {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -3243,4 +3253,82 @@ pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::E
         }
     }
     Global::exit(1);
+}
+
+/// JS-VM-thread-only pointer to the boxed `CommandLineReporter` while a
+/// `bun test` run is in progress. Set alongside [`jest::Jest::RUNNER`] in
+/// `TestCommand::exec` and cleared on the same shutdown path.
+static REPORTER: bun_core::RacyCell<Option<core::ptr::NonNull<CommandLineReporter>>> =
+    bun_core::RacyCell::new(None);
+
+/// Called from `Bun__Process__exit` when user code invokes `process.exit()`
+/// on the main thread while `bun test` is running. Prints the summary that
+/// would otherwise be lost and forces a nonzero exit so a test calling
+/// `process.exit(0)` can't make the whole run appear green while later files
+/// are silently never executed.
+pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u8) {
+    // SAFETY: `REPORTER` is only read/written on the JS VM thread.
+    let Some(reporter_ptr) = (unsafe { REPORTER.read() }) else {
+        return;
+    };
+    // Clear first so a re-entrant `process.exit()` from an `'exit'` listener
+    // or JUnit write path below is a no-op instead of double-printing.
+    // SAFETY: single-threaded (JS VM thread); no concurrent reader.
+    unsafe { REPORTER.write(None) };
+    // SAFETY: `REPORTER` was set from `&mut *reporter` in `exec()`, which
+    // owns the `Box<CommandLineReporter>` for the process lifetime. Same
+    // write-provenance raw-ptr escape as `Jest::RUNNER`: ancestor frames hold
+    // a `&mut` but never access it again because `global_exit()` (our caller's
+    // next call) diverges.
+    let reporter = unsafe { &mut *reporter_ptr.as_ptr() };
+
+    // A `--parallel` worker's crash is accounted for by the coordinator
+    // (`Coordinator::reap_worker` → `account_crash`); don't print a summary
+    // to stderr here, it would interleave with the coordinator's output.
+    if reporter.worker_ipc_file_idx.is_some() {
+        return;
+    }
+
+    let started = reporter.jest.summary.files;
+    let total = reporter.jest.total_test_files;
+    let not_run = total.saturating_sub(started);
+
+    pretty_error!(
+        "\n<red>error<r><d>:<r> <b>process.exit({})<r> was called during <b>bun test<r>\n",
+        requested,
+    );
+    if not_run > 0 {
+        pretty_error!(
+            "       <b>{}<r> test file{} {} never reached.\n",
+            not_run,
+            if not_run == 1 { "" } else { "s" },
+            if not_run == 1 { "was" } else { "were" },
+        );
+    }
+    pretty_error!("\n");
+
+    let summary = reporter.jest.summary;
+    if summary.pass > 0 {
+        pretty_error!("<r><green>");
+    }
+    pretty_error!(" {:5>} pass<r>\n", summary.pass);
+    if summary.skip > 0 {
+        pretty_error!(" <r><yellow>{:5>} skip<r>\n", summary.skip);
+    }
+    if summary.todo > 0 {
+        pretty_error!(" <r><magenta>{:5>} todo<r>\n", summary.todo);
+    }
+    if summary.fail > 0 {
+        pretty_error!("<r><red>");
+    } else {
+        pretty_error!("<r><d>");
+    }
+    pretty_error!(" {:5>} fail<r>\n", summary.fail);
+    reporter.print_summary();
+    pretty_error!("\n");
+    Output::flush();
+
+    reporter.write_junit_report_if_needed();
+
+    vm.exit_handler.exit_code = 1;
 }

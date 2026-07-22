@@ -4260,10 +4260,11 @@ class ServerHttp2Session extends Http2Session {
           // ended before the request body was consumed): node defers the destroy until the
           // consumer drains it ('end'), so the buffered request body is not lost.
           stream.once("end", destroySelfOnEnd);
-        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
-          // The writable side is mid-finish (an in-flight _final settled the native stream
-          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
-          // for the writable side to finish before destroying a cleanly closed stream.
+        } else if ((stream.writableEnded || stream[kEndingWithChunk]) && !stream.writableFinished && !stream.destroyed) {
+          // The writable side is mid-finish (an in-flight _final or _write carrying
+          // END_STREAM settled the native stream synchronously, re-entering here before
+          // Writable.end() has set kEnding): destroying now would swallow 'finish'.
+          // Node's kMaybeDestroy waits for the writable side to finish first.
           stream.once("finish", destroySelfOnEnd);
         } else {
           stream.destroy();
@@ -5240,10 +5241,11 @@ class ClientHttp2Session extends Http2Session {
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
           // lose data.
           stream.once("end", destroySelfOnEnd);
-        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
-          // The writable side is mid-finish (an in-flight _final settled the native stream
-          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
-          // for the writable side to finish before destroying a cleanly closed stream.
+        } else if ((stream.writableEnded || stream[kEndingWithChunk]) && !stream.writableFinished && !stream.destroyed) {
+          // The writable side is mid-finish (an in-flight _final or _write carrying
+          // END_STREAM settled the native stream synchronously, re-entering here before
+          // Writable.end() has set kEnding): destroying now would swallow 'finish'.
+          // Node's kMaybeDestroy waits for the writable side to finish first.
           stream.once("finish", destroySelfOnEnd);
         } else {
           stream.destroy();

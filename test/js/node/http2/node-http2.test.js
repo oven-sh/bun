@@ -3728,6 +3728,35 @@ it("packs END_STREAM onto the DATA frame produced by end(chunk)", async () => {
   }
 });
 
+it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () => {
+  // _write carries END_STREAM on the final chunk; when the peer's END_STREAM has already
+  // arrived that transitions the native stream to CLOSED and re-enters streamEnd(7) before
+  // Writable.end() has set kEnding. The mid-finish guard must defer destroy on 'finish'.
+  const server = http2.createServer();
+  try {
+    const serverFinish = Promise.withResolvers();
+    server.on("stream", async stream => {
+      stream.on("error", serverFinish.reject);
+      stream.respond({ ":status": 200 });
+      for await (const _ of stream);
+      stream.on("finish", () => serverFinish.resolve(true));
+      stream.on("close", () => serverFinish.resolve(false));
+      stream.end("ok");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", serverFinish.reject);
+    const req = client.request({ ":method": "POST", ":path": "/" });
+    req.on("error", serverFinish.reject);
+    req.resume();
+    req.end("body");
+    expect(await serverFinish.promise).toBe(true);
+    client.close();
+  } finally {
+    server.close();
+  }
+});
+
 it("client connects over a user Duplex that already has a 'data' listener", async () => {
   // A 'data' listener attached before connect() puts the stream in flowing mode, so the
   // peer's first frames can arrive before the connect callback has run. The preface must

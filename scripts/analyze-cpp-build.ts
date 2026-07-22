@@ -252,7 +252,9 @@ if (!noBuild) {
       "--timeTrace=on",
       `--buildDir=${buildDir}`,
     ],
-    { stdio: "inherit", cwd: repo },
+    // ccache is machine-shared and survives the buildDir clean; a cache hit
+    // records ~ms edge durations that make the wall-clock report meaningless.
+    { stdio: "inherit", cwd: repo, env: { ...process.env, CCACHE_DISABLE: "1" } },
   );
 }
 

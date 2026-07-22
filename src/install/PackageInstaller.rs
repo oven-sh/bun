@@ -292,7 +292,7 @@ pub struct TreeContext {
     /// Bins that the trust gate denied a spot in this tree's `.bin`. Deferred
     /// alongside `binaries` so the nested link into the owner's directory runs
     /// after every sibling's `uninstall_before_install` has finished.
-    pub nested_binaries: Vec<(DependencyID, PackageID)>,
+    pub nested_binaries: Vec<DependencyID>,
 
     /// Number of installed dependencies. Could be successful or failure.
     pub install_count: usize,
@@ -960,69 +960,33 @@ impl<'a> PackageInstaller<'a> {
     /// lifecycle scripts, so linking an untrusted transitive dependency's bins
     /// there lets it shadow system tools (`git`, `sh`, ...) and run on the next
     /// `bun run`, bypassing the default no-scripts trust model. For those trees
-    /// we link a bin only when:
-    ///  - the package is a direct dependency of root/a workspace, or
-    ///  - the package is trusted, or
-    ///  - the package that declares this dependency edge is trusted (so a
-    ///    trusted package's install script can still resolve its own
-    ///    dependencies' bins under a hoisted layout).
+    /// we link a bin only when the package is a direct dependency of root/a
+    /// workspace, or the package itself is trusted. Everything else is linked
+    /// into each declaring package's own `node_modules/.bin` instead (see
+    /// `link_tree_nested_bins`), which is on PATH for that package's lifecycle
+    /// scripts but not for `bun run` at the project root.
     ///
     /// Nested (non-workspace) `.bin` folders are not on the project-root PATH
     /// and keep the old behavior.
-    ///
-    /// Returns `None` when the bin may be linked into the tree's `.bin`,
-    /// otherwise `Some(owner_package_id)` identifying the package that
-    /// declares this dependency so the caller can link into that package's
-    /// nested `.bin` instead.
-    fn bin_link_redirect_for_tree(
+    fn should_redirect_bin_to_nested(
         &self,
         dependency_id: DependencyID,
         alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
-    ) -> Option<PackageID> {
+    ) -> bool {
         if !self.lockfile().is_workspace_tree_id(self.current_tree_id) {
-            return None;
+            return false;
         }
         if matches!(
             resolution.tag,
             resolution::Tag::Root | resolution::Tag::Workspace
         ) {
-            return None;
+            return false;
         }
         if self.lockfile().is_workspace_dependency(dependency_id) {
-            return None;
+            return false;
         }
-        if self.is_trusted_for_bin_link(alias, pkg_name, resolution) {
-            return None;
-        }
-        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
-        for (owner_id, dep_range) in self.pkg_dependencies.iter().enumerate() {
-            if !dep_range.contains(dependency_id) {
-                continue;
-            }
-            let owner_resolution = &self.resolutions[owner_id];
-            if matches!(
-                owner_resolution.tag,
-                resolution::Tag::Root | resolution::Tag::Workspace
-            ) {
-                return None;
-            }
-            let owner_name = self.names[owner_id].slice(string_buf);
-            if self.is_trusted_for_bin_link(owner_name, owner_name, owner_resolution) {
-                return None;
-            }
-            return Some(owner_id as PackageID);
-        }
-        Some(invalid_package_id)
-    }
-
-    fn is_trusted_for_bin_link(
-        &self,
-        alias: &[u8],
-        pkg_name: &[u8],
-        resolution: &Resolution,
-    ) -> bool {
         let truncated_hash =
             bun_semver::semver_string::Builder::string_hash(alias) as TruncatedPackageNameHash;
         if self
@@ -1030,19 +994,30 @@ impl<'a> PackageInstaller<'a> {
             .get(&truncated_hash)
             .is_some_and(|n| **n == *alias)
         {
-            return true;
+            return false;
         }
-        self.lockfile()
+        if self
+            .lockfile()
             .has_trusted_dependency(alias, pkg_name, resolution)
+        {
+            return false;
+        }
+        true
     }
 
-    /// Processes bins that `bin_link_redirect_for_tree` denied a spot in this
-    /// tree's `.bin`: links them into the declaring package's own
-    /// `node_modules/.bin` (so that package's lifecycle scripts still resolve
-    /// them, including via a later `bun pm trust`) and removes any stale
-    /// entries from the tree's `.bin` left behind by an install that predated
-    /// the gate or by a revoked trust. Runs after `link_tree_bins` so every
-    /// sibling's `uninstall_before_install` has already cleared the owner dir.
+    /// Processes bins that `should_redirect_bin_to_nested` denied a spot in
+    /// this tree's `.bin`: removes any stale entry from the tree's `.bin` (left
+    /// behind by an install that predated the gate or by a revoked trust), then
+    /// links the bin into every declaring package's own `node_modules/.bin`
+    /// inside this tree (each owner's lifecycle scripts, run now or later via
+    /// `bun pm trust`, resolve it there). Owners are found by scanning every
+    /// package's dependency range for an edge resolving to this package.
+    ///
+    /// Runs after every sibling in the tree has finished installing (via the
+    /// tree-completion gate) so no sibling's `uninstall_before_install` can
+    /// later wipe the owner directory, and *before* `link_tree_bins` so the
+    /// stale-unlink step cannot remove a same-named bin an allowed sibling is
+    /// about to place.
     fn link_tree_nested_bins(
         &mut self,
         tree_id: TreeContextId,
@@ -1060,13 +1035,14 @@ impl<'a> PackageInstaller<'a> {
         let manager = self.manager_mut();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let extern_string_buf = lockfile.buffers.extern_strings.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
 
         let mut tree_node_modules: AbsPath =
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
         let tree_node_modules_len = tree_node_modules.len();
 
-        for (dep_id, owner_id) in nested {
-            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+        for dep_id in nested {
+            let package_id = resolutions[dep_id as usize];
             debug_assert!(package_id != invalid_package_id);
             let bin = self.bins[package_id as usize];
             debug_assert!(bin.tag != bin::Tag::None);
@@ -1099,58 +1075,76 @@ impl<'a> PackageInstaller<'a> {
                 unlinker.unlink(false);
             }
 
-            if owner_id == invalid_package_id {
-                continue;
-            }
-            // Under hoisting the declaring package can live in a descendant
-            // tree while this package hoisted higher; the nested `.bin`
-            // belongs next to the declaring package, which is not under this
-            // tree's node_modules. Leave that case alone rather than link into
-            // the wrong directory.
-            let Some(owner_alias) = Self::alias_of_package_in_tree(lockfile, tree_id, owner_id)
-            else {
-                continue;
-            };
-
-            tree_node_modules.set_length(tree_node_modules_len);
-            let mut nested_node_modules: AbsPath =
-                AbsPath::from(tree_node_modules.slice()).unwrap_or_oom();
-            nested_node_modules.append(owner_alias).unwrap_or_oom();
-            nested_node_modules.append(b"node_modules").unwrap_or_oom();
-
-            let nested_ptr: *mut AbsPath = &raw mut nested_node_modules;
-            let mut linker = bin::Linker {
-                bin,
-                global_bin_path: manager.options.bin_path,
-                package_name,
-                target_package_name: package_name,
-                string_buf,
-                extern_string_buf,
-                seen: None,
-                target_node_modules_path: (&raw const tree_node_modules).cast(),
-                // SAFETY: `nested_ptr` is the unique borrow of `nested_node_modules`.
-                node_modules_path: unsafe { &mut *nested_ptr },
-                abs_target_buf: link_target_buf,
-                abs_dest_buf: link_dest_buf,
-                rel_buf: link_rel_buf,
-                err: None,
-                skipped_due_to_missing_bin: false,
-            };
-            linker.link(false);
-
-            if let Some(err) = linker.err {
-                if log_level != Options::LogLevel::Silent {
-                    bun_ast::add_error_pretty!(
-                        manager.log_mut(),
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        "Failed to link <b>{}<r>: {}",
-                        bstr::BStr::new(alias),
-                        err.name(),
-                    );
+            for (owner_id, dep_range) in self.pkg_dependencies.iter().enumerate() {
+                let mut owns = false;
+                for edge in dep_range.begin()..dep_range.end() {
+                    if resolutions[edge as usize] == package_id {
+                        owns = true;
+                        break;
+                    }
                 }
-                if manager.options.enable.fail_early() {
-                    manager.crash();
+                if !owns {
+                    continue;
+                }
+                if matches!(
+                    self.resolutions[owner_id].tag,
+                    resolution::Tag::Root | resolution::Tag::Workspace
+                ) {
+                    continue;
+                }
+                // Owners that hoisted to a different tree are not linked here:
+                // the path to a descendant tree can go through a workspace
+                // symlink (`node_modules/<ws>` -> `../<ws>`), which would
+                // leave a relative bin link resolving outside the package.
+                // That case needs the user to list the bin package in
+                // `trustedDependencies` (or as a direct dependency).
+                let Some(owner_alias) =
+                    Self::alias_of_package_in_tree(lockfile, tree_id, owner_id as PackageID)
+                else {
+                    continue;
+                };
+
+                tree_node_modules.set_length(tree_node_modules_len);
+                let mut nested_node_modules: AbsPath =
+                    AbsPath::from(tree_node_modules.slice()).unwrap_or_oom();
+                nested_node_modules.append(owner_alias).unwrap_or_oom();
+                nested_node_modules.append(b"node_modules").unwrap_or_oom();
+
+                tree_node_modules.set_length(tree_node_modules_len);
+                let nested_ptr: *mut AbsPath = &raw mut nested_node_modules;
+                let mut linker = bin::Linker {
+                    bin,
+                    global_bin_path: manager.options.bin_path,
+                    package_name,
+                    target_package_name: package_name,
+                    string_buf,
+                    extern_string_buf,
+                    seen: None,
+                    target_node_modules_path: (&raw const tree_node_modules).cast(),
+                    // SAFETY: `nested_ptr` is the unique borrow of `nested_node_modules`.
+                    node_modules_path: unsafe { &mut *nested_ptr },
+                    abs_target_buf: link_target_buf,
+                    abs_dest_buf: link_dest_buf,
+                    rel_buf: link_rel_buf,
+                    err: None,
+                    skipped_due_to_missing_bin: false,
+                };
+                linker.link(false);
+
+                if let Some(err) = linker.err {
+                    if log_level != Options::LogLevel::Silent {
+                        bun_ast::add_error_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "Failed to link <b>{}<r>: {}",
+                            bstr::BStr::new(alias),
+                            err.name(),
+                        );
+                    }
+                    if manager.options.enable.fail_early() {
+                        manager.crash();
+                    }
                 }
             }
         }
@@ -2065,23 +2059,20 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     if self.bins[package_id as usize].tag != bin::Tag::None {
-                        match self.bin_link_redirect_for_tree(
+                        if self.should_redirect_bin_to_nested(
                             dependency_id,
                             alias.slice(string_buf!()),
                             pkg_name.slice(string_buf!()),
                             resolution,
                         ) {
-                            None => {
-                                self.trees[self.current_tree_id as usize]
-                                    .binaries
-                                    .add(dependency_id)
-                                    .unwrap_or_oom();
-                            }
-                            Some(owner_id) => {
-                                self.trees[self.current_tree_id as usize]
-                                    .nested_binaries
-                                    .push((dependency_id, owner_id));
-                            }
+                            self.trees[self.current_tree_id as usize]
+                                .nested_binaries
+                                .push(dependency_id);
+                        } else {
+                            self.trees[self.current_tree_id as usize]
+                                .binaries
+                                .add(dependency_id)
+                                .unwrap_or_oom();
                         }
                     }
 
@@ -2373,23 +2364,20 @@ impl<'a> PackageInstaller<'a> {
             }
         } else {
             if self.bins[package_id as usize].tag != bin::Tag::None {
-                match self.bin_link_redirect_for_tree(
+                if self.should_redirect_bin_to_nested(
                     dependency_id,
                     alias.slice(string_buf!()),
                     pkg_name.slice(string_buf!()),
                     resolution,
                 ) {
-                    None => {
-                        self.trees[self.current_tree_id as usize]
-                            .binaries
-                            .add(dependency_id)
-                            .unwrap_or_oom();
-                    }
-                    Some(owner_id) => {
-                        self.trees[self.current_tree_id as usize]
-                            .nested_binaries
-                            .push((dependency_id, owner_id));
-                    }
+                    self.trees[self.current_tree_id as usize]
+                        .nested_binaries
+                        .push(dependency_id);
+                } else {
+                    self.trees[self.current_tree_id as usize]
+                        .binaries
+                        .add(dependency_id)
+                        .unwrap_or_oom();
                 }
             }
 

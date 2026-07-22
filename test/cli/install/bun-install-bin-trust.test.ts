@@ -241,7 +241,7 @@ describe.concurrent("hoisted linker bin trust gate", () => {
     expect(binEntries(packageDir)).toEqual(["git", "shadow-bin-tool"]);
   });
 
-  test("transitive dependency bins are linked when their declaring package is trusted", async () => {
+  test("trusting the declaring package does not place its dependency bins in root .bin", async () => {
     using dir = setup({
       name: "app",
       version: "1.0.0",
@@ -252,9 +252,33 @@ describe.concurrent("hoisted linker bin trust gate", () => {
 
     await install(packageDir);
 
-    // dep-on-shadow-bin is trusted, so its direct dependency shadow-bin's bins
-    // are available for dep-on-shadow-bin's (hypothetical) install script.
-    expect(binEntries(packageDir)).toEqual(["git", "shadow-bin-tool"]);
+    // dep-on-shadow-bin is trusted so its install script may run, but its
+    // dependency shadow-bin's bins are reachable from that script via
+    // dep-on-shadow-bin/node_modules/.bin, not the project-root .bin.
+    expect(binEntries(packageDir)).toEqual([]);
+    const nestedBin = join(packageDir, "node_modules", "dep-on-shadow-bin", "node_modules", ".bin");
+    expect(
+      readdirSync(nestedBin)
+        .map(n => n.replace(/\.(bunx|exe)$/i, ""))
+        .sort(),
+    ).toContain("shadow-bin-tool");
+  });
+
+  test("a default-trusted owner does not place its dependency bins in root .bin", async () => {
+    // Serve a package named after an entry in default-trusted-dependencies.txt
+    // so `has_trusted_dependency` would pass for it. The gate must not let
+    // that expose the child bin on the project PATH.
+    addPkg({ name: "puppeteer", version: "1.0.0", dependencies: { "shadow-bin": "1.0.0" } }, { "index.js": "0" });
+    using dir = setup({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { puppeteer: "1.0.0" },
+    });
+    const packageDir = String(dir);
+
+    await install(packageDir);
+
+    expect(binEntries(packageDir)).toEqual([]);
   });
 
   test("transitive dependency bins are linked when trusted via trustedDependencies", async () => {

@@ -2837,9 +2837,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
                 // prevents real `uses-what-bin` from hoisting to root
                 "uses-what-bin": "npm:a-dep@1.0.3",
               },
-              // what-bin hoists to root while its declaring uses-what-bin
-              // stays nested under pkg1; the bin trust gate would otherwise
-              // drop it from every `.bin` on PATH for the install script.
+              // what-bin hoists to root while uses-what-bin stays nested under
+              // pkg1 (via a workspace symlink). The nested-.bin redirect does
+              // not cross a workspace symlink boundary, so opt what-bin in
+              // explicitly. This is a deliberate compat note for a contrived
+              // layout, not a gap in the security gate itself.
               trustedDependencies: ["what-bin"],
               workspaces: ["pkg1"],
             }),

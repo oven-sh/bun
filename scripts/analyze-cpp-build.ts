@@ -140,10 +140,13 @@ function readNinjaLog(dir: string): Edge[] {
   if (!existsSync(path)) throw new Error(`no .ninja_log at ${path} — run a build first`);
   // Timestamps are ms since THAT ninja invocation started, and ninja appends
   // across runs, so entries from different runs have different time origins
-  // (which would make wall/parallelism nonsense). Entries are appended in
+  // (which would make wall/parallelism nonsense). Appended entries arrive in
   // completion order, so a drop in `end` marks a new run: keep only the last
-  // run's entries. The default clean flow has exactly one run, so this only
-  // matters for --no-build / --no-clean against an incrementally built dir.
+  // run's entries. Ninja's periodic recompaction rewrites the log in hash-map
+  // order (ends bounce, but one entry per output), so also require a repeated
+  // output before clearing; a recompacted log then keeps every entry, which
+  // at worst mixes time origins in the wall/parallelism headline. The default
+  // clean flow has exactly one run, so none of this applies there.
   const byOut = new Map<string, Edge>();
   let prevEnd = -1;
   for (const line of readFileSync(path, "utf8").split("\n")) {
@@ -151,7 +154,7 @@ function readNinjaLog(dir: string): Edge[] {
     const [s, e, , out] = line.split("\t");
     if (!out) continue;
     const edge = { start: +s, end: +e, out };
-    if (edge.end < prevEnd) byOut.clear();
+    if (edge.end < prevEnd && byOut.has(out)) byOut.clear();
     prevEnd = edge.end;
     byOut.set(out, edge);
   }

@@ -31,8 +31,11 @@ describe("Native types report their size correctly", () => {
   });
 
   it("Request", () => {
+    // A string body is owned by the Request (ArrayBuffer bodies above the
+    // borrow threshold are referenced, not copied, so their bytes are
+    // attributed to the ArrayBuffer in the heap snapshot instead).
     var request = new Request("https://example.com", {
-      body: Buffer.alloc(1024 * 1024 * 2, "yoo"),
+      body: Buffer.alloc(1024 * 1024 * 2, "yoo").toString(),
     });
     globalThis.request = request;
 
@@ -48,7 +51,7 @@ describe("Native types report their size correctly", () => {
   });
 
   it("Response", () => {
-    var response = new Response(Buffer.alloc(1024 * 1024 * 4, "yoo"), {
+    var response = new Response(Buffer.alloc(1024 * 1024 * 4, "yoo").toString(), {
       headers: {
         "Content-Type": "text/plain",
       },

@@ -1714,7 +1714,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.unregister_auto_flusher();
     }
 
-    /// In this case, it's always an error
+    /// Abort path: buffered bytes are intentionally left unflushed so the peer
+    /// observes a truncated body. `end_from_js` is the normal-completion path.
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         bun_core::scoped_log!(HTTPServerWritableLog, "end({:?})", err);
 

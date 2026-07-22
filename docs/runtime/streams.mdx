@@ -64,11 +64,14 @@ const stream = new ReadableStream({
   pull(controller) {
     controller.write("hello");
     controller.write("world");
+    controller.close(); // [!code ++]
   },
 });
 ```
 
 When using a direct `ReadableStream`, the destination handles all chunk queueing. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
+
+Call `controller.close()` when you're done writing. If `pull()` returns without closing, the destination stays open so you can keep writing through the captured controller and close later (this is how `react-dom/server`'s `renderToReadableStream` streams Suspense boundaries).
 
 ### Handling backpressure
 

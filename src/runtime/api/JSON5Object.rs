@@ -378,7 +378,16 @@ impl Stringifier {
         while i < len {
             let c = str.char_at(i);
             match c {
-                0x00 => self.builder.append_latin1(b"\\0"),
+                0x00 => {
+                    // `\0` followed by a decimal digit is a forbidden octal
+                    // escape, so emit `\x00` in that position (matches the
+                    // json5 npm reference).
+                    if i + 1 < len && matches!(str.char_at(i + 1), 0x30..=0x39) {
+                        self.builder.append_latin1(b"\\x00");
+                    } else {
+                        self.builder.append_latin1(b"\\0");
+                    }
+                }
                 0x08 => self.builder.append_latin1(b"\\b"),
                 0x09 => self.builder.append_latin1(b"\\t"),
                 0x0a => self.builder.append_latin1(b"\\n"),

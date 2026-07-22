@@ -815,6 +815,19 @@ describe("stringify", () => {
     expect(JSON5.parse(JSON5.stringify(obj))).toEqual(obj);
   });
 
+  test("NUL before a digit uses \\x00 to avoid an octal escape", () => {
+    expect(JSON5.stringify("\x001")).toEqual("'\\x001'");
+    expect(JSON5.stringify("\x00a")).toEqual("'\\0a'");
+    expect(JSON5.stringify("\x00")).toEqual("'\\0'");
+    expect(JSON5.stringify("a\x009b")).toEqual("'a\\x009b'");
+  });
+
+  test("round-trips NUL before a digit", () => {
+    for (const s of ["\x001", "\x000", "a\x009b", "\x00\x001"]) {
+      expect(JSON5.parse(JSON5.stringify(s))).toEqual(s);
+    }
+  });
+
   test("space parameter with Infinity/NaN/large numbers", () => {
     expect(JSON5.stringify({ a: 1 }, null, Infinity)).toEqual(JSON5.stringify({ a: 1 }, null, 10));
     expect(JSON5.stringify({ a: 1 }, null, -Infinity)).toEqual(JSON5.stringify({ a: 1 }));

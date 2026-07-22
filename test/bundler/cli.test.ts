@@ -248,12 +248,11 @@ console.log(utils());`,
         stderr: "pipe",
         cwd: testDir,
       }).exited;
-      // bun build --entrypoints ./index.ts --outdir ./dist --target node
+      // bun build ./index.ts --outdir ./dist --target node
       const { stderr, exited } = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
-          "--entrypoints",
           join(testDir, "index.ts"),
           "--outdir",
           join(testDir, "dist"),

@@ -172,6 +172,14 @@ if (process.argv.length === 2 &&
         process.env.SKIP_FLAG_CHECK = "1";
         break;
       }
+      if (process.versions.bun) {
+        // Bun rejects unknown CLI flags, so re-spawning with a Node/V8 flag
+        // Bun does not declare (--experimental-vm-modules, --test-only,
+        // --enable-source-maps, ...) would fail where the original run did
+        // not. These flags were never acted on under Bun anyway; skip them
+        // and keep running in the current process.
+        continue;
+      }
       console.log(
         'NOTE: The test started as a child_process using these flags:',
         inspect(flags),

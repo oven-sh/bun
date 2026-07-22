@@ -1449,7 +1449,7 @@ impl Template {
                 b"dev",
                 b"bun --hot .",
                 b"static",
-                b"bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+                b"bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
                 b"build",
                 b"NODE_ENV=production bun .",
             ],

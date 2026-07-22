@@ -216,7 +216,12 @@ for (const f of ["triaged.jsonl", "queue.jsonl"]) {
     if (!line.trim()) continue;
     try {
       const e = JSON.parse(line);
-      if (e.dedupeKey) knownKeys.add(e.dedupeKey);
+      if (e.dedupeKey) {
+        knownKeys.add(e.dedupeKey);
+        // Seed the primary-coordinate key too, so an already-triaged hang
+        // absorbs its multi-rule variants immediately.
+        if (e.dedupeKey.startsWith("chaos ")) knownKeys.add(e.dedupeKey.split(" + ")[0]);
+      }
     } catch {}
   }
 }
@@ -305,10 +310,16 @@ async function worker(w: number) {
       .join(" + ");
     const crash = rr.crashSig ?? (rr.stdout || rr.stderr ? detectCrash(rr.stdout, rr.stderr) : null);
     const dedupeKey = crash ? `crash: ${crash.signature}` : `chaos ${outcome} @ ${where}`;
-    if (knownKeys.has(dedupeKey)) {
+    // A HANG's variants (same primary fault with different rider rules
+    // surviving minimization) mint different full keys but are the same
+    // bug: also dedupe on the PRIMARY coordinate - the first minimized
+    // rule's site - so a reported one-rule hang absorbs its multi-rule twins.
+    const primaryKey = crash ? "" : `chaos ${outcome} @ ${where.split(" + ")[0]}`;
+    if (knownKeys.has(dedupeKey) || (primaryKey && knownKeys.has(primaryKey))) {
       console.log(`   [${n}] finding matches known ${dedupeKey.slice(0, 50)} - not re-queued`);
       continue;
     }
+    if (primaryKey) knownKeys.add(primaryKey);
     knownKeys.add(dedupeKey);
     const entry = {
       queuedAt: stamp,

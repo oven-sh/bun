@@ -138,6 +138,10 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // sentinel (user_unique_id: "GetUserNameW failed" -> return 0). The
       // panic never exists in the binary users run.
       if (/GetUserNameW failed/.test(detail)) k = "debug-only";
+      // The bake DevServer hashes its own exe's mtime into a debug-only
+      // cache-bust key (guarded by IS_DEBUG) and panics if that stat fails:
+      // "unhandled EINVAL: <bun>: ... (stat())" on the running binary.
+      if (/unhandled [A-Z]+: .*bun-debug\.exe.*\(stat\(\)\)/.test(detail)) k = "debug-only";
       if (k === "oom") {
         const bytes = /memory allocation of (\d+) bytes failed/i.exec(text)?.[1];
         if (bytes && Number(bytes) >= 256 * 1024 * 1024) k = "oom-large";

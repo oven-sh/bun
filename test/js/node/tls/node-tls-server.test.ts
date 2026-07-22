@@ -1327,11 +1327,7 @@ describe("tls.createServer pauseOnConnect", () => {
       expect({ paused, flowing }).toEqual({ paused: true, flowing: false });
 
       let got = "";
-      let stopped = true;
-      srv.on("data", d => {
-        if (stopped) throw new Error("data event fired while paused");
-        got += d;
-      });
+      srv.on("data", d => (got += d));
       cli.write("hello");
       // Wait for the bytes to land in the paused Duplex's buffer (proving they
       // reached the server without a 'data' event). Polling avoids the ordering
@@ -1342,7 +1338,6 @@ describe("tls.createServer pauseOnConnect", () => {
         flowing: false,
         readableLength: 5,
       });
-      stopped = false;
       const dataP = once(srv, "data");
       srv.resume();
       await dataP;

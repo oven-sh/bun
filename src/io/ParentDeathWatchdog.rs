@@ -361,6 +361,83 @@ extern "C" fn on_process_exit() {
     kill_sync_pgroups_and_descendants();
 }
 
+/// SIGTERM every direct child of this process, reap whatever exits, then
+/// SIGKILL the survivors. Called from `bun_core::reload_process()` immediately
+/// before `execve()` so `bun --watch` / `bun test --watch` / `bun build
+/// --watch` restarts don't leak the previous generation's `Bun.spawn` /
+/// `child_process` children (they stay parented to the same pid across
+/// `execve` and the new generation has no record of them).
+///
+/// Runs on whichever thread triggered the reload (usually the file-watcher
+/// thread), so it cannot touch the VM's `ProcessAutoKiller` registry; instead
+/// it enumerates direct children from the OS via [`list_child_pids`]. Unlike
+/// [`kill_descendants`] this sends SIGTERM first so children that handle it
+/// can shut down cleanly; survivors after ~100ms get SIGKILL. The `waitpid`
+/// reap loop prevents them from lingering as zombies of the post-`execve`
+/// process (which has no record of them and would never reap them).
+#[unsafe(no_mangle)]
+pub extern "C" fn bun_kill_children_before_reload() {
+    #[cfg(unix)]
+    {
+        let self_pid = getpid();
+        let mut buf: [libc::pid_t; 4096] = [0; 4096];
+        let n = match list_child_pids(self_pid, &mut buf) {
+            Some(n) if n > 0 => n,
+            _ => return,
+        };
+        for &pid in &buf[..n] {
+            if pid > 1 && pid != self_pid {
+                let _ = kill(pid, libc::SIGTERM);
+            }
+        }
+        // Give SIGTERM handlers a moment; reap as they exit. ~100ms ceiling.
+        for _ in 0u32..10 {
+            reap_nohang();
+            match list_child_pids(self_pid, &mut buf) {
+                Some(0) | None => return,
+                Some(_) => {}
+            }
+            // SAFETY: `req` points at a valid `timespec`; `rem` may be null.
+            unsafe {
+                libc::nanosleep(
+                    &libc::timespec {
+                        tv_sec: 0,
+                        tv_nsec: 10_000_000,
+                    },
+                    core::ptr::null_mut(),
+                );
+            }
+        }
+        if let Some(m) = list_child_pids(self_pid, &mut buf) {
+            for &pid in &buf[..m] {
+                if pid > 1 && pid != self_pid {
+                    let _ = kill(pid, libc::SIGKILL);
+                }
+            }
+        }
+        // SIGKILL is immediate; one short nap then a final reap pass.
+        // SAFETY: `req` points at a valid `timespec`; `rem` may be null.
+        unsafe {
+            libc::nanosleep(
+                &libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: 10_000_000,
+                },
+                core::ptr::null_mut(),
+            );
+        }
+        reap_nohang();
+    }
+}
+
+/// Drain `waitpid(-1, WNOHANG)` until it stops returning a reaped pid.
+#[cfg(unix)]
+fn reap_nohang() {
+    let mut st: c_int = 0;
+    // SAFETY: `status` is a valid out-pointer; WNOHANG never blocks.
+    while unsafe { libc::waitpid(-1, &mut st, libc::WNOHANG) } > 0 {}
+}
+
 /// Walk the process tree rooted at `getpid()` and SIGKILL every descendant.
 ///
 /// Pid-reuse safety: enumeration is a point-in-time snapshot, so a pid we

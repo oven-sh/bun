@@ -4525,6 +4525,18 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     // a null pointer; on success `execve` never returns, on failure errno is
     // read. No borrowed Rust state is observed after the exec.
     unsafe {
+        {
+            // `execve` preserves the pid, so child processes spawned by the
+            // outgoing generation stay parented to us but the new generation
+            // has no record of them. SIGTERM them now and reap what exits so
+            // each `--watch` restart doesn't accumulate orphans. Defined in
+            // `bun_io::ParentDeathWatchdog` (OS-level child enumeration).
+            unsafe extern "C" {
+                safe fn bun_kill_children_before_reload();
+            }
+            bun_kill_children_before_reload();
+        }
+
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             unsafe extern "C" {

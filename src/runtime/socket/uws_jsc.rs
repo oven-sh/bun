@@ -96,18 +96,24 @@ unsafe extern "C" {
     /// Uncork then half-close once `AsyncSocketData::buffer` is empty. Returns
     /// true when bytes remain buffered (shutdown deferred to the drain path).
     safe fn uws_async_socket_end(ssl: i32, socket: &mut us_socket_t) -> bool;
+
+    /// Copy the active response's zero-copy `res.write()` tail into
+    /// `AsyncSocketData::buffer` so the raw bytes below are ordered behind it.
+    fn Bun__NodeHTTPResponse_spillPendingPinnedWrite(ctx: *mut core::ffi::c_void);
 }
 
 // ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
 /// # Safety
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
-/// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
+/// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`). `response_ctx` is either
+/// null or a live `NodeHTTPResponse` ctx pointer.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     ssl: bool,
     ended: bool,
     buffer: *mut us_socket_stream_buffer_t,
+    response_ctx: *mut core::ffi::c_void,
     global_object: &JSGlobalObject,
     data: JSValue,
     encoding: JSValue,
@@ -149,6 +155,16 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
             ));
             return JSValue::ZERO;
         }
+    }
+
+    // A >16KB res.write() holds its unwritten tail in a separate zero-copy
+    // buffer that AsyncSocket::write never sees; spill it into
+    // AsyncSocketData::buffer so the raw bytes below are ordered behind it.
+    // Runs after the data/encoding coercion above, which can re-enter JS and
+    // arm a fresh pinned write.
+    if !response_ctx.is_null() {
+        // SAFETY: caller guarantees `response_ctx` is live when non-null.
+        unsafe { Bun__NodeHTTPResponse_spillPendingPinnedWrite(response_ctx) };
     }
 
     let data_slice = node_buffer.slice();

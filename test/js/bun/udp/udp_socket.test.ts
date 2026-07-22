@@ -78,6 +78,70 @@ describe("udpSocket()", () => {
     expect(exitCode).toBe(0);
   });
 
+  // connect() checked `is_number()` then read the port via `as_int32()`, which
+  // only works for int32-encoded JSValues. Float64Array element reads use
+  // `jsDoubleNumber` and never canonicalize to int32, and validatePort returns
+  // the original value, so a double-encoded port reaches the native path. In
+  // debug builds the `debug_assert!(is_int32())` fires; in release the low 32
+  // bits of the IEEE-754 encoding (always 0 for integers in the port range)
+  // become the port and the socket connects to port 0.
+  test("connect with a double-encoded port connects to the right port", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const dgram = require("node:dgram");
+        function once(socket, event) {
+          return new Promise((resolve, reject) => {
+            socket.once("error", reject);
+            socket.once(event, (...args) => {
+              socket.removeListener("error", reject);
+              resolve(args);
+            });
+          });
+        }
+
+        const server = dgram.createSocket("udp4");
+        server.bind(0, "127.0.0.1");
+        await once(server, "listening");
+        const serverPort = server.address().port;
+
+        const client = dgram.createSocket("udp4");
+        client.bind(0, "127.0.0.1");
+        await once(client, "listening");
+
+        // Float64Array reads return jsDoubleNumber(), never an int32-encoded value.
+        const doublePort = new Float64Array([serverPort])[0];
+        if (doublePort !== serverPort) throw new Error("precondition: double round-trip changed value");
+
+        client.connect(doublePort, "127.0.0.1");
+        await once(client, "connect");
+
+        const remote = client.remoteAddress();
+        if (remote.port !== serverPort) {
+          throw new Error("connected to wrong port: expected " + serverPort + ", got " + remote.port);
+        }
+
+        client.close();
+        server.close();
+        console.log("OK");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
+
   test("connect with invalid hostname rejects", async () => {
     expect(async () =>
       udpSocket({

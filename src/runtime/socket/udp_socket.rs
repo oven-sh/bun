@@ -1906,7 +1906,7 @@ impl UDPSocket {
                 .throw_invalid_arguments(format_args!("Expected \"port\" to be an integer")));
         }
 
-        let connect_port = connect_port_js.as_int32();
+        let connect_port = connect_port_js.coerce_to_i32(global_this)?;
         let port: u16 = if connect_port < 1 || connect_port > 0xffff {
             0
         } else {

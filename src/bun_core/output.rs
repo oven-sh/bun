@@ -441,6 +441,7 @@ impl Source {
         SOURCE.with_borrow_mut(|s| unsafe {
             Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
         });
+        crate::crash_handler_init_thread();
         crate::StackCheck::configure_thread();
     }
 
@@ -469,6 +470,7 @@ impl Source {
         SOURCE.with_borrow_mut(|s| unsafe {
             Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
         });
+        crate::crash_handler_init_thread();
         // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
     }
 

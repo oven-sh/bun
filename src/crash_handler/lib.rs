@@ -65,6 +65,14 @@ pub(crate) extern "Rust" fn __bun_crash_handler_dump_stack_trace(
     draft::dump_current_stack_trace_from_core(first_address, limits)
 }
 
+/// `extern "Rust"` symbol resolved by `bun_core`'s per-thread setup at link
+/// time. Registers an alternate signal stack for the calling thread.
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub(crate) extern "Rust" fn __bun_crash_handler_init_thread() {
+    draft::init_thread()
+}
+
 pub use draft::*;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1675,34 +1683,42 @@ mod draft {
         );
     }
 
+    /// Size of the alternate signal stack. The crash handler formats output,
+    /// captures a backtrace and may spawn a child (curl / llvm-symbolizer), so
+    /// this is much larger than `SIGSTKSZ`.
+    #[cfg(unix)]
+    pub(crate) const SIGALTSTACK_SIZE: usize = 512 * 1024;
+
     #[cfg(unix)]
     static DID_REGISTER_SIGALTSTACK: AtomicBool = AtomicBool::new(false);
-    /// 512K alternate signal stack. The kernel writes here during signal delivery;
-    /// Rust never reads/writes the bytes, so `RacyCell` only needs to provide a
-    /// stable `*mut u8` for `sigaltstack(2)`.
+    /// 512K alternate signal stack for the main thread. The kernel writes here
+    /// during signal delivery; Rust never reads/writes the bytes, so `RacyCell`
+    /// only needs to provide a stable `*mut u8` for `sigaltstack(2)`. Other
+    /// threads get a heap-allocated altstack via [`init_thread`].
     #[cfg(unix)]
-    static SIGALTSTACK: bun_core::RacyCell<[u8; 512 * 1024]> =
-        bun_core::RacyCell::new([0; 512 * 1024]);
+    static SIGALTSTACK: bun_core::RacyCell<[u8; SIGALTSTACK_SIZE]> =
+        bun_core::RacyCell::new([0; SIGALTSTACK_SIZE]);
 
     #[cfg(unix)]
     fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> crate::Result<()> {
         if let Some(act_) = act.as_deref_mut() {
-            // SAFETY: single global; only mutated during signal-handler setup
             if !DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
                 let stack = libc::stack_t {
                     ss_flags: 0,
-                    ss_size: 512 * 1024,
+                    ss_size: SIGALTSTACK_SIZE,
                     // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; the kernel only writes to it during signal delivery (no Rust aliasing)
                     ss_sp: SIGALTSTACK.get().cast(),
                 };
 
                 // SAFETY: stack points to a valid static buffer
                 if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
-                    act_.sa_flags |= libc::SA_ONSTACK;
-                    // SAFETY: single global; only mutated during signal-handler setup
                     DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
                 }
             }
+            // Always request altstack delivery. `SA_ONSTACK` on a thread without
+            // an altstack falls back to the normal stack, so this is never worse
+            // than omitting it.
+            act_.sa_flags |= libc::SA_ONSTACK;
         }
 
         let act_ptr: *const libc::sigaction = act
@@ -1716,6 +1732,125 @@ mod draft {
             libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
         }
         Ok(())
+    }
+
+    /// Heap-backed per-thread alternate signal stack. Installed by
+    /// [`init_thread`]; on drop the previous altstack is restored so this does
+    /// not fight ASAN's per-thread stack (which ASAN tears down itself).
+    #[cfg(unix)]
+    struct ThreadAltStack {
+        buf: Box<[u8]>,
+        prev: libc::stack_t,
+    }
+
+    #[cfg(unix)]
+    impl Drop for ThreadAltStack {
+        fn drop(&mut self) {
+            // Restore the altstack that was in place before we installed ours
+            // (none, or ASAN's) before the backing buffer is freed. `SS_ONSTACK`
+            // in the queried `ss_flags` is a status bit, not a request bit; pass
+            // either SS_DISABLE or 0.
+            let prev = libc::stack_t {
+                ss_flags: if self.prev.ss_flags & libc::SS_DISABLE != 0 || self.prev.ss_sp.is_null()
+                {
+                    libc::SS_DISABLE
+                } else {
+                    0
+                },
+                ..self.prev
+            };
+            // SAFETY: `prev` is either the valid altstack queried at install
+            // time or an SS_DISABLE request; null oldss is permitted.
+            unsafe {
+                libc::sigaltstack(&raw const prev, core::ptr::null_mut());
+            }
+            let _ = &self.buf;
+        }
+    }
+
+    #[cfg(unix)]
+    thread_local! {
+        static THREAD_ALTSTACK: core::cell::RefCell<Option<ThreadAltStack>> =
+            const { core::cell::RefCell::new(None) };
+    }
+
+    /// Register an alternate signal stack for the current thread so that a
+    /// guard-page fault (stack overflow) can still deliver `SIGSEGV` to the
+    /// crash handler. `sigaltstack(2)` is per-thread state; `init()` only sets
+    /// it on the thread it runs on.
+    ///
+    /// Called from every Bun-spawned thread's entry point via
+    /// `bun_core::output::Source::configure_thread` /
+    /// `configure_thread_no_js`.
+    ///
+    /// If the thread already has an altstack of at least `SIGALTSTACK_SIZE`
+    /// (e.g. the main thread's static one) it is left alone; a smaller one
+    /// (e.g. ASAN's ~56 KiB) is replaced so the full crash-report path has
+    /// room to run, and restored on thread exit.
+    pub fn init_thread() {
+        #[cfg(unix)]
+        THREAD_ALTSTACK.with(|cell| {
+            if cell.borrow().is_some() {
+                return;
+            }
+            let mut prev: libc::stack_t = bun_core::ffi::zeroed();
+            // SAFETY: null ss = query-only; `prev` is a valid out-pointer.
+            if unsafe { libc::sigaltstack(core::ptr::null(), &raw mut prev) } != 0 {
+                return;
+            }
+            if prev.ss_flags & libc::SS_DISABLE == 0
+                && !prev.ss_sp.is_null()
+                && prev.ss_size >= SIGALTSTACK_SIZE
+            {
+                return;
+            }
+            let mut buf = vec![0u8; SIGALTSTACK_SIZE].into_boxed_slice();
+            let ss = libc::stack_t {
+                ss_sp: buf.as_mut_ptr().cast(),
+                ss_flags: 0,
+                ss_size: SIGALTSTACK_SIZE,
+            };
+            // SAFETY: `ss.ss_sp` points into a live heap allocation of
+            // `ss.ss_size` bytes that is kept alive for the thread's lifetime
+            // by the thread-local below.
+            if unsafe { libc::sigaltstack(&raw const ss, core::ptr::null_mut()) } != 0 {
+                return;
+            }
+            *cell.borrow_mut() = Some(ThreadAltStack { buf, prev });
+        });
+    }
+
+    /// Ensure the currently installed fatal-signal dispositions carry
+    /// `SA_ONSTACK`. WTF's `SignalHandlers::finalize()` (run on the first
+    /// `JSC::VM` creation) installs its own `SIGSEGV`/`SIGBUS` action with
+    /// `sa_flags = SA_SIGINFO` only, dropping our `SA_ONSTACK` bit so even a
+    /// thread that has an altstack can no longer use it. Reapply the bit here
+    /// without otherwise disturbing whatever handler is in place (WTF's chains
+    /// to ours).
+    pub fn ensure_sa_onstack() {
+        #[cfg(unix)]
+        for &sig in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+            let mut act: libc::sigaction = bun_core::ffi::zeroed();
+            // SAFETY: null act = query-only; `act` is a valid out-pointer.
+            if unsafe { libc::sigaction(sig, core::ptr::null(), &raw mut act) } != 0 {
+                continue;
+            }
+            if act.sa_flags & libc::SA_ONSTACK != 0 {
+                continue;
+            }
+            // Don't touch SIG_DFL / SIG_IGN.
+            if act.sa_flags & libc::SA_SIGINFO == 0
+                && (act.sa_sigaction == libc::SIG_DFL || act.sa_sigaction == libc::SIG_IGN)
+            {
+                continue;
+            }
+            act.sa_flags |= libc::SA_ONSTACK;
+            // SAFETY: `act` was just read from the kernel for `sig` and only
+            // `sa_flags` was modified; null oldact is permitted.
+            unsafe {
+                libc::sigaction(sig, &raw const act, core::ptr::null_mut());
+            }
+        }
     }
 
     // Windows VEH handle storage lives at T0 (`bun_core::WINDOWS_SEGFAULT_HANDLE`,
@@ -1773,6 +1908,10 @@ mod draft {
         ))]
         {
             reset_on_posix();
+            // Under ASAN `reset_on_posix` early-returns without registering the
+            // static altstack; give the main thread the full-size one here so
+            // the ASAN-chained handler has room to run.
+            init_thread();
         }
 
         install_hooks();

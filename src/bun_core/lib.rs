@@ -2565,6 +2565,9 @@ pub mod ffi {
     // `usize` sighandler_t on every libc target).
     #[cfg(unix)]
     unsafe impl Zeroable for libc::sigaction {}
+    // SAFETY: C POD (raw-pointer/size_t/int fields only); all-zero is valid.
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::stack_t {}
     // `sigset_t` is a `u32` typedef on Darwin (covered by the primitive
     // blanket → E0119 if re-impl'd) but a real struct on Linux/Android
     // (`__val: [c_ulong; 16]`) and FreeBSD (`__bits: [u32; 4]`). Gate the

@@ -2161,6 +2161,11 @@ impl VirtualMachine {
         );
         // JSC may mess with the stack size.
         bun_core::StackCheck::configure_thread();
+        // The first `JSC::VM::tryCreate` runs `WTF::Config::finalize()` →
+        // `SignalHandlers::finalize()`, which installs SIGSEGV/SIGBUS actions
+        // with `sa_flags = SA_SIGINFO` only. Reapply `SA_ONSTACK` so the crash
+        // handler can still run after a guard-page fault.
+        bun_crash_handler::ensure_sa_onstack();
         // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
         // `&mut VirtualMachine` is held live across the FFI call above; same
         // pattern as the `init_runtime_state` hook above. `global` is freshly

@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, mergeWindowEnvs, tempDir } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -120,6 +120,71 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(exitCode).not.toBe(0);
     void stdout;
   });
+});
+
+// `sigaltstack(2)` is per-thread and WTF's SIGSEGV handler drops `SA_ONSTACK`
+// on VM init; without a per-thread altstack + reapplied `SA_ONSTACK`, a native
+// stack overflow becomes an unrecoverable guard-page fault with no output.
+describe.if(isPosix)("native stack overflow produces a crash report", () => {
+  // ASAN builds leave Bun's SIGSEGV handler uninstalled so ASAN's DEADLYSIGNAL
+  // diagnostic stays in charge; the handler chain is WTF -> ASAN there. Either
+  // way the process must emit a diagnostic rather than dying silently.
+  const expectCrashDiagnostic = (stderr: string) => {
+    // macOS delivers a guard-page fault as SIGBUS, Linux as SIGSEGV.
+    expect(stderr).toMatch(isASAN ? /AddressSanitizer:.*stack-overflow/ : /(Segmentation fault|Bus error) at address/);
+  };
+  // Skip llvm-symbolizer in the child; the unwinder walks hundreds of
+  // identical frames and symbolising them all takes several seconds.
+  const overflowEnv = {
+    ...noReportEnv,
+    ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0:fast_unwind_on_fatal=1",
+  };
+  // CI Linux runners set `ulimit -s unlimited`, so the main thread has no
+  // guard page and native recursion never faults. Bound the stack at exec
+  // time so both tests overflow deterministically.
+  const boundedStack = (argv: string[]) => ["/bin/sh", "-c", `ulimit -s 8192 && exec "$@"`, "--", ...argv];
+
+  test("on the main thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: boundedStack([
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `require("bun:internal-for-testing").crash_handler.stackOverflow();`,
+      ]),
+      env: overflowEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expectCrashDiagnostic(stderr);
+    expect(stderr).not.toContain("unreachable");
+    expect(exitCode).not.toBe(0);
+  }, 20_000);
+
+  test("on a worker thread", async () => {
+    using dir = tempDir("crash-handler-worker-stackoverflow", {
+      "entry.ts": `
+          import { Worker, isMainThread } from "worker_threads";
+          if (isMainThread) {
+            const w = new Worker(new URL(import.meta.url));
+            await new Promise(r => w.on("exit", r));
+          } else {
+            require("bun:internal-for-testing").crash_handler.stackOverflow();
+            process.stderr.write("unreachable\\n");
+          }
+        `,
+    });
+    await using proc = Bun.spawn({
+      cmd: boundedStack([bunExe(), "--debug-crash-handler-use-trace-string", "entry.ts"]),
+      env: overflowEnv,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expectCrashDiagnostic(stderr);
+    expect(stderr).not.toContain("unreachable");
+    expect(exitCode).not.toBe(0);
+  }, 20_000);
 });
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {

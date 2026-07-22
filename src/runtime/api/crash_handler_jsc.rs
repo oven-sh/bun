@@ -12,7 +12,7 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 8);
+        let obj = JSValue::create_empty_object(global, 9);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -23,6 +23,7 @@ pub mod js_bindings {
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
+            ("stackOverflow", __jsc_host_js_stack_overflow),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -97,6 +98,32 @@ pub mod js_bindings {
     pub(crate) fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
+    }
+
+    /// Recurse in native code until the guard page is hit. Unlike JS recursion
+    /// (caught by JSC's soft stack limit), this exercises the real
+    /// guard-page-fault path and so the sigaltstack/`SA_ONSTACK` setup.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_stack_overflow(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        #[inline(never)]
+        fn recurse(depth: usize) -> usize {
+            let mut frame = [0u8; 4096];
+            // Volatile I/O keeps the stack array from being elided; calling
+            // through a black-boxed fn pointer keeps release LLVM from proving
+            // the call is self-recursive and turning it into a loop.
+            // SAFETY: `frame` is a live stack array; the pointer is in-bounds.
+            unsafe { core::ptr::write_volatile(frame.as_mut_ptr(), depth as u8) };
+            let f: fn(usize) -> usize = core::hint::black_box(recurse);
+            let next = f(depth.wrapping_add(1));
+            // SAFETY: `frame` is a live stack array; the pointer is in-bounds.
+            next.wrapping_add(unsafe { core::ptr::read_volatile(frame.as_ptr()) } as usize)
+        }
+        core::hint::black_box(recurse(0));
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

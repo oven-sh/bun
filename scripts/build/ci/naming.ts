@@ -13,6 +13,8 @@
 // up — no wildcards, no version numbers, no newest-wins.
 
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { images } from "./images.ts";
 import type { Image } from "./types.ts";
 
@@ -20,12 +22,17 @@ import type { Image } from "./types.ts";
  * across the handful of specs that ever exist are negligible. */
 const HASH_LENGTH = 16;
 
-/** Deterministic JSON: keys sorted at every level, arrays in order. */
+/** Deterministic JSON: keys sorted at every level, arrays in order. An
+ * undefined field is the same as an absent one (both are dropped), so an
+ * entry written with `field: undefined` hashes like one that omits it. */
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (value === undefined || value === null) return "null";
+  if (typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
+  const keys = Object.keys(record)
+    .filter(key => record[key] !== undefined)
+    .sort();
   return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
 }
 
@@ -79,4 +86,9 @@ export function imageEntry(key: string): Image {
     );
   }
   return entry;
+}
+
+// `node scripts/build/ci/naming.ts` — print every image's current name.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  for (const image of images) console.log(imageName(image));
 }

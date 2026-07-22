@@ -257,8 +257,8 @@ function getImageLabel(platform) {
 
 /**
  * The image a platform's jobs run on: the content-addressed name
- * `${key}-${hash}` from scripts/build/ci (the hash covers the image's
- * spec entry + its resolved downloads). robobun launches machines by
+ * `${key}-${hash}` from scripts/build/ci (the hash is a digest of
+ * the image's spec entry value). robobun launches machines by
  * this exact name. There are no version numbers or build-number tags:
  * changing the spec re-bakes automatically (see the images group below).
  * @param {Platform} platform
@@ -814,8 +814,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * ------------------
  * Build/test agents boot from pre-baked cloud images (AWS AMIs for Linux,
  * Azure gallery images for Windows). Every image is content-addressed:
- * it is named `${key}-${hash}`, where the hash covers the image's entry
- * in scripts/build/ci/spec.ts plus its resolved downloads. getPipeline()
+ * it is named `${key}-${hash}`, where the hash is a digest of the
+ * image's spec entry value. getPipeline()
  * checks each name against its cloud FIRST (see existence.ts) and emits
  * this bake step only for the images that don't exist yet, so the
  * pipeline shows exactly what a push builds and existing images cost
@@ -823,7 +823,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * against two builds racing on the same new hash.
  *
  * To change what's installed on a CI machine: edit the fact in spec.ts
- * (or the URL construction in scripts/build/ci/artifacts.ts). The hash
+ * The hash
  * changes, so this branch bakes the new images once and every later push
  * — including main after merge, which computes the same hash — reuses
  * them. There is no commit-message tag and no version to bump; see

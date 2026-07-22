@@ -12,7 +12,7 @@ is baked, and how CI finds it.
 
 Every CI image (an AWS AMI for Linux, an Azure gallery image for Windows) is
 **content-addressed**: its name is `${key}-${hash}`, where the hash digests the
-image's entry in `spec.ts` plus every download URL that entry resolves to.
+image's entry value in the spec (canonically serialized).
 Change what an image contains → its hash changes → the branch that changed
 it bakes a fresh image once, and every later push — including `main` after
 you merge — computes the same hash and reuses it. There is no
@@ -37,25 +37,25 @@ number to bump anywhere. Merging _is_ publishing.
 
 ## The files
 
-| file                                                | role |
-| --------------------------------------------------- | ---- |
-| `spec.ts`, `spec.linux.ts`, `spec.windows.ts`      | **The single source of truth.** Pure data. `spec.ts` holds the facts every image references, declared once (the Node.js version, bun, LLVM, cross toolchains, packer pins); `spec.linux.ts` / `spec.windows.ts` hold the per-platform entries — one typed entry per image (`LinuxBuildHostImage`, `LinuxTestImage`, `WindowsX64Image`, `WindowsArm64Image`), a complete manifest of what's baked. |
-| `images.ts`                                         | The assembled fleet (`images`, `buildHost`) from the two platform specs, for consumers that need every image. |
-| `naming.ts`                                         | The name: `${key}-${imageHash(entry)}` — sha256 of the entry's value, canonically serialized. |
-| `existence.ts`                                      | Asks AWS/Azure whether each content-addressed name exists; the pipeline bakes only the missing ones. |
-| `packer.ts`                                         | Renders the Windows Packer template as JSON from a `WindowsImage` entry at bake time (no checked-in `.pkr.hcl`). |
-| `machine/bootstrap.ts`                              | The bake entry point run **on the machine** under a bare `node`: `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host. |
-| `machine/artifacts.ts`                              | Turns spec values into concrete `{url, sha256}` downloads. |
-| `machine/runtime.ts`                                | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report. |
-| `machine/ops-posix.ts`, `machine/ops-windows.ts`    | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command. |
-| `machine/components/{linux,windows}/*.ts`           | One file per baked thing, per platform: each owns HOW its thing installs and enumerates its own downloads, reading every fact from the spec entry. A thing on both platforms is two components sharing a name (`linux/nodejs.ts`, `windows/nodejs.ts`). |
-| `machine/components/linux/package-manager.ts`       | apt vs apk, abstracted once (`PackageManager`); an image's bundle imports only its own manager. |
-| `machine/components/registry.ts`                    | name → component per platform, and the derivations that walk an image's `components` list: the ordered install steps and the download bundle, from one input. |
-| `machine/components/paths.ts`                       | Derived locations composed from the spec's root paths; no path is written twice. |
+| file                                             | role                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spec.ts`, `spec.linux.ts`, `spec.windows.ts`    | **The single source of truth.** Pure data. `spec.ts` holds the facts every image references, declared once (the Node.js version, bun, LLVM, cross toolchains, packer pins); `spec.linux.ts` / `spec.windows.ts` hold the per-platform entries — one typed entry per image (`LinuxBuildHostImage`, `LinuxTestImage`, `WindowsX64Image`, `WindowsArm64Image`), a complete manifest of what's baked. |
+| `images.ts`                                      | The assembled fleet (`images`, `buildHost`) from the two platform specs, for consumers that need every image.                                                                                                                                                                                                                                                                                     |
+| `naming.ts`                                      | The name: `${key}-${imageHash(entry)}` — sha256 of the entry's value, canonically serialized.                                                                                                                                                                                                                                                                                                     |
+| `existence.ts`                                   | Asks AWS/Azure whether each content-addressed name exists; the pipeline bakes only the missing ones.                                                                                                                                                                                                                                                                                              |
+| `packer.ts`                                      | Renders the Windows Packer template as JSON from a `WindowsImage` entry at bake time (no checked-in `.pkr.hcl`).                                                                                                                                                                                                                                                                                  |
+| `machine/bootstrap.ts`                           | The bake entry point run **on the machine** under a bare `node`: `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host.                                                                                                                                                                                                       |
+| `machine/artifacts.ts`                           | Turns spec values into concrete `{url, sha256}` downloads.                                                                                                                                                                                                                                                                                                                                        |
+| `machine/runtime.ts`                             | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report.                                                                                                                                                                                                                                                                                                           |
+| `machine/ops-posix.ts`, `machine/ops-windows.ts` | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command.                                                                                                                                                                                                                          |
+| `machine/components/{linux,windows}/*.ts`        | One file per baked thing, per platform: each owns HOW its thing installs and enumerates its own downloads, reading every fact from the spec entry. A thing on both platforms is two components sharing a name (`linux/nodejs.ts`, `windows/nodejs.ts`).                                                                                                                                           |
+| `machine/components/linux/package-manager.ts`    | apt vs apk, abstracted once (`PackageManager`); an image's bundle imports only its own manager.                                                                                                                                                                                                                                                                                                   |
+| `machine/components/registry.ts`                 | name → component per platform, and the derivations that walk an image's `components` list: the ordered install steps and the download bundle, from one input.                                                                                                                                                                                                                                     |
+| `machine/components/paths.ts`                    | Derived locations composed from the spec's root paths; no path is written twice.                                                                                                                                                                                                                                                                                                                  |
 
 ## What we provision
 
-Eight images, all in `images` from `images.ts` (`node scripts/build/ci/naming.ts` computes their
+Eight images, all in `images` from `images.ts` (`node scripts/build/ci/naming.ts` prints their
 current names). Linux images are AWS AMIs; Windows are Azure gallery images.
 
 | key                                   | os / arch                | role                                                                                  |
@@ -81,7 +81,7 @@ version or force a rebuild by hand. Sanity-check by dry-running an image (see be
 | **Add a whole new tool**                     | new `components/<tool>.ts` (how to install) + register it in `components/registry.ts` + add its name to the image's `components` list in `spec.ts` (install order) + its facts on the entry |
 | **Remove a tool**                            | delete its name from the `components` list in `spec.ts`                                                                                                                                     |
 | **Change a download's mirror / host**        | the base-URL fact in `spec.ts` (e.g. `nodejs.distBase`)                                                                                                                                     |
-| **Change a download's URL scheme**           | the builder in `artifacts.ts` (code — the _resolved_ URL is hashed, so it rebakes correctly)                                                                                                |
+| **Change a download's URL scheme**           | the builder in `machine/artifacts.ts`, then bump the affected pin in the spec (only spec values move the hash; a code-only edit renames nothing) |
 | **Set the work / checkout dir**              | `paths.workDir` on that platform's entry (linux and windows are separate facts)                                                                                                             |
 | **Set a cache dir, or turn a cache off**     | `paths.caches.{prefetch,install}` — a path enables it, `null` disables it                                                                                                                   |
 | **Turn an optional feature on / off**        | its nullable config block on the entry (`null` = off). This is the idiom — Dev Drive would be `devDrive: {...} \| null` if added                                                            |
@@ -145,10 +145,12 @@ Pinning more checksums shrinks how often that happens.
 - **Nothing re-declares a spec value.** `winsysroot.ts`, `macos-sdk.ts`, and
   `ci.mjs` import their pins from the spec; a "keep in sync with X" comment
   is a smell that means "import it instead."
-- **`resolveArtifacts` is the one list of downloads.** The step code reads
-  its `Download`s from the resolved bundle (`ctx.artifacts.…`), never by
-  calling a URL builder itself, so what is hashed and what is fetched are
-  the same object.
+- **Only spec values move the hash.** The name digests the entry's
+  value and nothing else — not the recipe code, not the URL builders. A
+  code-only change (a fixed component, a changed URL template) renames no
+  image; to ship it, change a value in the affected entry (bump a pin,
+  a version, or add the fact that changed) so the entry, and therefore the
+  name, is different.
 - **Ops over shell strings.** Steps compose ops; the few genuine scripts use
   `shellScript`/`powershellScript` with a required `describe`, so raw script
   is a labeled exception, not the norm.

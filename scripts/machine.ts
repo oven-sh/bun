@@ -1,7 +1,16 @@
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import { azure } from "./azure.mjs";

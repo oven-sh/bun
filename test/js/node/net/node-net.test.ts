@@ -1132,3 +1132,96 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+describe("socket.destroy() is not a graceful EOF", () => {
+  // Node only emits 'end' / sets readableEnded when EOF is read from the peer.
+  // A locally destroy()ed socket emits 'close' alone; reporting it as cleanly
+  // ended makes a torn connection look like a complete message.
+  it("destroying a client socket emits 'close' but never 'end'", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const server = createServer(c => {
+      c.on("error", () => {});
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const events: string[] = [];
+      const socket = connect(port, "127.0.0.1", () => socket.destroy());
+      socket.on("end", () => events.push("end"));
+      socket.on("error", reject);
+      socket.on("close", () => {
+        try {
+          expect(events).toEqual([]);
+          expect(socket.readableEnded).toBe(false);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      await promise;
+    } finally {
+      server.close();
+    }
+  });
+
+  it("destroying an accepted socket emits 'close' but never 'end'", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const server = createServer(c => {
+      c.on("end", () => events.push("end"));
+      c.on("error", reject);
+      c.on("close", () => {
+        try {
+          expect(events).toEqual([]);
+          expect(c.readableEnded).toBe(false);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      c.on("data", () => c.destroy());
+    });
+    let client: Socket | undefined;
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const socket = (client = connect(port, "127.0.0.1", () => socket.write("x")));
+      socket.on("error", () => {});
+      await promise;
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("a socket that ended first still gets 'end' when the peer closes", async () => {
+    // The peer's FIN after our own arrives as a plain close (not a native
+    // 'end'), and must still end the readable side: 'end' + readableEnded.
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const server = createServer(c => {
+      c.on("error", () => {});
+      c.resume();
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const events: string[] = [];
+      const socket = connect(port, "127.0.0.1", () => socket.end());
+      socket.on("end", () => events.push("end"));
+      socket.on("error", reject);
+      socket.on("close", () => {
+        try {
+          expect(events).toEqual(["end"]);
+          expect(socket.readableEnded).toBe(true);
+          expect(socket.destroyed).toBe(true);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      await promise;
+    } finally {
+      server.close();
+    }
+  });
+});

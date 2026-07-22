@@ -799,9 +799,11 @@ impl ServerConfig {
                     DevelopmentOption::Production
                 };
             } else if !dev.is_null() {
-                return Err(
-                    global.throw_invalid_property_type("development", "boolean or object", dev)
-                );
+                return Err(global.throw_invalid_property_type(
+                    "development",
+                    "boolean or object",
+                    dev,
+                ));
             }
             args.reuse_port = args.development == DevelopmentOption::Production;
         }

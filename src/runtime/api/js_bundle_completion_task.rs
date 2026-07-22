@@ -137,11 +137,17 @@ pub(crate) fn create_and_schedule_completion_task(
     // dereferences worker-owned memory (a worker terminated mid-bundle frees
     // its VM's loader). `Loader::init` only populates `map`; the bundle-thread
     // consumers read the map only (`NODE_PATH`, proxy, reject-unauthorized).
-    let env_map =
-        bun_core::heap::into_raw(Box::new(global_this.bun_vm().env_loader().map.clone_with_allocator()?));
+    let env_map = bun_core::heap::into_raw(Box::new(
+        global_this
+            .bun_vm()
+            .env_loader()
+            .map
+            .clone_with_allocator()?,
+    ));
     // SAFETY: `env_map` is a fresh heap allocation owned by this task; the
     // `'static` borrow is the lifetime erasure for the task-lifetime map.
-    let env = bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init(unsafe { &mut *env_map })));
+    let env =
+        bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init(unsafe { &mut *env_map })));
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,

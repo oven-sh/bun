@@ -2,7 +2,7 @@ import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { constants as fsConstants, closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("FileSink", () => {

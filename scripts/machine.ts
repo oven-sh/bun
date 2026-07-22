@@ -1,4 +1,4 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -32,7 +32,6 @@ import {
   getGithubApiUrl,
   getGithubUrl,
   getSecret,
-  getUsernameForDistro,
   homedir,
   isCI,
   isMacOS,
@@ -429,9 +428,8 @@ const aws = {
       return device;
     });
 
-    // The login user is a fact on the spec entry (base.sshUsername); the
-    // AMI-name derivation covers the ad-hoc path with no entry.
-    const username = options.imageEntry ? options.imageEntry.base.sshUsername : getUsernameForDistro(Name);
+    // The login user is a fact on the spec entry (base.sshUsername).
+    const username = options.imageEntry.base.sshUsername;
 
     // Only include minimal cloud-init for SSH access
     let userData = getUserData({ ...options, username });
@@ -1297,16 +1295,17 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
  * @param {string} version
  */
 async function ensurePacker(version) {
-  // Check if packer is already in PATH
+  // Reuse an existing packer only if it is the pinned version; a stale
+  // system or cached binary must not shadow the spec pin.
+  const isPinned = (bin: string) =>
+    spawnSync(bin, ["version"], { encoding: "utf8" }).stdout.includes(`v${version}`);
   const packerPath = which("packer");
-  if (packerPath) {
+  if (packerPath && isPinned(packerPath)) {
     console.log("[packer] Found:", packerPath);
     return packerPath;
   }
-
-  // Check if we have a local copy
   const localPacker = join(tmpdir(), "packer");
-  if (existsSync(localPacker)) {
+  if (existsSync(localPacker) && isPinned(localPacker)) {
     return localPacker;
   }
 

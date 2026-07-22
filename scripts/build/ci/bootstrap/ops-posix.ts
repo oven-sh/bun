@@ -13,7 +13,7 @@
 // exception visible in the code and the log.
 
 import type { RunOptions, RunResult } from "./runtime.ts";
-import { log, run, runOutput, sudo, verify, warn, which } from "./runtime.ts";
+import { log, mode, run, runOutput, sudo, verify, warn, which } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
 // Files and directories (all system paths → run as root)
@@ -118,6 +118,10 @@ export type UserSpec = {
 
 /** Create a system user if it doesn't exist. Idempotent. */
 export async function ensureSystemUser(spec: UserSpec): Promise<void> {
+  if (mode.dryRun) {
+    log(`[dry-run] would ensure system user ${spec.name} (home ${spec.home})`);
+    return;
+  }
   const existing = await runOutput(["sh", "-c", `getent passwd ${spec.name} || true`]);
   if (existing) {
     log(`user ${spec.name} already exists`);
@@ -146,6 +150,10 @@ export async function ensureSystemUser(spec: UserSpec): Promise<void> {
 /** Add a user to a group if the group exists (a missing group is a
  * logged no-op, e.g. no docker group on a machine without docker). */
 export async function addUserToGroup(user: string, group: string): Promise<void> {
+  if (mode.dryRun) {
+    log(`[dry-run] would add ${user} to group ${group}`);
+    return;
+  }
   const exists = await runOutput(["sh", "-c", `getent group ${group} || true`]);
   if (!exists) {
     log(`group ${group} does not exist; not adding ${user} to it`);

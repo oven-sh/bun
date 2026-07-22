@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bake/machine entry point invoked by the ensure-image steps
+// Bake/machine entry point invoked by the build-image steps
 // (`node ./scripts/machine.mjs create-image ...`). Plain JavaScript, no .ts
 // imports, so it starts under whatever node the bake agent has installed.
 // It hands the real orchestrator (scripts/machine.ts) to the spec-pinned

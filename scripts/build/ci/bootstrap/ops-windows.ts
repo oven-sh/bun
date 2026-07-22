@@ -254,8 +254,6 @@ if ($user) {
 
 export async function addToMachinePath(dir: string): Promise<void> {
   log(`machine PATH += ${dir} (if absent)`);
-  // The registry PATH is about to change: children must re-read it.
-  invalidateChildPath();
   await ps(
     `$p = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if (($p -split ';') -notcontains ${psq(dir)}) {
@@ -265,6 +263,9 @@ if (($p -split ';') -notcontains ${psq(dir)}) {
   Write-Output "PATH already contains ${dir}"
 }`,
   );
+  // The registry PATH just changed: children must re-read it. Invalidate
+  // AFTER the write, so the next read sees the new value.
+  invalidateChildPath();
 }
 
 /**

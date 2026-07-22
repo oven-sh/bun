@@ -325,7 +325,6 @@ function getPriority() {
 
 /**
  * @param {Platform} platform
- * @param {PipelineOptions} options
  * @param {Ec2Options} ec2Options
  * @returns {Agent}
  */

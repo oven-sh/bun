@@ -145,7 +145,9 @@ const siteMap = new Map<string, Site>();
         await replayCoordinate({ bun: bun!, args: ["test", sample[i]], schedule: "", dir: d, timeoutMs, capture: false }).catch(
           () => null,
         );
-        const t = await readTraceDir(d, { faultsOnly: true }).catch(() => null);
+        // Full trace (NOT faultsOnly - that flag skips the ordinary records
+        // the census exists to count).
+        const t = await readTraceDir(d).catch(() => null);
         for (const r of t?.recs ?? []) {
           if (r.entryOnly) continue;
           const sysName = manifestNames[r.sys];

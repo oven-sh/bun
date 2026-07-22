@@ -215,9 +215,7 @@ describe.concurrent("Bun.cron.parse — { tz } option", () => {
     expect(() => Bun.cron.parse("* * * * *", Date.now(), { tz: "Mars/Olympus" })).toThrow(
       /unknown time zone 'Mars\/Olympus'/,
     );
-    expect(() => Bun.cron("* * * * *", () => {}, { tz: "Mars/Olympus" })).toThrow(
-      /unknown time zone 'Mars\/Olympus'/,
-    );
+    expect(() => Bun.cron("* * * * *", () => {}, { tz: "Mars/Olympus" })).toThrow(/unknown time zone 'Mars\/Olympus'/);
   });
 
   test("non-string tz throws", () => {

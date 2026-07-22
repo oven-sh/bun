@@ -684,17 +684,17 @@ fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
         return Ok(CronTz::Local);
     }
     if !opts.is_object() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.cron: options must be an object"
-        )));
+        return Err(
+            global.throw_invalid_arguments(format_args!("Bun.cron: options must be an object"))
+        );
     }
     let Some(tz_val) = opts.get_truthy(global, "tz")? else {
         return Ok(CronTz::Local);
     };
     if !tz_val.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.cron: options.tz must be a string"
-        )));
+        return Err(
+            global.throw_invalid_arguments(format_args!("Bun.cron: options.tz must be a string"))
+        );
     }
     let tz_str = bun_core::OwnedString::new(tz_val.to_bun_string(global)?);
     let tz_slice = tz_str.to_utf8();

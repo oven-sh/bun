@@ -18,6 +18,8 @@ interface BundlerPlugin {
   onResolveAsync(internalID, a, b, c): void;
   /** Binding to `JSBundlerPlugin__addError` */
   addError(internalID: number, error: any, which: number): void;
+  /** Binding to `JSBundlerPlugin__createBuildMessage` */
+  createBuildMessage(error: any): BuildMessage;
   addFilter(filter, namespace, number): void;
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
@@ -145,12 +147,7 @@ export function runOnEndCallbacks(
           $rejectPromise(promise, e);
         } else {
           (buildResult as any).success = false;
-          $arrayPush((buildResult as any).logs, {
-            name: "BuildMessage",
-            level: "error",
-            message: e != null && typeof (e as any).message === "string" ? (e as any).message : String(e),
-            position: null,
-          });
+          $arrayPush((buildResult as any).logs, this.createBuildMessage(e));
           $resolvePromise(promise, buildResult);
         }
       },

@@ -1312,119 +1312,160 @@ export { greeting };`,
     // What matters is that callbacks fired before promise settled
     expect(result.success).toBeDefined();
   });
+});
 
-  describe("throw: false captures plugin lifecycle errors", () => {
-    for (const [label, plugin] of [
-      [
-        "setup() sync",
-        {
-          name: "p",
-          setup() {
+describe("Bun.build throw: false captures plugin lifecycle errors", () => {
+  for (const [label, plugin] of [
+    [
+      "setup() sync",
+      {
+        name: "p",
+        setup() {
+          throw new Error("lifecycle-boom");
+        },
+      },
+    ],
+    [
+      "setup() async",
+      {
+        name: "p",
+        async setup() {
+          throw new Error("lifecycle-boom");
+        },
+      },
+    ],
+    [
+      "onStart sync",
+      {
+        name: "p",
+        setup(b) {
+          b.onStart(() => {
             throw new Error("lifecycle-boom");
-          },
+          });
         },
-      ],
-      [
-        "setup() async",
-        {
-          name: "p",
-          async setup() {
+      },
+    ],
+    [
+      "onStart async",
+      {
+        name: "p",
+        setup(b) {
+          b.onStart(async () => {
             throw new Error("lifecycle-boom");
-          },
+          });
         },
-      ],
-      [
-        "onStart sync",
-        {
-          name: "p",
-          setup(b) {
-            b.onStart(() => {
-              throw new Error("lifecycle-boom");
-            });
-          },
+      },
+    ],
+    [
+      "onEnd sync",
+      {
+        name: "p",
+        setup(b) {
+          b.onEnd(() => {
+            throw new Error("lifecycle-boom");
+          });
         },
-      ],
-      [
-        "onStart async",
-        {
-          name: "p",
-          setup(b) {
-            b.onStart(async () => {
-              throw new Error("lifecycle-boom");
-            });
-          },
+      },
+    ],
+    [
+      "onEnd async",
+      {
+        name: "p",
+        setup(b) {
+          b.onEnd(async () => {
+            throw new Error("lifecycle-boom");
+          });
         },
-      ],
-      [
-        "onEnd sync",
+      },
+    ],
+  ] as const) {
+    test(`${label} throw returns {success:false, logs}`, async () => {
+      using dir = tempDir("throw-false-lifecycle", { "entry.ts": `console.log("hi");` });
+      const entry = join(String(dir), "entry.ts");
+
+      // With throw: false the error must become a log entry, not a throw/reject.
+      const result = await Bun.build({
+        entrypoints: [entry],
+        throw: false,
+        plugins: [plugin as Bun.BunPlugin],
+      });
+      expect(result.success).toBe(false);
+      const log = result.logs.find(l => (l as any).message === "lifecycle-boom");
+      expect(log).toBeInstanceOf(BuildMessage);
+      expect((log as any).level).toBe("error");
+
+      // With throw: true (default) the same plugin must still throw/reject.
+      // setup/onStart currently throw synchronously while onEnd rejects; an
+      // async IIFE normalises both into a rejection.
+      await expect(
+        (async () => await Bun.build({ entrypoints: [entry], plugins: [plugin as Bun.BunPlugin] }))(),
+      ).rejects.toThrow("lifecycle-boom");
+    });
+  }
+
+  test("onEnd throw after failed build appends to existing logs", async () => {
+    using dir = tempDir("throw-false-onend-after-fail", {
+      "entry.ts": `import {x} from "./missing"; console.log(x);`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      throw: false,
+      plugins: [
         {
           name: "p",
           setup(b) {
             b.onEnd(() => {
-              throw new Error("lifecycle-boom");
+              throw new Error("onEnd-after-fail");
             });
           },
         },
       ],
-      [
-        "onEnd async",
-        {
-          name: "p",
-          setup(b) {
-            b.onEnd(async () => {
-              throw new Error("lifecycle-boom");
-            });
-          },
+    });
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(l => (l as any).message);
+    expect(messages.some(m => m.includes("./missing"))).toBe(true);
+    expect(messages).toContain("onEnd-after-fail");
+  });
+
+  // A lifecycle throw whose thrown value itself throws on string conversion
+  // must still settle the build promise instead of leaving it pending forever.
+  for (const hook of ["setup", "onEnd"] as const) {
+    test(`${hook} throws value with throwing toString() still resolves`, async () => {
+      using dir = tempDir("throw-false-secondary", { "entry.ts": `console.log("hi");` });
+      const poison = {
+        get message() {
+          throw 0;
         },
-      ],
-    ] as const) {
-      test(`${label} throw returns {success:false, logs}`, async () => {
-        using dir = tempDir("throw-false-lifecycle", { "entry.ts": `console.log("hi");` });
-        const entry = join(String(dir), "entry.ts");
-
-        // With throw: false the error must become a log entry, not a throw/reject.
-        const result = await Bun.build({
-          entrypoints: [entry],
-          throw: false,
-          plugins: [plugin as Bun.BunPlugin],
-        });
-        expect(result.success).toBe(false);
-        expect(result.logs.length).toBeGreaterThan(0);
-        expect(result.logs.some(l => (l as any).message === "lifecycle-boom")).toBe(true);
-
-        // With throw: true (default) the same plugin must still throw/reject.
-        // setup/onStart currently throw synchronously while onEnd rejects; an
-        // async IIFE normalises both into a rejection.
-        await expect(
-          (async () => await Bun.build({ entrypoints: [entry], plugins: [plugin as Bun.BunPlugin] }))(),
-        ).rejects.toThrow("lifecycle-boom");
-      });
-    }
-
-    test("onEnd throw after failed build appends to existing logs", async () => {
-      using dir = tempDir("throw-false-onend-after-fail", {
-        "entry.ts": `import {x} from "./missing"; console.log(x);`,
-      });
+        toString() {
+          throw 0;
+        },
+      };
+      const plugin: Bun.BunPlugin =
+        hook === "setup"
+          ? {
+              name: "p",
+              setup() {
+                throw poison;
+              },
+            }
+          : {
+              name: "p",
+              setup(b) {
+                b.onEnd(() => {
+                  throw poison;
+                });
+              },
+            };
       const result = await Bun.build({
         entrypoints: [join(String(dir), "entry.ts")],
         throw: false,
-        plugins: [
-          {
-            name: "p",
-            setup(b) {
-              b.onEnd(() => {
-                throw new Error("onEnd-after-fail");
-              });
-            },
-          },
-        ],
+        plugins: [plugin],
       });
       expect(result.success).toBe(false);
-      const messages = result.logs.map(l => (l as any).message);
-      expect(messages.some(m => m.includes("./missing"))).toBe(true);
-      expect(messages).toContain("onEnd-after-fail");
+      expect(result.logs.length).toBeGreaterThan(0);
+      expect(result.logs[0]).toBeInstanceOf(BuildMessage);
     });
-  });
+  }
 });
 
 // On release builds mimalloc's large-allocation arenas make RSS growth too

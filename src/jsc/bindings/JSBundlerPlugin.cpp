@@ -53,6 +53,7 @@ extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, 
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onVirtualModulePlugin(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__createBuildMessage(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addError);
@@ -60,6 +61,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise);
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_createBuildMessage);
 
 void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index)
 {
@@ -117,6 +119,7 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "onResolveAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onResolveAsync, 4 } },
     { "onBeforeParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onBeforeParse, 4 } },
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
+    { "createBuildMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_createBuildMessage, 1 } },
 };
 
 class JSBundlerPlugin final : public JSC::JSDestructibleObject {
@@ -410,6 +413,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_createBuildMessage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSBundlerPlugin__createBuildMessage(globalObject, JSValue::encode(callFrame->argument(0)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -1374,7 +1374,7 @@ pub mod js_bundler {
 
         if let Some(err) = plugin_error {
             debug_assert!(!config.throw_on_error);
-            let msg = bun_ast_jsc::msg_from_js(global_this, Vec::new(), err)?;
+            let msg = msg_from_js_with_fallback(global_this, b"", err);
             let mut log = bun_ast::Log::init();
             log.errors = 1;
             log.msgs.push(msg);
@@ -1831,15 +1831,13 @@ pub mod js_bundler {
 
     /// Convert a JS exception value into a `logger.Msg`. If the conversion itself
     /// throws (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that
-    /// secondary exception and return a generic fallback message so
-    /// `onResolveAsync`/`onLoadAsync` is still called and the bundler's
-    /// pending-item counter is decremented. Returning early here would cause
-    /// `Bun.build` to hang forever waiting on the counter.
-    ///
-    /// Runs on the JS thread, so allocations go through the global heap; the
-    /// bundler arena is owned by another thread.
-    fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
-        let global = plugin.global_object();
+    /// secondary exception and return a generic fallback message so the caller's
+    /// completion path (promise settle / pending-item decrement) always runs.
+    pub(crate) fn msg_from_js_with_fallback(
+        global: &JSGlobalObject,
+        file: &[u8],
+        exception: JSValue,
+    ) -> bun_ast::Msg {
         match bun_ast_jsc::msg_from_js(global, file.to_vec(), exception) {
             Ok(msg) => msg,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1863,6 +1861,38 @@ pub mod js_bundler {
                     },
                     ..Default::default()
                 }
+            }
+        }
+    }
+
+    /// `onResolveAsync`/`onLoadAsync` error path: route through the shared
+    /// fallback so the bundler's pending-item counter is always decremented.
+    /// Returning early here would cause `Bun.build` to hang forever waiting on
+    /// the counter.
+    ///
+    /// Runs on the JS thread, so allocations go through the global heap; the
+    /// bundler arena is owned by another thread.
+    fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
+        msg_from_js_with_fallback(plugin.global_object(), file, exception)
+    }
+
+    /// `BundlerPlugin.prototype.createBuildMessage` — wraps a thrown value in a
+    /// real `BuildMessage` for `BuildOutput.logs`. Never throws: secondary
+    /// throws during string conversion fall back to a generic message, and a
+    /// failure from `BuildMessage::create` itself returns `undefined` so the
+    /// caller in `runOnEndCallbacks` can still settle the build promise.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn JSBundlerPlugin__createBuildMessage(
+        global: &JSGlobalObject,
+        exception: JSValue,
+    ) -> JSValue {
+        let msg = msg_from_js_with_fallback(global, b"", exception);
+        match bun_jsc::BuildMessage::create(global, msg) {
+            Ok(v) => v,
+            Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+            Err(_) => {
+                let _ = global.clear_exception_except_termination();
+                JSValue::UNDEFINED
             }
         }
     }

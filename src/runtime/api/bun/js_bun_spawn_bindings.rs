@@ -1075,9 +1075,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
-            let sync_loop = (*jsc_vm_ptr)
+            let Some(sync_loop) = (*jsc_vm_ptr)
                 .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr);
+                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
+            else {
+                // The per-spawnSync isolated event loop could not be created
+                // (uv_loop_init on Windows, epoll_create1/kqueue on POSIX).
+                // Throw instead of letting the unchecked NULL dereference in
+                // us_create_loop segfault the whole process.
+                return Err(throw_spawn_sync_loop_init_failed(global_this));
+            };
             sync_loop.prepare(jsc_vm_ptr.cast());
             // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
             // (bun_event_loop is below bun_jsc); the accessor returns the
@@ -1104,6 +1111,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
+                    .expect("cached by the IS_SYNC prepare above")
                     .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
             }
         }
@@ -1908,7 +1916,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
         let sync_loop = unsafe { &mut *jsc_vm_ptr }
             .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
+            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
+            .expect("cached by the IS_SYNC prepare above");
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
@@ -2079,6 +2088,22 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     sync_value.put(global_this, b"pid", result_pid);
 
     Ok(sync_value)
+}
+
+fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
+    let err = SystemError {
+        message: BunString::static_(
+            b"spawnSync failed to initialize its event loop (system resource exhaustion)",
+        ),
+        code: BunString::static_("EMFILE"),
+        errno: -UV_E::MFILE,
+        path: BunString::EMPTY,
+        syscall: BunString::static_("uv_loop_init"),
+        hostname: BunString::EMPTY,
+        fd: -1,
+        dest: BunString::EMPTY,
+    };
+    global_this.throw_value(err.to_error_instance(global_this))
 }
 
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {

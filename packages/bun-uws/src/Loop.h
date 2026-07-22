@@ -84,8 +84,11 @@ private:
     }
 
     static Loop *create(void *hint) {
-        Loop *loop = ((Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData)))->init();
-        return loop;
+        Loop *loop = (Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+        if (!loop) {
+            return nullptr;
+        }
+        return loop->init();
     }
 
     /* What to do with loops created with existingNativeLoop? */
@@ -119,7 +122,14 @@ public:
                 getLazyLoop().loop = create(existingNativeLoop);
                 /* We cannot register automatic free here, must be manually done */
             } else {
-                getLazyLoop().loop = create(nullptr);
+                Loop *loop = create(nullptr);
+                if (!loop) {
+                    /* Resource exhaustion (epoll/kqueue/eventfd EMFILE, or
+                     * uv_loop_init). Leave lazyLoop null so a later get()
+                     * retries once resources free up. */
+                    return nullptr;
+                }
+                getLazyLoop().loop = loop;
                 getLazyLoop().cleanMe = true;
             }
         }

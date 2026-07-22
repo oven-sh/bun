@@ -705,20 +705,31 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+    /// Returns `None` when the isolated event loop cannot be created
+    /// (uv_loop_init / epoll_create1 / kqueue failure under resource
+    /// exhaustion); the caller surfaces that as a thrown JS error so a
+    /// `Bun.spawnSync` under resource pressure fails the one call instead of
+    /// taking the process down. Once created the loop is cached, so only the
+    /// first call per VM can return `None`.
+    pub fn spawn_sync_event_loop(
+        &mut self,
+        vm: &mut VirtualMachine,
+    ) -> Option<&mut SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
             // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(
+            if !SpawnSyncEventLoop::init(
                 &mut *boxed,
                 core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
-            // SAFETY: `init` fully initialised the slot.
+            ) {
+                return None;
+            }
+            // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_mut().unwrap()
+        self.spawn_sync_event_loop_.as_deref_mut()
     }
 
     pub fn mime_type_from_string(&mut self, str_: &[u8]) -> Option<mime_type::MimeType> {

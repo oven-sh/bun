@@ -1,4 +1,5 @@
 use core::ffi::{c_int, c_uint, c_void};
+use core::ptr::NonNull;
 
 use crate::InternalLoopData;
 use crate::Timespec;
@@ -229,13 +230,14 @@ impl PosixLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut Loop {
+    /// Returns `None` when the kernel cannot create the backing event
+    /// provider (epoll/kqueue EMFILE); callers surface that as an error.
+    pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        NonNull::new(p)
     }
 
     pub fn wakeup(&mut self) {
@@ -470,13 +472,14 @@ impl WindowsLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut WindowsLoop {
+    /// Returns `None` when `uv_loop_init` fails (CreateIoCompletionPort under
+    /// handle/non-paged-pool exhaustion); callers surface that as an error.
+    pub fn create<H: LoopHandler>() -> Option<NonNull<WindowsLoop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        NonNull::new(p)
     }
 
     pub fn run(&mut self) {

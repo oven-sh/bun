@@ -268,6 +268,15 @@ struct us_loop_t *us_create_loop(void *hint,
       (struct us_loop_t *)us_calloc(1, sizeof(struct us_loop_t) + ext_size);
 
   loop->uv_loop = hint ? hint : uv_loop_new();
+  /* uv_loop_new() returns NULL when uv_loop_init fails (CreateIoCompletionPort
+   * under handle/non-paged-pool exhaustion on Windows). Without this check the
+   * uv_prepare_init below dereferences NULL and segfaults the process; the
+   * only hint==NULL caller is Bun.spawnSync's per-call isolated loop, so the
+   * failure must surface as a thrown error instead. */
+  if (!loop->uv_loop) {
+    us_free(loop);
+    return NULL;
+  }
   loop->is_default = hint != 0;
 
   loop->uv_pre = us_malloc(sizeof(uv_prepare_t));
@@ -283,7 +292,7 @@ struct us_loop_t *us_create_loop(void *hint,
   loop->uv_check->data = loop;
 
   // here we create two unreffed handles - timer and async
-  us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+  (void)us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
 
   // if we do not own this loop, we need to integrate and set up timer
   if (hint) {

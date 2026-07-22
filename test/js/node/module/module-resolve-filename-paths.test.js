@@ -199,3 +199,41 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
     Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
+
+test("require.resolve throws ERR_INVALID_ARG_TYPE if options.paths contains a non-string", () => {
+  let err;
+  try {
+    require.resolve("nonexistent", { paths: [new DataView(new ArrayBuffer(8))] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+
+  err = undefined;
+  try {
+    require.resolve("nonexistent", { paths: ["/tmp", {}] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+});
+
+test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths contains a non-string", () => {
+  let err;
+  try {
+    Module._resolveFilename("nonexistent", null, false, { paths: [{}] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+});
+
+test("require.resolve with a relative directory in options.paths does not crash", () => {
+  let err;
+  try {
+    require.resolve("nonexistent", { paths: ["not/an/absolute/path"] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("MODULE_NOT_FOUND");
+});

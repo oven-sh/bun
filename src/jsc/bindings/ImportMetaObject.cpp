@@ -372,6 +372,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 WTF::Vector<BunString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
+                    if (!path.isString()) {
+                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("paths["_s, i, "]"_s), "string"_s, path);
+                        goto cleanup;
+                    }
                     WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;

@@ -2040,10 +2040,20 @@ impl<'a> Resolver<'a> {
 
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
+                let mut abs_buf = bun_paths::path_buffer_pool::get();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_slice = custom_utf8.slice();
+                    let abs_custom = if bun_paths::is_absolute(custom_slice) {
+                        custom_slice
+                    } else {
+                        match self.fs_ref().abs_buf_checked(&[custom_slice], &mut abs_buf) {
+                            Some(p) => p,
+                            None => continue,
+                        }
+                    };
                     match self.check_package_path(
-                        custom_utf8.slice(),
+                        abs_custom,
                         import_path,
                         kind,
                         global_cache,

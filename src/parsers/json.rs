@@ -1393,13 +1393,6 @@ mod tests {
     #[test]
     fn lenient_numbers() {
         for (src, want) in [
-            ("[0x10]", 16.0),
-            ("[0X10]", 16.0),
-            ("[0b101]", 5.0),
-            ("[0o17]", 15.0),
-            ("[017]", 15.0),
-            ("[018]", 18.0),
-            ("[1_000_000]", 1e6),
             ("[.5]", 0.5),
             ("[5.]", 5.0),
             ("[- 5]", -5.0),
@@ -1415,6 +1408,32 @@ mod tests {
             };
             assert_eq!(n.value(), want, "{src}");
         }
+    }
+
+    #[test]
+    fn js_numeric_literals_rejected() {
+        for src in [
+            "[0x10]",
+            "[0X10]",
+            "[0b101]",
+            "[0o17]",
+            "[017]",
+            "[018]",
+            "[0777]",
+            "[-010]",
+            "[1_000_000]",
+            "[0_1]",
+            "[0xFF_FF]",
+        ] {
+            let p = run(src.as_bytes(), Which::Utf8);
+            assert_ne!(p.errors, 0, "{src}: accepted but should be rejected");
+        }
+        let p = run(b"[017]", Which::Utf8);
+        assert!(
+            p.first_msg.contains("leading zeros"),
+            "got: {}",
+            p.first_msg
+        );
     }
 
     #[test]

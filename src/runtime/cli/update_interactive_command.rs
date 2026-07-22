@@ -1271,13 +1271,27 @@ impl UpdateInteractiveCommand {
             show_workspace: columns.show_workspace, // Show workspace if packages have workspaces
         };
 
+        // Install a signal / console-ctrl handler that restores the cursor
+        // and mouse-tracking state if the process dies mid-prompt. See
+        // `crate::cli::prompt_signal` for the full rationale.
+        let _signal_guard = crate::cli::prompt_signal::install();
+
         // Set raw mode — RAII guard restores the original terminal mode on Drop.
+        //
+        // `ENABLE_PROCESSED_INPUT` is intentionally unset so the Windows console
+        // delivers Ctrl+C as byte `\x03` rather than terminating the process via
+        // the default console ctrl handler. If the console killed the process,
+        // it would bypass the `scopeguard::defer!` in `process_multi_select`
+        // that re-shows the cursor and disables mouse tracking, leaving the
+        // terminal in a broken state. The byte-3 path in the input loop below
+        // takes the graceful-cancel branch instead.
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
+                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+                unset: bun_sys::windows::ENABLE_LINE_INPUT
+                    | bun_sys::windows::ENABLE_ECHO_INPUT
                     | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
             });
 
         #[cfg(unix)]
@@ -1290,6 +1304,11 @@ impl UpdateInteractiveCommand {
                     err,
                     crate::Error::EndOfStream | crate::Error::Core(bun_core::Error::EndOfStream)
                 ) {
+                    // Drop the raw-mode guard BEFORE `Global::exit`, which does
+                    // not unwind. The `scopeguard::defer!` inside
+                    // `process_multi_select` already restored the cursor and
+                    // disabled mouse tracking; this restores the console mode.
+                    drop(_restore);
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);

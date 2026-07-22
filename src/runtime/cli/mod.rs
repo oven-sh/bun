@@ -361,6 +361,8 @@ pub mod pm_version_command;
 pub mod pm_view_command;
 #[path = "pm_why_command.rs"]
 pub mod pm_why_command;
+#[path = "prompt_signal.rs"]
+pub(crate) mod prompt_signal;
 #[path = "publish_command.rs"]
 pub mod publish_command;
 #[path = "remove_command.rs"]

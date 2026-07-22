@@ -66,6 +66,11 @@ export const bunEnv: NodeJS.Dict<string> = {
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
+  // Strip the user agent injected by an outer `bun run` (e.g. when the suite
+  // is launched via `bun bd test`). Spawned buns honor a pre-existing value
+  // (put_default in run_command.rs), so tests asserting on the user agent
+  // would otherwise see the outer bun's version instead of bunExe()'s.
+  npm_config_user_agent: undefined,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",

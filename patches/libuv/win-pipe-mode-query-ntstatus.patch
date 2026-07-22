@@ -1,0 +1,15 @@
+--- a/src/win/pipe.c
++++ b/src/win/pipe.c
+@@ -545,7 +545,11 @@ static int uv__set_pipe_handle(uv_loop_t* loop,
+                                       sizeof(mode_info),
+                                       FileModeInformation);
+   if (nt_status != STATUS_SUCCESS) {
+-    return uv_translate_sys_error(err);
++    /* Translate the actual NTSTATUS. `err` still holds the value from the
++     * SetNamedPipeHandleState block above (0 on the common path), so
++     * translating it reports success and returns before handle->handle is
++     * assigned, leaving the pipe half-initialized. */
++    return uv_translate_sys_error(pRtlNtStatusToDosError(nt_status));
+   }
+ 
+   if (mode_info.Mode & FILE_SYNCHRONOUS_IO_ALERT ||

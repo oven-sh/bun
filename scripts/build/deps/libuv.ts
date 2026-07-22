@@ -49,7 +49,15 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    // uv__set_pipe_handle's FileModeInformation failure branch returned
+    // uv_translate_sys_error(err) with a stale `err` (0 on the normal path),
+    // i.e. reported success before handle->handle was assigned. Still present
+    // on upstream v1.x as of this commit; drop once oven-sh/libuv picks it up.
+    "patches/libuv/win-pipe-mode-query-ntstatus.patch",
+  ],
 
   build: () => ({
     kind: "direct",

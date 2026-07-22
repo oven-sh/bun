@@ -1235,8 +1235,15 @@ mod _impl {
     }
 
     #[bun_jsc::host_fn]
-    pub(super) fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    pub(super) fn secure_heap_used(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        // BoringSSL has no secure heap. Return Node's "unavailable" shape so
+        // `crypto.secureHeapUsed().used` etc. work instead of throwing on undefined.
+        let obj = JSValue::create_empty_object(global, 4);
+        obj.put(global, b"total", JSValue::js_number(0.0));
+        obj.put(global, b"used", JSValue::js_number(0.0));
+        obj.put(global, b"utilization", JSValue::js_number(0.0));
+        obj.put(global, b"min", JSValue::js_number(0.0));
+        Ok(obj)
     }
 
     #[bun_jsc::host_fn]

@@ -7,8 +7,8 @@
 // on Debian and Alpine the distro's own compiler set is what the build uses.
 
 import { basename } from "node:path";
-import { ensureLines, log, mode, run, sudo, which } from "../bootstrap/runtime.ts";
 import { ensureDirectory, ensureSymlink } from "../bootstrap/ops-posix.ts";
+import { ensureLines, log, mode, run, sudo, which } from "../bootstrap/runtime.ts";
 import type { Component, LinuxContext } from "./component.ts";
 import { appendToProfiles } from "./environment.ts";
 import { installPackages } from "./system-linux.ts";
@@ -39,7 +39,10 @@ export const gcc: Component = {
       const spec = image.gcc;
       return [
         {
-          name: spec === null ? "Install pinned GCC toolchain" : `Install GCC ${spec.version} toolchain (PPA, sanitizers, compiler env)`,
+          name:
+            spec === null
+              ? "Install pinned GCC toolchain"
+              : `Install GCC ${spec.version} toolchain (PPA, sanitizers, compiler env)`,
           skip: spec === null && "no pinned gcc on this image (distro compiler set is used)",
           run: () => installGcc(ctx, spec!.version),
         },
@@ -131,6 +134,8 @@ async function installGcc(ctx: LinuxContext, version: string): Promise<void> {
   await ensureSymlink("/usr/bin/clang++", "/usr/bin/c++");
 
   const gccPath = which("gcc");
-  log(`gcc: ${gccPath !== undefined ? basename(gccPath) : "gcc"} -> ${version}; CC=clang-${llvm}; toolchain ${gccLibDir}`);
+  log(
+    `gcc: ${gccPath !== undefined ? basename(gccPath) : "gcc"} -> ${version}; CC=clang-${llvm}; toolchain ${gccLibDir}`,
+  );
   await run(["gcc", "--version"], { allowFailure: false });
 }

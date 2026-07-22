@@ -26,8 +26,7 @@
 "use strict";
 
 const { URL, URLSearchParams } = globalThis;
-const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
-const { urlToHttpOptions } = require("internal/url");
+const { urlToHttpOptions, fileURLToPath, domainToASCII, domainToUnicode } = require("internal/url");
 const { validateString } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -951,7 +950,7 @@ export default {
   URLSearchParams,
   URL,
   pathToFileURL: Bun.pathToFileURL,
-  fileURLToPath: Bun.fileURLToPath,
+  fileURLToPath,
   urlToHttpOptions,
   domainToASCII,
   domainToUnicode,

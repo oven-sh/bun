@@ -1900,14 +1900,7 @@ function isUint8Array(value) {
 // Section 6. Random utilities
 //------------------------------------------------------------------------------
 
-function isURLInstance(fileURLOrPath) {
-  return fileURLOrPath != null && fileURLOrPath.href && fileURLOrPath.origin;
-}
-
-function toPathIfFileURL(fileURLOrPath) {
-  if (!isURLInstance(fileURLOrPath)) return fileURLOrPath;
-  return Bun.fileURLToPath(fileURLOrPath);
-}
+const { toPathIfFileURL } = require("internal/url");
 
 //------------------------------------------------------------------------------
 // Section 7. Node errors / error polyfills

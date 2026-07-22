@@ -151,4 +151,80 @@ describe("url.fileURLToPath", () => {
       assert.strictEqual(fromURL, path);
     }
   });
+
+  // Node accepts any object that duck-types as a WHATWG URL (truthy href and
+  // protocol, no legacy url.parse() fields) and reads protocol/hostname/pathname
+  // off it directly.
+  test("URL-like object", () => {
+    const duck = (hostname, pathname) => ({
+      href: "file://placeholder",
+      protocol: "file:",
+      hostname,
+      pathname,
+    });
+
+    // POSIX path
+    assert.strictEqual(url.fileURLToPath(duck("", "/tmp"), { windows: false }), "/tmp");
+    assert.strictEqual(url.fileURLToPath(duck("", "/a%20b"), { windows: false }), "/a b");
+    assert.strictEqual(
+      url.fileURLToPath(
+        { __proto__: null, href: "x", protocol: "file:", hostname: "", pathname: "/tmp" },
+        { windows: false },
+      ),
+      "/tmp",
+    );
+
+    // Windows path
+    assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp"), { windows: true }), "C:\\tmp");
+    assert.strictEqual(url.fileURLToPath(duck("server", "/share"), { windows: true }), "\\\\server\\share");
+
+    // Host platform default: no options, or `windows` nullish (Node uses `??`).
+    if (isWindows) {
+      assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp")), "C:\\tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp"), { windows: null }), "C:\\tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp"), { windows: undefined }), "C:\\tmp");
+    } else {
+      assert.strictEqual(url.fileURLToPath(duck("", "/tmp")), "/tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/tmp"), { windows: null }), "/tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/tmp"), { windows: undefined }), "/tmp");
+    }
+
+    // Protocol mismatch
+    assert.throws(() => url.fileURLToPath({ href: "http://x", protocol: "http:", hostname: "", pathname: "/" }), {
+      code: "ERR_INVALID_URL_SCHEME",
+    });
+
+    // Node reads `hostname` directly: anything !== "" (including undefined) is
+    // rejected on POSIX.
+    assert.throws(() => url.fileURLToPath({ href: "file:///tmp", protocol: "file:" }, { windows: false }), {
+      code: "ERR_INVALID_FILE_URL_HOST",
+    });
+    assert.throws(() => url.fileURLToPath(duck("host", "/tmp"), { windows: false }), {
+      code: "ERR_INVALID_FILE_URL_HOST",
+    });
+
+    // Encoded separators
+    assert.throws(() => url.fileURLToPath(duck("", "/a%2Fb"), { windows: false }), {
+      code: "ERR_INVALID_FILE_URL_PATH",
+    });
+    assert.throws(() => url.fileURLToPath(duck("", "/C:/a%5Cb"), { windows: true }), {
+      code: "ERR_INVALID_FILE_URL_PATH",
+    });
+
+    // No drive letter on Windows
+    assert.throws(() => url.fileURLToPath(duck("", "/tmp"), { windows: true }), {
+      code: "ERR_INVALID_FILE_URL_PATH",
+    });
+
+    // Legacy url.parse() results have `auth` / `path` set and must be rejected.
+    assert.throws(() => url.fileURLToPath({ href: "file:///tmp", protocol: "file:", auth: null, path: "/tmp" }), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+    assert.throws(() => url.fileURLToPath(url.parse("file:///tmp")), { code: "ERR_INVALID_ARG_TYPE" });
+
+    // Still rejects plain non-URL-like values.
+    for (const arg of [null, undefined, 1, true, {}, [], () => {}]) {
+      assert.throws(() => url.fileURLToPath(arg), { code: "ERR_INVALID_ARG_TYPE" });
+    }
+  });
 });

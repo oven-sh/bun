@@ -220,6 +220,39 @@ describe("nested macro imports", () => {
     expect(out).not.toContain("stamp");
     expect(out).not.toContain("inner.ts");
   });
+
+  test.concurrent("bunfig [macros] remap inside the macro runtime", async () => {
+    using dir = tempDir("macro-nested-remap", {
+      "bunfig.toml": `[macros]\nfakepkg = { "stamp" = "fakepkg" }\n`,
+      "node_modules/fakepkg/package.json": `{"name":"fakepkg","main":"index.js"}`,
+      "node_modules/fakepkg/index.js": `export function stamp() { return "MACRO_" + 7; }\n`,
+      "outer.ts": `
+        import { stamp } from "fakepkg";
+        export function outer() { return "OUTER(" + stamp() + ")"; }
+      `,
+      "use.ts": `
+        import { outer } from "./outer.ts" with { type: "macro" };
+        console.log(outer());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "use.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({
+      stdout: expect.stringMatching(/OUTER\(MACRO_7\)\n$/),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("--no-macros", () => {

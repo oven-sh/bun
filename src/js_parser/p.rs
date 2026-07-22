@@ -3689,7 +3689,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(self.s(S::Empty {}, loc));
         }
 
-        let macro_remap = if Self::ALLOW_MACROS {
+        let macro_remap = if Self::ALLOW_MACROS && !self.options.features.is_macro_runtime {
             self.options
                 .macro_context
                 .as_deref()

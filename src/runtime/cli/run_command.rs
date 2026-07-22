@@ -671,7 +671,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             // Always skip default .env files for package.json script runner
             // (the script's own bun instance loads .env)
-            let _ = this_transpiler.run_env_loader(true);
+            //
+            // Propagate: the loader reports a missing explicit `--env-file` and
+            // returns an error, which must surface as a non-zero exit.
+            this_transpiler.run_env_loader(true)?;
         }
 
         // Re-derive after `run_env_loader` — that call creates its own
@@ -1798,6 +1801,15 @@ impl RunCommand {
         let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
         ));
+
+        // Already-reported errors (e.g. a missing explicit `--env-file`, which the
+        // env loader prints in detail before returning this sentinel) must not get
+        // a second generic line — which would also leak the internal code name.
+        // Mirror the crash handler's `InvalidArgument` handling: exit non-zero
+        // without printing more.
+        if *err == bun_core::err!("InvalidArgument") {
+            Global::exit(1);
+        }
 
         pretty_errorln!(
             "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",

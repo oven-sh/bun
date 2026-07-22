@@ -910,15 +910,24 @@ impl<'a> Loader<'a> {
 
         let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
             Ok(f) => f,
-            Err(_) => {
-                // prevent retrying
-                // `Source::init_path_string` requires a `'static` path; the
-                // map key already carries `file_path` (boxed), and the value is never
-                // read for its path/contents — only `.contains()` and key iteration —
-                // so an empty placeholder is observationally identical.
-                self.custom_files_loaded
-                    .put(file_path, bun_ast::Source::default())?;
-                return Ok(());
+            Err(err) => {
+                // An explicitly requested `--env-file` that won't open is a user
+                // error: report it and fail instead of silently running without
+                // the variables. Only explicit files reach here — default `.env`
+                // discovery uses `load_default_files`, which stays silent. The
+                // loader reports and returns the error; the CLI caller decides to
+                // exit (it propagates to a non-zero exit). The loader must not
+                // exit the process itself.
+                bun_core::err_generic!(
+                    "failed to load env file \"{}\": {}",
+                    bstr::BStr::new(file_path),
+                    bstr::BStr::new(err.name()),
+                );
+                // `InvalidArgument` is the "already reported, exit quietly" code:
+                // callers propagate it to a non-zero exit and the top-level
+                // handler emits no extra message (the detailed line above is the
+                // only output). The bad `--env-file` path is an invalid argument.
+                return Err(bun_core::err!("InvalidArgument"));
             }
         };
 

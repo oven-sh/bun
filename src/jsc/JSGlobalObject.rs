@@ -157,7 +157,16 @@ impl JSGlobalObject {
         second: i32,
         millisecond: i32,
     ) -> JsResult<f64> {
-        self.gregorian_date_time_to_ms_impl(year, month, day, hour, minute, second, millisecond, false)
+        self.gregorian_date_time_to_ms_impl(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            false,
+        )
     }
 
     pub fn gregorian_date_time_to_ms(
@@ -170,7 +179,16 @@ impl JSGlobalObject {
         second: i32,
         millisecond: i32,
     ) -> JsResult<f64> {
-        self.gregorian_date_time_to_ms_impl(year, month, day, hour, minute, second, millisecond, true)
+        self.gregorian_date_time_to_ms_impl(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+            true,
+        )
     }
 
     fn ms_to_gregorian_date_time_impl(&self, ms: f64, local: bool) -> GregorianDateTime {

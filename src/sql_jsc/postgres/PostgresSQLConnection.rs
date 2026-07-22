@@ -2977,7 +2977,11 @@ impl PostgresSQLConnection {
 
                 let Some(request) = self.current() else {
                     debug!("ErrorResponse: {}", err);
-                    return Err(AnyPostgresError::ExpectedRequest);
+                    let v =
+                        crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
+                    drop(err);
+                    self.fail_with_js_value(v);
+                    return Ok(());
                 };
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.

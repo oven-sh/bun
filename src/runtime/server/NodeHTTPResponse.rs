@@ -1824,9 +1824,12 @@ impl NodeHTTPResponse {
         // bytes are still outstanding return `false` (the uWS onWritable
         // contract's "write failed") so HttpContext::onWritable waits for the
         // next writable event instead of evaluating its close gate against a
-        // bufferedAmount that does not count the pinned tail.
+        // bufferedAmount that does not count the pinned tail. Zero progress on
+        // a writable event means send() is failing (EPIPE): returning `false`
+        // would spin this callback, so fall through to the close gate instead.
+        let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
-            return false;
+            return self.pending_pinned_write.get().remaining.len() >= pinned_before;
         }
 
         // Drained (or nothing was pinned): disarm the native callback so

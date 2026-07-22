@@ -244,19 +244,16 @@ impl CryptoHasher {
     /// `(algorithm string, input, optional output buffer/encoding)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
-        let mut i = 0usize;
-        let mut next_eat = || {
+        let arg_at = |i: usize| {
             if i < arguments.len {
-                let v = arguments.ptr[i];
-                i += 1;
-                Some(v)
+                Some(arguments.ptr[i])
             } else {
                 None
             }
         };
 
         let algorithm = {
-            let Some(string_value) = next_eat() else {
+            let Some(string_value) = arg_at(0) else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
             if string_value.is_undefined_or_null() {
@@ -265,24 +262,12 @@ impl CryptoHasher {
             string_value.get_zig_string(global)?
         };
 
-        // Node.BlobOrStringOrBuffer
-        let input = {
-            let Some(arg) = next_eat() else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
-            };
-            match BlobOrStringOrBuffer::from_js(global, arg)? {
-                Some(b) => b,
-                None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-            }
-        };
-
+        // Parse the output/options argument before decoding `input`: option
+        // getters can run user JS that detaches or resizes the input buffer,
+        // so all user-JS re-entry must happen before the input pointer is
+        // captured.
         let mut output_length: Option<u32> = None;
-        let output: Option<StringOrBuffer> = match next_eat() {
+        let output: Option<StringOrBuffer> = match arg_at(2) {
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -316,6 +301,22 @@ impl CryptoHasher {
                 }
             },
             None => None,
+        };
+
+        // Node.BlobOrStringOrBuffer
+        let input = {
+            let Some(arg) = arg_at(1) else {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+                );
+            };
+            match BlobOrStringOrBuffer::from_js(global, arg)? {
+                Some(b) => b,
+                None => {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
+                }
+            }
         };
 
         Self::hash_(global, algorithm, &input, output, output_length)

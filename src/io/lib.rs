@@ -394,7 +394,7 @@ impl EventLoopCtx {
         self.loop_mut().ref_();
     }
     #[inline]
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(crate) fn loop_unref(&self) {
         self.loop_mut().unref();
     }
@@ -417,7 +417,7 @@ impl EventLoopCtx {
     }
 
     #[inline]
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(crate) fn is_js(&self) -> bool {
         self.is(EventLoopCtxKind::Js)
     }
@@ -887,7 +887,7 @@ impl IoRequestLoop {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(crate) fn on_spawn_io_thread() {
         // From here on, only this thread may borrow `IoRequestLoop`;
         // `ThreadCell` enforces that in debug builds.
@@ -928,7 +928,7 @@ impl IoRequestLoop {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(crate) fn tick(&self) {
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
         let name = bun_core::ZStr::from_static(b"IO Watcher\0");

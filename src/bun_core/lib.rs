@@ -1154,7 +1154,7 @@ pub use fmt::{
 // to the crate root here for the `bun_core::X` spelling.
 // ──────────────────────────────────────────────────────────────────────────
 pub use crate::string::immutable::{
-    CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
+    CodePoint, DecodeHexError, PercentEncodeError, QuoteEscapeFormatFlags,
     SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
     concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
     decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,

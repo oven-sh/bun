@@ -248,7 +248,7 @@ pub struct Owner {
 }
 
 impl Owner {
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(crate) const NULL: Owner = Owner {
         tag: PollTag::Null,
         ptr: core::ptr::null_mut(),
@@ -262,7 +262,7 @@ impl Owner {
         self.ptr.is_null()
     }
     #[inline]
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(crate) fn clear(&mut self) {
         *self = Self::NULL;
     }

@@ -1621,7 +1621,7 @@ pub fn trim_suffix<'a>(buffer: &'a [u8], suffix: &[u8]) -> &'a [u8] {
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 #[derive(Copy, Clone, Default)]
-pub struct LineRange {
+struct LineRange {
     start: u32,
     end: u32,
 }

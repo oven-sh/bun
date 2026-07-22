@@ -701,6 +701,19 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
     return opened;
 }
 
+/* RFC 8305 connection-attempt delay (Happy Eyeballs): start one more untried
+ * address. Driven by the HTTP client's per-attempt timer so a blackholed
+ * address (SYN silently dropped, connect() stuck in EINPROGRESS until kernel
+ * SYN-retry exhaustion, ~130 s on Linux) does not block a reachable later
+ * address in the same DNS answer. Without this, start_connections only
+ * advances when an in-flight attempt hard-fails. */
+void us_connecting_socket_start_next(struct us_connecting_socket_t *c) {
+    if (c->closed || c->addrinfo_head == NULL) {
+        return;
+    }
+    start_connections(c, 1);
+}
+
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     /* close_all() may have run between the DNS thread queuing this callback and
      * us reaching it; c->group is NULL'd at close so it can't be touched. The

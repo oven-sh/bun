@@ -425,16 +425,11 @@ impl<'a> AsyncHTTP<'a> {
         redirect_type: FetchRedirect,
         options: Options<'a>,
     ) -> AsyncHTTP<'a> {
-        let async_http_id = if options
-            .signals
-            .as_ref()
-            .map(|s| s.aborted.is_some())
-            .unwrap_or(false)
-        {
-            crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed)
-        } else {
-            0
-        };
+        // Every request gets an id and an abort-tracker entry (not just
+        // abortable ones): the happy-eyeballs connect-attempt nudge
+        // (`HTTPThread::schedule_connect_nudge`) addresses the in-flight
+        // socket by this id.
+        let async_http_id = crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed);
 
         let signals = options.signals.unwrap_or_default();
 

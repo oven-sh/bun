@@ -434,6 +434,10 @@ struct us_socket_t *us_socket_group_connect_unix(us_socket_group_r group,
 int us_socket_is_established(us_socket_r s) nonnull_fn_decl;
 void us_connecting_socket_free(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void us_connecting_socket_close(struct us_connecting_socket_t *c) nonnull_fn_decl;
+/* RFC 8305 connection-attempt delay: start one more untried resolved address
+ * so a blackholed earlier address does not block a reachable later one.
+ * No-op if `c` is closed or every address has already been attempted. */
+void us_connecting_socket_start_next(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) nonnull_fn_decl;
 void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) nonnull_fn_decl;
 void us_connecting_socket_shutdown(struct us_connecting_socket_t *c) nonnull_fn_decl;

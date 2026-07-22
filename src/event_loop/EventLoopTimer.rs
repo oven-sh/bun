@@ -205,6 +205,8 @@ pub enum Tag {
     CronJob,
     GcOneShot,
     GcRepeating,
+    /// RFC 8305 happy-eyeballs connection-attempt delay on `FetchTasklet`.
+    FetchConnectAttempt,
 }
 
 impl Tag {
@@ -215,6 +217,7 @@ impl Tag {
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
             | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing
+            | Tag::FetchConnectAttempt // internal network pacing, never user-visible
             => false,
             _ => true,
         }

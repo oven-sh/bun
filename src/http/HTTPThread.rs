@@ -124,11 +124,17 @@ pub struct HttpThread {
     pub queued_writes: Vec<WriteMessage>,
     pub queued_receive_resumes: Vec<u32>,
     pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
+    /// RFC 8305 happy-eyeballs connection-attempt delay ticks from the JS
+    /// thread (`FetchTasklet`'s 300 ms timer). Each entry asks the still
+    /// DNS-deferred connecting socket for `async_http_id` to start one more
+    /// untried resolved address; a no-op once the socket has connected.
+    pub queued_connect_nudges: Vec<u32>,
 
     pub queued_shutdowns_lock: Mutex,
     pub queued_writes_lock: Mutex,
     pub queued_receive_resumes_lock: Mutex,
     pub queued_cert_check_resumes_lock: Mutex,
+    pub queued_connect_nudges_lock: Mutex,
 
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
 
@@ -179,10 +185,12 @@ impl HttpThread {
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
+            queued_connect_nudges: Vec::new(),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
+            queued_connect_nudges_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
@@ -849,6 +857,25 @@ impl HttpThread {
         }
     }
 
+    fn drain_queued_connect_nudges(&mut self) {
+        loop {
+            let queued = {
+                let _guard = self.queued_connect_nudges_lock.lock_guard();
+                core::mem::take(&mut self.queued_connect_nudges)
+            };
+            if queued.is_empty() {
+                return;
+            }
+            for id in queued {
+                // Ids whose socket has already settled (or that never had one:
+                // h2/h3 sessions, not-yet-started requests) are simply absent.
+                if let Some(socket_ptr) = abort_tracker().get(&id) {
+                    socket_ptr.start_next_connect_attempt();
+                }
+            }
+        }
+    }
+
     pub fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
@@ -858,6 +885,9 @@ impl HttpThread {
         // turn removes the abort-tracker entry first, so the resume becomes a
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
+        // Same post-shutdown rule: a connect nudge scheduled in the same JS
+        // turn as an abort finds no tracker entry and is a no-op.
+        self.drain_queued_connect_nudges();
         h3::PendingConnect::drain_resolved();
 
         for http in self.queued_threadlocal_proxy_derefs.drain(..) {
@@ -960,6 +990,20 @@ impl HttpThread {
                 return;
             }
             self.queued_receive_resumes.push(async_http_id);
+        }
+        self.wakeup();
+    }
+
+    /// RFC 8305 happy-eyeballs connection-attempt delay tick. Called from the
+    /// JS thread (`FetchTasklet`'s per-attempt timer); the HTTP thread drains
+    /// it in [`Self::drain_queued_connect_nudges`].
+    pub fn schedule_connect_nudge(&mut self, async_http_id: u32) {
+        {
+            let _guard = self.queued_connect_nudges_lock.lock_guard();
+            if self.queued_connect_nudges.last() == Some(&async_http_id) {
+                return;
+            }
+            self.queued_connect_nudges.push(async_http_id);
         }
         self.wakeup();
     }

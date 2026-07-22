@@ -366,6 +366,20 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// RFC 8305 connection-attempt delay: start one more untried resolved
+    /// address while this is still a DNS-deferred connecting socket. A no-op
+    /// in every other state, so a tick that lands after the connect settles
+    /// is harmless.
+    pub fn start_next_connect_attempt(&self) {
+        on_socket!(self.socket;
+            connected _s => {},
+            connecting c => c.start_next(),
+            detached => {},
+            duplex _d => {},
+            pipe _p => {},
+        )
+    }
+
     // ── I/O ─────────────────────────────────────────────────────────────────
 
     pub fn write(&self, data: &[u8]) -> i32 {
@@ -955,6 +969,7 @@ impl AnySocket {
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);
         fn shutdown_read(&self);
+        fn start_next_connect_attempt(&self);
         fn local_port(&self) -> i32;
         fn get_native_handle(&self) -> Option<*mut c_void>;
     }

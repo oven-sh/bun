@@ -1163,7 +1163,7 @@ pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> 
 /// to `DeadSocket`/`PooledSocket`, the client/session dispatch is skipped and
 /// any stale entry would survive into `us_internal_free_closed_sockets`,
 /// leaving `drain_queued_shutdowns` to dereference freed memory on a later
-/// abort. O(n) over live abortable requests; no-op on a `Detached` socket.
+/// abort. O(n) over live tracked requests; no-op on a `Detached` socket.
 pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
     if socket.is_detached() {
         return;
@@ -1749,22 +1749,18 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub fn register_abort_tracker<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
-        if self.signals.aborted.is_some() {
-            let any = if IS_SSL {
-                uws::AnySocket::SocketTls(uws::SocketTLS::from_any(socket.socket))
-            } else {
-                uws::AnySocket::SocketTcp(uws::SocketTCP::from_any(socket.socket))
-            };
-            // SAFETY: HTTP-thread only; per-statement reborrow.
-            let _ = abort_tracker().put(self.async_http_id, any);
-        }
+        let any = if IS_SSL {
+            uws::AnySocket::SocketTls(uws::SocketTLS::from_any(socket.socket))
+        } else {
+            uws::AnySocket::SocketTcp(uws::SocketTCP::from_any(socket.socket))
+        };
+        // SAFETY: HTTP-thread only; per-statement reborrow.
+        let _ = abort_tracker().put(self.async_http_id, any);
     }
 
     pub fn unregister_abort_tracker(&mut self) {
-        if self.signals.aborted.is_some() {
-            // SAFETY: HTTP-thread only; per-statement reborrow.
-            let _ = abort_tracker().swap_remove(&self.async_http_id);
-        }
+        // SAFETY: HTTP-thread only; per-statement reborrow.
+        let _ = abort_tracker().swap_remove(&self.async_http_id);
     }
 
     pub fn on_open<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) -> crate::Result<()> {

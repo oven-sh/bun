@@ -361,6 +361,17 @@ export type SocketFaultRule = {
   fd?: number;
 };
 
+/**
+ * Inject a pre-resolved entry into the internal DNS cache so `fetch()` and
+ * `Bun.connect()` to `hostname` try `addresses` in exactly that order without
+ * a real getaddrinfo call.
+ */
+export const dnsCacheSeed: (hostname: string, addresses: string[]) => void = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.seedCacheForTesting",
+  2,
+);
+
 export const socketFaultInjection = {
   /** True when the current binary was built with `--socket-fault-injection=on` (defaults to on for ASan builds). */
   available: $newRustFunction(

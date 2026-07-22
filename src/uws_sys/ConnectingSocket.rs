@@ -71,6 +71,13 @@ impl ConnectingSocket {
         us_connecting_socket_shutdown_read(self)
     }
 
+    /// RFC 8305 connection-attempt delay: start one more untried resolved
+    /// address so a blackholed earlier address does not block a reachable
+    /// later one. No-op if closed or every address has already been tried.
+    pub fn start_next(&mut self) {
+        us_connecting_socket_start_next(self)
+    }
+
     pub fn timeout(&mut self, seconds: c_uint) {
         us_connecting_socket_timeout(self, seconds)
     }
@@ -96,5 +103,6 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_long_timeout(s: &mut ConnectingSocket, seconds: c_uint);
     pub(crate) safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
+    pub(crate) safe fn us_connecting_socket_start_next(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
 }

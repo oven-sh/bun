@@ -4,6 +4,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_event_loop::EventLoopTimer::{
+    EventLoopTimer, State as TimerState, Tag as TimerTag, Timespec as ElTimespec,
+};
 use bun_event_loop::{
     AnyTask::AnyTask,
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
@@ -51,6 +54,11 @@ impl Taskable for FetchTasklet {
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
+/// RFC 8305 connection-attempt delay. Node's `autoSelectFamilyAttemptTimeout`
+/// default is 250 ms; slightly larger so a healthy-but-slow first address is
+/// not raced on loaded hosts.
+const CONNECT_ATTEMPT_DELAY_MS: i64 = 300;
+
 pub(crate) type ResumableSink = ResumableFetchSink;
 
 use http::signals::BodyReceiveMode;
@@ -90,6 +98,10 @@ pub struct FetchTasklet {
     pub promise: jsc::JSPromiseStrong,
     pub concurrent_task: ConcurrentTask,
     pub poll_ref: KeepAlive,
+    /// RFC 8305 connection-attempt delay, armed by [`Self::queue`] and re-armed
+    /// by its fire handler until the first HTTP progress. The VM's timer heap
+    /// holds a raw pointer to it; [`Self::clear_data`] MUST unlink it first.
+    pub connect_attempt_timer: EventLoopTimer,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -445,6 +457,9 @@ impl FetchTasklet {
 
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
+        // The VM's timer heap holds a raw pointer to `connect_attempt_timer`
+        // and `deinit` frees this box on return, so unlink it first.
+        self.remove_connect_attempt_timer();
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
@@ -805,6 +820,9 @@ impl FetchTasklet {
     pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
+        // The HTTP thread's first result means the connect phase is over, so the
+        // per-attempt nudge timer is done (later updates find it unlinked).
+        self.remove_connect_attempt_timer();
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
@@ -1896,6 +1914,7 @@ impl FetchTasklet {
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: KeepAlive::default(),
+            connect_attempt_timer: EventLoopTimer::init_paused(TimerTag::FetchConnectAttempt),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             signal: fetch_options.signal,
@@ -2298,6 +2317,50 @@ impl FetchTasklet {
         }
     }
 
+    /// Link `connect_attempt_timer` into the VM heap for CONNECT_ATTEMPT_DELAY_MS
+    /// from now (JS thread only; the node must be unlinked). Real time on purpose:
+    /// internal pacing, and `Tag::allow_fake_timers` excludes the tag to match.
+    fn arm_connect_attempt_timer(&mut self) {
+        let deadline = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::ForceRealTime,
+            CONNECT_ATTEMPT_DELAY_MS,
+        );
+        self.connect_attempt_timer.next = ElTimespec {
+            sec: deadline.sec,
+            nsec: deadline.nsec,
+        };
+        let vm = core::ptr::from_ref::<VirtualMachine>(self.javascript_vm).cast_mut();
+        // SAFETY: `self` is heap-pinned (allocated via `heap::into_raw` in
+        // `get()`) so the node's address is stable; `vm` is the live
+        // per-thread VM (JS-thread-only call site).
+        unsafe { VirtualMachine::timer_insert(vm, &raw mut self.connect_attempt_timer) };
+    }
+
+    /// Unlink `connect_attempt_timer` from the VM heap if it is currently
+    /// scheduled. JS-thread only.
+    fn remove_connect_attempt_timer(&mut self) {
+        if self.connect_attempt_timer.state == TimerState::ACTIVE {
+            let vm = core::ptr::from_ref::<VirtualMachine>(self.javascript_vm).cast_mut();
+            // SAFETY: state == ACTIVE means the node is currently linked into
+            // the heap; `vm` is the live per-thread VM (JS-thread-only call).
+            unsafe { VirtualMachine::timer_remove(vm, &raw mut self.connect_attempt_timer) };
+        }
+    }
+
+    /// Fire handler: nudge the HTTP thread to start the next untried resolved
+    /// address, then re-arm. Stopped by [`Self::remove_connect_attempt_timer`]
+    /// at the first progress update and, as the backstop, in `clear_data`.
+    pub(crate) fn on_connect_attempt_timer(&mut self) {
+        // `All::next` already unlinked the node from the heap but left
+        // `state == ACTIVE`; acknowledge the pop before re-inserting (a
+        // `timer_remove` here would be a double-unlink).
+        self.connect_attempt_timer.state = TimerState::FIRED;
+        if let Some(http_) = self.http.as_mut() {
+            http::http_thread().schedule_connect_nudge(http_.async_http_id);
+        }
+        self.arm_connect_attempt_timer();
+    }
+
     pub(crate) fn queue(
         global: &JSGlobalObject,
         fetch_options: FetchOptions,
@@ -2310,6 +2373,10 @@ impl FetchTasklet {
         let mut batch = bun_threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
         node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+        // RFC 8305 connection-attempt delay: every CONNECT_ATTEMPT_DELAY_MS
+        // the fire handler nudges the HTTP thread to start one more untried
+        // resolved address while the connect is still DNS-deferred.
+        node_ref.arm_connect_attempt_timer();
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();

@@ -298,6 +298,7 @@ export function getJS2NativeRust() {
   const handExported = new Set<string>([
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");

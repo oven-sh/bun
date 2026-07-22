@@ -167,6 +167,7 @@ for (const s of syscalls) {
   // kernel performs a genuinely short transfer, offset and count coherent);
   // extra forwarding slots beyond the declared count pass straight through.
   const call = Array.from({ length: FWD }, (_, k) => (k < n ? `args[${k}]` : `a${k}`)).join(", ");
+  const callDirect = Array.from({ length: FWD }, (_, k) => `a${k}`).join(", "); // no-return hooks: no args[] context
   const argsArr = n ? `{${Array.from({ length: n }, (_, k) => `a${k}`).join(", ")}}` : "{}";
   const isNt = s.ret === "NTSTATUS";
   C.push(`// ${s.category ? "[" + s.category + "] " : ""}${s.ret} ${s.name}(${n} args)`);
@@ -177,8 +178,12 @@ for (const s of syscalls) {
   C.push(`static ULONG_PTR NTAPI Hook_${s.name}(${params}) {`);
   if (noReturn.has(s.name)) {
     // Does not return: entry record only, no context spanning the call.
+    // NtTerminateProcess additionally records the terminating thread's stack:
+    // the abort/crash chain is still on it, so the crash names itself.
+    if (s.name === "NtTerminateProcess")
+      C.push(`  LogTerminateStack((uintptr_t)_ReturnAddress());`);
     C.push(`  LogEntryOnly(SYS_${s.name}, (uintptr_t)_ReturnAddress());`);
-    C.push(`  return Real_${s.name}(${call});`);
+    C.push(`  return Real_${s.name}(${callDirect});`);
   } else {
     C.push(`  ULONG_PTR args[] = ${n ? argsArr : "{0}"};`);
     C.push(`  CallCtx ctx(SYS_${s.name}, (uintptr_t)_ReturnAddress(), args, ${n});`);

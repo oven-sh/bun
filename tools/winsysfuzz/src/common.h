@@ -82,6 +82,9 @@ void DepthPop();
 
 // Entry-only 'E' record for syscalls that never return (see codegen noReturn).
 void LogEntryOnly(uint32_t sysId, uintptr_t retAddr);
+// In-process capture of the terminating thread's stack ('T' record) - the
+// abort/crash chain, no debugger. Called from the NtTerminateProcess hook.
+void LogTerminateStack(uintptr_t retAddr);
 
 // Runtime setup/teardown, called from DllMain.
 bool RuntimeInit();

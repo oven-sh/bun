@@ -404,6 +404,41 @@ void LogEntryOnly(uint32_t sysId, uintptr_t retAddr) {
   SetDepth(0);
 }
 
+// The terminating thread's call stack, captured in-process at
+// NtTerminateProcess: abort()/_exit and bun's crash handler all funnel here
+// with the fatal path still on the stack, so a deep conservative scrape
+// (same lock-free reader as CallCtx) recovers "_wassert <- uv__poll_set <-
+// uv_poll_start <- us_poll_start" - the crash's why - with no debugger.
+// Logged as one 'T' record: comma list of bun.exe RVAs, nearest first.
+void LogTerminateStack(uintptr_t retAddr) {
+  intptr_t d = Depth();
+  if (!g_ready || d != 0) return;
+  SetDepth(1);
+  constexpr int kDeep = 40;
+  uintptr_t frames[kDeep];
+  int n = 0;
+  auto* tib = (NT_TIB*)NtCurrentTeb();
+  uintptr_t* sp = (uintptr_t*)&sp;
+  uintptr_t* end = (uintptr_t*)tib->StackBase;
+  for (uintptr_t* p = sp; p < end && n < kDeep; p++) {
+    uintptr_t v = *p;
+    if (v < g_txtBase || v >= g_txtEnd) continue;
+    if (!AfterCall(v)) continue;
+    bool dup = false;
+    for (int i = 0; i < n; i++) if (frames[i] == v) { dup = true; break; }
+    if (dup) continue;
+    frames[n++] = v;
+  }
+  char buf[24 * kDeep];
+  int o = 0;
+  for (int i = 0; i < n; i++)
+    o += snprintf(buf + o, sizeof buf - o, "%s%llx", i ? "," : "", (unsigned long long)(frames[i] - g_bunBase));
+  buf[o] = 0;
+  CallKey k = KeyOf(retAddr);
+  LogLine("T %lu %c:%llx %s\n", GetCurrentThreadId(), k.tag, (unsigned long long)k.rva, n ? buf : "0");
+  SetDepth(0);
+}
+
 // --- CallCtx ---------------------------------------------------------------
 
 CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)

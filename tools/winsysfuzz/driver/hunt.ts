@@ -47,14 +47,15 @@ const targetName = (file: string) => basename(file).replace(/\.(test|spec)\.(ts|
 let targets: string[][] = [];
 if (flag("--tests")) {
   // bun's test suite as the corpus: each test file is `bun test <file>`.
-  const dir = flag("--tests")!;
+  // --tests takes a comma list of directories (a whole hunting circuit).
+  const dirs = flag("--tests")!.split(",").filter(Boolean);
   const filter = flag("--filter");
   const limit = +(flag("--limit", "0") as string) || Infinity;
   const walk = (d: string): string[] =>
     readdirSync(d, { withFileTypes: true }).flatMap(e =>
       e.isDirectory() ? walk(join(d, e.name)) : /\.(test|spec)\.(ts|tsx|js|mjs|cjs)$/.test(e.name) ? [join(d, e.name)] : [],
     );
-  let files = walk(dir).sort();
+  let files = dirs.flatMap(d => walk(d)).sort();
   if (filter) files = files.filter(f => f.includes(filter));
   files = files.slice(0, limit);
   targets = files.map(f => ["test", f]);
@@ -88,13 +89,24 @@ async function sweep(s: Scenario) {
   console.log(`  done   ${s.name} (${Math.round((performance.now() - t0) / 1000)}s, exit=${proc.exitCode})`);
 }
 
-// Bounded-parallel over scenarios.
-let next = 0;
-await Promise.all(
-  Array.from({ length: parallel }, async () => {
-    while (next < scenarios.length) await sweep(scenarios[next++]);
-  }),
-);
+// Bounded-parallel over scenarios. With --loop the circuit repeats forever
+// (the continuous feeder): every pass re-sweeps every target and each
+// sweep appends its verified findings to the global triage queue, so the
+// triager can drain it while the fuzzer keeps producing. Each pass writes
+// its own roll-up. Stop it by killing the process.
+const loop = argv.includes("--loop");
+let pass = 0;
+do {
+  pass++;
+  if (loop) console.log(`\n=== pass ${pass} (continuous mode) ===`);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: parallel }, async () => {
+      while (next < scenarios.length) await sweep(scenarios[next++]);
+    }),
+  );
+  if (!loop) break;
+} while (true);
 
 // --- roll-up ------------------------------------------------------------------
 // Each sweep wrote <workDir>\<stamp>\findings.md and sweep-report.json;

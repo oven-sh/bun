@@ -360,6 +360,7 @@ console.log(`\n=== sweep done in ${Math.round((performance.now() - t0) / 1000)}s
 for (const k of ["HANG", "CRASH", "slow", "expected-abort", "error-exit", "diverged", "no-fire", "clean"])
   if (counts.has(k)) console.log(`  ${k.padEnd(15)} ${counts.get(k)}`);
 
+const findingsPath = join(workRoot, "findings.md");
 const findings = results.filter(r => r.outcome === "CRASH" || r.outcome === "HANG");
 
 // --- auto-verify: no false positives ------------------------------------------
@@ -378,6 +379,7 @@ interface Verify {
   outcomes: string[];
   stage: string | null; // last STAGE marker the program printed
   stacks: string[]; // digested thread stacks (hangs) or crash frames
+  termChain: string[]; // in-process terminating stack, symbolized (abort/crash chain)
 }
 const verdicts = new Map<Result, Verify>();
 if (findings.length) {
@@ -386,6 +388,7 @@ if (findings.length) {
     const sched = `${f.job.coord.sysName} ${f.job.coord.key} ${f.job.hit} ${f.job.mode} ${f.job.status}`;
     const outcomes: string[] = [];
     let stage: string | null = null;
+    let termChain: string[] = [];
     let stacks: string[] = [];
     for (let n = 1; n <= 3; n++) {
       const rr = await replayCoordinate({
@@ -403,6 +406,19 @@ if (findings.length) {
         stage = lastStage(rr.stdout);
         const raw = rr.hangStacks ?? rr.crashDump ?? "";
         stacks = raw ? digestStacks(raw) : [];
+        // In-process terminating stacks ('T' records) - the abort/crash
+        // chain with no debugger. Every traced process (parent + injected
+        // children) leaves one; symbolize each and keep the fatal-looking one.
+        const trace = await readTraceDir(rr.dir, { faultsOnly: true });
+        const cands = trace?.termStacks ?? [];
+        if (cands.length) {
+          const allSyms = await symbolize(bun, cands.flat());
+          const rendered = cands.map(ts =>
+            ts.map(r => (allSyms.get(r)?.sym ?? `bun+0x${r}`).replace(/\+0x[0-9a-f]+$/, "")),
+          );
+          const fatal = /wassert|abort|panic|crash|CRASH|fastfail|__scrt_common|raise/i;
+          termChain = rendered.find(rs => rs.some(x => fatal.test(x))) ?? rendered[0] ?? [];
+        }
       }
     }
     const bad = outcomes.filter(o => o === "CRASH" || o === "HANG").length;
@@ -418,7 +434,7 @@ if (findings.length) {
           : bad === 0 && fired > 0
             ? "load-dependent"
             : "not-reproduced";
-    verdicts.set(f, { verdict, outcomes, stage, stacks });
+    verdicts.set(f, { verdict, outcomes, stage, stacks, termChain });
     console.log(
       `  ${verdict.padEnd(15)} ${f.outcome} ${f.job.coord.sysName} @${f.job.coord.key} ` +
         `standalone: ${outcomes.join(",")}` +
@@ -515,6 +531,10 @@ if (findings.length) {
           siblings.map(s => `${s.job.mode} ${s.job.status} -> ${s.outcome} (${Math.round(s.ms / 100) / 10}s)`).join("; "),
       );
     if (v?.stage) md.push(`- **last stage reached**: \`${v.stage}\` (the program hung/died after this)`);
+    if (v?.termChain.length) {
+      // The crash's why, straight from the dying process: read top-down.
+      md.push(`- **fatal chain** (terminating thread, nearest first): \`${v.termChain.slice(0, 8).join(" <- ")}\``);
+    }
     if (v?.stacks.length) {
       md.push(`- **where the process is** (top frames per thread at capture):`);
       for (const line of v.stacks.slice(0, 10)) md.push(`  - ${line}`);
@@ -537,7 +557,6 @@ if (findings.length) {
       );
     md.push("");
   }
-  const findingsPath = join(workRoot, "findings.md");
   await Bun.write(findingsPath, md.join("\n") + "\n");
   console.log(`\nfindings: ${findingsPath}`);
 }
@@ -556,6 +575,7 @@ await Bun.write(
         standalone: verdicts.get(r)?.outcomes ?? null,
         lastStage: verdicts.get(r)?.stage ?? null,
         stacks: verdicts.get(r)?.stacks ?? null,
+        termChain: verdicts.get(r)?.termChain ?? null,
         expect: r.job.expect,
         syscall: r.job.coord.sysName,
         key: r.job.coord.key,
@@ -576,3 +596,46 @@ await Bun.write(
   ),
 );
 console.log(`\nreport: ${outPath}`);
+
+// --- the queue: global append-only feed of verified findings ---------------
+// The fuzzer runs continuously and the triager drains this file, so every
+// verified finding lands here as one JSON line with a stable dedupeKey (a
+// crash signature, else syscall@owning-symbol) - one bug appears once no
+// matter how many targets/hunts hit it. Append-only, never deleted; the
+// triager's verdicts live in the sibling triaged.jsonl.
+const queueDir = flag("--queue", "C:\\wsfqueue") as string;
+ensureDir(queueDir);
+const queueLines: string[] = [];
+for (const r of results) {
+  const v = verdicts.get(r);
+  if (!v) continue; // only verified findings enter the queue
+  const dedupeKey = r.crashSig ? `crash: ${r.crashSig.signature}` : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
+  queueLines.push(
+    JSON.stringify({
+      queuedAt: stamp,
+      dedupeKey,
+      verdict: v.verdict,
+      outcome: r.outcome,
+      boundary: r.crashSig?.boundary ?? null,
+      crashKind: r.crashSig?.kind ?? null,
+      crashDetail: r.crashSig?.detail ?? null,
+      expect: r.job.expect,
+      target: progArgs.join(" "),
+      schedule: `${r.job.coord.sysName} ${r.job.coord.key} ${r.job.hit} ${r.job.mode} ${r.job.status}`,
+      symbol: ownerFrame(r.job.coord),
+      module: coordModule(r.job.coord),
+      standalone: v.outcomes,
+      lastStage: v.stage,
+      termChain: v.termChain,
+      stacks: v.stacks.slice(0, 12),
+      findings: findingsPath,
+      workDir: workRoot,
+    }),
+  );
+}
+if (queueLines.length) {
+  const qfile = join(queueDir, "queue.jsonl");
+  const prev = (await Bun.file(qfile).exists()) ? await Bun.file(qfile).text() : "";
+  await Bun.write(qfile, prev + queueLines.join("\n") + "\n");
+  console.log(`queued ${queueLines.length} verified finding(s) -> ${qfile}`);
+}

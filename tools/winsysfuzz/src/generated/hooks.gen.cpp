@@ -3169,7 +3169,7 @@ static const uint8_t NtCallbackReturn_dirs[] = {128, 0, 0};
 static ULONG_PTR (NTAPI *Real_NtCallbackReturn)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtCallbackReturn(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtCallbackReturn, (uintptr_t)_ReturnAddress());
-  return Real_NtCallbackReturn(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtCallbackReturn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Other] NTSTATUS NtCallEnclave(4 args)
@@ -3608,7 +3608,7 @@ static const uint8_t NtContinue_dirs[] = {0, 0};
 static ULONG_PTR (NTAPI *Real_NtContinue)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtContinue(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtContinue, (uintptr_t)_ReturnAddress());
-  return Real_NtContinue(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtContinue(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtContinueEx(2 args)
@@ -3891,7 +3891,7 @@ static const uint8_t NtRaiseException_dirs[] = {0, 0, 0};
 static ULONG_PTR (NTAPI *Real_NtRaiseException)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtRaiseException(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtRaiseException, (uintptr_t)_ReturnAddress());
-  return Real_NtRaiseException(args[0], args[1], args[2], a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtRaiseException(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtRaiseHardError(6 args)
@@ -4056,8 +4056,9 @@ static const char* const NtTerminateProcess_names[] = {"ProcessHandle", "ExitSta
 static const uint8_t NtTerminateProcess_dirs[] = {0, 0};
 static ULONG_PTR (NTAPI *Real_NtTerminateProcess)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtTerminateProcess(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
+  LogTerminateStack((uintptr_t)_ReturnAddress());
   LogEntryOnly(SYS_NtTerminateProcess, (uintptr_t)_ReturnAddress());
-  return Real_NtTerminateProcess(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtTerminateProcess(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtTerminateThread(2 args)
@@ -4067,7 +4068,7 @@ static const uint8_t NtTerminateThread_dirs[] = {0, 0};
 static ULONG_PTR (NTAPI *Real_NtTerminateThread)(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) = nullptr;
 static ULONG_PTR NTAPI Hook_NtTerminateThread(ULONG_PTR a0, ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9, ULONG_PTR a10, ULONG_PTR a11, ULONG_PTR a12, ULONG_PTR a13, ULONG_PTR a14, ULONG_PTR a15, ULONG_PTR a16, ULONG_PTR a17) {
   LogEntryOnly(SYS_NtTerminateThread, (uintptr_t)_ReturnAddress());
-  return Real_NtTerminateThread(args[0], args[1], a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
+  return Real_NtTerminateThread(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17);
 }
 
 // [Process] NTSTATUS NtTestAlert(0 args)

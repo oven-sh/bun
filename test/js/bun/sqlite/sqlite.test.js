@@ -2891,7 +2891,8 @@ it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
 );
 
 it("new Database() does not leak the sqlite3 handle when open fails", async () => {
-  const badPath = path.join(tmpdir(), `bun-sqlite-nonexistent-${Date.now()}-${process.pid}`, "x.sqlite");
+  using dir = tempDir("sqlite-open-fail", {});
+  const badPath = path.join(String(dir), "nonexistent", "x.sqlite");
 
   // The failed open must still surface the real SQLite error code after the
   // handle has been released.

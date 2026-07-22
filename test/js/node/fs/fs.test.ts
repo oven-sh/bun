@@ -2210,6 +2210,41 @@ describe("open with a numeric flag boxed as a double", () => {
     const file = join(String(dir), "bad.txt");
     expect(() => openSync(file, asDouble(578.5), 0o666)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   });
+
+  // Node passes a negative integer flag through validateInt32 unchanged, so it
+  // reaches open(2) as-is; on POSIX, -1 carries O_DIRECTORY and opening a
+  // regular file fails at the syscall rather than silently degrading to
+  // O_RDONLY.
+  it.skipIf(isWindows).each([-1, -4, asDouble(-1)])(
+    "passes negative flag %p through to open(2) instead of clamping to O_RDONLY",
+    async flag => {
+      using dir = tempDir("fs-flags-negative", { "f.txt": "x" });
+      const file = join(String(dir), "f.txt");
+      // The exact errno is platform-dependent, but it must be a syscall error
+      // (.syscall === 'open'), not an argument-validation TypeError/RangeError.
+      const expectSyscallError = (err: any) => {
+        expect(err).not.toBeInstanceOf(TypeError);
+        expect(err).not.toBeInstanceOf(RangeError);
+        expect(err?.syscall).toBe("open");
+      };
+
+      let err: any;
+      try {
+        closeSync(openSync(file, flag));
+      } catch (e) {
+        err = e;
+      }
+      expectSyscallError(err);
+
+      const { promise, resolve } = Promise.withResolvers<[any, any]>();
+      fs.open(file, flag, (e, fd) => resolve([e, fd]));
+      const [cbErr, fd] = await promise;
+      if (fd != null) closeSync(fd);
+      expectSyscallError(cbErr);
+
+      await expect(promises.open(file, flag)).rejects.toMatchObject({ syscall: "open" });
+    },
+  );
 });
 
 describe("open flag string validation matches node", () => {
@@ -2266,6 +2301,34 @@ describe("open flag string validation matches node", () => {
     "",
     true,
   ];
+
+  // Node's fs.open/openSync has no options-object overload; any object in the
+  // flags slot must throw ERR_INVALID_ARG_VALUE, not be treated as
+  // `{flags, mode}` and default to O_RDONLY.
+  it.each([
+    ["{}", {}],
+    ["[]", []],
+    ["new String('r')", new String("r")],
+    ["{flags:'w'}", { flags: "w" }],
+  ])("openSync/open/promises.open reject object flag %s with ERR_INVALID_ARG_VALUE", async (_, flag) => {
+    using dir = tempDir("fs-flags-object", { "f.txt": "x" });
+    const file = join(String(dir), "f.txt");
+    for (const fn of [() => openSync(file, flag as any), () => fs.open(file, flag as any, () => {})]) {
+      let err: any;
+      try {
+        const fd = fn();
+        if (typeof fd === "number") closeSync(fd);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    }
+    await expect(promises.open(file, flag as any)).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+  });
 
   it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {
     using dir = tempDir("fs-flags-invalid", {});

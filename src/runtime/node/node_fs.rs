@@ -3614,21 +3614,14 @@ pub mod args {
             let mut mode: Mode = DEFAULT_PERMISSION;
             if let Some(val) = arguments.next() {
                 arguments.eat();
-                if val.is_object() {
-                    if let Some(flags_) = val.get_truthy(ctx, "flags")? {
-                        flags = FileSystemFlags::from_js(ctx, flags_)?.unwrap_or(flags);
-                    }
-                    if let Some(mode_) = val.get_truthy(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
-                } else if !val.is_empty() {
-                    if !val.is_undefined_or_null() {
-                        // error is handled below
-                        flags = FileSystemFlags::from_js(ctx, val)?.unwrap_or(flags);
-                    }
-                    if let Some(next) = arguments.next_eat() {
-                        mode = node::mode_from_js(ctx, next)?.unwrap_or(mode);
-                    }
+                // Node's fs.open/openSync is positional (path, flags, mode) with
+                // no options-object overload; objects must throw
+                // ERR_INVALID_ARG_VALUE via FileSystemFlags::from_js.
+                if !val.is_undefined_or_null() {
+                    flags = FileSystemFlags::from_js(ctx, val)?.unwrap_or(flags);
+                }
+                if let Some(next) = arguments.next_eat() {
+                    mode = node::mode_from_js(ctx, next)?.unwrap_or(mode);
                 }
             }
             Ok(Open { path, flags, mode })

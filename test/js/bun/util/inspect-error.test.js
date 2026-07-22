@@ -72,19 +72,19 @@ note: "duplicateConstDecl" was originally declared here
 });
 
 const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
+  // remove debug-only stack trace frames (BUN_DEBUG sets showPrivateScriptsInStackTraces),
+  // e.g. "at require (native)"; older builds emitted "at require (:1:21)" / "at require (51:24)".
+  const debugOnlyFrame = / \((?:native|:?\d+:\d+)\)/;
+  if (debugOnlyFrame.test(str)) {
     const splits = str.split("\n");
     for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
+      if (debugOnlyFrame.test(splits[i])) {
         splits.splice(i, 1);
         i--;
       }
     }
     return splits.join("\n");
   }
-
   return str;
 };
 
@@ -187,4 +187,32 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+test("Bun.inspect labels JS-builtin frames as (native), not bare line:col", () => {
+  // Builtin frames (Array.prototype.forEach etc.) have no source URL; their
+  // line/col point into JSC-internal builtin source. Bun.inspect used to render
+  // that as e.g. `at forEach (1:11)`, which reads like a file:line pair.
+  let err;
+  try {
+    [1].forEach(function callback() {
+      throw new Error("boom");
+    });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
+
+  for (const colors of [false, true]) {
+    const out = Bun.stripANSI(Bun.inspect(err, { colors }));
+    const frames = out.split("\n").filter(l => /^\s+at /.test(l));
+    const forEachLine = frames.find(l => /\bat forEach\b/.test(l));
+    expect(forEachLine).toBeDefined();
+    expect(forEachLine).not.toMatch(/\(\d+:\d+\)/);
+    expect(forEachLine).toMatch(/\(native\)/);
+    // every frame that carries a line:col also names a source URL
+    for (const line of frames) {
+      expect(line).not.toMatch(/\(:?\d+:\d+\)/);
+    }
+  }
 });

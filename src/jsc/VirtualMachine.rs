@@ -5001,6 +5001,19 @@ impl VirtualMachine {
                     }
                 };
             }
+            if file.is_empty() {
+                // Builtin JS (JSC or Bun) frame with no source URL: line/col
+                // point into generated builtin source and are meaningless on
+                // their own. Label it `(native)` to match the `.stack` string
+                // (FormatStackTraceForJS.cpp).
+                if has_name {
+                    pretty_write!(
+                        "<r>      <d>at <r>{}<d> (native)<r>\n",
+                        frame.name_formatter(allow_ansi_colors),
+                    )?;
+                }
+                continue;
+            }
             if has_name && !frame.position.is_invalid() {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",

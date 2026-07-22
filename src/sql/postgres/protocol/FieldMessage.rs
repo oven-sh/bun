@@ -3,8 +3,6 @@ use core::fmt;
 use bun_core::String;
 
 use super::field_type::FieldType;
-use super::new_reader::NewReader;
-use crate::postgres::AnyPostgresError;
 
 pub enum FieldMessage {
     Severity(String),
@@ -56,29 +54,30 @@ impl FieldMessage {
         }
     }
 
-    pub fn decode_list<Context: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Context>,
-    ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
+    /// Decode an ErrorResponse/NoticeResponse body that has already been sliced
+    /// out of the connection buffer. Parsing stops at the body end regardless of
+    /// what the field list contains, so a malformed or truncated field cannot
+    /// spill into the next message.
+    pub fn decode_list_from_slice(body: &[u8]) -> Vec<FieldMessage> {
         let mut messages: Vec<FieldMessage> = Vec::new();
-        loop {
-            let field_int: u8 = reader.int::<u8>()?;
+        let mut off: usize = 0;
+        while off < body.len() {
+            let field_int = body[off];
+            off += 1;
             if field_int == 0 {
                 break;
             }
-            let field: FieldType = FieldType::from(field_int);
-
-            let message = reader.read_z()?;
-            if message.slice().is_empty() {
+            let Some(nul) = bun_core::strings::index_of_char(&body[off..], 0) else {
                 break;
-            }
-
-            let Ok(field_msg) = FieldMessage::init(field, message.slice()) else {
-                continue;
             };
-            messages.push(field_msg);
+            let nul = nul as usize;
+            let value = &body[off..off + nul];
+            off += nul + 1;
+            if let Ok(field_msg) = FieldMessage::init(FieldType::from(field_int), value) {
+                messages.push(field_msg);
+            }
         }
-
-        Ok(messages)
+        messages
     }
 
     pub fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {

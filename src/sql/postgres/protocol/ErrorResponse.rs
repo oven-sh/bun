@@ -25,12 +25,17 @@ impl ErrorResponse {
         // A length of exactly 4 is an empty message (no fields); `length()`
         // already rejected anything smaller.
         let remaining_bytes = reader.length()? - 4;
-        if remaining_bytes > 0 {
-            return Ok(Self {
-                messages: FieldMessage::decode_list::<Container>(reader)?,
-            });
+        if remaining_bytes == 0 {
+            return Ok(Self::default());
         }
-        Ok(Self::default())
+        // Read the entire declared body as one slice so the connection
+        // reader advances by exactly the frame length. Parsing the field
+        // list out of that slice then cannot under- or over-run into the
+        // next message regardless of what the body contains.
+        let body = reader.read(remaining_bytes as usize)?;
+        Ok(Self {
+            messages: FieldMessage::decode_list_from_slice(body.slice()),
+        })
     }
 }
 

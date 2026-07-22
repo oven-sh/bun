@@ -578,26 +578,29 @@ impl CryptoHasher {
                 global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
             );
         }
-        let encoding = arguments.ptr[1];
-        if input.is_string()
-            && encoding.is_cell()
-            && Encoding::from_js(encoding, global)? == Some(Encoding::Hex)
-        {
+        let encoding_value = arguments.ptr[1];
+        let encoding = if encoding_value.is_cell() {
+            Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8)
+        } else {
+            Encoding::Utf8
+        };
+        if input.is_string() && encoding == Encoding::Hex {
             let length = input.to_js_string(global)?.length();
             if length % 2 != 0 {
+                let actual = JSGlobalObject::inspect_for_error_message(global, encoding_value)?;
                 return Err(global
                     .err(
                         ErrorCode::INVALID_ARG_VALUE,
                         format_args!(
-                            "The argument 'encoding' is invalid for data of length {}. Received 'hex'",
-                            length
+                            "The argument 'encoding' is invalid for data of length {}. Received {}",
+                            length, actual
                         ),
                     )
                     .throw());
             }
         }
         let buffer =
-            match BlobOrStringOrBuffer::from_js_with_encoding_value(global, input, encoding)? {
+            match BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)? {
                 Some(b) => b,
                 None => {
                     if !global.has_exception() {

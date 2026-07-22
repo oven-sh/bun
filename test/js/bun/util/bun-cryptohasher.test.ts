@@ -32,6 +32,14 @@ test("CryptoHasher.update(str, 'hex') rejects odd-length hex like node:crypto", 
     }
   }
 
+  // Error message echoes the encoding argument as passed.
+  expect(() => new Bun.CryptoHasher("sha1").update("abc", "HEX")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The argument 'encoding' is invalid for data of length 3. Received 'HEX'",
+    }),
+  );
+
   // Even-length hex decodes and matches node:crypto (including truncation at the first invalid char).
   for (const s of ["ab", "deadbeef", "ffzz"]) {
     expect(new Bun.CryptoHasher("sha1").update(s, "hex").digest("hex")).toBe(

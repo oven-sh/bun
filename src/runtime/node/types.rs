@@ -164,6 +164,25 @@ impl BlobOrStringOrBuffer {
         )
     }
 
+    /// Like [`from_js_with_encoding_value`] but takes an already-parsed
+    /// [`Encoding`], so callers that must inspect the encoding first (e.g. to
+    /// validate odd-length hex) don't coerce `encoding_value` twice.
+    pub fn from_js_with_encoding(
+        global: &JSGlobalObject,
+        value: JSValue,
+        encoding: Encoding,
+    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
+        if value.js_type() == jsc::JSType::DOMWrapper {
+            if let Some(blob) = value.as_class_ref::<Blob>() {
+                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
+            }
+        }
+        match StringOrBuffer::from_js_with_encoding(global, value, encoding)? {
+            Some(s) => Ok(Some(Self::StringOrBuffer(s))),
+            None => Ok(None),
+        }
+    }
+
     pub fn from_js_with_encoding_value_allow_request_response(
         global: &JSGlobalObject,
         value: JSValue,

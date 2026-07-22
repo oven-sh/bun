@@ -7297,8 +7297,10 @@ pub enum ExistsAtType {
 fn nt_query_basic_attrs_at(
     dir: Fd,
     mut path: &[u16],
-) -> core::result::Result<bun_windows_sys::externs::FILE_BASIC_INFORMATION, bun_windows_sys::externs::NTSTATUS>
-{
+) -> core::result::Result<
+    bun_windows_sys::externs::FILE_BASIC_INFORMATION,
+    bun_windows_sys::externs::NTSTATUS,
+> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.

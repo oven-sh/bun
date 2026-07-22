@@ -410,6 +410,9 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     }
 
     for (let [filter, callback] of results) {
+      // A /g or /y filter advances lastIndex on a match; without resetting it,
+      // the next path is tested from that offset and alternates match/miss.
+      filter.lastIndex = 0;
       if (filter.test(inputPath)) {
         var result = callback({
           path: inputPath,
@@ -517,6 +520,7 @@ export function runOnLoadPlugins(
     }
 
     for (let [filter, callback] of results) {
+      filter.lastIndex = 0;
       if (filter.test(path)) {
         var result = callback({
           path,

@@ -4,9 +4,10 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/RegularExpression.h>
+#include <JavaScriptCore/YarrInterpreter.h>
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
+#include <wtf/BumpPointerAllocator.h>
 #include "WriteBarrierList.h"
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -22,23 +23,49 @@ class BundlerPlugin final {
 public:
     /// In native plugins, the regular expression could be called concurrently on multiple threads.
     /// Therefore, we need a mutex to synchronize access.
+    ///
+    /// This compiles Yarr bytecode directly instead of going through
+    /// Yarr::RegularExpression because that wrapper's debug ASSERT rejects every
+    /// flag other than i/m/v, while plugin filters are user-supplied RegExps that
+    /// commonly carry /u or /s. YarrPattern itself handles all semantic flags.
     class FilterRegExp {
     public:
         String m_pattern;
-        Yarr::RegularExpression regex;
+        // BytecodePattern stores a raw pointer into its allocator, so the
+        // allocator must not move when this struct is relocated by Vector growth.
+        std::unique_ptr<WTF::BumpPointerAllocator> m_allocator;
+        std::unique_ptr<Yarr::BytecodePattern> m_bytecode;
         WTF::Lock lock {};
+
+        WTF_MAKE_NONCOPYABLE(FilterRegExp);
 
         FilterRegExp(FilterRegExp&& other)
             : m_pattern(WTF::move(other.m_pattern))
-            , regex(WTF::move(other.regex))
+            , m_allocator(WTF::move(other.m_allocator))
+            , m_bytecode(WTF::move(other.m_bytecode))
         {
         }
 
         FilterRegExp(const String& pattern, OptionSet<Yarr::Flags> flags)
             // Ensure it's safe for cross-thread usage.
             : m_pattern(pattern.isolatedCopy())
-            , regex(m_pattern, flags)
+            , m_allocator(WTF::makeUnique<WTF::BumpPointerAllocator>())
         {
+            // Global/Sticky/HasIndices control JS iteration state and result
+            // shape, not whether a path matches; drop them so the compiled
+            // pattern only carries flags that affect matching.
+            constexpr auto semanticFlags = OptionSet<Yarr::Flags> {
+                Yarr::Flags::IgnoreCase,
+                Yarr::Flags::Multiline,
+                Yarr::Flags::DotAll,
+                Yarr::Flags::Unicode,
+                Yarr::Flags::UnicodeSets,
+            };
+            Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
+            Yarr::YarrPattern yarrPattern(m_pattern, flags & semanticFlags, errorCode);
+            if (Yarr::hasError(errorCode))
+                return;
+            m_bytecode = Yarr::byteCompile(yarrPattern, m_allocator.get(), errorCode);
         }
 
         bool match(JSC::VM& vm, const String& path);

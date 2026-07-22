@@ -43,6 +43,38 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     }
   });
 
+  test("0A000 from a source other than RevalidateCachedQuery does not evict", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    const fn = `fn_0a000_${randomUUIDv7("hex").slice(-12)}`;
+    // This 0A000 comes from PL/pgSQL (routine exec_stmt_raise, not
+    // RevalidateCachedQuery); the prepared plan is fine and must stay cached.
+    await sql.unsafe(
+      `CREATE FUNCTION ${fn}(int) RETURNS int AS $$ BEGIN RAISE feature_not_supported; END $$ LANGUAGE plpgsql`,
+    );
+    try {
+      // First call prepares and caches.
+      const first = await sql.unsafe(`SELECT ${fn}($1)`, [0]).catch((e: any) => e);
+      expect((first as any).errno).toBe("0A000");
+      expect((first as any).routine).not.toBe("RevalidateCachedQuery");
+
+      // pg_prepared_statements must hold exactly one entry for this query,
+      // and it must stay the same one across repeated executions.
+      const sel = `SELECT name FROM pg_prepared_statements WHERE statement LIKE 'SELECT ${fn}%'`;
+      const before = await sql.unsafe(sel);
+      expect(before.length).toBe(1);
+      for (let i = 0; i < 3; i++) {
+        const e = await sql.unsafe(`SELECT ${fn}($1)`, [0]).catch((e: any) => e);
+        expect((e as any).errno).toBe("0A000");
+      }
+      const after = await sql.unsafe(sel);
+      expect(after).toEqual(before);
+    } finally {
+      await sql.unsafe(`DROP FUNCTION IF EXISTS ${fn}(int)`);
+    }
+  });
+
   test("26000 (invalid_sql_statement_name) after DISCARD ALL evicts the prepared statement", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1 });

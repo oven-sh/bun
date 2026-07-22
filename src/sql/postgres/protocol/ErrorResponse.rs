@@ -26,15 +26,31 @@ impl ErrorResponse {
     ///
     /// - 26000 invalid_sql_statement_name: statement was deallocated
     ///   (DEALLOCATE / DISCARD ALL, or a pooler recycled the backend).
-    /// - 0A000 feature_not_supported: "cached plan must not change result
-    ///   type" after DDL altered a referenced table.
+    /// - 0A000 feature_not_supported with routine RevalidateCachedQuery:
+    ///   "cached plan must not change result type" after DDL altered a
+    ///   referenced table. 0A000 alone is the generic feature_not_supported
+    ///   class and does not mean the plan is invalid; the routine check is
+    ///   what pgjdbc uses (`willHealViaReparse`).
     pub fn is_prepared_statement_invalid(&self) -> bool {
+        let mut is_26000 = false;
+        let mut is_0a000 = false;
+        let mut is_revalidate_cached_query = false;
         for msg in &self.messages {
-            if let FieldMessage::Code(code) = msg {
-                return code.eql_comptime(b"26000") || code.eql_comptime(b"0A000");
+            match msg {
+                FieldMessage::Code(code) => {
+                    is_26000 = code.eql_comptime(b"26000");
+                    is_0a000 = code.eql_comptime(b"0A000");
+                    if !is_26000 && !is_0a000 {
+                        return false;
+                    }
+                }
+                FieldMessage::Routine(r) => {
+                    is_revalidate_cached_query = r.eql_comptime(b"RevalidateCachedQuery");
+                }
+                _ => {}
             }
         }
-        false
+        is_26000 || (is_0a000 && is_revalidate_cached_query)
     }
 
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(

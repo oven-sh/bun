@@ -760,12 +760,14 @@ pub(crate) fn execute_simple_s3_request(
     ));
     // Terminate/exit can abort this transfer while the VM is alive: wake
     // the HTTP side so the final callback fires and the producer pin drops.
-    vm.terminate_abort_registry.borrow_mut().register(task_ptr, move || {
-        // SAFETY: the entry is unregistered at the top of `on_response`,
-        // before any path frees the task, and `http` was initialised above.
-        let id = unsafe { (*task_ptr).http.assume_init_ref().async_http_id };
-        bun_http::http_thread().schedule_shutdown_by_id(id);
-    });
+    vm.terminate_abort_registry
+        .borrow_mut()
+        .register(task_ptr, move || {
+            // SAFETY: the entry is unregistered at the top of `on_response`,
+            // before any path frees the task, and `http` was initialised above.
+            let id = unsafe { (*task_ptr).http.assume_init_ref().async_http_id };
+            bun_http::http_thread().schedule_shutdown_by_id(id);
+        });
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();

@@ -1255,7 +1255,6 @@ pub fn readable_stream(
             let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
             let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
         }
-
     }
 
     impl Drop for S3DownloadStreamWrapper {

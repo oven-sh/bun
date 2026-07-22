@@ -990,12 +990,9 @@ impl VirtualMachine {
     /// teardown. Call on the JS thread when scheduling async work; drop on
     /// the completing thread right after the completion enqueue.
     pub fn pin(&self) -> bun_threading::GateGuest {
-        bun_threading::GateGuest::enter(
-            self.shutdown_gate.as_ref().expect("pin() after destroy()"),
-        )
-        .expect("pin() on a closed gate: producers are created on the live JS thread")
+        bun_threading::GateGuest::enter(self.shutdown_gate.as_ref().expect("pin() after destroy()"))
+            .expect("pin() on a closed gate: producers are created on the live JS thread")
     }
-
 
     pub fn has_run_cleanup_hooks(&self) -> bool {
         self.has_run_cleanup_hooks

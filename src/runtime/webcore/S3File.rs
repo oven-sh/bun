@@ -581,7 +581,6 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-
     pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),

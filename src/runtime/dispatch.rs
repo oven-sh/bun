@@ -1245,7 +1245,9 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                 // mutex-guarded buffer append.
                 (*s3).mutex.lock();
                 (*s3).mutex.unlock();
-                (*s3).callback_context_release.run((*s3).callback_context.as_ptr().cast());
+                (*s3)
+                    .callback_context_release
+                    .run((*s3).callback_context.as_ptr().cast());
                 drop(bun_core::heap::take(s3));
             }
             true

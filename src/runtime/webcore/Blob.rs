@@ -596,7 +596,6 @@ impl BlobExt for Blob {
                     }
                     Ok(())
                 }
-
             }
             let mut t = Box::new(Task::<H> {
                 ctx,
@@ -4635,7 +4634,6 @@ fn write_file_with_empty_source_to_destination(
                     }
                     Ok(())
                 }
-
             }
 
             let promise = jsc::JSPromiseStrong::init(ctx);
@@ -4919,7 +4917,6 @@ pub fn write_file_with_source_destination(
                             }
                             Ok(())
                         }
-
                     }
                     let promise = jsc::JSPromiseStrong::init(ctx);
                     let promise_value = promise.value();
@@ -5842,7 +5839,6 @@ impl S3BlobDownloadTask {
         }
         Ok(())
     }
-
 
     pub fn init(
         global_this: &JSGlobalObject,

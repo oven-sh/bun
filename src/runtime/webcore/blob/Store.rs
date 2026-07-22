@@ -324,7 +324,6 @@ impl S3Ext for S3 {
                 }
                 Ok(())
             }
-
         }
 
         // Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
@@ -421,7 +420,6 @@ impl S3Ext for S3 {
                 }
                 Ok(())
             }
-
         }
 
         // Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,

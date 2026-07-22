@@ -752,14 +752,23 @@ private:
             /* CONNECT/Upgrade tunnels allow half-open: the peer finishing its
              * writable side ends the JS socket's readable side ('end' event) but
              * the server can keep writing until it ends the socket itself, like
-             * Node's http server (allowHalfOpen: true). This includes an accepted
-             * Upgrade whose body never completed (HTTP_NODE_TUNNEL_AFTER_BODY): the
-             * EOF ends the upgrade socket, exactly like Node's UpgradeStream. */
-            if (httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+             * Node's http server (allowHalfOpen: true). */
+            if (httpResponseData->isConnectRequest) {
                 if (httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
                 return s;
+            }
+            /* An accepted Upgrade whose body never completed is not a tunnel yet:
+             * Node's UpgradeStream wraps a socket that still has socketOnEnd
+             * attached, so a mid-body FIN ends the raw socket and the
+             * UpgradeStream destroys with it. Staying half-open here stranded
+             * the response's body-read ref and the server's pending-request
+             * count. onClose() runs the tunnel-after-body cleanup (socketData
+             * last=true + inStream last=true). */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) {
+                asyncSocket->uncorkWithoutSending();
+                return asyncSocket->close();
             }
 
             if (httpContextData->onClientError && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)

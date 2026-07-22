@@ -9,8 +9,8 @@
 // `cargo check --tests` type-checks only and will not catch this; it has to
 // be `cargo test --no-run` so rustc actually drives the linker. The crate has
 // zero dependencies, so linking completes in well under a second on a warm tree.
-import { expect, test } from "bun:test";
 import { which } from "bun";
+import { expect, test } from "bun:test";
 import { isWindows } from "harness";
 import { join } from "node:path";
 

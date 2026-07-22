@@ -355,6 +355,64 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
+  itBundled("compile/ChildProcessForkEmbedded", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { fork } from "child_process";
+        import { rmSync } from "fs";
+        if (process.env.__FORK_DEPTH) {
+          console.log("MAIN-REENTERED argv=" + JSON.stringify(process.argv.slice(2)));
+          process.exit(7);
+        }
+        rmSync("./job.mjs", { force: true });
+        const child = fork("./job.mjs", ["hello"], {
+          silent: true,
+          env: { ...process.env, __FORK_DEPTH: "1" },
+        });
+        let out = "";
+        child.stdout.on("data", d => (out += d));
+        child.on("message", m => console.log("ipc=" + m));
+        child.on("exit", code => {
+          console.log(out.trim());
+          process.exit(code ?? 1);
+        });
+      `,
+      "/job.mjs": /* js */ `
+        process.send("pong");
+        console.log("forked " + process.argv[2] + " leaked=" + ("BUN_INTERNAL_FORK_ENTRY" in process.env));
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./job.mjs"],
+    outfile: "dist/out",
+    run: { stdout: "ipc=pong\nforked hello leaked=false", file: "dist/out", setCwd: true },
+  });
+  itBundled("compile/ClusterFork", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import cluster from "cluster";
+        if (cluster.isPrimary) {
+          if (process.env.__FORK_DEPTH) {
+            console.log("MAIN-REENTERED-AS-PRIMARY");
+            process.exit(7);
+          }
+          const worker = cluster.fork({ __FORK_DEPTH: "1" });
+          worker.on("message", m => {
+            console.log("primary got " + m);
+            worker.kill();
+          });
+          worker.on("exit", () => process.exit(0));
+        } else {
+          process.send("worker argv=" + JSON.stringify(process.argv.slice(2)));
+        }
+      `,
+    },
+    outfile: "dist/out",
+    run: { stdout: 'primary got worker argv=[]', file: "dist/out", setCwd: true },
+  });
   itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
     backend: "cli",
     compile: true,

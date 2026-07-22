@@ -770,7 +770,8 @@ function fork(modulePath, args = [], options) {
     validateObject(options, "options");
   }
   options = { __proto__: null, ...options, shell: false };
-  options.execPath = options.execPath || process.execPath;
+  const userExecPath = options.execPath;
+  options.execPath = userExecPath || process.execPath;
   validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
@@ -785,6 +786,17 @@ function fork(modulePath, args = [], options) {
       execArgv = ArrayPrototypeSlice.$call(execArgv);
       ArrayPrototypeSplice.$call(execArgv, index - 1, 2);
     }
+  }
+
+  // Inside a compiled executable, process.execPath is this binary and it
+  // always boots its embedded main entry. Tell the child which embedded
+  // module to run instead so fork()/cluster.fork() don't re-execute main.
+  if (Bun.isStandaloneExecutable && (!userExecPath || userExecPath === process.execPath)) {
+    const modulePathStr = typeof modulePath === "string" ? modulePath : Buffer.from(modulePath).toString("utf8");
+    options.env = {
+      ...(options.env || process.env),
+      BUN_INTERNAL_FORK_ENTRY: modulePathStr,
+    };
   }
 
   args = [...execArgv, modulePath, ...args];

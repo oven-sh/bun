@@ -1400,15 +1400,65 @@ pub mod command {
             ctx.debug.global_cache = GlobalCache::disable;
         }
 
+        let (entry_name, passthrough_start) = match resolve_standalone_fork_entry(graph) {
+            Some((entry, module_argv_idx)) => (entry, module_argv_idx + 1),
+            None => (
+                graph.entry_point().name.to_vec().into_boxed_slice(),
+                offset_for_passthrough,
+            ),
+        };
+
         ctx.passthrough = bun::argv()
             .iter()
-            .skip(offset_for_passthrough)
+            .skip(passthrough_start)
             .map(|a| a.to_vec().into_boxed_slice())
             .collect();
 
-        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
         super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
         Ok(())
+    }
+
+    /// `child_process.fork()` inside a compiled executable spawns this same
+    /// binary with `BUN_INTERNAL_FORK_ENTRY` naming the module to run in place
+    /// of the baked entry point. Returns the resolved entry path and the argv
+    /// index of the module-path argument so everything after it becomes
+    /// `process.argv[2..]`.
+    #[cold]
+    fn resolve_standalone_fork_entry(
+        graph: &mut bun_standalone_graph::Graph,
+    ) -> Option<(Box<[u8]>, usize)> {
+        let raw = bun_core::env_var::BUN_INTERNAL_FORK_ENTRY::get()?;
+        if raw.is_empty() {
+            return None;
+        }
+        let module_path = raw.to_vec();
+        // SAFETY: single-threaded startup, before `bun_jsc::initialize`.
+        unsafe { std::env::remove_var("BUN_INTERNAL_FORK_ENTRY") };
+
+        let argv = bun::argv();
+        let idx = argv
+            .iter()
+            .skip(1)
+            .position(|a| a == module_path.as_slice())
+            .map(|i| i + 1)
+            .unwrap_or(argv.len());
+
+        let entry = graph.resolve_fork_entry(&module_path).unwrap_or_else(|| {
+            let mut cwd_buf = bun_paths::PathBuffer::uninit();
+            let cwd = bun_core::getcwd(&mut cwd_buf)
+                .map(|z| z.as_bytes())
+                .unwrap_or(b".");
+            let mut out = bun_paths::path_buffer_pool::get();
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                cwd,
+                &mut out[..],
+                &[&module_path],
+            )
+            .to_vec()
+            .into_boxed_slice()
+        });
+
+        Some((entry, idx))
     }
 
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag

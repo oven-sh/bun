@@ -141,6 +141,10 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+// Set by child_process.fork() when the parent is a compiled executable so the
+// spawned copy of the binary runs the requested module instead of the baked
+// entry point. Consumed and unset in `boot_standalone`.
+new!(pub BUN_INTERNAL_FORK_ENTRY: string, "BUN_INTERNAL_FORK_ENTRY", {});
 // A string, not a boolean: node suppresses warnings only when the value is
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});

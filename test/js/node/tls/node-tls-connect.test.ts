@@ -141,6 +141,134 @@ it("should have checkServerIdentity", async () => {
   expect(tls.checkServerIdentity).toBeFunction();
 });
 
+// Node rejects invalid ALPNProtocols / session / servername types synchronously
+// from inside tls.connect() / the TLSSocket constructor. A value that is
+// silently dropped (instead of throwing) means the application believes it
+// enabled ALPN or session resumption and got neither.
+describe("tls.connect() option type validation", () => {
+  const base = { host: "127.0.0.1", port: 0 };
+
+  describe.each([
+    ["string", "h2"],
+    ["wire-format string", "\x02h2\x08http/1.1"],
+    ["number", 42],
+    ["object", { foo: 1 }],
+    ["true", true],
+  ])("ALPNProtocols: %s", (_, value) => {
+    it("throws synchronously from tls.connect()", () => {
+      expect(() => tlsConnect({ ...base, ALPNProtocols: value as never })).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Must give a Buffer as first argument" }),
+      );
+    });
+    it("throws synchronously from new TLSSocket()", () => {
+      expect(() => new TLSSocket(undefined, { ALPNProtocols: value as never })).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Must give a Buffer as first argument" }),
+      );
+    });
+  });
+
+  it.each([
+    ["array", ["h2", "http/1.1"], Buffer.from("\x02h2\x08http/1.1")],
+    ["Buffer", Buffer.from("\x02h2"), Buffer.from("\x02h2")],
+    ["Uint8Array", new Uint8Array([2, 0x68, 0x32]), Buffer.from("\x02h2")],
+    ["DataView", new DataView(new Uint8Array([2, 0x68, 0x32]).buffer), Buffer.from("\x02h2")],
+  ])("ALPNProtocols: %s is accepted", (_, value, expected) => {
+    const sock = new TLSSocket(undefined, { ALPNProtocols: value as never });
+    try {
+      // convertALPNProtocols normalized the input into the wire-format Buffer.
+      const got = (sock as unknown as { ALPNProtocols: Buffer }).ALPNProtocols;
+      expect(Buffer.isBuffer(got)).toBe(true);
+      expect(got.equals(expected)).toBe(true);
+    } finally {
+      sock.destroy();
+    }
+  });
+
+  describe.each([
+    ["string", "this is not a tls session"],
+    ["number", 42],
+    ["object", {}],
+  ])("session: %s", (_, value) => {
+    const expected = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "Session must be a buffer",
+    });
+    it("throws synchronously from tls.connect()", () => {
+      expect(() => tlsConnect({ ...base, session: value as never })).toThrow(expected);
+    });
+    it("throws synchronously from new TLSSocket()", () => {
+      expect(() => new TLSSocket(undefined, { session: value as never })).toThrow(expected);
+    });
+  });
+
+  it.each([
+    ["Buffer", Buffer.from([1, 2, 3, 4])],
+    ["Uint8Array", new Uint8Array([1, 2, 3, 4])],
+    ["DataView", new DataView(new ArrayBuffer(4))],
+  ])("session: %s is accepted", (_, value) => {
+    expect(() => new TLSSocket(undefined, { session: value as never }).destroy()).not.toThrow();
+  });
+
+  it("session is not validated for a server-side TLSSocket", () => {
+    // Node's ssl.setSession is only called from the client _init path.
+    expect(() => new TLSSocket(undefined, { isServer: true, session: "ignored" as never }).destroy()).not.toThrow();
+  });
+
+  it.each([
+    ["servername", 123],
+    ["secureOptions", "nope"],
+  ])("%s: wrong type throws ERR_INVALID_ARG_TYPE synchronously", (key, value) => {
+    const expected = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => tlsConnect({ ...base, [key]: value } as never)).toThrow(expected);
+    expect(() => new TLSSocket(undefined, { [key]: value } as never)).toThrow(expected);
+  });
+
+  it("invalid ALPNProtocols / session never reach the socket 'error' event", async () => {
+    // An argument-type error must be catchable by try/catch around the call,
+    // not delivered asynchronously on the socket. A real server proves no
+    // handshake is ever started for the rejected options.
+    await using server = tls.createServer({ ...COMMON_CERT_, ALPNProtocols: ["h2", "http/1.1"] }, c => {
+      c.end(JSON.stringify({ alpn: c.alpnProtocol || null }));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const ok = { host: "127.0.0.1", port, ca: COMMON_CERT_.cert, servername: "localhost" };
+
+    for (const bad of [{ ALPNProtocols: "h2" }, { session: 42 }, { session: "nope" }]) {
+      let asyncError: unknown;
+      let thrown: unknown;
+      try {
+        const s = tlsConnect({ ...ok, ...bad } as never);
+        s.on("error", e => (asyncError = e));
+        await once(s, "close");
+      } catch (e) {
+        thrown = e;
+      }
+      expect({ bad, thrown: thrown && (thrown as Error).name, asyncError }).toEqual({
+        bad,
+        thrown: "TypeError",
+        asyncError: undefined,
+      });
+    }
+
+    // Control: a valid ALPN array is offered on the wire and negotiated.
+    const client = tlsConnect({ ...ok, ALPNProtocols: ["h2"] });
+    try {
+      let body = "";
+      client.on("data", d => (body += d));
+      await once(client, "secureConnect");
+      await once(client, "end");
+      expect({ clientAlpn: client.alpnProtocol, serverSaw: JSON.parse(body) }).toEqual({
+        clientAlpn: "h2",
+        serverSaw: { alpn: "h2" },
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+});
+
 it("should thow ECONNRESET if FIN is received before handshake", async () => {
   await using server = net.createServer(c => {
     c.end();

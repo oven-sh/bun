@@ -677,10 +677,11 @@ var InternalSecureContext = class SecureContext {
       if (key) throwOnInvalidTLSArray("options.key", key);
       const ca = options.ca;
       if (ca) throwOnInvalidTLSArray("options.ca", ca);
-      if (options.servername != null && typeof options.servername !== "string")
-        throw new TypeError("servername argument must be an string");
-      if (options.secureOptions != null && typeof options.secureOptions !== "number")
-        throw new TypeError("secureOptions argument must be an number");
+      const { servername, secureOptions } = options;
+      if (servername != null && typeof servername !== "string")
+        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
+      if (secureOptions != null && typeof secureOptions !== "number")
+        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
       const privateKeyIdentifier = options.privateKeyIdentifier;
       if (!$isUndefinedOrNull(privateKeyIdentifier)) {
         const privateKeyEngine = options.privateKeyEngine;
@@ -808,6 +809,13 @@ function TLSSocket(socket?, options?) {
     const { ALPNProtocols } = options;
     if (ALPNProtocols) {
       convertALPNProtocols(ALPNProtocols, this);
+      // Node's native ssl.setALPNProtocols rejects anything that
+      // convertALPNProtocols did not turn into a Buffer; a string or other
+      // truthy non-Array/non-ArrayBufferView value must throw synchronously
+      // rather than silently dropping the ALPN extension.
+      if (this.ALPNProtocols === undefined) {
+        throw new TypeError("Must give a Buffer as first argument");
+      }
     }
 
     if (isNetSocketOrDuplex && !this.isServer) {
@@ -831,7 +839,17 @@ function TLSSocket(socket?, options?) {
     validateFunction(checkServerIdentityOption, "options.checkServerIdentity");
   }
   this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
-  this[ksession] = options.session || null;
+  // Node's native ssl.setSession (called from the client _init path) rejects a
+  // non-ArrayBufferView session with ERR_INVALID_ARG_TYPE before the handshake
+  // starts; without this check a bad value would surface asynchronously on the
+  // socket (or be ignored entirely), escaping a try/catch around tls.connect().
+  const session = options.session;
+  if (session && !isServer && !isArrayBufferView(session)) {
+    const error = new TypeError("Session must be a buffer");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  this[ksession] = session || null;
 
   // `new tls.TLSSocket(socket, { isServer: true })`: drive the server-side TLS
   // handshake over the provided socket via net.ts's native upgrade path (reaches

@@ -58,7 +58,9 @@ impl<Context: ConcurrentPromiseTaskContext> Taskable for ConcurrentPromiseTask<'
 
 impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Context> {
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
-        let event_loop = VirtualMachine::get().event_loop_shared().concurrent_handle();
+        let event_loop = VirtualMachine::get()
+            .event_loop_shared()
+            .concurrent_handle();
         let mut this = Box::new(Self {
             event_loop,
             ctx: value,

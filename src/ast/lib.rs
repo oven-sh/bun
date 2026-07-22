@@ -131,9 +131,6 @@ impl ImportKind {
             || self == Self::Url
             || self == Self::Composes
     }
-
-    // `to_api()` lives in `bun_ast::ImportKindExt` — depends on
-    // `schema::api::ImportKind` which sits in a higher-tier crate.
 }
 
 // ───────────────────────────────────────────────────────────────────────────

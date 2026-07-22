@@ -1,9 +1,9 @@
 //! `Loader` + `SideEffects`.
 //!
-//! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES` /
-//! `LoaderOptional::from_api` live in `bun_options_types::LoaderExt` (would
-//! back-edge into the schema crate). `to_mime_type` / `from_mime_type` live in
-//! `bun_http_types` (would back-edge into `bun_http::MimeType`).
+//! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES`
+//! live in `bun_options_types::LoaderExt` (would back-edge into the schema
+//! crate). `to_mime_type` / `from_mime_type` live in `bun_http_types` (would
+//! back-edge into `bun_http::MimeType`).
 
 use enum_map::Enum;
 

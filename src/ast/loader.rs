@@ -64,20 +64,6 @@ bun_core::assert_ffi_discr!(
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
 );
 
-/// `Loader.Optional` — `enum(u8) { none = 254, _ }` niche-packed optional.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct LoaderOptional(pub(crate) u8);
-
-impl LoaderOptional {
-    pub const NONE: LoaderOptional = LoaderOptional(254);
-
-    #[inline]
-    pub const fn from_loader(l: Loader) -> LoaderOptional {
-        LoaderOptional(l as u8)
-    }
-}
-
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
 pub type LoaderHashTable = bun_collections::StringArrayHashMap<Loader>;
 

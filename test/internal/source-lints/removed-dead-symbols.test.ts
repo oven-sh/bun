@@ -54,6 +54,11 @@ const removed: { file: string; pattern: RegExp; name: string }[] = [
     pattern: /\bpub fn contains\(&self, other: &Optional\)/,
     name: "Method::Optional::contains",
   },
+  {
+    file: "src/ast/loader.rs",
+    pattern: /\bpub struct LoaderOptional\b/,
+    name: "bun_ast::LoaderOptional",
+  },
 ];
 
 for (const { file: rel, pattern, name } of removed) {

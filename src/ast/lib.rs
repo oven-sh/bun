@@ -2984,7 +2984,7 @@ pub use ast_result::{
     TopLevelSymbolToParts, TsEnumsMap,
 };
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
-pub use loader::{Loader, LoaderHashTable, LoaderOptional, SideEffects};
+pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
 pub mod transpiler_cache;
 // Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that

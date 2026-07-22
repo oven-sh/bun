@@ -523,6 +523,9 @@ bool CallCtx::PreFault() {
         // call. For a genuine partial send, halve the first WSABUF.len: the
         // kernel then really accepts fewer payload bytes.
         ULONG code = (ULONG)args_[xi];
+        // NB: for ANY ioctl the info-struct length is never shrunk (a
+        // malformed call the OS never makes) - only the AFD_SEND payload
+        // is followed. Non-AFD ioctls therefore never get a Short mangle.
         if (code == 0x1201F /* AFD_SEND */ && kHooks[sys_].bufIndex >= 0) {
           __try {
             auto* info = (ULONG_PTR*)args_[kHooks[sys_].bufIndex]; // AFD_SEND_INFO
@@ -535,7 +538,9 @@ bool CallCtx::PreFault() {
             }
           } __except (EXCEPTION_EXECUTE_HANDLER) {}
         }
-      } else if (li >= 0 && li < argc_ && args_[li] > 1) {
+      } else if (sys_ != SYS_NtDeviceIoControlFile && sys_ != SYS_NtFsControlFile &&
+                 li >= 0 && li < argc_ && args_[li] > 1) {
+        // Plain read/query calls: Length IS the caller's output buffer.
         args_[li] = args_[li] / 2;
         shrunk_ = true;
       }

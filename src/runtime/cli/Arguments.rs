@@ -261,6 +261,8 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     // Node-compat; empty help text hides these from `--help`.
     parse_param!("--trace-deprecation"),
     parse_param!("--pending-deprecation"),
+    parse_param!("--no-warnings"),
+    parse_param!("--trace-warnings"),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
@@ -740,22 +742,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     }
 
     match cmd {
-        CommandTag::BuildCommand | CommandTag::TestCommand => {
+        CommandTag::BuildCommand => {
             if diag.reject_unknown(table.converted) {
-                let name = if cmd == CommandTag::BuildCommand {
-                    "build"
-                } else {
-                    "test"
-                };
-                bun_core::pretty_errorln!("\nFor a list of options, run <b>bun {} --help<r>", name);
+                bun_core::pretty_errorln!("\nFor a list of options, run <b>bun build --help<r>");
                 Output::flush();
                 Global::exit(1);
             }
         }
-        // run / auto: warn but keep going. Unknown Node/V8 flags are common
-        // here and hard-failing would be a regression; the warning surfaces
-        // typo'd real flags (`--silnt`, `--watc`, …) without breaking scripts.
-        CommandTag::RunCommand | CommandTag::AutoCommand => {
+        // run / auto / test: warn but keep going. Unknown Node/V8 flags are
+        // common here (the upstream Node test suite re-spawns itself under
+        // `bun test` with Node-only flags) and hard-failing would be a
+        // regression; the warning surfaces typo'd real flags (`--silnt`,
+        // `--watc`, `--coverag`, …) without breaking scripts.
+        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::TestCommand => {
             diag.warn_unknown(table.converted);
         }
         // The `node` shim deliberately accepts every Node/V8 flag Bun has not

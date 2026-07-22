@@ -93,7 +93,7 @@ describe("unknown CLI flags", () => {
     });
   });
 
-  describe("build / test: reject", () => {
+  describe("build: reject", () => {
     test.concurrent("build --minif suggests --minify and exits 1", async () => {
       using dir = tempDir("unknown-flag-build", {
         "in.ts": "export const x = 1;\n",
@@ -102,17 +102,6 @@ describe("unknown CLI flags", () => {
       expect(combined).toContain("unknown option '--minif'");
       expect(combined).toContain("Did you mean '--minify'");
       expect(combined).toContain("bun build --help");
-      expect(exitCode).toBe(1);
-    });
-
-    test.concurrent("test --coverag suggests --coverage and exits 1", async () => {
-      using dir = tempDir("unknown-flag-test", {
-        "a.test.ts": "import {test,expect} from 'bun:test'; test('x',()=>expect(1).toBe(1));\n",
-      });
-      const { combined, exitCode } = await run(["test", "--coverag", "a.test.ts"], String(dir));
-      expect(combined).toContain("unknown option '--coverag'");
-      expect(combined).toContain("Did you mean '--coverage'");
-      expect(combined).toContain("bun test --help");
       expect(exitCode).toBe(1);
     });
 
@@ -155,7 +144,7 @@ describe("unknown CLI flags", () => {
     });
   });
 
-  describe("run / auto: warn but proceed", () => {
+  describe("run / auto / test: warn but proceed", () => {
     test.concurrent("bun --totally-fake-flag <file> warns and still runs", async () => {
       using dir = tempDir("unknown-flag-auto", {
         "script.js": "console.log('RAN')\n",
@@ -163,6 +152,17 @@ describe("unknown CLI flags", () => {
       const { stdout, stderr, exitCode } = await run(["--totally-fake-flag", "script.js"], String(dir));
       expect(stderr).toContain("unknown option '--totally-fake-flag'");
       expect(stdout).toContain("RAN");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("test --coverag warns with suggestion and still runs", async () => {
+      using dir = tempDir("unknown-flag-test", {
+        "a.test.ts": "import {test,expect} from 'bun:test'; test('x',()=>expect(1).toBe(1));\n",
+      });
+      const { combined, exitCode } = await run(["test", "--coverag", "a.test.ts"], String(dir));
+      expect(combined).toContain("unknown option '--coverag'");
+      expect(combined).toContain("Did you mean '--coverage'");
+      expect(combined).toContain("1 pass");
       expect(exitCode).toBe(0);
     });
 

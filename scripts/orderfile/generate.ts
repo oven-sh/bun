@@ -134,8 +134,10 @@ export interface GenerateOptions {
  * stripping — lld and ld take exactly what nm gave.
  */
 function readSymbolTable(bunProfile: string): Map<number, string[]> {
-  const nm = process.env.NM || (existsSync("/usr/bin/llvm-nm") ? "llvm-nm" : "nm");
-  const r = runCommand([nm, "--defined-only", "--numeric-sort", bunProfile]);
+  // Bare `nm` with no GNU-only long options: the regex below is the
+  // defined-text-symbol filter, and nothing here depends on output order.
+  const nm = process.env.NM || "nm";
+  const r = runCommand([nm, bunProfile]);
   if (r.status !== 0) throw new Error(`${nm} failed on ${bunProfile}\n${r.stderr}`);
 
   const symbols = new Map<number, string[]>();

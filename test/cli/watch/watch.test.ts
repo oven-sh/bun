@@ -52,10 +52,8 @@ afterEach(() => {
 // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
 // immediately before start()) and fails the very next pthread_create.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-it.skipIf(!isLinux || !cc)(
-  "propagates FileWatcher thread spawn failure instead of panicking in start()",
-  async () => {
-    const SHIM_C = /* c */ `
+it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
+  const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
@@ -80,37 +78,36 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   return real_pthread_create(t, a, f, arg);
 }
 `;
-    using dir = tempDir("watch-spawn-fail", {
-      "shim.c": SHIM_C,
-      "watchee.js": "console.log('unreachable');\n",
-    });
-    const shimPath = join(String(dir), "shim.so");
-    await using ccProc = Bun.spawn({
-      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  using dir = tempDir("watch-spawn-fail", {
+    "shim.c": SHIM_C,
+    "watchee.js": "console.log('unreachable');\n",
+  });
+  const shimPath = join(String(dir), "shim.so");
+  await using ccProc = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
 
-    const existing = bunEnv.LD_PRELOAD;
-    await using proc = Bun.spawn({
-      // --debug-crash-handler-use-trace-string skips the debug build's slow
-      // backtrace symbolication so the child exits promptly.
-      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    // --debug-crash-handler-use-trace-string skips the debug build's slow
+    // backtrace symbolication so the child exits promptly.
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The .expect("spawn FileWatcher thread") panic inside start() must be gone;
-    // the error now reaches the caller, which reports it by name.
-    expect(stderr).not.toContain("spawn FileWatcher thread");
-    expect(stderr).toContain("Failed to start File Watcher");
-    expect(stdout).not.toContain("unreachable");
-    expect(exitCode).not.toBe(0);
-  },
-);
+  // The .expect("spawn FileWatcher thread") panic inside start() must be gone;
+  // the error now reaches the caller, which reports it by name.
+  expect(stderr).not.toContain("spawn FileWatcher thread");
+  expect(stderr).toContain("Failed to start File Watcher");
+  expect(stdout).not.toContain("unreachable");
+  expect(exitCode).not.toBe(0);
+});

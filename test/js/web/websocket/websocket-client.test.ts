@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import * as path from "node:path";
-import { WebSocket as NodeWS } from "ws";
+import { WebSocket as NodeWS, WebSocketServer } from "ws";
 function test(
   label: string,
   fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
@@ -491,6 +491,54 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
       expect(srv.frames).toEqual([{ opcode: 0x9, payloadLen: 125, extendedLen: false }]);
       // the shim must not have routed the RangeError to an 'error' event
       expect(errorEvents).toEqual([]);
+    } finally {
+      ws.terminate();
+      await srv.close();
+    }
+  });
+
+  it("require('ws') ping()/pong() after close delivers a 'not open' error to the callback", async () => {
+    // Server side (BunWebSocketMocked): #close() nulls #ws, so this would be a
+    // TypeError without the not-OPEN guard.
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const { promise: closedCbErr, resolve: onCbErr, reject } = Promise.withResolvers<unknown>();
+      closedCbErr.catch(() => {});
+      wss.on("connection", serverWs => {
+        serverWs.on("close", () => {
+          try {
+            serverWs.ping();
+            serverWs.pong();
+            serverWs.ping("data", true, onCbErr);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+      const port = (wss.address() as import("node:net").AddressInfo).port;
+      const client = new NodeWS(`ws://127.0.0.1:${port}/`);
+      await once(client, "open");
+      client.close();
+      const err = await closedCbErr;
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(TypeError);
+      expect((err as Error).message).toContain("WebSocket is not open: readyState 3 (CLOSED)");
+    } finally {
+      wss.close();
+    }
+
+    // Client side (BunWebSocket): native WebSocket no-ops on CLOSING/CLOSED, but
+    // npm ws still delivers the error to cb.
+    const srv = await rawHandshakeServer();
+    const ws = new NodeWS(`ws://127.0.0.1:${srv.port}/`);
+    try {
+      await once(ws, "open");
+      ws.close();
+      const { promise: cbErr, resolve: onCb } = Promise.withResolvers<unknown>();
+      ws.ping("data", true, onCb);
+      const err = await cbErr;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/WebSocket is not open: readyState [23] \((CLOSING|CLOSED)\)/);
     } finally {
       ws.terminate();
       await srv.close();

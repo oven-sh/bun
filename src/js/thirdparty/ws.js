@@ -16,6 +16,15 @@ const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
 
+// npm ws's sendAfterClose: a ping/pong/send on a CLOSING/CLOSED socket delivers
+// a "not open" Error to the callback on the next tick and never throws.
+function sendAfterClose(state, cb) {
+  if (typeof cb === "function") {
+    const err = new Error(`WebSocket is not open: readyState ${state} (${readyStates[state]})`);
+    process.nextTick(cb, err);
+  }
+}
+
 /**
  * Extracts TLS and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
@@ -473,7 +482,8 @@ class BunWebSocket extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const state = this.#ws.readyState;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -484,6 +494,8 @@ class BunWebSocket extends EventEmitter {
       cb = mask;
       mask = undefined;
     }
+
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
 
     if (typeof data === "number") data = data.toString();
 
@@ -496,7 +508,8 @@ class BunWebSocket extends EventEmitter {
   }
 
   pong(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const state = this.#ws.readyState;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -507,6 +520,8 @@ class BunWebSocket extends EventEmitter {
       cb = mask;
       mask = undefined;
     }
+
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
 
     if (typeof data === "number") data = data.toString();
 
@@ -888,7 +903,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#state === ReadyState_CONNECTING) {
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -899,6 +915,8 @@ class BunWebSocketMocked extends EventEmitter {
       cb = mask;
       mask = undefined;
     }
+
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
 
     if (typeof data === "number") data = data.toString();
 
@@ -909,7 +927,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   pong(data, mask, cb) {
-    if (this.#state === ReadyState_CONNECTING) {
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -920,6 +939,8 @@ class BunWebSocketMocked extends EventEmitter {
       cb = mask;
       mask = undefined;
     }
+
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
 
     if (typeof data === "number") data = data.toString();
 

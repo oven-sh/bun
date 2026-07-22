@@ -162,7 +162,9 @@ impl BodyAbortListener {
                 readable.error(&global, reason);
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
-            let _ = response_ref.get_body_value().to_error_instance(err, &global);
+            let _ = response_ref
+                .get_body_value()
+                .to_error_instance(err, &global);
         }
         // May destroy `response` and free `*ctx`; do not touch either after.
         Response::unref(response);

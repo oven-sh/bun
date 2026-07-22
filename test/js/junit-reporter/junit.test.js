@@ -514,8 +514,9 @@ describe("junit reporter", () => {
     expect(assertion.failure[0]._).toContain("Received: 1");
     expect(assertion.failure[0]._).toContain("fail.test.js:5");
 
-    // No ANSI escape sequences should leak into the report.
-    expect(xmlContent).not.toContain("\x1b[");
+    // No ANSI escape sequences should leak into the report. escape_xml drops
+    // the ESC byte, so a colour leak would surface as bare SGR residue.
+    expect(xmlContent).not.toMatch(/\[\d+m/);
     expect(exitCode).toBe(1);
   });
 });

@@ -421,6 +421,16 @@ impl ByteStream {
 
         if !self.buffer.get().is_empty() {
             debug_assert!(self.value().is_empty()); // == .zero
+
+            if self.offset.get() == 0 {
+                let owned = self.buffer.replace(Vec::new());
+                if self.has_received_last_chunk.get() {
+                    self.done.set(true);
+                    return streams::Result::OwnedAndDone(owned);
+                }
+                return streams::Result::Owned(owned);
+            }
+
             // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
             // borrow escapes the copy. The result tuple drives the rest.
             let (to_write, remaining_in_buffer_len) = self.buffer.with_mut(|b| {

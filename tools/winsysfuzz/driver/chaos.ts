@@ -156,7 +156,9 @@ function drawSchedule(): string[] {
     // pre-failure there fails system plumbing mid-operation - bun only ever
     // sees the API boundary. Never draw fail/lie faults on o: keys (delays
     // stay: they perturb scheduling, not truth). Sweeper drops the same.
-    if ((f.mode === "post" || f.mode === "pre") && c.key.startsWith("o:")) continue;
+    // Delays included: a pause inside another module's own loop is that
+    // module's scheduling, not bun's. All o:-keyed modes are refused.
+    if (c.key.startsWith("o:")) continue;
     // hit biased deep: sqrt of a uniform skews toward the late end
     const hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
     rules.add(`${c.sysName} ${c.key} ${hit} ${f.mode} ${f.status}`);

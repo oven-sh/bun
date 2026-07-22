@@ -478,9 +478,10 @@ async function queueFinding(r: Result, v: Verify) {
   // caller is another module ('o:' key) fabricates an impossible world: a
   // completed operation does not retroactively report failure inside system
   // machinery. Repeatedly triaged not-real; suppressed as a class.
-  // ...and a pre-failure on an o: key fails system plumbing mid-operation
-  // (bun only sees the API boundary): same class, same drop.
-  if ((r.job.mode === "post" || r.job.mode === "pre") && r.job.coord.key.startsWith("o:")) return;
+  // ...a pre-failure on an o: key fails system plumbing mid-operation, and
+  // a delay there is that module's own loop scheduling - bun only ever sees
+  // the API boundary. All o:-keyed fault modes drop as one class.
+  if (r.job.coord.key.startsWith("o:")) return;
   // A stall whose fault sits INSIDE ntdll ('n:' key = loader/heap-internal
   // machinery, mostly hit-1 startup) is a system-side slowdown, not bun's
   // code path - repeatedly triaged not-bun on slow test targets.

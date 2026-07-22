@@ -15,8 +15,10 @@
 // honest cost buys a system that cannot be fooled.
 //
 // Read from disk at hash time, so the digest is the code THIS checkout would
-// run — exactly what gets uploaded to the bake VM (BOOTSTRAP_SOURCE_DIRS)
-// plus the orchestrator that drives it.
+// run. It walks the tree, so a new component is included with nothing to
+// remember — which means it must run where the FULL scripts tree exists
+// (the CI host / orchestrator). A bake VM receives only scripts/build/ci and
+// never computes the name; readRecipeFile fails loudly if that is violated.
 
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -83,7 +85,24 @@ export function recipeHash(os: Image["os"]): string {
   const hash = createHash("sha256");
   for (const file of recipeFiles(os)) {
     hash.update(`\x00${file}\x00`);
-    hash.update(readFileSync(join(repoRoot, file)));
+    hash.update(readRecipeFile(file));
   }
   return hash.digest("hex");
+}
+
+/** Read one recipe file, insisting the full tree is present. The hash is
+ * computed by the orchestrator on the CI host, where every recipe file
+ * exists; a bake VM sees only the delivered subtree and must never compute
+ * the name (it would digest a different, incomplete set). A missing file
+ * therefore means "wrong place to hash", never "skip it and hash the rest". */
+function readRecipeFile(file: string): Buffer {
+  try {
+    return readFileSync(join(repoRoot, file));
+  } catch (cause) {
+    throw new Error(
+      `recipe hash: cannot read ${file}. The image name must be computed where the full ` +
+        `scripts tree exists (the CI host), not on a bake VM that only received scripts/build/ci.`,
+      { cause },
+    );
+  }
 }

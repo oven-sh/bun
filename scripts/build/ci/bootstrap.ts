@@ -19,7 +19,7 @@ import { detectHost } from "./bootstrap/host.ts";
 import { banner, log, mode, runSteps } from "./bootstrap/runtime.ts";
 import { linuxArtifacts, linuxSteps, windowsArtifacts, windowsSteps } from "./components/registry.ts";
 import { verifyHost } from "./components/verify-host.ts";
-import { imageEntry, imageName } from "./naming.ts";
+import { imageEntry } from "./naming.ts";
 import { epoch } from "./spec.ts";
 
 const USAGE = `Usage: node scripts/build/ci/bootstrap.ts --image=<key> [--ci] [--repo-ref=<ref>] [--dry-run]
@@ -65,9 +65,10 @@ async function main(): Promise<void> {
   mode.dryRun = dryRun;
   const image = imageEntry(imageKey);
 
-  banner(
-    `Bun CI image bootstrap: ${imageName(image)} (epoch ${epoch})${ci ? " [CI]" : ""}${dryRun ? " [DRY RUN]" : ""}`,
-  );
+  // Identify the run by its spec key. The content-addressed NAME is the
+  // orchestrator's concern (it holds every recipe file); this VM sees only
+  // the delivered subtree, so it must not recompute the hash here.
+  banner(`Bun CI image bootstrap: ${image.key} (epoch ${epoch})${ci ? " [CI]" : ""}${dryRun ? " [DRY RUN]" : ""}`);
   log(`spec entry: ${image.key} (${image.os} ${image.arch})`);
   log(`components (${image.components.length}): ${image.components.join(", ")}`);
   log(`repo ref for caches: ${repoRef}`);

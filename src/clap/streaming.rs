@@ -1,12 +1,5 @@
-use core::sync::atomic::{AtomicBool, Ordering};
-
-use bun_core::Output;
-
 use crate as clap;
 use crate::args::ArgIter;
-
-// Disabled because not all CLI arguments are parsed with Clap.
-pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
 pub(crate) struct Arg<'p, 'a, Id> {
@@ -155,32 +148,10 @@ where
                 // Unrecognised `--long` flag: record it in the caller's
                 // Diagnostic so commands can warn or hard-fail after parsing
                 // completes, then keep going so later flags are still seen.
-                if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
-                    if let Some(d) = self.diagnostic.as_deref_mut() {
-                        d.unknown_long.push(name.to_vec());
-                    }
-                    if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        bun_core::warn!(
-                            "unrecognized flag: {}{}\n",
-                            if arg_info.kind == ArgKind::Long {
-                                "--"
-                            } else {
-                                "-"
-                            },
-                            bstr::BStr::new(name),
-                        );
-                        Output::flush();
-                    }
-
-                    // continue parsing after unrecognized flag
-                    return self.next();
+                if let Some(d) = self.diagnostic.as_deref_mut() {
+                    d.unknown_long.push(name.to_vec());
                 }
-
-                if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    bun_core::warn!("unrecognized argument: {}\n", bstr::BStr::new(name));
-                    Output::flush();
-                }
-                Ok(None)
+                self.next()
             }
             ArgKind::Short => self.chainging(Chaining { arg, index: 0 }),
             ArgKind::Positional => {

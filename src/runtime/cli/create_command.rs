@@ -220,6 +220,7 @@ impl CreateOptions {
         };
 
         if diag.reject_unknown(Self::params()) {
+            bun_core::pretty_errorln!("\nFor a list of options, run <b>bun create --help<r>");
             Output::flush();
             bun_core::Global::exit(1);
         }

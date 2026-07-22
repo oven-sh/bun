@@ -820,10 +820,6 @@ pub mod command {
     // ──────────────────────────────────────────────────────────────────────────
     // Canonical home: src/runtime/cli/mod.rs, inside `pub mod command { ... }`
     // (crate path `bun_runtime::cli::command::{is_bun_x, is_node, which}`).
-    //
-    // The `is_node` branch of `which()` must clear
-    // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
-    // stays silent on unknown flags.
     // ──────────────────
     pub(crate) fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
@@ -935,9 +931,6 @@ pub mod command {
         }
 
         if is_node(argv0) {
-            // Node-mode must not warn on flags Bun doesn't know.
-            bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
-                .store(false, core::sync::atomic::Ordering::Relaxed);
             // SAFETY: single-threaded startup
             PRETEND_TO_BE_NODE.store(true, core::sync::atomic::Ordering::Relaxed);
             return Tag::RunAsNodeCommand;

@@ -91,6 +91,14 @@ describe("unknown CLI flags", () => {
       expect(combined).toContain("unknown option '--totally-fake-flag'");
       expect(exitCode).toBe(1);
     });
+
+    test.concurrent("create rejects unknown flags", async () => {
+      using dir = tempDir("unknown-flag-create", {});
+      const { combined, exitCode } = await run(["create", "--totally-fake-flag", "placeholder"], String(dir));
+      expect(combined).toContain("unknown option '--totally-fake-flag'");
+      expect(combined).toContain("bun create --help");
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("build / test: reject", () => {

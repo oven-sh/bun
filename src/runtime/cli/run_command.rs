@@ -1216,6 +1216,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
+        // `configure_defines` loaded .env per `apply_standalone_runtime_flags`;
+        // forward `$TZ` to JSC/ICU the same as `boot` does.
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
+            if !tz.is_empty() {
+                let _ = vm
+                    .global()
+                    .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+            }
+        }
+
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
         // `Transpiler::init`).

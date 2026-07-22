@@ -61,6 +61,25 @@ describe("bundler", () => {
     },
   });
 
+  // TZ loaded from .env must reach JSC/ICU, not just process.env.
+  itBundled("compile/AutoloadDotenvAppliesTZ", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TZ + " " + Intl.DateTimeFormat().resolvedOptions().timeZone);
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TZ=Pacific/Auckland`,
+    },
+    run: {
+      stdout: "Pacific/Auckland Pacific/Auckland",
+      setCwd: true,
+      // bunEnv forces TZ=Etc/UTC; unset it so the value must come from .env.
+      env: { TZ: undefined as unknown as string },
+    },
+  });
+
   // Test that process environment variables take precedence over .env files
   itBundled("compile/AutoloadDotenvWithExistingEnv", {
     compile: true,

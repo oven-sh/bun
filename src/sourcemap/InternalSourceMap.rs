@@ -626,6 +626,30 @@ impl InternalSourceMap {
         }
         Some(best.to_mapping())
     }
+
+    /// Matches the semantics of `Mapping.List.find_closest`: returns the last
+    /// mapping with generated position `<= (line, column)` regardless of
+    /// whether the generated line matches. Inputs are signed 0-based offsets.
+    pub fn find_closest(self, line: i32, column: i32) -> Option<Mapping> {
+        let sync_idx = self.locate_window(line, column)?;
+
+        let mut state = State::default();
+        let mut reader = WindowReader::DANGLING;
+        self.seed_window(sync_idx, &mut state, &mut reader);
+
+        let mut best = state;
+        while !reader.done() {
+            let mut nxt = state;
+            reader.next(&mut nxt);
+            if !nxt.less_or_equal(line, column) {
+                break;
+            }
+            best = nxt;
+            state = nxt;
+        }
+
+        Some(best.to_mapping())
+    }
 }
 
 /// Stateful forward cursor. `move_to` is cheap when successive targets are

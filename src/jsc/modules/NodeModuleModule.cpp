@@ -1082,9 +1082,27 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
     return JSValue::encode(object);
 }
 
+static JSC::JSArray* shallowCopyJSArray(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& throwScope, JSC::JSArray* array)
+{
+    JSC::JSArray* copy = array->fastSlice(globalObject, array, 0, array->length());
+    if (copy) {
+        return copy;
+    }
+
+    copy = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList());
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    for (unsigned i = 0, length = array->length(); i < length; i++) {
+        JSC::JSValue element = array->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        copy->putDirectIndex(globalObject, i, element);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+    }
+    return copy;
+}
+
 // Shallow clone matching Node's `cloneSourceMapV3`: `{ ...payload }` with a
-// fresh copy of the `sources` array so callers cannot alias or mutate the
-// stored map through `SourceMap.prototype.payload`.
+// fresh slice of every own-enumerable array-valued property so callers cannot
+// alias or mutate the stored map through `SourceMap.prototype.payload`.
 extern "C" JSC::EncodedJSValue Bun__cloneSourceMapV3Payload(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue encodedPayload)
@@ -1102,21 +1120,21 @@ extern "C" JSC::EncodedJSValue Bun__cloneSourceMapV3Payload(
     JSC::objectAssignGeneric(globalObject, vm, target, source);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSC::JSValue sources = target->getIfPropertyExists(globalObject, Identifier::fromString(vm, "sources"_s));
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    target->getOwnPropertyNames(target, globalObject, properties, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (auto* sourcesArray = sources.isCell() ? dynamicDowncast<JSC::JSArray>(sources) : nullptr) {
-        JSC::JSArray* copy = sourcesArray->fastSlice(globalObject, sourcesArray, 0, sourcesArray->length());
-        if (!copy) {
-            copy = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList());
-            RETURN_IF_EXCEPTION(throwScope, {});
-            for (unsigned i = 0, length = sourcesArray->length(); i < length; i++) {
-                JSC::JSValue element = sourcesArray->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                copy->putDirectIndex(globalObject, i, element);
-                RETURN_IF_EXCEPTION(throwScope, {});
-            }
+    for (const auto& propertyName : properties) {
+        JSC::JSValue value = target->getDirect(vm, propertyName);
+        if (!value || !value.isCell()) {
+            continue;
         }
-        target->putDirect(vm, Identifier::fromString(vm, "sources"_s), copy);
+        auto* array = dynamicDowncast<JSC::JSArray>(value);
+        if (!array) {
+            continue;
+        }
+        JSC::JSArray* copy = shallowCopyJSArray(globalObject, throwScope, array);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        target->putDirect(vm, propertyName, copy);
     }
 
     return JSValue::encode(target);
@@ -1130,24 +1148,13 @@ extern "C" JSC::EncodedJSValue Bun__shallowCopyJSArray(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = JSC::JSValue::decode(encodedArray);
-    auto* array = value.isCell() ? dynamicDowncast<JSC::JSArray>(value) : nullptr;
+    auto* array = value && value.isCell() ? dynamicDowncast<JSC::JSArray>(value) : nullptr;
     if (!array) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    JSC::JSArray* copy = array->fastSlice(globalObject, array, 0, array->length());
-    if (copy) {
-        return JSValue::encode(copy);
-    }
-
-    copy = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList());
+    JSC::JSArray* copy = shallowCopyJSArray(globalObject, throwScope, array);
     RETURN_IF_EXCEPTION(throwScope, {});
-    for (unsigned i = 0, length = array->length(); i < length; i++) {
-        JSC::JSValue element = array->getIndex(globalObject, i);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        copy->putDirectIndex(globalObject, i, element);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
     return JSValue::encode(copy);
 }
 

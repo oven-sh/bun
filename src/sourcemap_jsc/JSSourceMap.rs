@@ -313,8 +313,10 @@ impl JSSourceMap {
         if mapping.source_index < 0 {
             return Ok(JSValue::create_empty_object(global, 0));
         }
-        let line_offset = line_number.wrapping_sub(mapping.generated.lines.zero_based());
-        let column_offset = column_number.wrapping_sub(mapping.generated.columns.zero_based());
+        // Node computes these offsets in JS numbers; widen to f64 so an
+        // adversarial 2^31-ish input cannot overflow i32 arithmetic.
+        let line_offset = line_number as f64 - mapping.generated.lines.zero_based() as f64;
+        let column_offset = column_number as f64 - mapping.generated.columns.zero_based() as f64;
         let name = this.mapping_name_to_js(global, &mapping)?;
         let source = this.source_name_to_js(global, &mapping)?;
         // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
@@ -325,8 +327,8 @@ impl JSSourceMap {
                 global.as_mut_ptr(),
                 name,
                 source,
-                JSValue::js_number((mapping.original.lines.zero_based() + line_offset) as f64),
-                JSValue::js_number((mapping.original.columns.zero_based() + column_offset) as f64),
+                JSValue::js_number(mapping.original.lines.zero_based() as f64 + line_offset),
+                JSValue::js_number(mapping.original.columns.zero_based() as f64 + column_offset),
             )
         })
     }

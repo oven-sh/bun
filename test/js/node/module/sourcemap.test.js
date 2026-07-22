@@ -39,23 +39,41 @@ test("SourceMap payload getter returns a fresh clone", () => {
   const payload = {
     version: 3,
     sources: ["test.js"],
-    mappings: "AAAA",
+    names: ["fn"],
+    sourcesContent: ["src"],
+    mappings: "AAAAA",
   };
   const sourceMap = new SourceMap(payload);
 
   const first = sourceMap.payload;
   expect(first).toEqual(payload);
   expect(first).not.toBe(payload);
+  // Every array-valued property is sliced, not just sources.
   expect(first.sources).not.toBe(payload.sources);
+  expect(first.names).not.toBe(payload.names);
+  expect(first.sourcesContent).not.toBe(payload.sourcesContent);
   expect(sourceMap.payload).not.toBe(first);
 
-  // Mutating the caller's object after construction must not leak through.
+  // Mutating the caller's object or its arrays after construction must not
+  // leak through.
   payload.file = "mutated";
+  payload.sources.push("leaked");
+  payload.names.push("leaked");
   expect(sourceMap.payload.file).toBeUndefined();
+  expect(sourceMap.payload.sources).toEqual(["test.js"]);
+  expect(sourceMap.payload.names).toEqual(["fn"]);
 
   // Mutating a returned clone must not leak into later reads.
   first.version = 99;
+  first.sources.push("leaked");
   expect(sourceMap.payload.version).toBe(3);
+  expect(sourceMap.payload.sources).toEqual(["test.js"]);
+});
+
+test("SourceMap payload without sources is cloned without crashing", () => {
+  const sourceMap = new SourceMap({ version: 3, mappings: ";;" });
+  expect(sourceMap.payload).toEqual({ version: 3, mappings: ";;" });
+  expect(sourceMap.findEntry(0, 0)).toEqual({});
 });
 
 test("SourceMap lineLengths getter returns a fresh copy", () => {
@@ -71,6 +89,10 @@ test("SourceMap lineLengths getter returns a fresh copy", () => {
   expect(first).toEqual([10, 20, 30]);
   expect(first).not.toBe(lineLengths);
   expect(sourceMap.lineLengths).not.toBe(first);
+
+  // Mutating a returned copy must not leak into later reads.
+  first.push(99);
+  expect(sourceMap.lineLengths).toEqual([10, 20, 30]);
 });
 
 test("SourceMap lineLengths undefined when not provided", () => {

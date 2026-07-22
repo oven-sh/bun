@@ -261,13 +261,7 @@ impl ParsedSourceMap {
     /// and may be negative.
     pub fn find_closest_mapping(&self, line: i32, column: i32) -> Option<Mapping> {
         if let Some(ism) = &self.internal {
-            if line < 0 {
-                return None;
-            }
-            return ism.find(
-                Ordinal::from_zero_based(line),
-                Ordinal::from_zero_based(column.max(0)),
-            );
+            return ism.find_closest(line, column);
         }
         self.mappings.find_closest(line, column)
     }

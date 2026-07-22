@@ -16,13 +16,14 @@ export default [
       },
       payload: {
         getter: "getPayload",
-        cache: true,
+        this: true,
       },
       lineLengths: {
         getter: "getLineLengths",
-        cache: true,
+        this: true,
       },
     },
+    values: ["storedPayload", "storedLineLengths"],
     finalize: true,
     construct: true,
     constructNeedsThis: true,

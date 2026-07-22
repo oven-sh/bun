@@ -35,7 +35,7 @@ test("SourceMap instance has expected methods", () => {
   expect(sourceMap.findEntry.length).toBe(2);
 });
 
-test("SourceMap payload getter", () => {
+test("SourceMap payload getter returns a fresh clone", () => {
   const payload = {
     version: 3,
     sources: ["test.js"],
@@ -43,10 +43,22 @@ test("SourceMap payload getter", () => {
   };
   const sourceMap = new SourceMap(payload);
 
-  expect(sourceMap.payload).toBe(payload);
+  const first = sourceMap.payload;
+  expect(first).toEqual(payload);
+  expect(first).not.toBe(payload);
+  expect(first.sources).not.toBe(payload.sources);
+  expect(sourceMap.payload).not.toBe(first);
+
+  // Mutating the caller's object after construction must not leak through.
+  payload.file = "mutated";
+  expect(sourceMap.payload.file).toBeUndefined();
+
+  // Mutating a returned clone must not leak into later reads.
+  first.version = 99;
+  expect(sourceMap.payload.version).toBe(3);
 });
 
-test("SourceMap lineLengths getter", () => {
+test("SourceMap lineLengths getter returns a fresh copy", () => {
   const payload = {
     version: 3,
     sources: ["test.js"],
@@ -55,7 +67,10 @@ test("SourceMap lineLengths getter", () => {
   const lineLengths = [10, 20, 30];
   const sourceMap = new SourceMap(payload, { lineLengths });
 
-  expect(sourceMap.lineLengths).toBe(lineLengths);
+  const first = sourceMap.lineLengths;
+  expect(first).toEqual([10, 20, 30]);
+  expect(first).not.toBe(lineLengths);
+  expect(sourceMap.lineLengths).not.toBe(first);
 });
 
 test("SourceMap lineLengths undefined when not provided", () => {
@@ -93,16 +108,66 @@ test("SourceMap findOrigin returns origin data", () => {
     sources: ["test.js"],
     mappings: "AAAA",
   });
-  const result = sourceMap.findOrigin(0, 0);
+  // findOrigin takes 1-based Error-stack line/column and returns 1-based
+  // lineNumber/columnNumber.
+  const result = sourceMap.findOrigin(1, 1);
 
   expect(result).toMatchInlineSnapshot(`
     {
-      "column": 0,
+      "columnNumber": 1,
       "fileName": "test.js",
-      "line": 0,
+      "lineNumber": 1,
       "name": undefined,
     }
   `);
+});
+
+test("SourceMap findOrigin is 1-based and findEntry clamps to the closest preceding entry", () => {
+  const payload = {
+    version: 3,
+    file: "out.js",
+    sources: ["a.ts", "b.ts"],
+    names: [],
+    mappings: "AAAA,IACC;AAAC,GCAE",
+  };
+  const sourceMap = new SourceMap(payload);
+
+  // Row/column 0 are before the first 1-based position.
+  expect(sourceMap.findOrigin(1, 0)).toEqual({});
+  expect(sourceMap.findOrigin(0, 0)).toEqual({});
+
+  // findOrigin offsets the original position by the distance from the matched
+  // generated position, so the returned column tracks the input column.
+  expect(sourceMap.findOrigin(2, 5)).toEqual({
+    name: undefined,
+    fileName: "b.ts",
+    lineNumber: 2,
+    columnNumber: 6,
+  });
+
+  // Past the last mapping, findEntry returns the closest preceding entry.
+  expect(sourceMap.findEntry(99, 99)).toEqual({
+    generatedLine: 1,
+    generatedColumn: 3,
+    originalSource: "b.ts",
+    originalLine: 1,
+    originalColumn: 4,
+    name: undefined,
+  });
+
+  // Before the first mapping it stays {}.
+  expect(sourceMap.findEntry(-1, -1)).toEqual({});
+  expect(sourceMap.findEntry(0, -1)).toEqual({});
+
+  // A negative column on a later line still resolves to the preceding line.
+  expect(sourceMap.findEntry(1, -1)).toEqual({
+    generatedLine: 0,
+    generatedColumn: 4,
+    originalSource: "a.ts",
+    originalLine: 1,
+    originalColumn: 1,
+    name: undefined,
+  });
 });
 
 test("SourceMap with names returns name property correctly", () => {

@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
-use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
+use bun_sourcemap::{Mapping, ParseResult, ParsedSourceMap, mapping};
 
 // generate-classes.ts does not emit Rust accessors yet, so the
 // `to_js`/cached-setter helpers below forward to the codegen-emitted C++
@@ -176,11 +176,14 @@ impl JSSourceMap {
             names: names.into_boxed_slice(),
         });
 
-        if !payload_arg.is_empty() {
-            Self::payload_set_cached(this_value, global, payload_arg);
+        // Node stores a private clone of the caller's payload so later
+        // mutations to the argument cannot change what `sm.payload` reports.
+        let payload_clone = clone_source_map_payload(global, payload_arg)?;
+        if !payload_clone.is_empty() {
+            Self::stored_payload_set_cached(this_value, global, payload_clone);
         }
         if !line_lengths.is_empty() {
-            Self::line_lengths_set_cached(this_value, global, line_lengths);
+            Self::stored_line_lengths_set_cached(this_value, global, line_lengths);
         }
 
         Ok(source_map)
@@ -203,18 +206,36 @@ impl JSSourceMap {
         }
     }
     #[inline]
-    fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    fn stored_payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
         unsafe {
-            SourceMapPrototype__payloadSetCachedValue(this_value, global.as_mut_ptr(), value)
+            SourceMapPrototype__storedPayloadSetCachedValue(this_value, global.as_mut_ptr(), value)
         };
     }
     #[inline]
-    fn line_lengths_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    fn stored_payload_get_cached(this_value: JSValue) -> JSValue {
+        // SAFETY: `this_value` is the live wrapper; the slot is a WriteBarrier read.
+        unsafe { SourceMapPrototype__storedPayloadGetCachedValue(this_value) }
+    }
+    #[inline]
+    fn stored_line_lengths_set_cached(
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
         // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
         unsafe {
-            SourceMapPrototype__lineLengthsSetCachedValue(this_value, global.as_mut_ptr(), value)
+            SourceMapPrototype__storedLineLengthsSetCachedValue(
+                this_value,
+                global.as_mut_ptr(),
+                value,
+            )
         };
+    }
+    #[inline]
+    fn stored_line_lengths_get_cached(this_value: JSValue) -> JSValue {
+        // SAFETY: `this_value` is the live wrapper; the slot is a WriteBarrier read.
+        unsafe { SourceMapPrototype__storedLineLengthsGetCachedValue(this_value) }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -227,14 +248,24 @@ impl JSSourceMap {
         self.memory_cost()
     }
 
-    // The cached value should handle this.
-    pub fn get_payload(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    pub fn get_payload(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let stored = Self::stored_payload_get_cached(this_value);
+        if stored.is_empty() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        clone_source_map_payload(global, stored)
     }
 
-    // The cached value should handle this.
-    pub fn get_line_lengths(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    pub fn get_line_lengths(
+        &self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        let stored = Self::stored_line_lengths_get_cached(this_value);
+        if stored.is_empty() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        shallow_copy_array(global, stored)
     }
 
     fn mapping_name_to_js(&self, global: &JSGlobalObject, mapping: &Mapping) -> JsResult<JSValue> {
@@ -266,14 +297,24 @@ impl JSSourceMap {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Node documents `findOrigin` in Error-stack units: both inputs and the
+        // returned `lineNumber`/`columnNumber` are 1-based. It delegates to
+        // `findEntry(line - 1, column - 1)` and then offsets the original
+        // position by the distance from the matched generated position, so a
+        // lookup mid-range interpolates within the original span.
         let [line_number, column_number] = get_line_column(global, frame)?;
 
-        let Some(mapping) = this.sourcemap.find_mapping(
-            Ordinal::from_zero_based(line_number),
-            Ordinal::from_zero_based(column_number),
-        ) else {
+        let Some(mapping) = this
+            .sourcemap
+            .find_closest_mapping(line_number.wrapping_sub(1), column_number.wrapping_sub(1))
+        else {
             return Ok(JSValue::create_empty_object(global, 0));
         };
+        if mapping.source_index < 0 {
+            return Ok(JSValue::create_empty_object(global, 0));
+        }
+        let line_offset = line_number.wrapping_sub(mapping.generated.lines.zero_based());
+        let column_offset = column_number.wrapping_sub(mapping.generated.columns.zero_based());
         let name = this.mapping_name_to_js(global, &mapping)?;
         let source = this.source_name_to_js(global, &mapping)?;
         // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
@@ -283,9 +324,9 @@ impl JSSourceMap {
             Bun__createNodeModuleSourceMapOriginObject(
                 global.as_mut_ptr(),
                 name,
-                JSValue::js_number(mapping.original.lines.zero_based() as f64),
-                JSValue::js_number(mapping.original.columns.zero_based() as f64),
                 source,
+                JSValue::js_number((mapping.original.lines.zero_based() + line_offset) as f64),
+                JSValue::js_number((mapping.original.columns.zero_based() + column_offset) as f64),
             )
         })
     }
@@ -297,10 +338,10 @@ impl JSSourceMap {
     ) -> JsResult<JSValue> {
         let [line_number, column_number] = get_line_column(global, frame)?;
 
-        let Some(mapping) = this.sourcemap.find_mapping(
-            Ordinal::from_zero_based(line_number),
-            Ordinal::from_zero_based(column_number),
-        ) else {
+        let Some(mapping) = this
+            .sourcemap
+            .find_closest_mapping(line_number, column_number)
+        else {
             return Ok(JSValue::create_empty_object(global, 0));
         };
 
@@ -334,6 +375,20 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
     ])
 }
 
+fn clone_source_map_payload(global: &JSGlobalObject, payload: JSValue) -> JsResult<JSValue> {
+    // SAFETY: C++ FFI; `global` is live and `payload` is a valid JSValue.
+    bun_jsc::call_zero_is_throw(global, || unsafe {
+        Bun__cloneSourceMapV3Payload(global.as_mut_ptr(), payload)
+    })
+}
+
+fn shallow_copy_array(global: &JSGlobalObject, array: JSValue) -> JsResult<JSValue> {
+    // SAFETY: C++ FFI; `global` is live and `array` is a valid JSValue.
+    bun_jsc::call_zero_is_throw(global, || unsafe {
+        Bun__shallowCopyJSArray(global.as_mut_ptr(), array)
+    })
+}
+
 // Codegen-emitted helpers (`SourceMap__create`, `*SetCachedValue`) are defined
 // in ZigGeneratedClasses.cpp with `extern JSC_CALLCONV` (= `"C" SYSV_ABI` on
 // Windows-x64), so they must be imported via `jsc_abi_extern!` to get the
@@ -345,29 +400,31 @@ bun_jsc::jsc_abi_extern! {
     // the extern FFI-safe — `JSSourceMap` itself has Rust-only field layout.
     fn SourceMap__create(globalObject: *mut JSGlobalObject, ctx: *mut ()) -> JSValue;
 
-    // Codegen-emitted cached-value setters; names match generated_classes.ts output.
-    fn SourceMapPrototype__payloadSetCachedValue(
+    // Codegen-emitted cached-value slots; names match generated_classes.ts output.
+    fn SourceMapPrototype__storedPayloadSetCachedValue(
         thisValue: JSValue,
         globalObject: *mut JSGlobalObject,
         value: JSValue,
     );
-    fn SourceMapPrototype__lineLengthsSetCachedValue(
+    fn SourceMapPrototype__storedPayloadGetCachedValue(thisValue: JSValue) -> JSValue;
+    fn SourceMapPrototype__storedLineLengthsSetCachedValue(
         thisValue: JSValue,
         globalObject: *mut JSGlobalObject,
         value: JSValue,
     );
+    fn SourceMapPrototype__storedLineLengthsGetCachedValue(thisValue: JSValue) -> JSValue;
 }
 
-// These two are hand-written in `src/jsc/modules/NodeModuleModule.cpp` as
-// plain `extern "C"` (no `JSC_CALLCONV`/`SYSV_ABI`), so they use the platform
+// These are hand-written in `src/jsc/modules/NodeModuleModule.cpp` as plain
+// `extern "C"` (no `JSC_CALLCONV`/`SYSV_ABI`), so they use the platform
 // default — keep them in a separate `extern "C"` block.
 unsafe extern "C" {
     fn Bun__createNodeModuleSourceMapOriginObject(
         globalObject: *mut JSGlobalObject,
         name: JSValue,
+        source: JSValue,
         line: JSValue,
         column: JSValue,
-        source: JSValue,
     ) -> JSValue;
 
     fn Bun__createNodeModuleSourceMapEntryObject(
@@ -379,4 +436,9 @@ unsafe extern "C" {
         source: JSValue,
         name: JSValue,
     ) -> JSValue;
+
+    fn Bun__cloneSourceMapV3Payload(globalObject: *mut JSGlobalObject, payload: JSValue)
+    -> JSValue;
+
+    fn Bun__shallowCopyJSArray(globalObject: *mut JSGlobalObject, array: JSValue) -> JSValue;
 }

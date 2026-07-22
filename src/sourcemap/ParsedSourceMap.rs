@@ -255,6 +255,23 @@ impl ParsedSourceMap {
         self.mappings.find(line, column)
     }
 
+    /// Like [`Self::find_mapping`] but returns the closest preceding mapping even
+    /// when its generated line differs from `line`. Matches Node.js's
+    /// `SourceMap.prototype.findEntry` semantics. Inputs are signed 0-based offsets
+    /// and may be negative.
+    pub fn find_closest_mapping(&self, line: i32, column: i32) -> Option<Mapping> {
+        if let Some(ism) = &self.internal {
+            if line < 0 {
+                return None;
+            }
+            return ism.find(
+                Ordinal::from_zero_based(line),
+                Ordinal::from_zero_based(column.max(0)),
+            );
+        }
+        self.mappings.find_closest(line, column)
+    }
+
     pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
         self.internal.as_ref().map(|ism| ism.cursor())
     }

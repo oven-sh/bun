@@ -12,6 +12,7 @@
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
@@ -1054,11 +1055,11 @@ static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC
 
     structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->name, 0, offset);
     RELEASE_ASSERT(offset == 0);
-    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "line"), 0, offset);
-    RELEASE_ASSERT(offset == 1);
-    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "column"), 0, offset);
-    RELEASE_ASSERT(offset == 2);
     structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "fileName"), 0, offset);
+    RELEASE_ASSERT(offset == 1);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "lineNumber"), 0, offset);
+    RELEASE_ASSERT(offset == 2);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "columnNumber"), 0, offset);
     RELEASE_ASSERT(offset == 3);
 
     return structure;
@@ -1067,18 +1068,87 @@ static JSC::Structure* createNodeModuleSourceMapOriginStructure(JSC::VM& vm, JSC
 extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue encodedName,
+    JSC::EncodedJSValue encodedSource,
     JSC::EncodedJSValue encodedLine,
-    JSC::EncodedJSValue encodedColumn,
-    JSC::EncodedJSValue encodedSource)
+    JSC::EncodedJSValue encodedColumn)
 {
     auto& vm = globalObject->vm();
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSObject* object = JSC::constructEmptyObject(vm, zigGlobalObject->m_nodeModuleSourceMapOriginStructure.getInitializedOnMainThread(zigGlobalObject));
     object->putDirectOffset(vm, 0, JSC::JSValue::decode(encodedName));
-    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedLine));
-    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedColumn));
-    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedSource));
+    object->putDirectOffset(vm, 1, JSC::JSValue::decode(encodedSource));
+    object->putDirectOffset(vm, 2, JSC::JSValue::decode(encodedLine));
+    object->putDirectOffset(vm, 3, JSC::JSValue::decode(encodedColumn));
     return JSValue::encode(object);
+}
+
+// Shallow clone matching Node's `cloneSourceMapV3`: `{ ...payload }` with a
+// fresh copy of the `sources` array so callers cannot alias or mutate the
+// stored map through `SourceMap.prototype.payload`.
+extern "C" JSC::EncodedJSValue Bun__cloneSourceMapV3Payload(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedPayload)
+{
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue payload = JSC::JSValue::decode(encodedPayload);
+    JSC::JSObject* source = payload.getObject();
+    if (!source) [[unlikely]] {
+        return JSValue::encode(payload);
+    }
+
+    JSC::JSObject* target = JSC::constructEmptyObject(globalObject);
+    JSC::objectAssignGeneric(globalObject, vm, target, source);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSC::JSValue sources = target->getIfPropertyExists(globalObject, Identifier::fromString(vm, "sources"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (auto* sourcesArray = sources.isCell() ? dynamicDowncast<JSC::JSArray>(sources) : nullptr) {
+        JSC::JSArray* copy = sourcesArray->fastSlice(globalObject, sourcesArray, 0, sourcesArray->length());
+        if (!copy) {
+            copy = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList());
+            RETURN_IF_EXCEPTION(throwScope, {});
+            for (unsigned i = 0, length = sourcesArray->length(); i < length; i++) {
+                JSC::JSValue element = sourcesArray->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                copy->putDirectIndex(globalObject, i, element);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+        }
+        target->putDirect(vm, Identifier::fromString(vm, "sources"_s), copy);
+    }
+
+    return JSValue::encode(target);
+}
+
+extern "C" JSC::EncodedJSValue Bun__shallowCopyJSArray(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedArray)
+{
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = JSC::JSValue::decode(encodedArray);
+    auto* array = value.isCell() ? dynamicDowncast<JSC::JSArray>(value) : nullptr;
+    if (!array) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSArray* copy = array->fastSlice(globalObject, array, 0, array->length());
+    if (copy) {
+        return JSValue::encode(copy);
+    }
+
+    copy = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    for (unsigned i = 0, length = array->length(); i < length; i++) {
+        JSC::JSValue element = array->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        copy->putDirectIndex(globalObject, i, element);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    return JSValue::encode(copy);
 }
 
 void addNodeModuleConstructorProperties(JSC::VM& vm,

@@ -1,37 +1,43 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { join } from "path";
 
-uafTest("node-http-uaf-fixture.ts");
-uafTest("node-http-uaf-fixture-2.ts");
+// Each fixture internally loops thousands of requests to hit the abort/destroy
+// race; running the whole subprocess a second time adds no new coverage. On
+// ASAN/debug builds the access-after-free is caught on the first bad touch, so
+// the request count only needs to be large enough to land the timing window a
+// few times. Release builds keep the original counts.
+const slow = isASAN || isDebug;
+// #18485: reporter "spammed in a bash while loop" to crash a release build; 2000
+// aborted requests at CONCURRENCY=100 is still 20 full windows under ASAN.
+uafTest("node-http-uaf-fixture.ts", { REQUESTS: slow ? "2000" : "10000" });
+// #18564: the repro in the PR body was a single request; 200 is 200x that.
+uafTest("node-http-uaf-fixture-2.ts", { ROUNDS: slow ? "20" : "100" });
 
-function uafTest(fixture, iterations = 2) {
-  test(
+function uafTest(fixture: string, extraEnv: Record<string, string>) {
+  test.concurrent(
     `should not crash on abort (${fixture})`,
     async () => {
-      for (let i = 0; i < iterations; i++) {
-        const { exited } = Bun.spawn({
-          cmd: [bunExe(), join(import.meta.dir, fixture)],
-          env: bunEnv,
-          stdout: "inherit",
-          stderr: "inherit",
-          stdin: "ignore",
-        });
-        const exitCode = await exited;
-        expect(exitCode).not.toBeNull();
-        expect(exitCode).toBe(0);
-      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, fixture)],
+        env: { ...bunEnv, ...extraEnv },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trimEnd().split("\n").at(-1)).toBe("Done");
+      expect(exitCode).toBe(0);
     },
-    // The express fixture pushes 10k aborted requests; one iteration runs
-    // ~10 s under ASAN instrumentation (~1 s on release), so two iterations
-    // can never fit the 5 s default there. The full file measures ~2.1 s on a
-    // release x64 box, and the windows-11-aarch64 agent ran a single fixture
-    // to 5006 ms - just over the default - so give release the same measured
-    // headroom instead of sitting on the line.
-    isASAN ? 90_000 : 20_000,
+    // One reduced-count pass measured ~22 s (fixture 1) / ~3.5 s (fixture 2) on
+    // a 16-core debug+ASAN box with the other concurrent tests contending;
+    // release runs the full 10k in ~1 s. Keep the 20 s release ceiling for the
+    // windows-aarch64 lane that previously ran one fixture to 5006 ms.
+    slow ? 60_000 : 20_000,
   );
 }
 

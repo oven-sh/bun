@@ -178,8 +178,3 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.
-
-# macOS fast-exit-intermediate race in the new no-orphans machinery (#34768);
-# fix open in #33965. Hit both darwin-14 lanes of build 76401 plus darwin
-# lanes of builds 76399/76406/76419 on sibling branches, ~1 retry each.
-[ DARWIN ] test/cli/run/no-orphans.test.ts [ FLAKY ] # #33965: fast-exit intermediate race on macOS

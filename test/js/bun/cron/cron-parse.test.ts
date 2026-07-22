@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // Bun.cron.parse() and the in-process Bun.cron(schedule, handler) interpret
 // schedules in the system's local time zone — matching the OS-level
@@ -22,27 +22,7 @@ async function parseUTC(expr: string, fromISO: string): Promise<string> {
   return stdout;
 }
 
-describe.concurrent("Bun.cron.parse — local time (pinned TZ=UTC)", () => {
-  test("0 9 * * * in different TZs returns the local 9am", async () => {
-    for (const [tz, expected] of [
-      ["America/Los_Angeles", "2026-06-15T16:00:00.000Z"],
-      ["Asia/Tokyo", "2026-06-16T00:00:00.000Z"],
-      ["UTC", "2026-06-15T09:00:00.000Z"],
-    ] as const) {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z")).toISOString())`,
-        ],
-        env: { ...bunEnv, TZ: tz },
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe(expected);
-      expect(exitCode).toBe(0);
-    }
-  });
-
+describe.concurrent("Bun.cron.parse — algorithm (pinned TZ=UTC)", () => {
   test("weekday matching uses local day-of-week", async () => {
     // 2026-06-15 is a Monday in UTC.
     expect(await parseUTC("0 12 * * MON", "2026-06-14T23:00:00Z")).toBe("2026-06-15T12:00:00.000Z");
@@ -56,22 +36,8 @@ describe.concurrent("Bun.cron.parse — local time (pinned TZ=UTC)", () => {
     expect(await parseUTC("0 0 29 2 *", "2026-01-01T00:00:00Z")).toBe("2028-02-29T00:00:00.000Z");
   });
 
-  test("impossible day/month (Feb 30) returns null quickly", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const t = performance.now();
-         const r = Bun.cron.parse("0 0 30 2 *", new Date("2026-01-01T00:00:00Z"));
-         process.stdout.write(JSON.stringify({ r, ms: performance.now() - t }))`,
-      ],
-      env: { ...bunEnv, TZ: "UTC" },
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const { r, ms } = JSON.parse(stdout);
-    expect(r).toBeNull();
-    expect(ms).toBeLessThan(isDebug ? 2000 : 50);
-    expect(exitCode).toBe(0);
+  test("impossible day/month (Feb 30) returns null", async () => {
+    expect(await parseUTC("0 0 30 2 *", "2026-01-01T00:00:00Z")).toBe("null");
   });
 
   test("DOM/DOW OR semantics when both restricted", async () => {

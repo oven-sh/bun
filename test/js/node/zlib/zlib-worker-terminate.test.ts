@@ -64,6 +64,5 @@ test("worker.terminate() during in-flight node:zlib async compression does not U
   expect(stderr).not.toContain("heap-use-after-free");
   expect(stderr).not.toContain("AddressSanitizer");
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-}, // Per-test override: each round starts a Worker under ASAN and compresses a
-// 16 MiB buffer; the default 5s is too short for that even once.
+}, // 16 MiB buffer; the default 5s is too short for that even once. // Per-test override: each round starts a Worker under ASAN and compresses a
 60_000);

@@ -314,6 +314,14 @@ async function worker(w: number) {
       try {
         rmSync(rr.dir, { recursive: true, force: true });
       } catch {}
+    } else if (!keepAllTraces && outcome !== "CRASH" && outcome !== "HANG" && outcome !== "stalled") {
+      // A kept sighting that is not a hard finding: its fired-count is
+      // recorded, drop the multi-MB raw trace NOW rather than at end-of-sweep
+      // so a long sweep's in-flight disk footprint stays flat.
+      try {
+        for (const f of readdirSync(rr.dir))
+          if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(join(rr.dir, f), { force: true });
+      } catch {}
     }
     liveWriter.write(
       JSON.stringify({

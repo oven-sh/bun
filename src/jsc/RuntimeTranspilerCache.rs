@@ -476,7 +476,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
+                    if hash(bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
                     }
 
@@ -506,14 +506,12 @@ impl Entry {
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
 
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
-
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
+                    }
+
+                    if hash(latin1.latin1()) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     scopeguard::ScopeGuard::into_inner(errdefer);
@@ -539,11 +537,9 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
+                    let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
+                    if hash(utf16_bytes) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     scopeguard::ScopeGuard::into_inner(errdefer);
@@ -559,11 +555,17 @@ impl Entry {
         let output_code_errdefer = scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
 
         if self.metadata.sourcemap_byte_length > 0 {
-            self.sourcemap = pread_box(
+            let sourcemap = pread_box(
                 file,
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
+
+            if hash(&sourcemap) != self.metadata.sourcemap_hash {
+                return Err(crate::CrateError::InvalidHash);
+            }
+
+            self.sourcemap = sourcemap;
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -573,10 +575,8 @@ impl Entry {
                 self.metadata.esm_record_byte_offset,
             )?;
 
-            if self.metadata.esm_record_hash != 0 {
-                if hash(&esm_record) != self.metadata.esm_record_hash {
-                    return Err(crate::CrateError::InvalidHash);
-                }
+            if hash(&esm_record) != self.metadata.esm_record_hash {
+                return Err(crate::CrateError::InvalidHash);
             }
 
             self.esm_record = esm_record;

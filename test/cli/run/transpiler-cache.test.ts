@@ -263,6 +263,70 @@ describe("transpiler cache", () => {
   });
 });
 
+// Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+//   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
+//   then twelve u64 fields at offsets 6..102. Payload follows @ 102.
+const METADATA_SIZE = 102;
+const OUTPUT_BYTE_OFFSET_AT = 30;
+const OUTPUT_BYTE_LENGTH_AT = 38;
+const OUTPUT_HASH_AT = 46;
+const SOURCEMAP_BYTE_OFFSET_AT = 54;
+const SOURCEMAP_BYTE_LENGTH_AT = 62;
+const SOURCEMAP_HASH_AT = 70;
+const ESM_RECORD_BYTE_OFFSET_AT = 78;
+const ESM_RECORD_BYTE_LENGTH_AT = 86;
+const ESM_RECORD_HASH_AT = 94;
+// Wyhash seed used by RuntimeTranspilerCache::hash().
+const CACHE_WYHASH_SEED = 42n;
+
+test("rejects a cache entry whose output_hash is zeroed", () => {
+  // The on-disk transpiler cache entry stores a wyhash of the transpiled
+  // output in the header. On load the hash of the output bytes is compared
+  // against that stored value. A stored hash of zero must not skip that
+  // check: anyone who can write to the cache directory can compute the
+  // cache filename for a known source file, prepend arbitrary code to the
+  // cached output, and zero the stored output_hash so the altered output
+  // is accepted without being re-verified.
+
+  // A >=4 KiB source file so it is eligible for the cache.
+  writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "output-hash-zero", "clean"));
+
+  // First run transpiles the file and writes the cache entry.
+  const first = bunRun(join(temp_dir, "a.js"), env);
+  expect(first.stdout).toBe("clean");
+  expect(newCacheCount()).toBe(1);
+  const pile = join(cache_dir, readdirSync(cache_dir)[0]);
+
+  // Rewrite the cached output: prepend a payload, then zero output_hash so the
+  // only integrity check on the output bytes is bypassed.
+  const data = readFileSync(pile);
+  const outOff = Number(data.readBigUInt64LE(OUTPUT_BYTE_OFFSET_AT));
+  const outLen = Number(data.readBigUInt64LE(OUTPUT_BYTE_LENGTH_AT));
+  const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
+  const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
+  const esmOff = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_OFFSET_AT));
+  const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
+
+  const payload = Buffer.from('console.log("PLANTED");\n');
+  const newOut = Buffer.concat([payload, data.subarray(outOff, outOff + outLen)]);
+  const sm = data.subarray(smOff, smOff + smLen);
+  const esm = data.subarray(esmOff, esmOff + esmLen);
+
+  const header = Buffer.from(data.subarray(0, METADATA_SIZE));
+  header.writeBigUInt64LE(BigInt(METADATA_SIZE), OUTPUT_BYTE_OFFSET_AT);
+  header.writeBigUInt64LE(BigInt(newOut.length), OUTPUT_BYTE_LENGTH_AT);
+  header.writeBigUInt64LE(0n, OUTPUT_HASH_AT);
+  header.writeBigUInt64LE(BigInt(METADATA_SIZE + newOut.length), SOURCEMAP_BYTE_OFFSET_AT);
+  header.writeBigUInt64LE(BigInt(METADATA_SIZE + newOut.length + sm.length), ESM_RECORD_BYTE_OFFSET_AT);
+  writeFileSync(pile, Buffer.concat([header, newOut, sm, esm]));
+
+  // Second run must not execute the planted payload. The entry's integrity
+  // check fails, so the cache entry is discarded and the source file is
+  // re-transpiled from scratch.
+  const second = bunRun(join(temp_dir, "a.js"), env);
+  expect(second.stdout).toBe("clean");
+});
+
 test("rejects cached module records containing out-of-range string indices", () => {
   // When test isolation is enabled, the runtime transpiler cache stores a
   // serialized ES module record ("esm_record") alongside the transpiled
@@ -271,18 +335,10 @@ test("rejects cached module records containing out-of-range string indices", () 
   // record, so any index beyond the table length (other than the reserved
   // *-default / *-namespace sentinels near u32::MAX) must be rejected.
   //
-  // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
-  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; esm_record_byte_offset @ 78,
-  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
   // Serialized module record layout (src/bundler/analyze_transpiled_module.rs,
   // serialize()):
   //   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
   //   [buffer_len u32][buffer: u32 string index x buffer_len] ...
-  const ESM_RECORD_BYTE_OFFSET_AT = 78;
-  const ESM_RECORD_BYTE_LENGTH_AT = 86;
-  const ESM_RECORD_HASH_AT = 94;
-  const METADATA_SIZE = 102;
 
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);
@@ -303,10 +359,11 @@ test("rejects cached module records containing out-of-range string indices", () 
     for (let i = 0; i < bufferLen; i++) {
       data.writeUInt32LE(0x7fffffff, off + i * 4);
     }
-    // The cache loader skips esm-record content verification when the stored
-    // hash field is zero, so whoever writes the cache file controls exactly
-    // what reaches the module record deserializer.
-    data.writeBigUInt64LE(0n, ESM_RECORD_HASH_AT);
+    // Re-derive the stored esm_record hash so the corrupted record still
+    // passes the loader's integrity check and reaches the deserializer under
+    // test. The loader uses the same wyhash variant and seed as
+    // Bun.hash.wyhash.
+    data.writeBigUInt64LE(Bun.hash.wyhash(data.subarray(esmOff, esmOff + esmLen), CACHE_WYHASH_SEED), ESM_RECORD_HASH_AT);
     writeFileSync(file, data);
     return true;
   }

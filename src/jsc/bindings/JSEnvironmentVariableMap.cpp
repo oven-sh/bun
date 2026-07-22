@@ -185,7 +185,8 @@ static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* glo
     if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
         return;
     DeletePropertySlot deleteSlot;
-    JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot);
+    if (!JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot))
+        return;
     object->putDirectCustomAccessor(vm, propertyName, existing,
         attributes & ~JSC::PropertyAttribute::DontEnum);
 }

@@ -16,6 +16,7 @@
  */
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <stdlib.h>
 
@@ -195,13 +196,36 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   }
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return;
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return 0;
   p->poll_type = us_internal_poll_type(p) |
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
-  uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  int rc;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+  ssize_t injected = 0;
+  int unused = 0;
+  if (US_FAULT_CHECK(US_FAULT_POLL_START, p->fd, injected, unused)) {
+    rc = (int) injected;
+  } else
+#endif
+  rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  if (rc < 0) {
+    /* libuv returns before uv__handle_init on failure (e.g. the FIONBIO
+     * ioctlsocket in win/poll.c), so uv_p is still the raw us_malloc block.
+     * uv_unref/uv_poll_start on it would read garbage, and so would
+     * us_poll_free's uv_is_closing check. Free it here and null the pointer
+     * so the caller's us_poll_free takes the !uv_p fast path. errno is set
+     * for the callers that capture it (context.c / loop.c / udp.c); on a
+     * real failure LIBUS_ERR (WSAGetLastError) still holds the winsock code
+     * that made ioctlsocket/CreateIoCompletionPort fail. */
+    int saved = LIBUS_ERR;
+    us_free(p->uv_p);
+    p->uv_p = NULL;
+    errno = saved ? saved : -rc;
+    return rc;
+  }
   // This unref is okay in the context of Bun's event loop, because sockets have
   // a `Async.KeepAlive` associated with them, which is used instead of the
   // usockets internals. usockets doesnt have a notion of ref-counted handles.
@@ -210,11 +234,11 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
    * writable-only at that moment (a half-closed connection whose reads are
    * paused is exactly the state that otherwise hangs; see poll_cb). */
   uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
+  return 0;
 }
 
-int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  us_poll_start(p, loop, events);
-  return 0;
+void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  us_poll_start_rc(p, loop, events);
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {

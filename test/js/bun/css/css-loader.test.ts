@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // The default export of a CSS import is an empty object (esbuild parity), and
 // `bun run` and `bun build --target=bun` agree on that shape.
-describe("css loader default export", () => {
+describe.concurrent("css loader default export", () => {
   const entry = `import c from "./s.css";\nprocess.stdout.write(typeof c + " " + JSON.stringify(c));\n`;
 
   test("bun run", async () => {

@@ -1352,8 +1352,7 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue, 
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ =
-        crate::node::node_cluster_binding::handle_internal_message_child(global, data, handle);
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data, handle);
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —

@@ -678,11 +678,12 @@ impl Value {
 }
 
 impl Value {
-    /// `new Response(arrayBuffer)` / `new Request(url, { body: arrayBuffer })`
-    /// borrows the buffer above this size; below it the copy is cheap and the
-    /// spec snapshot semantics are preserved exactly. Matches the uWS cork
-    /// buffer (`LoopData::CORK_BUFFER_SIZE`): a body that fits the cork buffer
-    /// is memcpy'd on the send path anyway.
+    /// `new Response(arrayBuffer)` borrows the buffer above this size (see
+    /// [`from_js_maybe_borrow`]). Below it the copy is cheap and the spec
+    /// snapshot semantics are preserved exactly; `new Request` and outbound
+    /// `fetch()` always copy. Matches the uWS cork buffer
+    /// (`LoopData::CORK_BUFFER_SIZE`): a body that fits the cork buffer is
+    /// memcpy'd on the send path anyway.
     pub const ARRAY_BUFFER_BORROW_THRESHOLD: usize = 16 * 1024;
 
     // We may not have all the data yet
@@ -742,6 +743,7 @@ impl Value {
             Value::InternalBlob(b) => b.memory_cost(),
             Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
             Value::Locked(l) => l.size_hint() as usize,
+            Value::Blob(b) => b.size.get() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
@@ -752,6 +754,11 @@ impl Value {
             Value::InternalBlob(b) => b.slice_const().len(),
             Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len(),
             Value::Locked(l) => l.size_hint() as usize,
+            // A borrowed-ArrayBuffer store's bytes are already reported by
+            // the source ArrayBuffer, so this double-counts them, but the
+            // heap-snapshot and GC estimate should reflect that the body
+            // retains body-sized storage.
+            Value::Blob(b) => b.size.get() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
@@ -867,6 +874,20 @@ impl Value {
     }
 
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
+        Self::from_js_maybe_borrow::<false>(global_this, value)
+    }
+
+    /// `BORROW_ARRAY_BUFFER`: when true, an ArrayBuffer/view body at or above
+    /// [`ARRAY_BUFFER_BORROW_THRESHOLD`] is wrapped in a `Blob` that borrows
+    /// the live storage instead of `.to_vec()`ing it. Only the `Response`
+    /// constructor takes this path (via [`body::extract`]); `Request` and
+    /// outbound `fetch()` keep the spec snapshot semantics so mutating a
+    /// buffer after handing it to `fetch()` cannot change what goes on the
+    /// wire.
+    pub fn from_js_maybe_borrow<const BORROW_ARRAY_BUFFER: bool>(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Value> {
         value.ensure_still_alive();
 
         if value.is_empty_or_undefined_or_null() {
@@ -896,14 +917,15 @@ impl Value {
                 }
 
                 // Above the cork-buffer size, borrow the ArrayBuffer's storage
-                // instead of `.to_vec()`ing it. A fetch handler that returns
-                // `new Response(sharedBuffer)` otherwise pays one body-sized
-                // memcpy + allocation per request, and under backpressure
-                // that per-connection copy is held until the socket drains,
-                // so N slow clients x an M-byte body costs N*M bytes of RSS.
-                // `init_pinned_array_buffer` rejects resizable/growable
-                // buffers (a shrink would invalidate the stored `(ptr, len)`).
-                if bytes.len() >= Self::ARRAY_BUFFER_BORROW_THRESHOLD {
+                // instead of `.to_vec()`ing it. A `Bun.serve` fetch handler
+                // that returns `new Response(sharedBuffer)` otherwise pays one
+                // body-sized memcpy + allocation per request, and under
+                // backpressure that per-connection copy is held until the
+                // socket drains, so N slow clients x an M-byte body costs
+                // N*M bytes of RSS. `init_pinned_array_buffer` rejects
+                // resizable/growable buffers (a shrink would invalidate the
+                // stored `(ptr, len)`).
+                if BORROW_ARRAY_BUFFER && bytes.len() >= Self::ARRAY_BUFFER_BORROW_THRESHOLD {
                     if let Some(store) = blob::Store::init_pinned_array_buffer(&buffer) {
                         return Ok(Value::Blob(Blob::init_with_store(store, global_this)));
                     }
@@ -1603,7 +1625,7 @@ type ArrayBufferJSSink = sink::JSSink<ArrayBufferSink>;
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
 pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
-    let body_value = Value::from_js(global_this, value)?;
+    let body_value = Value::from_js_maybe_borrow::<true>(global_this, value)?;
     if let Value::Blob(b) = &body_value {
         debug_assert!(!b.is_heap_allocated()); // owned by Body
     }

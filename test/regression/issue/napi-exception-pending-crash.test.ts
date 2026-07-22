@@ -60,7 +60,7 @@ test("napi_is_exception_pending crash fix and Node.js compatibility", async () =
   // Test 1: Run with Bun - this should NOT crash (verifies our fix)
   console.log("\n=== Testing with Bun (should not crash) ===");
   const bunProcess = await Bun.spawn({
-    cmd: [bunExe(), "--expose-gc", "test.js"],
+    cmd: [bunExe(), "--expose-gc", "run-fixture.js"],
     cwd: testDir,
     env: bunEnv,
     stdio: ["ignore", "pipe", "pipe"],
@@ -92,7 +92,7 @@ test("napi_is_exception_pending crash fix and Node.js compatibility", async () =
   let nodeProcess;
   try {
     nodeProcess = await Bun.spawn({
-      cmd: ["node", "--expose-gc", "test.js"],
+      cmd: ["node", "--expose-gc", "run-fixture.js"],
       cwd: testDir,
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe"],

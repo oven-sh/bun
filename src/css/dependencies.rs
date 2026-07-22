@@ -1,7 +1,7 @@
 use crate::SourceLocation;
 
 /// A line and column position within a source file (1-based line), used by
-/// `Url` values and printer error locations.
+/// printer error locations.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Location {
     /// The line number, starting from 1.

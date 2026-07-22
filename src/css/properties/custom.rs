@@ -1336,7 +1336,7 @@ impl Clone for TokenOrValue {
             TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
             TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
             TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
-            // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
+            // `Url` has no `#[derive(Clone)]` but its field is `Copy`.
             TokenOrValue::Url(u) => TokenOrValue::Url(Url {
                 import_record_idx: u.import_record_idx,
             }),

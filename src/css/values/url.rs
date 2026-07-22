@@ -1,7 +1,7 @@
 use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
-/// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
+/// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value.
 pub struct Url {
     /// The url string.
     pub(crate) import_record_idx: u32,
@@ -83,8 +83,7 @@ impl Url {
     // TODO: dedupe import records??
     // This might not fucking work
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Only `import_record_idx` participates in identity (matches `eql`
-        // above); `loc` is presentation metadata.
+        // `import_record_idx` is the identity (matches `eql` above).
         hasher.update(&self.import_record_idx.to_ne_bytes());
     }
 }

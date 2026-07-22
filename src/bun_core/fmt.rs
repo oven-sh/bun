@@ -278,7 +278,7 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
 // RedactedSourceFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct RedactedSourceFormatter<'a> {
+struct RedactedSourceFormatter<'a> {
     text: &'a [u8],
 }
 

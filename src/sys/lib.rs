@@ -8811,7 +8811,7 @@ pub mod make_path {
 /// `WindowsSymlinkOptions` — Windows-only flag struct
 /// plus a process-global "symlink creation has failed once" sticky bit. The
 /// flag is checked by the install linker to decide whether to fall back to
-/// junctions; on POSIX the flag is harmless dead state. Only the sticky bit
+/// junctions. Only the sticky bit
 /// is needed cross-platform (`PackageManager::init` sets it when
 /// `BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS` is on).
 #[derive(Default, Clone, Copy)]

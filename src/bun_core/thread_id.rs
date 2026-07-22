@@ -10,7 +10,7 @@
 //!
 //! Rust's `std::thread::ThreadId` is intentionally NOT used: it is an opaque,
 //! process-local monotonic counter (no `MAX`, no atomic repr, not the kernel
-//! TID), whereas every consumer (`CriticalSection`, `ThreadLock`, `ThreadCell`)
+//! TID), whereas every consumer (`ThreadLock`, `ThreadCell`)
 //! needs a plain integer it can store in an atomic and compare against a
 //! sentinel.
 
@@ -58,9 +58,6 @@ pub type ThreadId = u64;
     target_os = "visionos",
 )))]
 pub type ThreadId = usize;
-
-// ── Atomic wrapper ─────────────────────────────────────────────────────────
-// Width-matched alias so `CriticalSection` can `compare_exchange` on it directly.
 
 /// Per-thread cache of [`current()`]. Without it, every call paid a syscall
 /// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The

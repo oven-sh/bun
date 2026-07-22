@@ -596,7 +596,3 @@ pub fn convert_stmts_for_chunk(
 
     Ok(())
 }
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

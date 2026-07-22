@@ -387,8 +387,6 @@ impl Drop for S3HttpDownloadStreamingTask {
 #[derive(Copy, Clone)]
 pub struct State(pub u64);
 
-pub type StateAtomicType = AtomicU64;
-
 impl State {
     const STATUS_CODE_SHIFT: u32 = 0;
     const REQUEST_ERROR_SHIFT: u32 = 32;

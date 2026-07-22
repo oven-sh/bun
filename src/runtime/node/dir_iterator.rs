@@ -8,7 +8,7 @@
 
 use core::mem::offset_of;
 
-use bun_core::{RawSlice, WStr};
+use bun_core::RawSlice;
 use bun_sys::{self as sys, Fd, Tag};
 
 // `Entry.Kind` is `bun_core::FileKind`, re-exported here as
@@ -61,11 +61,6 @@ impl IteratorResultWName {
     pub fn slice(&self) -> &[u16] {
         self.data.slice()
     }
-    pub fn slice_assume_z(&self) -> &WStr {
-        let s = self.data.slice();
-        // SAFETY: name_data[len] == 0 was written by next()
-        unsafe { WStr::from_raw(s.as_ptr(), s.len()) }
-    }
 }
 
 pub struct IteratorResultW {
@@ -73,9 +68,6 @@ pub struct IteratorResultW {
     pub kind: EntryKind,
 }
 pub type ResultW = sys::Result<Option<IteratorResultW>>;
-
-pub type Iterator = NewIterator<false>;
-pub type IteratorW = NewIterator<true>;
 
 /// Cross-platform marker for the const-bool→buffer-type selection. On Windows
 /// this is the real `Select<B>` machinery (see the `windows` `platform` mod);
@@ -868,12 +860,6 @@ pub use platform::NewIterator;
 // per-value to avoid inherent associated types.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PathType {
-    U8,
-    U16,
-}
-
 pub struct NewWrappedIterator<const IS_U16: bool>
 where
     (): WrappedSelect<IS_U16>,
@@ -974,17 +960,6 @@ where
                     buf: [0u8; 8192],
                 },
             };
-        }
-    }
-
-    pub fn set_name_filter(&mut self, filter: Option<&[u16]>) {
-        #[cfg(not(windows))]
-        {
-            let _ = filter;
-        }
-        #[cfg(windows)]
-        {
-            self.iter.name_filter = filter.map(|f| (f.as_ptr(), f.len()));
         }
     }
 }

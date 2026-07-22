@@ -10,11 +10,6 @@ use crate::BundleV2;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
 
-/// Re-export for callers that previously named
-/// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in
-/// `bundle_v2::dispatch` alongside the other §Dispatch vtables.
-pub use crate::bundle_v2::dispatch::CompletionDispatch;
-
 #[derive(Default)]
 pub struct DeferredBatchTask {
     // Debug-only flag; zero-sized in release.

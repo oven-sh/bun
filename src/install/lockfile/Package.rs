@@ -15,9 +15,9 @@ use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
-    TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, dependency,
-    initialize_store, invalid_package_id,
+    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
+    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
+    invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -626,118 +626,6 @@ impl Package<u64> {
         Ok(new_package.meta.id)
     }
 
-    pub fn from_package_json(
-        lockfile: &mut Lockfile,
-        pm: &mut PackageManager,
-        package_json: &mut PackageJSON,
-        features: Features,
-    ) -> crate::Result<Self> {
-        #[allow(non_snake_case)]
-        let FEATURES = features;
-        let mut package = Self::default();
-
-        // var string_buf = package_json;
-
-        // split-borrow `string_bytes`/`string_pool` so the disjoint
-        // `lockfile.buffers.dependencies/resolutions` borrows below pass.
-        let mut string_builder = crate::string_builder!(lockfile);
-
-        let mut total_dependencies_count: u32 = 0;
-        // var bin_extern_strings_count: u32 = 0;
-
-        // --- Counting
-        {
-            string_builder.count(&package_json.name);
-            string_builder.count(&package_json.version);
-            let dependencies = package_json.dependencies.map.values();
-            for dep in dependencies {
-                if dep.behavior.is_enabled(FEATURES) {
-                    dep.count(package_json.dependencies.source_buf, &mut string_builder);
-                    total_dependencies_count += 1;
-                }
-            }
-        }
-
-        // string_builder.count(manifest.str(&package_version_ptr.tarball_url));
-
-        string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope below
-        // var extern_strings_list = &lockfile.buffers.extern_strings;
-        let dependencies_list = &mut lockfile.buffers.dependencies;
-        let resolutions_list = &mut lockfile.buffers.resolutions;
-        dependencies_list.reserve(total_dependencies_count as usize);
-        resolutions_list.reserve(total_dependencies_count as usize);
-        // try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
-        // extern_strings_list.items.len += bin_extern_strings_count;
-
-        // -- Cloning
-        {
-            let package_name: ExternalString =
-                string_builder.append::<ExternalString>(&package_json.name);
-            package.name_hash = package_name.hash;
-            package.name = package_name.value;
-
-            package.resolution = Resolution::<u64>::init(TaggedValue::Root);
-
-            let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
-
-            let dep_start = dependencies_list.len();
-            bun_core::vec::extend_from_fn(
-                dependencies_list,
-                total_dependencies_count as usize,
-                |_| Dependency::default(),
-            );
-            debug_assert_eq!(dependencies_list.len(), total_len);
-            let mut dependencies: &mut [Dependency] = &mut dependencies_list[dep_start..total_len];
-
-            let package_dependencies = package_json.dependencies.map.values();
-            let source_buf = package_json.dependencies.source_buf;
-            for dep in package_dependencies {
-                if !dep.behavior.is_enabled(FEATURES) {
-                    continue;
-                }
-
-                dependencies[0] = dep.clone_in(pm, source_buf, &mut string_builder)?;
-                dependencies = &mut dependencies[1..];
-                if dependencies.is_empty() {
-                    break;
-                }
-            }
-
-            // We lose the bin info here
-            // package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
-            // and the integriy hash
-            // package.meta.integrity = package_version.integrity;
-
-            package.meta.arch = package_json.arch;
-            package.meta.os = package_json.os;
-
-            package.dependencies.off = dep_start as u32;
-            package.dependencies.len = total_dependencies_count - (dependencies.len() as u32);
-            package.resolutions.off = package.dependencies.off;
-            package.resolutions.len = package.dependencies.len;
-
-            let new_length = package.dependencies.len as usize + dep_start;
-
-            debug_assert_eq!(resolutions_list.len(), dep_start);
-            bun_core::vec::extend_from_fn(
-                resolutions_list,
-                package.dependencies.len as usize,
-                |_| invalid_package_id,
-            );
-            debug_assert_eq!(resolutions_list.len(), new_length);
-
-            // Shrink off the unused default-initialized tail (`new_length <= total_len`).
-            dependencies_list.truncate(new_length);
-
-            string_builder.clamp();
-            return Ok(package);
-        }
-    }
-
     pub fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
@@ -788,9 +676,7 @@ impl Package<u64> {
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
                 total_dependencies_count += map.value.len;
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
 
                 debug_assert_eq!(keys.len(), version_strings.len());
                 for (key, ver) in keys.iter().zip(version_strings.iter()) {
@@ -835,9 +721,7 @@ impl Package<u64> {
                 }));
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
+            debug_assert!(dependencies_list.len() == resolutions_list.len());
 
             let dep_start = dependencies_list.len();
             bun_core::vec::extend_from_fn(
@@ -854,9 +738,7 @@ impl Package<u64> {
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
                 let is_peer = group.field == b"peer_dependencies";
 
                 debug_assert_eq!(keys.len(), version_strings.len());
@@ -2008,10 +1890,8 @@ impl Package<u64> {
                                 break 'brk rel;
                             }
                         });
-                    if cfg!(debug_assertions) {
-                        debug_assert!(path.len() > 0);
-                        debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
-                    }
+                    debug_assert!(path.len() > 0);
+                    debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;
 
                     let workspace_entry = workspace_paths.get_or_put(name_hash)?;
@@ -2511,11 +2391,7 @@ impl Package<u64> {
 
         let off = lockfile.buffers.dependencies.len();
         let total_len = off + total_dependencies_count as usize;
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len()
-            );
-        }
+        debug_assert!(lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len());
 
         // `parse_dependency` can return early with an error
         // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
@@ -2629,9 +2505,7 @@ impl Package<u64> {
                                 extern_strings[i] = string_builder.append::<ExternalString>(v);
                                 i += 1;
                             }
-                            if cfg!(debug_assertions) {
-                                debug_assert!(i == extern_strings.len());
-                            }
+                            debug_assert!(i == extern_strings.len());
                             self.bin = Bin {
                                 tag: bin::Tag::Map,
                                 value: bin::Value {
@@ -3068,11 +2942,6 @@ pub mod serializer {
 
     /// Number of columns in the on-disk package table.
     pub(crate) const FIELD_COUNT: usize = PackageField::ALL.len();
-
-    pub struct Sizes {
-        pub bytes: [usize; FIELD_COUNT],
-        pub fields: [usize; FIELD_COUNT],
-    }
 
     pub fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,

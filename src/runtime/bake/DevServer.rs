@@ -145,11 +145,6 @@ impl DevServer {
         unsafe { self.client_transpiler.assume_init_mut() }
     }
     #[inline]
-    pub fn ssr_transpiler(&self) -> &Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.ssr_transpiler.assume_init_ref() }
-    }
-    #[inline]
     pub fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
         unsafe { self.ssr_transpiler.assume_init_mut() }
@@ -644,8 +639,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 static_routes: Default::default(),
                 dynamic_routes: Default::default(),
                 pattern_string_arena: Arena::new(),
-                edges: Vec::new(),
-                freed_edges: Vec::new(),
             }
         );
     }
@@ -1259,16 +1252,6 @@ impl Drop for DevServer {
     }
 }
 
-impl DevServer {
-    /// Everything is `Box`/`Vec` on the global mimalloc, so this just
-    /// returns the default `StdAllocator`. Kept for the few call sites
-    /// that still want a `StdAllocator` handle.
-    #[inline]
-    pub fn allocator(&self) -> bun_alloc::StdAllocator {
-        bun_alloc::StdAllocator::default()
-    }
-}
-
 // re-exports from memory_cost module already declared at top
 
 impl DevServer {
@@ -1708,7 +1691,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         if !is_allowed_dev_origin(req) {
             return origin_forbidden(res.as_any_response());
         }
-        let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
+        let dw = bun_core::heap::into_raw(HmrSocket::new(this));
         let _ = this.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
             dw,
@@ -1720,8 +1703,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
     }
 }
 
-// `ResponseLike` for the concrete `Response<SSL>` so `HmrSocket::new` can be
-// called from `on_websocket_upgrade`.
+// `ResponseLike` for the concrete `Response<SSL>` (used by `on_websocket_upgrade`).
 impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     fn write_status(&mut self, status: &[u8]) {
         bun_uws_sys::response::Response::<SSL>::write_status(self, status)
@@ -1735,15 +1717,6 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
         } else {
             bun_uws::AnyResponse::TCP(std::ptr::from_mut::<Self>(self).cast())
         }
-    }
-    fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        bun_uws_sys::response::Response::<SSL>::get_remote_socket_info(self).map(|a| {
-            bun_uws::SocketAddress {
-                ip: a.ip().to_vec().into_boxed_slice(),
-                port: a.port,
-                is_ipv6: a.is_ipv6,
-            }
-        })
     }
     fn upgrade<D>(
         &mut self,
@@ -1985,7 +1958,6 @@ impl RequestEnsureRouteBundledCtx {
                         // SAFETY: `r` is a uWS `Request*` valid for the handler callback's duration.
                         SavedRequestUnion::Stack(unsafe { &mut *r })
                     }
-                    ReqOrSaved::Saved(s) => SavedRequestUnion::Saved(s),
                     ReqOrSaved::Aborted => unreachable!(),
                 };
                 self.dev_mut()
@@ -2234,9 +2206,9 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
     }
 }
 
+#[derive(Clone, Copy)]
 enum ReqOrSaved {
     Req(*mut Request), // FFI: uws C request ptr from handler callback
-    Saved(SavedRequest),
     Aborted,
 }
 
@@ -2246,10 +2218,6 @@ impl ReqOrSaved {
             ReqOrSaved::Req(req) => {
                 // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
                 Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST)
-            }
-            ReqOrSaved::Saved(saved) => {
-                // SAFETY: `saved.request` is kept alive by `saved.js_request` (Strong handle).
-                unsafe { (*saved.request).method }
             }
             ReqOrSaved::Aborted => unreachable!(),
         }
@@ -2280,10 +2248,6 @@ impl DevServer {
         let method = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
             ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
-            ReqOrSaved::Saved(saved) => {
-                // SAFETY: `saved.request` is kept alive by `saved.js_request` (Strong handle).
-                unsafe { (*saved.request).method }
-            }
             _ => unreachable!(),
         };
 
@@ -2330,7 +2294,6 @@ impl DevServer {
                                 None => return Ok(()),
                             }
                         }
-                        ReqOrSaved::Saved(saved) => saved,
                         _ => unreachable!(),
                     };
                     server_handler.ctx.ref_();
@@ -3670,9 +3633,7 @@ impl DevServer {
             route_bundle.data,
             route_bundle::Data::Framework(_)
         ));
-        if cfg!(debug_assertions) {
-            debug_assert!(!route_bundle.data.framework().cached_css_file_array.has());
-        }
+        debug_assert!(!route_bundle.data.framework().cached_css_file_array.has());
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
         let _lock = self.graph_safety_lock.guard();
@@ -3827,10 +3788,6 @@ pub struct HotUpdateContext<'a> {
 pub struct CachedFileIndex(pub u32);
 impl CachedFileIndex {
     pub const NONE: Self = Self(u32::MAX);
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
     #[inline]
     pub fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
         if self.0 == u32::MAX {
@@ -5272,45 +5229,6 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
 }
 
 impl DevServer {
-    // TODO: path params
-    pub fn handle_render_redirect(
-        &mut self,
-        saved_request: SavedRequest,
-        render_path: &[u8],
-        mut resp: AnyResponse,
-    ) -> crate::Result<()> {
-        // Match the render path against the router
-        let mut params: framework_router::MatchedParams = Default::default();
-        if let Some(route_index) = self.router.match_slow(render_path, &mut params) {
-            let route_bundle_index = self
-                .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
-                .expect("oom");
-            let mut ctx = RequestEnsureRouteBundledCtx {
-                dev: std::ptr::from_mut::<DevServer>(self),
-                req: ReqOrSaved::Saved(saved_request),
-                resp,
-                kind: deferred_request::HandlerKind::ServerHandler,
-                route_bundle_index,
-            };
-            let rbi = ctx.route_bundle_index;
-            // Found a matching route, bundle it and handle the request
-            match ensure_route_is_bundled(self, rbi, &mut ctx) {
-                Ok(()) => {}
-                Err(jsc::JsError::OutOfMemory) => {
-                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                }
-                Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
-                    self.vm().global().report_active_exception_as_unhandled(e);
-                }
-            }
-            return Ok(());
-        }
-
-        // No matching route found - render 404
-        send_built_in_not_found(&mut resp);
-        Ok(())
-    }
-
     pub fn respond_for_html_bundle(
         &mut self,
         html: *mut HTMLBundleRoute,
@@ -5820,7 +5738,6 @@ impl DevServer {
         }
         Ok(())
     }
-
     pub fn write_visualizer_message(&self, payload: &mut Vec<u8>) -> crate::Result<()> {
         payload.push(MessageId::Visualizer.char());
 
@@ -6054,7 +5971,7 @@ impl DevServer {
         &mut self,
         events: &[bun_watcher::Event],
         changed_files: &[bun_watcher::ChangedFilePath],
-        watchlist: &bun_watcher::ItemList,
+        watchlist: &bun_watcher::WatchList,
     ) {
         debug_assert!(self.magic == Magic::Valid);
         debug_log!("onFileUpdate start");

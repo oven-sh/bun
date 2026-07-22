@@ -10,7 +10,7 @@ use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::fs::{FileSystem, Path as FsPath};
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Wyhash (final4 variant). Must stay stable so on-disk
 // `.pile` filenames/hashes remain interchangeable across versions.
@@ -836,10 +836,6 @@ impl RuntimeTranspilerCache {
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
         Ok(entry)
-    }
-
-    pub fn is_eligible(&self, path: &FsPath<'_>) -> bool {
-        path.is_file()
     }
 
     pub fn to_file(

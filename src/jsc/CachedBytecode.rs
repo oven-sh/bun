@@ -124,13 +124,6 @@ impl CachedBytecode {
 
 impl bun_alloc::Allocator for CachedBytecode {}
 
-impl CachedBytecode {
-    /// Concrete-type identity check via the `Allocator::type_id()` hook.
-    pub fn is_instance(alloc: &dyn bun_alloc::Allocator) -> bool {
-        alloc.is::<Self>()
-    }
-}
-
 /// Link-time entry point for lower-tier crates (declared `extern "Rust"` in
 /// `bun_bundler`). Generic "generate JSC bytecode off the main JS thread"
 /// helper: marks the calling thread as a bytecode-only thread (so WTF timer

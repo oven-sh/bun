@@ -24,33 +24,6 @@ use super::options::LogLevel;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub fn format_later_version_in_cache<'a>(
-    this: &'a mut PackageManager,
-    package_name: &[u8],
-    name_hash: PackageNameHash,
-    resolution: &Resolution,
-) -> Option<semver::version::Formatter<'a, u64>> {
-    this.format_later_version_in_cache(package_name, name_hash, resolution)
-}
-
-#[inline]
-pub fn scope_for_package_name<'a>(
-    this: &'a PackageManager,
-    name: &[u8],
-) -> &'a npm::registry::Scope {
-    this.scope_for_package_name(name)
-}
-
-#[inline]
-pub fn get_installed_versions_from_disk_cache(
-    this: &mut PackageManager,
-    tags_buf: &mut Vec<u8>,
-    package_name: &[u8],
-) -> crate::Result<Vec<semver::Version>> {
-    this.get_installed_versions_from_disk_cache(tags_buf, package_name)
-}
-
-#[inline]
 pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
@@ -60,26 +33,12 @@ pub fn resolve_from_disk_cache(
 }
 
 #[inline]
-pub fn assign_resolution(
-    this: &mut PackageManager,
-    dependency_id: DependencyID,
-    package_id: PackageID,
-) {
-    this.assign_resolution(dependency_id, package_id)
-}
-
-#[inline]
 pub fn assign_root_resolution(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
 ) {
     this.assign_root_resolution(dependency_id, package_id)
-}
-
-#[inline]
-pub fn verify_resolutions(this: &mut PackageManager, log_level: LogLevel) {
-    this.verify_resolutions(log_level)
 }
 
 impl PackageManager {
@@ -298,13 +257,11 @@ impl PackageManager {
 
     pub fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
@@ -319,16 +276,14 @@ impl PackageManager {
 
     pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            debug_assert!(
-                self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
-                    == invalid_package_id
-            );
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        debug_assert!(
+            self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
+                == invalid_package_id
+        );
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();

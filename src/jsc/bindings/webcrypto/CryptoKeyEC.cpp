@@ -116,22 +116,22 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::importJwk(CryptoAlgorithmIdentifier identifier,
     return platformImportJWKPrivate(identifier, *namedCurve, WTF::move(*x), WTF::move(*y), WTF::move(*d), extractable, usages);
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::importSpki(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyEC> CryptoKeyEC::importSpki(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     auto namedCurve = toNamedCurve(curve);
     if (!namedCurve || !platformSupportedCurve(*namedCurve))
         return nullptr;
 
-    return platformImportSpki(identifier, *namedCurve, WTF::move(keyData), extractable, usages);
+    return platformImportSpki(identifier, *namedCurve, WTF::move(keyData), extractable, usages, keyTypeMismatch);
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::importPkcs8(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyEC> CryptoKeyEC::importPkcs8(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     auto namedCurve = toNamedCurve(curve);
     if (!namedCurve || !platformSupportedCurve(*namedCurve))
         return nullptr;
 
-    return platformImportPkcs8(identifier, *namedCurve, WTF::move(keyData), extractable, usages);
+    return platformImportPkcs8(identifier, *namedCurve, WTF::move(keyData), extractable, usages, keyTypeMismatch);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyEC::exportRaw() const

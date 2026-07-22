@@ -12,7 +12,7 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 8);
+        let obj = JSValue::create_empty_object(global, 9);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -23,6 +23,10 @@ pub mod js_bindings {
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
+            (
+                "segfaultInFramelessLeaf",
+                __jsc_host_js_segfault_in_frameless_leaf,
+            ),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -65,6 +69,74 @@ pub mod js_bindings {
 
             Ok(JSValue::js_number((base_address - vmaddr_slide) as f64))
         }
+    }
+
+    // A one-instruction leaf with no frame prologue, so at the fault `fp`
+    // still belongs to the caller. The fp-walk's first hop is therefore the
+    // caller's caller, and the immediate caller survives only in `lr`
+    // (aarch64) / `[rsp]` (x86_64) — which the crash handler must capture.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    unsafe extern "C" {
+        fn bun_test_frameless_segv();
+    }
+    #[cfg(target_arch = "x86_64")]
+    core::arch::global_asm!(
+        ".globl {s}",
+        ".p2align 4",
+        "{s}:",
+        "    movq 0, %rax",
+        "    retq",
+        s = sym bun_test_frameless_segv,
+        options(att_syntax),
+    );
+    #[cfg(target_arch = "aarch64")]
+    core::arch::global_asm!(
+        ".globl {s}",
+        ".p2align 2",
+        "{s}:",
+        "    mov x8, #0",
+        "    ldr x0, [x8]",
+        "    ret",
+        s = sym bun_test_frameless_segv,
+    );
+
+    #[inline(never)]
+    fn frameless_segv_caller() -> ! {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            // ASAN owns SIGSEGV in sanitizer builds, so drive
+            // `capture_from_context` directly with the (pc, fp, lr) the
+            // real fault would have produced: `fp` is ours (the stub pushes
+            // no frame), `lr` is the return-into-us the `call`/`bl` would
+            // set — approximated as our entry + one instruction so it
+            // symbolicates to this function and is distinct from `[fp+8]`.
+            if Environment::ENABLE_ASAN {
+                let pc = bun_test_frameless_segv as *const () as usize;
+                let fp = crash_handler::debug::frame_address();
+                let step: usize = if cfg!(target_arch = "aarch64") { 4 } else { 1 };
+                let lr = frameless_segv_caller as *const () as usize + step;
+                crash_handler::crash_handler(
+                    crash_handler::CrashReason::SegmentationFault(0),
+                    crash_handler::TraceSeed::Fault { pc, fp, lr, sp: 0 },
+                );
+            }
+            // SAFETY: test-only, intentionally faults.
+            unsafe { bun_test_frameless_segv() };
+        }
+        // Other arches: an ordinary null deref so the helper still
+        // terminates; the frame-shape assertion is gated on x64/arm64.
+        // SAFETY: test-only, intentionally faults.
+        unsafe { core::ptr::write_volatile(core::ptr::null_mut::<u64>(), 0) };
+        unreachable!()
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_segfault_in_frameless_leaf(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        frameless_segv_caller();
     }
 
     #[bun_jsc::host_fn]

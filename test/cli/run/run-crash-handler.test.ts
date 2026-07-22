@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -121,6 +121,38 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     void stdout;
   });
 });
+
+// A fault inside a function with no frame prologue (machine-outlined
+// sequence, ICF-folded thunk, hand-written asm) leaves `fp` pointing at the
+// caller's frame record, so an fp-walk seeded from the fault context alone
+// skips straight to the caller's caller and the immediate caller vanishes
+// from the report. The crash handler has to recover that frame from `lr`
+// (aarch64 x30) / `[rsp]` (x86_64). Under ASAN the SIGSEGV handler isn't
+// installed so the helper synthesises an equivalent `TraceSeed::Fault`
+// instead of taking a real signal.
+test.if(isDebug && isLinux && hasSymbolizer && ["x64", "arm64"].includes(process.arch))(
+  "crash in a frameless leaf still reports its immediate caller",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInFramelessLeaf"],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address");
+    if (!isASAN) expect(proc.signalCode).toBe("SIGSEGV");
+    expect(exitCode).not.toBe(0);
+
+    // The symbolized trace must name the Rust wrapper that called the
+    // frameless asm stub. Without the lr/[rsp] seed the first non-pc frame
+    // is the wrapper's caller and `frameless_segv_caller` never appears.
+    expect(stdout.includes("frameless_segv_caller") ? "frameless_segv_caller" : stdout || stderr).toBe(
+      "frameless_segv_caller",
+    );
+  },
+  60_000,
+);
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {
   // If this fails, then https://bun.report will be incorrect and the stack

@@ -58,6 +58,19 @@ pub fn frame_address() -> usize {
     }
 }
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn mach_vm_read_overwrite(
+        target_task: libc::mach_port_t,
+        address: u64,
+        size: u64,
+        data: u64,
+        out_size: *mut u64,
+    ) -> libc::kern_return_t;
+    // `mach_task_self()` in C is `#define mach_task_self() mach_task_self_`.
+    safe static mach_task_self_: libc::mach_port_t;
+}
+
 /// Reads memory from any address of the current process, tolerating unmapped
 /// or corrupt pages so a damaged stack can't fault the walker itself.
 struct MemoryAccessor {
@@ -76,6 +89,28 @@ impl MemoryAccessor {
     };
 
     fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            // `msync` only checks *mapped*, not *readable*, so a PROT_NONE
+            // page (guard, mimalloc/JSC reservation) would pass and the raw
+            // copy below would fault — inside the SIGSEGV handler, with
+            // SA_RESETHAND set, that loses the whole report.
+            // `mach_vm_read_overwrite` asks the kernel to do the copy and
+            // returns KERN_INVALID_ADDRESS / KERN_PROTECTION_FAILURE instead.
+            let mut out: u64 = 0;
+            // SAFETY: `buf` is a valid writable slice; the kernel validates
+            // `address` and writes at most `buf.len()` bytes into `buf`.
+            let kr = unsafe {
+                mach_vm_read_overwrite(
+                    mach_task_self_,
+                    address as u64,
+                    buf.len() as u64,
+                    buf.as_mut_ptr() as u64,
+                    &raw mut out,
+                )
+            };
+            return kr == 0 && out == buf.len() as u64;
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             match self.mem {
@@ -137,14 +172,17 @@ impl MemoryAccessor {
                 }
             }
         }
-        if !is_valid_memory(address) {
-            return false;
+        #[cfg(not(target_os = "macos"))]
+        {
+            if !is_valid_memory(address) {
+                return false;
+            }
+            // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
+            unsafe {
+                core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
+            }
+            true
         }
-        // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
-        unsafe {
-            core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
-        }
-        true
     }
 
     fn load_usize(&mut self, address: usize) -> Option<usize> {
@@ -154,6 +192,24 @@ impl MemoryAccessor {
         } else {
             None
         }
+    }
+
+    /// Quick plausibility filter for a candidate return address recovered
+    /// from `lr` / `[rsp]`: mapped page and (on aarch64) 4-byte instruction
+    /// alignment. Not a precise text-segment test; the goal is only to drop
+    /// obvious garbage (small integers, unmapped) so a clobbered `lr` in a
+    /// framed function doesn't inject a nonsense frame.
+    #[cfg(not(windows))]
+    fn looks_like_code(&mut self, address: usize) -> bool {
+        if address == 0 {
+            return false;
+        }
+        #[cfg(target_arch = "aarch64")]
+        if !address.is_multiple_of(4) {
+            return false;
+        }
+        let mut probe = [0u8; 1];
+        self.read(address, &mut probe)
     }
 }
 
@@ -167,6 +223,7 @@ impl Drop for MemoryAccessor {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn is_valid_memory(address: usize) -> bool {
     let page_size = bun_alloc::page_size();
     let aligned_address = address & !(page_size - 1);
@@ -329,14 +386,29 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// POSIX: walk frame pointers from `fp` (the saved frame pointer register).
 /// No trimming is needed — the walk starts on the faulting stack, so the
 /// signal handler's own frames (on the altstack) are never in the chain.
+/// `lr` (aarch64 x30) or `[sp]` (x86_64, the word `call` pushed) is inserted
+/// after `pc` when it names a caller the fp-walk would skip — i.e. a fault
+/// inside a frameless leaf, where `fp` still belongs to the caller and the
+/// walk's first hop is the caller's caller. When the faulting function has
+/// its own frame record, the walk's first hop is already the caller and the
+/// recovered value would either duplicate it (not yet clobbered) or be stale
+/// (clobbered); both are suppressed. The `[sp]` read is deferred to here (not
+/// done in the signal handler) so a stack overflow with `rsp` in a guard page
+/// cannot recursively fault before the crash header is printed.
 ///
 /// Windows: `rbp` is not a reliable frame pointer across all linked code (the
 /// prebuilt JavaScriptCore and LLInt assembly do not maintain it), so an
 /// fp-walk derails at the C++ boundary. Use the native `.pdata`-based
 /// `RtlCaptureStackBackTrace` instead — it works with or without unwind tables
 /// since `.pdata` is always emitted — and trim the handler's own frames by
-/// scanning for `pc`. `fp` is unused on Windows.
-pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
+/// scanning for `pc`. `fp` / `lr` / `sp` are unused on Windows.
+pub fn capture_from_context(
+    pc: usize,
+    fp: usize,
+    lr: usize,
+    sp: usize,
+    out: &mut [usize],
+) -> usize {
     if out.is_empty() {
         return 0;
     }
@@ -344,7 +416,7 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     let mut n = 1usize;
     #[cfg(windows)]
     {
-        let _ = fp;
+        let _ = (fp, lr, sp);
         let cap = (out.len() - 1).min(u16::MAX as usize) as u32;
         // SAFETY: out[1..] is valid for `cap` writes; hash ptr may be null.
         let got = unsafe {
@@ -376,6 +448,45 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     #[cfg(not(windows))]
     {
         let mut it = StackIterator::init(fp);
+        let first = it.next();
+        // x86_64 has no link register; derive one from the word `call`
+        // pushed. A stack overflow can leave `rsp` in a PROT_NONE guard page
+        // — `it.ma` tolerates that (process_vm_readv / mach_vm_read_overwrite
+        // return an error rather than faulting).
+        let lr = if lr == 0 && sp != 0 && sp.is_multiple_of(core::mem::align_of::<usize>()) {
+            it.ma.load_usize(sp).unwrap_or(0)
+        } else {
+            lr
+        };
+        // Frameless-leaf recovery: emit `lr` between `pc` and the fp-walk when
+        // it is a distinct, plausible return address. `first` (the saved LR at
+        // `[fp+8]`) is the caller when the faulting function pushed a frame
+        // record, but the caller's caller when it didn't; only in the latter
+        // case does `lr` add information. `lr == first` means the faulting
+        // function pushed a frame and hasn't clobbered x30/[rsp] yet, so skip
+        // the duplicate. `lr == pc` covers a fault on the leaf's very first
+        // instruction. The stack-proximity check rejects the x86_64 case
+        // where a framed function has adjusted `rsp` and `[rsp]` is a local
+        // rather than the pushed return address. A stale clobbered `lr` that
+        // still lands in the image is tolerated — one noisy frame is cheaper
+        // than a missing one.
+        const STACK_RADIUS: usize = 64 * 1024 * 1024;
+        if lr != 0
+            && lr != pc
+            && Some(lr) != first
+            && lr.abs_diff(fp) > STACK_RADIUS
+            && n < out.len()
+            && it.ma.looks_like_code(lr)
+        {
+            out[n] = lr;
+            n += 1;
+        }
+        if let Some(addr) = first {
+            if n < out.len() {
+                out[n] = addr;
+                n += 1;
+            }
+        }
         while n < out.len() {
             match it.next() {
                 Some(addr) => {

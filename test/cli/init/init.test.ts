@@ -271,6 +271,50 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
+  test("bun init --react does not overwrite an existing README.md", async () => {
+    // https://github.com/oven-sh/bun/issues/2892
+    const temp = tempDirWithFiles("bun-init--react-preserve-readme", {
+      "README.md": "MY README - do not lose me\n",
+      "src/index.ts": "export const mine = 1;\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "--react"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("README.md (already exists, skipping)");
+    expect(stdout).toContain("src/index.ts (already exists, skipping)");
+    expect(stderr).not.toContain("error");
+
+    expect(fs.readFileSync(path.join(temp, "README.md"), "utf8")).toBe("MY README - do not lose me\n");
+    expect(fs.readFileSync(path.join(temp, "src/index.ts"), "utf8")).toBe("export const mine = 1;\n");
+    // a file the user did *not* have should still be created
+    expect(fs.existsSync(path.join(temp, "src/index.html"))).toBe(true);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test("bun init --react into an empty dir still writes a templated README.md", async () => {
+    const temp = tempDirWithFiles("bun-init--react-fresh-readme", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "--react"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatch(/\+ README\.md/);
+    const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
+    expect(readme).toStartWith("# bun-react-template");
+    expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   test("bun init --react=tailwind works", async () => {
     const temp = tempDirWithFiles("bun-init--react=tailwind-works", {});
 

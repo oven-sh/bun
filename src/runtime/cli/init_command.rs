@@ -966,15 +966,6 @@ impl Assets {
         Self::create_full_inner(asset, asset_name, "", is_template, args)
     }
 
-    pub fn create_with_contents(
-        asset_name: &[u8],
-        contents: &'static [u8],
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
-        Self::create_full_with_contents(asset_name, contents, "", is_template, args)
-    }
-
     /// Substitutes named placeholders `{[key]s}` in `template` with the
     /// corresponding value from `args`.
     fn substitute(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
@@ -1056,40 +1047,6 @@ impl Assets {
         } else {
             file.write_all(asset)?;
         }
-        bun_core::prettyln!(
-            " + <r><d>{}{}<r>",
-            bstr::BStr::new(filename),
-            message_suffix,
-        );
-        Output::flush();
-        Ok(())
-    }
-
-    fn create_full_with_contents(
-        // name of asset file to create
-        filename: &[u8],
-        contents: &'static [u8],
-        // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
-        message_suffix: &'static str,
-        // Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
-        is_template: bool,
-        // Format arguments
-        args: &[(&[u8], &[u8])],
-    ) -> Result<(), Error> {
-        let file = bun_sys::File::openat(
-            Fd::cwd(),
-            filename,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o666,
-        )?;
-
-        if is_template {
-            let buf = Self::substitute(contents, args);
-            file.write_all(&buf)?;
-        } else {
-            file.write_all(contents)?;
-        }
-
         bun_core::prettyln!(
             " + <r><d>{}{}<r>",
             bstr::BStr::new(filename),
@@ -1656,14 +1613,21 @@ impl Template {
             let contents = file.contents;
 
             let result = if path == b"README.md" {
-                Assets::create_with_contents(
-                    b"README.md",
-                    contents,
-                    &[
-                        (b"name", self.name()),
-                        (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
-                    ],
-                )
+                if exists_z(b"README")
+                    || exists_z(b"README.txt")
+                    || exists_z(b"README.mdx")
+                {
+                    Err(crate::Error::Sys(bun_errno::SystemErrno::EEXIST))
+                } else {
+                    let buf = Assets::substitute(
+                        contents,
+                        &[
+                            (b"name", self.name()),
+                            (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
+                        ],
+                    );
+                    Assets::create_new(ZStr::from_slice_with_nul(b"README.md\0"), &buf)
+                }
             } else {
                 let mut p = path.to_vec();
                 p.push(0);

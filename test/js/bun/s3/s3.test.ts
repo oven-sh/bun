@@ -670,7 +670,8 @@ for (let credentials of allCredentials) {
                 flushed = await writer.flush();
               }
               await writer.end();
-              expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+              // Content correctness for writer() is covered by the #16452 test above; a HEAD is enough here.
+              expect((await s3file.stat()).size).toBe(Buffer.byteLength(mediumPayload) * 2);
             }, 100_000);
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
@@ -813,7 +814,8 @@ for (let credentials of allCredentials) {
                 flushed = await writer.flush();
               }
               await writer.end();
-              expect(await s3file.text()).toBe(mediumPayload.repeat(2));
+              // Content correctness for writer() is covered by the surrounding large-upload tests; a HEAD is enough here.
+              expect((await s3file.stat()).size).toBe(Buffer.byteLength(mediumPayload) * 2);
             }, 100_000);
 
             it("should be able to upload large files in one go using S3File.write", async () => {

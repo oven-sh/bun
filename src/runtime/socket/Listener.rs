@@ -740,6 +740,10 @@ impl Listener {
                 return Ok(JSValue::UNDEFINED);
             };
 
+        // SNI selects a tree entry with SSL_set_SSL_CTX before BoringSSL
+        // negotiates ALPN; carry the per-connection selector over.
+        super::socket_body::install_sni_alpn_selector(sni_ctx);
+
         // The C SNI tree SSL_CTX_up_ref()s; drop our build/borrow ref once added.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
         let ls_ref = bun_opaque::opaque_deref_mut(ls);
@@ -1938,7 +1942,11 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     }
     if let Some(sc) = result.as_class_ref::<SecureContext>() {
         // `SSL_set_SSL_CTX` takes its own reference to the returned SSL_CTX.
-        return sc.borrow().cast();
+        let ctx = sc.borrow();
+        // The caller installs `ctx` with SSL_set_SSL_CTX before BoringSSL
+        // negotiates ALPN; carry the per-connection selector over.
+        super::socket_body::install_sni_alpn_selector(ctx);
+        return ctx.cast();
     }
     // Anything else is not a SecureContext: Node treats this as an invalid SNI
     // context and drops the connection.

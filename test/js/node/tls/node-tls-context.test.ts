@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -354,6 +355,130 @@ describe("tls.Server", () => {
       true,
       "chain.example.com",
     );
+  });
+});
+
+describe("ALPN survives an SNI-selected SecureContext", () => {
+  // Node negotiates ALPN at the connection level, independent of which
+  // SecureContext SNI selected; an SNI/multi-domain server is exactly the
+  // deployment shape that needs ALPN (h2, gRPC), so selecting a per-domain
+  // context must not drop the server's ALPN configuration.
+  const identity = { key: agent1Key, cert: agent1Cert };
+  type SNICb = (err: Error | null, ctx?: unknown) => void;
+  const cases: [string, object, undefined | ((server: tls.Server) => void)][] = [
+    [
+      "synchronous SNICallback",
+      { SNICallback: (_name: string, cb: SNICb) => cb(null, tls.createSecureContext(identity)) },
+      undefined,
+    ],
+    [
+      "asynchronous SNICallback",
+      {
+        SNICallback(_name: string, cb: SNICb) {
+          setImmediate(() => cb(null, tls.createSecureContext(identity)));
+        },
+      },
+      undefined,
+    ],
+    ["addContext", {}, (server: tls.Server) => server.addContext("alpn.sni.test", identity)],
+  ];
+
+  for (const [label, extraOptions, setup] of cases) {
+    it(`negotiates the server's ALPNProtocols: ${label}`, async () => {
+      const serverSide = Promise.withResolvers<string | false | null>();
+      await using server = tls.createServer(
+        { ...identity, ALPNProtocols: ["h2", "http/1.1"], ...extraOptions },
+        socket => {
+          serverSide.resolve(socket.alpnProtocol);
+          socket.end();
+        },
+      );
+      server.on("tlsClientError", serverSide.reject);
+      server.listen(0);
+      await once(server, "listening");
+      setup?.(server);
+      const { port } = server.address() as AddressInfo;
+      await using client = tls.connect({
+        port,
+        host: "127.0.0.1",
+        servername: "alpn.sni.test",
+        ALPNProtocols: ["h2"],
+        rejectUnauthorized: false,
+      });
+      client.on("error", serverSide.reject);
+      await once(client, "secureConnect");
+      expect({ client: client.alpnProtocol, server: await serverSide.promise }).toEqual({
+        client: "h2",
+        server: "h2",
+      });
+    });
+  }
+
+  // https://github.com/oven-sh/bun/issues/17932
+  it("still consults the server's ALPNCallback", async () => {
+    const seen: { servername: string; protocols: string[] }[] = [];
+    const failed = Promise.withResolvers<never>();
+    await using server = tls.createServer(
+      {
+        ...identity,
+        ALPNCallback(arg: { servername: string; protocols: string[] }) {
+          seen.push(arg);
+          return "h2";
+        },
+        SNICallback: (_name: string, cb: SNICb) => cb(null, tls.createSecureContext(identity)),
+      },
+      socket => socket.end(),
+    );
+    server.on("tlsClientError", failed.reject);
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    await using client = tls.connect({
+      port,
+      host: "127.0.0.1",
+      servername: "alpn.sni.test",
+      ALPNProtocols: ["http/1.1", "h2"],
+      rejectUnauthorized: false,
+    });
+    client.on("error", failed.reject);
+    await Promise.race([once(client, "secureConnect"), failed.promise]);
+    expect(client.alpnProtocol).toBe("h2");
+    expect(seen).toEqual([{ servername: "alpn.sni.test", protocols: ["http/1.1", "h2"] }]);
+  });
+
+  it("sends the fatal no_application_protocol alert on a genuine mismatch", async () => {
+    // RFC 7301 3.2: no overlap between the offered and configured protocol
+    // lists is a fatal no_application_protocol alert, not a silent handshake
+    // that negotiated nothing.
+    await using server = tls.createServer({
+      ...identity,
+      ALPNProtocols: ["h2"],
+      SNICallback: (_name: string, cb: SNICb) => cb(null, tls.createSecureContext(identity)),
+    });
+    server.on("tlsClientError", () => {});
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    // Not `await using`: a Readable's Symbol.asyncDispose rejects with the
+    // stream's terminal error, and this client is expected to end in one.
+    const client = tls.connect({
+      port,
+      host: "127.0.0.1",
+      servername: "alpn.sni.test",
+      ALPNProtocols: ["spdy/3"],
+      rejectUnauthorized: false,
+    });
+    try {
+      const outcome = Promise.withResolvers<Error & { code?: string }>();
+      client.on("error", outcome.resolve);
+      client.on("secureConnect", () => {
+        outcome.reject(new Error(`handshake succeeded with alpnProtocol=${JSON.stringify(client.alpnProtocol)}`));
+      });
+      const err = await outcome.promise;
+      expect(err.code).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+    } finally {
+      client.destroy();
+    }
   });
 });
 

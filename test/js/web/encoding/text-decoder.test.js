@@ -337,17 +337,25 @@ describe("TextDecoder", () => {
       expect(decoder.decode(new Uint8Array([0x92, 0xa9]))).toBe("\u{1F4A9}");
     });
 
-    it("constructor accepts null options", () => {
-      const decoder = new TextDecoder("utf-8", null);
-      expect(decoder.encoding).toBe("utf-8");
-      expect(decoder.fatal).toBe(false);
-      expect(decoder.ignoreBOM).toBe(false);
-    });
-
-    it("constructor rejects primitive options with ERR_INVALID_ARG_TYPE", () => {
-      expect(() => new TextDecoder("utf-8", 5)).toThrow(
+    it.each([5, "x", true, 0n])("constructor rejects primitive options: %p", opt => {
+      expect(() => new TextDecoder("utf-8", opt)).toThrow(
         expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
       );
+    });
+
+    it("constructor rejects symbol options", () => {
+      expect(() => new TextDecoder("utf-8", Symbol())).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it.each([[null], [undefined], [{}], [() => {}], [[]]])("constructor accepts %p options", opt => {
+      const decoder = new TextDecoder("utf-8", opt);
+      expect({ encoding: decoder.encoding, fatal: decoder.fatal, ignoreBOM: decoder.ignoreBOM }).toEqual({
+        encoding: "utf-8",
+        fatal: false,
+        ignoreBOM: false,
+      });
     });
   });
 });

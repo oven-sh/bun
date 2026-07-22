@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
 import https from "https";
 import net from "net";
@@ -662,6 +663,97 @@ it("'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls
   await once(client, "close");
   server.close();
   await once(server, "close");
+});
+
+it("does not present a client certificate to a server whose `ca` was set without requestCert", async () => {
+  // A server-side `ca` only scopes verification; on its own it must not make
+  // the server send a CertificateRequest. A client holding a certificate the
+  // server's `ca` would happily accept therefore never gets asked for it, and
+  // a client with no certificate at all still connects.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+
+  const { promise, resolve, reject } = Promise.withResolvers<{ authorized: boolean; clientCertificate: unknown }>();
+  const server = tls.createServer({ key: agent1Key, cert: agent1Cert, ca: [ca1] }, socket => {
+    const peer = socket.getPeerCertificate();
+    resolve({ authorized: socket.authorized, clientCertificate: peer?.subject?.CN ?? null });
+    socket.end();
+  });
+  server.on("tlsClientError", reject);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const client = tlsConnect({
+    port,
+    host: "127.0.0.1",
+    // The client is fully equipped to do mTLS. Nobody asked, so it must stay unused.
+    key: agent1Key,
+    cert: agent1Cert,
+    rejectUnauthorized: false,
+  });
+  client.on("error", reject);
+  // A handshake that dies without an 'error' would otherwise hang the await.
+  client.on("close", () => reject(new Error("client closed before the server accepted the connection")));
+  try {
+    expect(await promise).toEqual({ authorized: false, clientCertificate: null });
+  } finally {
+    client.destroy();
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("verifies against a user-supplied `ca` when the TLS socket rides on a Duplex", async () => {
+  // A Duplex that is not a net.Socket takes the SSLWrapper attach path, which
+  // loads the shared system roots into sockets whose context has no verify
+  // mode of its own. A context carrying the user's `ca` must keep that store:
+  // agent1 is signed by ca1, which is not in the system root bundle, so `ca`
+  // is the only thing that can authorize this server.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+
+  const server = tls.createServer({ key: agent1Key, cert: agent1Cert }, socket => socket.end("hi"));
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  async function authorizedOver(connectOptions: tls.ConnectionOptions): Promise<string> {
+    const raw = net.connect(port, "127.0.0.1");
+    await once(raw, "connect");
+    const client = tls.connect({
+      socket: new SocketProxy(raw),
+      servername: "agent1",
+      checkServerIdentity: () => undefined,
+      ...connectOptions,
+    });
+    const { promise, resolve } = Promise.withResolvers<string>();
+    client.on("secureConnect", () => resolve(`authorized=${client.authorized}`));
+    client.on("error", err => resolve(`error ${(err as NodeJS.ErrnoException).code ?? err.message}`));
+    // Settle rather than hang if the socket dies without either event. The
+    // string matches none of the expectations below, so it still fails loudly.
+    client.on("close", () => resolve("closed before secureConnect or error"));
+    try {
+      return await promise;
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  }
+
+  try {
+    expect(await authorizedOver({ ca: ca1 })).toBe("authorized=true");
+    expect(await authorizedOver({ secureContext: tls.createSecureContext({ ca: ca1 }) })).toBe("authorized=true");
+    // Without the CA the same server must not verify against the system roots.
+    expect(await authorizedOver({})).toBe("error UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 });
 
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {

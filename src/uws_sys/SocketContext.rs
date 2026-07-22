@@ -154,7 +154,7 @@ impl BunSocketContextOptions {
     /// correct on every path.
     ///
     /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
-    /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
+    /// accepts. CTX-level verify mode comes from `request_cert`/
     /// `reject_unauthorized` here; the per-socket client override (always run
     /// chain validation, populate verify_error) is applied in
     /// `us_internal_ssl_attach`, so a server reusing this ctx never sends

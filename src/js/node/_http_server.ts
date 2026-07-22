@@ -283,16 +283,12 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
-// Node.js only requests a client certificate when `requestCert: true`.
-// The uSockets SSL context treats `ca` alone as "verify peer", so without
-// these two flags an `https.Server({ ca })` would reject every client that
-// doesn't present a cert. Mirror tls.Server (net.ts): default `requestCert`
-// to false and, when not requesting, force `rejectUnauthorized` to false so
-// the CA is loaded into the trust store without requiring a client cert.
+// Node's https.Server coerces `requestCert` to a boolean and defaults
+// `rejectUnauthorized` to true; unlike a client it never falls back to
+// $NODE_TLS_REJECT_UNAUTHORIZED. Neither is read unless `requestCert` is set.
 function normalizeServerTls(tls) {
-  const requestCert = !!tls.requestCert;
-  tls.requestCert = requestCert;
-  tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
+  tls.requestCert = !!tls.requestCert;
+  tls.rejectUnauthorized = tls.rejectUnauthorized !== false;
   return tls;
 }
 

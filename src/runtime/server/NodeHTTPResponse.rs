@@ -1822,19 +1822,17 @@ impl NodeHTTPResponse {
 
         // Partial pinned progress: return false so onWritable's close gate
         // waits (bufferedAmount does not count the pinned tail). Zero progress
-        // after the peer's FIN mirrors the `flushed == 0 && RECEIVED_FIN`
-        // close in HttpContext::onWritable: drop and disarm so the gate can
-        // close. Zero progress without FIN (SSL WANT_READ, ENOBUFS) retries.
+        // after the peer's FIN is handed to the buffered path (spill) so the
+        // sibling `flushed == 0 && RECEIVED_FIN` close in HttpContext::
+        // onWritable decides; without FIN (SSL WANT_READ, ENOBUFS) retries.
         let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
             if self.pending_pinned_write.get().remaining.len() < pinned_before {
                 return false;
             }
-            if !response.state().is_node_received_fin() {
-                return true;
+            if response.state().is_node_received_fin() {
+                self.spill_pending_pinned_write(self.server.global_this());
             }
-            self.clear_pending_pinned_write(self.server.global_this(), JSValue::ZERO);
-            response.clear_on_writable();
             return true;
         }
 

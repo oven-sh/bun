@@ -1400,13 +1400,14 @@ pub mod command {
             ctx.debug.global_cache = GlobalCache::disable;
         }
 
-        let (entry_name, passthrough_start) = match resolve_standalone_fork_entry(graph) {
-            Some((entry, module_argv_idx)) => (entry, module_argv_idx + 1),
-            None => (
-                graph.entry_point().name.to_vec().into_boxed_slice(),
-                offset_for_passthrough,
-            ),
-        };
+        let (entry_name, passthrough_start) =
+            match resolve_standalone_fork_entry(graph, offset_for_passthrough) {
+                Some((entry, module_argv_idx)) => (entry, module_argv_idx + 1),
+                None => (
+                    graph.entry_point().name.to_vec().into_boxed_slice(),
+                    offset_for_passthrough,
+                ),
+            };
 
         ctx.passthrough = bun::argv()
             .iter()
@@ -1426,6 +1427,7 @@ pub mod command {
     #[cold]
     fn resolve_standalone_fork_entry(
         graph: &bun_standalone_graph::Graph,
+        offset_for_passthrough: usize,
     ) -> Option<(Box<[u8]>, usize)> {
         use bun_resolver::StandaloneModuleGraph as _;
 
@@ -1437,12 +1439,15 @@ pub mod command {
         // SAFETY: single-threaded startup, before `bun_jsc::initialize`.
         unsafe { std::env::remove_var("BUN_INTERNAL_FORK_ENTRY") };
 
+        // argv() has compile_exec_argv / BUN_OPTIONS tokens spliced at index 1;
+        // `offset_for_passthrough` is the first OS-passed arg slot, so start
+        // the scan there to avoid matching a spliced flag value.
         let argv = bun::argv();
         let idx = argv
             .iter()
-            .skip(1)
+            .skip(offset_for_passthrough)
             .position(|a| a == module_path.as_slice())
-            .map(|i| i + 1)
+            .map(|i| i + offset_for_passthrough)
             .unwrap_or(argv.len());
 
         let entry = match graph.resolve_embedded_entry(&module_path) {

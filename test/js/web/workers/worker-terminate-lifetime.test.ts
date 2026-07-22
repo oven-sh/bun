@@ -121,6 +121,53 @@ test(
   timeout,
 );
 
+// Regression: Bun.password.hash() runs argon2/bcrypt on the shared work pool
+// and enqueues its completion back through a raw *mut EventLoop captured at
+// schedule time. worker.terminate() freed the VM box mid-hash, then the pool
+// thread dereferenced the freed event loop (heap-use-after-free in
+// EventLoop::enqueue_task_concurrent on a Bun Pool thread).
+test(
+  "terminate() while Bun.password.hash() is in flight does not UAF the worker VM",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        // Keep several argon2/bcrypt jobs in flight continuously so at least
+        // one is mid-compute on the pool when terminate() frees the worker VM.
+        const workerSrc =
+          "const { parentPort } = require('node:worker_threads');" +
+          "const lane = f => (async () => { for (;;) { try { await f(); } catch {} } })();" +
+          "for (let i = 0; i < 3; i++) lane(() => Bun.password.hash('hunter2', { algorithm: 'argon2id', memoryCost: 1 << 12, timeCost: 2 }));" +
+          "for (let i = 0; i < 3; i++) lane(() => Bun.password.hash('pw', { algorithm: 'bcrypt', cost: 6 }));" +
+          "parentPort.postMessage('up');";
+        for (let r = 0; r < ${rounds}; r++) {
+          const w = new Worker(workerSrc, { eval: true });
+          await new Promise(res => w.once("message", res));
+          // Vary the delay so terminate scans across the hash-compute window.
+          await Bun.sleep(20 + (r * 37) % 120);
+          await w.terminate();
+        }
+        console.log("done");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr before stdout/exitCode: on failure the sanitizer/crash report is
+    // the useful output.
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-

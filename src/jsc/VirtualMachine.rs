@@ -274,6 +274,14 @@ pub struct VirtualMachine {
     pub regular_event_loop: EventLoop,
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
+    /// Cross-thread producers that enqueue completions back onto this VM's
+    /// event loop hold this gate open across the enqueue; worker terminate
+    /// closes it (blocking until every guest leaves) before freeing the VM
+    /// box. Lives in an `Arc` so guests may outlive the box; `Option` so
+    /// [`Self::destroy`] can drop the VM's ref explicitly (worker boxes are
+    /// freed without `Drop`).
+    pub shutdown_gate: Option<std::sync::Arc<bun_threading::ShutdownGate>>,
+
     pub ref_strings: crate::ref_string::Map,
     pub ref_strings_mutex: bun_threading::Mutex,
 
@@ -969,6 +977,15 @@ impl VirtualMachine {
 
     pub fn is_shutting_down(&self) -> bool {
         self.is_shutting_down
+    }
+
+    /// The per-VM [`bun_threading::ShutdownGate`]; see the field doc. Clone
+    /// on the JS thread when scheduling async work that will enqueue back
+    /// from another thread, and bracket the enqueue with `enter()`/`leave()`.
+    pub fn shutdown_gate(&self) -> &std::sync::Arc<bun_threading::ShutdownGate> {
+        self.shutdown_gate
+            .as_ref()
+            .expect("shutdown_gate: accessed after destroy()")
     }
 
     pub fn has_run_cleanup_hooks(&self) -> bool {
@@ -2114,6 +2131,10 @@ impl VirtualMachine {
             (*regular).virtual_machine = NonNull::new(vm);
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
+
+            addr_of_mut!((*vm).shutdown_gate).write(Some(std::sync::Arc::new(
+                bun_threading::ShutdownGate::new(),
+            )));
 
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.
@@ -4372,6 +4393,20 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // Backstop close of the shutdown gate: refuse new producer guests.
+        // Worker shutdown already did the full close-and-wait before its
+        // drain; main-VM exit must not wait (its box is never freed and a
+        // straggling guest on a parked thread must not hang exit).
+        if let Some(gate) = &self.shutdown_gate {
+            if self.is_main_thread {
+                gate.close_without_waiting();
+            } else {
+                gate.close_and_wait();
+            }
+        }
+        // Drop the VM's ref explicitly: worker boxes are freed without
+        // running `Drop`, which would leak the `Arc` allocation.
+        drop(self.shutdown_gate.take());
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 

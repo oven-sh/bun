@@ -550,6 +550,10 @@ struct PasswordJob<Op: PasswordOp> {
     password: Box<[u8]>,
     promise: JSPromiseStrong,
     event_loop: *mut EventLoop,
+    /// Cloned from the VM on the JS thread; bracket the `event_loop`
+    /// dereference in `run_owned` with `enter()`/`leave()` so worker
+    /// terminate can fence the pool thread out before freeing the VM box.
+    gate: std::sync::Arc<bun_threading::ShutdownGate>,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
     task: WorkPoolTask,
@@ -573,6 +577,20 @@ impl<Op: PasswordOp> PasswordJob<Op> {
     #[allow(clippy::boxed_local)]
     fn run_owned(mut self: Box<Self>) {
         let value = self.op.compute(&self.password);
+        // argon2/bcrypt take hundreds of ms: by the time the compute finishes
+        // the worker that scheduled this job may have been terminated and its
+        // VM box freed. Enter the VM's shutdown gate (cloned into `self.gate`,
+        // so the gate itself outlives the VM box) and only dereference
+        // `event_loop` while inside; worker terminate closes-and-waits on the
+        // gate before the dealloc.
+        if !self.gate.enter() {
+            // Worker gone. The promise handle points into the dead JSC VM's
+            // HandleSet; leak the slot rather than let `Drop` deref it.
+            core::mem::forget(core::mem::take(&mut self.promise));
+            return;
+            // `self: Box<Self>` drops here; Drop runs secure_zero on password
+            // (+op); `KeepAlive` has no `Drop`; `gate` Arc is released.
+        }
         let result = bun_core::heap::into_raw(Box::new(PasswordResult::<Op> {
             value,
             task: AnyTask::default(), // overwritten below
@@ -585,14 +603,16 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         unsafe {
             (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
         }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here. `task` is
-        // an intrusive field at a stable address.
+        // SAFETY: `event_loop` was stored from the JS-thread VM and is kept
+        // alive by the gate guest held above; ownership of `result` transfers
+        // to the event loop here. `task` is an intrusive field at a stable
+        // address.
         unsafe {
             (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
                 core::ptr::addr_of_mut!((*result).task),
             ));
         }
+        self.gate.leave();
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
 }
@@ -666,12 +686,13 @@ impl JSPasswordObject {
         let promise = JSPromiseStrong::init(global_object);
         let promise_value = promise.value();
 
+        let vm = global_object.bun_vm();
         let mut job = Box::new(PasswordJob::<Op> {
             op,
             password,
             promise,
-            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: global_object.bun_vm().event_loop(),
+            event_loop: vm.event_loop(),
+            gate: std::sync::Arc::clone(vm.shutdown_gate()),
             global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),

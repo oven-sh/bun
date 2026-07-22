@@ -1312,6 +1312,10 @@ impl WebWorker {
             // or observes m_isShuttingDown under m_lock and drops. Idempotent;
             // teardownJSCVM sets it again.
             Bun__JSCTaskScheduler__markShuttingDown(vm.global());
+            // Close the VM's shutdown gate and wait for every cross-thread
+            // producer that entered it: after this no pool thread can
+            // dereference the (about-to-be-freed) VM box to enqueue.
+            vm.shutdown_gate().close_and_wait();
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when
             // terminate() lands, and any Worker dispatchExit close task from a

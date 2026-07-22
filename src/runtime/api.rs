@@ -288,9 +288,20 @@ fn estring_to_js(
     if str.is_utf16 {
         let zig = bun_core::ZigString::init_utf16(str.slice16());
         let bun_s = bun_core::String::init(zig);
-        bun_s.to_js(global)
+        return bun_s.to_js(global);
+    }
+    // The 8-bit path holds WTF-8 (parsers write unpaired-surrogate `\uHHHH`
+    // escapes via `encode_wtf8_rune`). `create_utf8_for_js` decodes strict
+    // UTF-8 with replacement, which turns a WTF-8 surrogate into three
+    // U+FFFD, so route non-ASCII through the WTF-8 → UTF-16 transcoder
+    // instead (matches `expr_jsc::utf8_bytes_to_js`).
+    let bytes = str.slice8();
+    if let Some(utf16) = bun_core::strings::wtf8_to_utf16_alloc(bytes) {
+        let (mut out, chars) = bun_core::String::create_uninitialized_utf16(utf16.len());
+        chars.copy_from_slice(&utf16);
+        bun_jsc::bun_string_jsc::transfer_to_js(&mut out, global)
     } else {
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, bytes)
     }
 }
 

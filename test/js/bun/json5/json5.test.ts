@@ -105,6 +105,29 @@ describe("escape sequences", () => {
     expect(parsed).toEqual(expected);
   });
 
+  test("lone high surrogate", () => {
+    expect(JSON5.parse('"\\ud800"')).toEqual("\ud800");
+    expect(JSON5.parse('"\\uD800"')).toEqual(JSON.parse('"\\uD800"'));
+  });
+
+  test("lone low surrogate", () => {
+    expect(JSON5.parse('"\\udc00"')).toEqual("\udc00");
+    expect(JSON5.parse('"\\uDFFF"')).toEqual(JSON.parse('"\\uDFFF"'));
+  });
+
+  test("lone surrogate followed by non-surrogate", () => {
+    expect(JSON5.parse('"\\ud83dA"')).toEqual("\ud83dA");
+    expect(JSON5.parse('"\\ud800\\u0041"')).toEqual("\ud800A");
+  });
+
+  test("high surrogate followed by another high surrogate", () => {
+    expect(JSON5.parse('"\\ud800\\ud800"')).toEqual("\ud800\ud800");
+  });
+
+  test("lone surrogate in object key", () => {
+    expect(JSON5.parse('{"\\ud800": 1}')).toEqual({ "\ud800": 1 });
+  });
+
   test("identity escapes", () => {
     const input: string = '"\\A\\C\\/\\D\\C"';
     const parsed = JSON5.parse(input);
@@ -767,6 +790,29 @@ describe("stringify", () => {
   test("escapes U+2028 and U+2029 line separators", () => {
     expect(JSON5.stringify("hello\u2028world")).toEqual("'hello\\u2028world'");
     expect(JSON5.stringify("hello\u2029world")).toEqual("'hello\\u2029world'");
+  });
+
+  test("escapes lone surrogates (well-formed output)", () => {
+    expect(JSON5.stringify("\ud800")).toEqual("'\\ud800'");
+    expect(JSON5.stringify("\udfff")).toEqual("'\\udfff'");
+    expect(JSON5.stringify("a\ud83db")).toEqual("'a\\ud83db'");
+    expect(JSON5.stringify("\udc00\ud800")).toEqual("'\\udc00\\ud800'");
+  });
+
+  test("does not escape valid surrogate pairs", () => {
+    expect(JSON5.stringify("🎼")).toEqual("'🎼'");
+    expect(JSON5.stringify("\ud83c\udfbc")).toEqual("'🎼'");
+  });
+
+  test("round-trips strings containing lone surrogates", () => {
+    for (const s of ["\ud800", "hi \ud800 x \ud83dA", "\udc00", "\ud800\udc00", "🎼\ud800"]) {
+      expect(JSON5.parse(JSON5.stringify(s))).toEqual(s);
+    }
+  });
+
+  test("round-trips object keys containing lone surrogates", () => {
+    const obj = { "\ud800": 1 };
+    expect(JSON5.parse(JSON5.stringify(obj))).toEqual(obj);
   });
 
   test("space parameter with Infinity/NaN/large numbers", () => {

@@ -541,42 +541,15 @@ fn on_close(ctx: *mut HTTPClient) {
         && this.state.stage != Stage::Fail
         && !this.state.flags.is_redirect_pending;
     let mut fail_err: Option<crate::Error> = None;
-    if in_progress {
-        if this.state.is_chunked_encoding() {
-            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-            // (`phr_chunked_decoder._state` is a raw `c_char`.)
-            match this.state.chunked_decoder._state {
-                4 | 5 => {
-                    this.state.flags.received_last_chunk = true;
-                    let buffer_snap = core::mem::take(&mut this.state.get_body_buffer().list);
-                    match this.state.process_body_buffer(buffer_snap, true) {
-                        Ok(_) => {
-                            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                            progress_update_for_proxy_socket(ctx, proxy_nn);
-                            // Drop our temporary ref asynchronously to avoid freeing within callback
-                            crate::http_thread().schedule_proxy_deref(proxy_ptr);
-                            return;
-                        }
-                        Err(e) => fail_err = Some(e),
-                    }
-                }
-                _ => {}
+    if in_progress && this.state.is_body_complete_on_close() {
+        match this.state.finalize_body_on_eof() {
+            Ok(()) => {
+                // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                progress_update_for_proxy_socket(ctx, proxy_nn);
+                crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                return;
             }
-        } else if this.state.content_length.is_none()
-            && this.state.response_stage == HTTPStage::Body
-        {
-            this.state.flags.received_last_chunk = true;
-            let buffer_snap = core::mem::take(&mut this.state.get_body_buffer().list);
-            match this.state.process_body_buffer(buffer_snap, true) {
-                Ok(_) => {
-                    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                    progress_update_for_proxy_socket(ctx, proxy_nn);
-                    // Balance the ref we took asynchronously
-                    crate::http_thread().schedule_proxy_deref(proxy_ptr);
-                    return;
-                }
-                Err(e) => fail_err = Some(e),
-            }
+            Err(e) => fail_err = Some(e),
         }
     }
 

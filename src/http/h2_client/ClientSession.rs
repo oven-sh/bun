@@ -1109,12 +1109,7 @@ impl ClientSession {
         if stream.remote_closed() {
             stream.client = None;
             client.h2 = None;
-            client.state.flags.received_last_chunk = true;
-            // END_STREAM arrived with no accompanying DATA bytes; drive the
-            // decompressor one last time so a truncated compressed stream
-            // with no content-length is rejected instead of resolved short.
-            let buffer_snap = core::mem::take(&mut client.state.get_body_buffer().list);
-            if let Err(err) = client.state.process_body_buffer(buffer_snap, true) {
+            if let Err(err) = client.state.finalize_body_on_eof() {
                 client.h2_fail(err);
                 return true;
             }

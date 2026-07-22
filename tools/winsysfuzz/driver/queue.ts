@@ -7,9 +7,10 @@
 //   bun driver/queue.ts --all                 # include already-triaged
 //   bun driver/queue.ts --show 3              # full detail for entry #3
 //   bun driver/queue.ts --done 3 --verdict reported --note "<report ref>"
-//     verdicts: reported | not-real | not-user-facing | not-bun | dup | needs-work
+//     verdicts: reported | not-real | not-user-facing | not-bun | intentional-fatal | dup | needs-work
+//   bun driver/queue.ts --reap [--dry-run]  # delete case dirs of non-actionable verdicts
 //
-// Nothing is deleted: queue.jsonl and triaged.jsonl are append-only.
+// queue.jsonl and triaged.jsonl themselves are append-only ledgers.
 
 import { join } from "node:path";
 
@@ -95,6 +96,73 @@ const groupRank = (g: Group) => rankOf(g.best);
 const showAll = argv.includes("--all");
 const showIdx = flag("--show");
 const doneIdx = flag("--done");
+
+// --- reap: delete the kept case dirs of non-actionable verdicts --------------
+// A triaged finding that is not actionable (not-real / not-user-facing /
+// not-bun / intentional-fatal / dup) has no reason to keep its case
+// directory. Match each such entry's exact runs by its schedule text -
+// chaos iteration dirs directly, sweep job/verify dirs via their
+// schedule.txt - and delete only those. reported/needs-work cases stay.
+if (argv.includes("--reap")) {
+  const { existsSync, readdirSync, readFileSync, rmSync, statSync } = await import("node:fs");
+  const dryRun = argv.includes("--dry-run");
+  const actionable = new Set(["reported", "needs-work"]);
+  const deadKeys = new Set(triaged.filter(t => !actionable.has(t.verdict)).map(t => t.dedupeKey));
+  const dirSize = (d: string): number => {
+    let n = 0;
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      try {
+        n += e.isDirectory() ? dirSize(p) : statSync(p).size;
+      } catch {}
+    }
+    return n;
+  };
+  let freed = 0;
+  let removed = 0;
+  const kill = (d: string) => {
+    if (!existsSync(d)) return;
+    freed += dirSize(d);
+    removed++;
+    if (!dryRun) {
+      try {
+        rmSync(d, { recursive: true, force: true });
+      } catch {}
+    }
+  };
+  const schedText = (dir: string): string => {
+    try {
+      return readFileSync(join(dir, "schedule.txt"), "utf8").trim().split(/\s+/).join(" ");
+    } catch {
+      return "";
+    }
+  };
+  for (const e of entries) {
+    if (!deadKeys.has(e.dedupeKey)) continue;
+    const wd = e.workDir;
+    if (!wd || !existsSync(wd)) continue;
+    const target = e.schedule.replace(/ ; /g, "\n").trim().split(/\s+/).join(" ");
+    if (e.module === "chaos") {
+      kill(wd); // one iteration dir per chaos finding
+      continue;
+    }
+    // sweep: the job dir(s) and verify replay dir(s) carrying this schedule
+    for (const sub of ["runs", "verify"]) {
+      const base = join(wd, sub);
+      if (!existsSync(base)) continue;
+      for (const d of readdirSync(base, { withFileTypes: true })) {
+        if (!d.isDirectory() || /^(baseline|startup-mask\d*|control\d*)$/.test(d.name)) continue;
+        const p = join(base, d.name);
+        if (schedText(p) === target) kill(p);
+      }
+    }
+  }
+  console.log(
+    `${dryRun ? "[dry-run] would remove" : "removed"} ${removed} non-actionable case dir(s), ` +
+      `${(freed / 1024 ** 3).toFixed(1)} GB ${dryRun ? "reclaimable" : "reclaimed"}`,
+  );
+  process.exit(0);
+}
 
 const ordered = [...groups.values()].sort(
   (a, b) => groupRank(a) - groupRank(b) || b.targets.size - a.targets.size,

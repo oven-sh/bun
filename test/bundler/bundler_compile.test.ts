@@ -1237,104 +1237,108 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 // of the file's actual length; the first dereference of a page past EOF then delivers
 // SIGBUS along with a "this is a bug in Bun" crash banner. The runtime must instead detect
 // the short file before touching that memory and report a clean error.
-test.skipIf(!isLinux)("compile: truncated standalone executable reports a clean error instead of SIGBUS", async () => {
-  using dir = tempDir("compile-truncated", {
-    "entry.ts": `console.log("intact");`,
-  });
-  const cwd = String(dir);
-  const exe = join(cwd, "app");
-
-  {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(cwd, "entry.ts"), "--outfile", exe],
-      env: bunEnv,
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
+test.skipIf(!isLinux)(
+  "compile: truncated standalone executable reports a clean error instead of SIGBUS",
+  async () => {
+    using dir = tempDir("compile-truncated", {
+      "entry.ts": `console.log("intact");`,
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  }
+    const cwd = String(dir);
+    const exe = join(cwd, "app");
 
-  // Parse the ELF64 program headers to find where the file-backed load segments end.
-  // Truncating just below that boundary guarantees at least one PT_LOAD page maps past
-  // EOF, independent of how large the base bun binary or its trailing section headers are.
-  const header = Buffer.alloc(4096);
-  {
-    const fd = openSync(exe, "r");
-    readSync(fd, header, 0, header.length, 0);
-    closeSync(fd);
-  }
-  expect(header.subarray(0, 4).toString("binary")).toBe("\x7fELF");
-  const e_phoff = Number(header.readBigUInt64LE(32));
-  const e_phentsize = header.readUInt16LE(54);
-  const e_phnum = header.readUInt16LE(56);
-  let loadEnd = 0;
-  for (let i = 0; i < e_phnum; i++) {
-    const off = e_phoff + i * e_phentsize;
-    if (header.readUInt32LE(off) !== 1 /* PT_LOAD */) continue;
-    const p_offset = Number(header.readBigUInt64LE(off + 8));
-    const p_filesz = Number(header.readBigUInt64LE(off + 32));
-    loadEnd = Math.max(loadEnd, p_offset + p_filesz);
-  }
-  expect(loadEnd).toBeGreaterThan(4096);
-
-  async function run(path: string) {
-    await using proc = Bun.spawn({ cmd: [path], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
-  }
-
-  // One page short: only the appended module-graph page is past EOF. `main()` is
-  // reached and the check reports the short file before any graph byte is touched.
-  {
-    const trunc = join(cwd, "app-trunc-1pg");
-    copyFileSync(exe, trunc);
-    truncateSync(trunc, loadEnd - 4096);
-    chmodSync(trunc, 0o755);
-    const r = await run(trunc);
-    expect(r).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining("This executable is incomplete"),
-      exitCode: 1,
-      signalCode: null,
-    });
-    expect(r.stderr).toContain("truncated");
-    expect(r.stderr).not.toContain("oh no");
-    expect(r.stderr).not.toContain("panic");
-  }
-
-  // Deeper cut into the file-backed BSS tail. libc/CRT globals (`environ`, `stdout`,
-  // `__cpu_model`) may land there, so the process can SIGBUS before `main()` runs at
-  // all; either outcome is acceptable so long as the crash-handler banner blaming Bun
-  // never appears.
-  {
-    const trunc = join(cwd, "app-trunc-deep");
-    copyFileSync(exe, trunc);
-    truncateSync(trunc, loadEnd - 64 * 1024);
-    chmodSync(trunc, 0o755);
-    const r = await run(trunc);
-    expect(r.stderr).not.toContain("oh no");
-    expect(r.stderr).not.toContain("bug in Bun");
-    expect(r.stdout).toBe("");
-    expect(r.exitCode).not.toBe(0);
-    if (r.signalCode === null) {
-      expect(r.stderr).toContain("This executable is incomplete");
-      expect(r.exitCode).toBe(1);
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(cwd, "entry.ts"), "--outfile", exe],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
     }
-  }
 
-  // The intact executable still runs normally.
-  {
-    await using proc = Bun.spawn({
-      cmd: [exe],
-      env: bunEnv,
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "intact\n", stderr: "", exitCode: 0 });
-  }
-}, 120_000);
+    // Parse the ELF64 program headers to find where the file-backed load segments end.
+    // Truncating just below that boundary guarantees at least one PT_LOAD page maps past
+    // EOF, independent of how large the base bun binary or its trailing section headers are.
+    const header = Buffer.alloc(4096);
+    {
+      const fd = openSync(exe, "r");
+      readSync(fd, header, 0, header.length, 0);
+      closeSync(fd);
+    }
+    expect(header.subarray(0, 4).toString("binary")).toBe("\x7fELF");
+    const e_phoff = Number(header.readBigUInt64LE(32));
+    const e_phentsize = header.readUInt16LE(54);
+    const e_phnum = header.readUInt16LE(56);
+    let loadEnd = 0;
+    for (let i = 0; i < e_phnum; i++) {
+      const off = e_phoff + i * e_phentsize;
+      if (header.readUInt32LE(off) !== 1 /* PT_LOAD */) continue;
+      const p_offset = Number(header.readBigUInt64LE(off + 8));
+      const p_filesz = Number(header.readBigUInt64LE(off + 32));
+      loadEnd = Math.max(loadEnd, p_offset + p_filesz);
+    }
+    expect(loadEnd).toBeGreaterThan(4096);
+
+    async function run(path: string) {
+      await using proc = Bun.spawn({ cmd: [path], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+    }
+
+    // One page short: only the appended module-graph page is past EOF. `main()` is
+    // reached and the check reports the short file before any graph byte is touched.
+    {
+      const trunc = join(cwd, "app-trunc-1pg");
+      copyFileSync(exe, trunc);
+      truncateSync(trunc, loadEnd - 4096);
+      chmodSync(trunc, 0o755);
+      const r = await run(trunc);
+      expect(r).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("This executable is incomplete"),
+        exitCode: 1,
+        signalCode: null,
+      });
+      expect(r.stderr).toContain("truncated");
+      expect(r.stderr).not.toContain("oh no");
+      expect(r.stderr).not.toContain("panic");
+    }
+
+    // Deeper cut into the file-backed BSS tail. libc/CRT globals (`environ`, `stdout`,
+    // `__cpu_model`) may land there, so the process can SIGBUS before `main()` runs at
+    // all; either outcome is acceptable so long as the crash-handler banner blaming Bun
+    // never appears.
+    {
+      const trunc = join(cwd, "app-trunc-deep");
+      copyFileSync(exe, trunc);
+      truncateSync(trunc, loadEnd - 64 * 1024);
+      chmodSync(trunc, 0o755);
+      const r = await run(trunc);
+      expect(r.stderr).not.toContain("oh no");
+      expect(r.stderr).not.toContain("bug in Bun");
+      expect(r.stdout).toBe("");
+      expect(r.exitCode).not.toBe(0);
+      if (r.signalCode === null) {
+        expect(r.stderr).toContain("This executable is incomplete");
+        expect(r.exitCode).toBe(1);
+      }
+    }
+
+    // The intact executable still runs normally.
+    {
+      await using proc = Bun.spawn({
+        cmd: [exe],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "intact\n", stderr: "", exitCode: 0 });
+    }
+  },
+  120_000,
+);

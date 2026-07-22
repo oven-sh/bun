@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { FAULTS } from "./faults";
 import {
   detectCrash,
+  digestStacks,
   ensureDir,
   nameOf,
   readTraceDir,
@@ -150,11 +151,12 @@ function drawSchedule(): string[] {
   while (rules.size < n && guard++ < n * 8) {
     const c = pickCoord();
     const f = pick(FAULTS[c.sysName]);
-    // A post-lie (op SUCCEEDED, we report failure) on a call issued from
-    // inside another module ('o:' key) fabricates an impossible world - a
-    // completed operation does not retroactively report failure inside
-    // system machinery. Never draw it (the sweeper drops the same class).
-    if (f.mode === "post" && c.key.startsWith("o:")) continue;
+    // A call issued from INSIDE another module ('o:' key) is that module's
+    // own machinery: a post-lie there fabricates an impossible world, and a
+    // pre-failure there fails system plumbing mid-operation - bun only ever
+    // sees the API boundary. Never draw fail/lie faults on o: keys (delays
+    // stay: they perturb scheduling, not truth). Sweeper drops the same.
+    if ((f.mode === "post" || f.mode === "pre") && c.key.startsWith("o:")) continue;
     // hit biased deep: sqrt of a uniform skews toward the late end
     const hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
     rules.add(`${c.sysName} ${c.key} ${hit} ${f.mode} ${f.status}`);
@@ -179,8 +181,15 @@ function classify(rr: ReplayResult): string {
 const isFinding = (o: string) => o === "CRASH" || o === "HANG" || o === "stalled";
 
 // --- verify + minimize --------------------------------------------------------
-async function reproduces(schedule: string[], dir: string): Promise<boolean> {
-  const rr = await replayCoordinate({ bun, args: progArgs, schedule: schedule.join("\n"), dir, timeoutMs, capture: false });
+// Captured on the first verify replay: where a HANG is stuck / a crash's
+// stack. Without this a chaos HANG reaches the queue unreadable.
+let capturedStacks: string[] = [];
+async function reproduces(schedule: string[], dir: string, capture = false): Promise<boolean> {
+  const rr = await replayCoordinate({ bun, args: progArgs, schedule: schedule.join("\n"), dir, timeoutMs, capture });
+  if (capture) {
+    const raw = rr.hangStacks ?? rr.crashDump ?? "";
+    capturedStacks = raw ? digestStacks(raw) : [];
+  }
   return isFinding(classify(rr));
 }
 // Greedy delta over rules: drop each rule if the finding still reproduces
@@ -247,7 +256,9 @@ async function worker(w: number) {
     // Verify: replay the same schedule; two of three (including the
     // original) reproducing = confirmed. Then minimize.
     let bad = 1;
-    for (let v = 1; v <= 2; v++) if (await reproduces(schedule, join(dir, `verify${v}`))) bad++;
+    capturedStacks = [];
+    for (let v = 1; v <= 2; v++) if (await reproduces(schedule, join(dir, `verify${v}`), v === 1)) bad++;
+    const stacks = [...capturedStacks];
     if (bad < 2) {
       console.log(`   [${n}] not reproduced on verify - discarding`);
       try {
@@ -312,7 +323,7 @@ async function worker(w: number) {
       standalone: [`verified ${bad}/3`],
       lastStage: null,
       termChain: null,
-      stacks: null,
+      stacks: stacks.length ? stacks.slice(0, 12) : null,
       findings: join(dir, "minimal-schedule.txt"),
       workDir: dir,
     };

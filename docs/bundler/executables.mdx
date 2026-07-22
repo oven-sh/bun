@@ -408,7 +408,8 @@ Standalone executables can optionally load configuration files from the director
 - **`tsconfig.json`** and **`package.json`** loading is **disabled** — these are typically only needed at development time, and the bundler already uses them when compiling
 
 <Note>
-  In earlier versions of Bun, `.env` and `bunfig.toml` were autoloaded by default. If your executable relied on `.env` from the working directory, pass `--compile-autoload-dotenv` when building.
+  In earlier versions of Bun, `.env` and `bunfig.toml` were autoloaded by default. If your executable relied on `.env`
+  from the working directory, pass `--compile-autoload-dotenv` when building.
 </Note>
 
 ### Enabling config loading at runtime

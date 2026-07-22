@@ -834,6 +834,10 @@ public:
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked()) {
             LoopData *loopData = Super::getLoopData();
+            /* Captured before handler(): an upgrade inside the handler moves
+             * the socket to the WebSocket group, after which
+             * getSocketContextDataS(this) no longer points at HttpContextData. */
+            HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this);
             Super::cork();
             handler();
 
@@ -845,6 +849,20 @@ public:
              * The upgrade case is handled by HttpContext's uncork or the drain
              * loop. */
             if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
+                /* (b) and (c) only happen while onData is parsing; (a) from an
+                 * async handler completing outside onData lands here via
+                 * internalEnd()'s uncork with a connection-close mark nothing
+                 * else acts on (onData's post-parse close check is not on the
+                 * stack). */
+                if (!httpContextData->flags.isParsingHttp) {
+                    HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+                    if (httpResponseData->shouldCloseConnection()
+                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0
+                        && ((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                        ((AsyncSocket<SSL> *) this)->shutdown();
+                        ((AsyncSocket<SSL> *) this)->close();
+                    }
+                }
                 return this;
             }
 

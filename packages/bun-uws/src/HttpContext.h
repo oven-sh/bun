@@ -374,8 +374,19 @@ private:
             if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses) {
                 if constexpr (!IsNodeHttp) {
-                    us_socket_close((us_socket_t *) s, 0, nullptr);
-                    return nullptr;
+                    /* Bun.serve has one HttpResponseData per socket (no queue): drop
+                     * this request and mark the in-flight response for
+                     * connection-close so the socket closes once it drains. Closing
+                     * here would lose the in-flight response before it reaches the
+                     * wire (it is still in the cork buffer, or its body has not been
+                     * produced yet). RFC 9112 9.3.2: a pipelining client must be
+                     * prepared to retry unanswered requests on a new connection.
+                     * getHeaders() writes isConnectRequest via bool& for every
+                     * parsed request; reset it so a dropped CONNECT cannot switch
+                     * the in-flight response's socket into tunnel handling. */
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                    httpResponseData->isConnectRequest = false;
+                    return s;
                 } else {
 
                 /* node:http supports async pipelining: the request is dispatched

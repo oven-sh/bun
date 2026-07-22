@@ -205,8 +205,9 @@ impl SpawnSyncEventLoop {
     /// Shared borrow of the isolated `uws::Loop`.
     ///
     /// # Safety (invariant)
-    /// `uws_loop` is created in `init` via `uws::Loop::create` (asserts
-    /// non-null) and freed only in `Drop`, so it is valid for all of `self`'s
+    /// `uws_loop` is created in `init` via `uws::Loop::create`; `init` returns
+    /// `false` on `None`, so `Self` is never constructed with a null loop. It
+    /// is freed only in `Drop`, so it is valid for all of `self`'s
     /// lifetime. The loop is only mutated through `&mut self` paths
     /// (`uws_loop_mut`), so a shared borrow tied to `&self` cannot overlap a
     /// unique borrow.

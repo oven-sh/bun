@@ -791,26 +791,29 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port);
 
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+    if (kr == KERN_SUCCESS) {
+        // Insert a send right into the port since we also use this to send
+        kr = mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND);
+        if (kr == KERN_SUCCESS) {
+            // Modify the port queue size to be 1 because we are only
+            // using it for notifications and not for any other purpose.
+            mach_port_limits_t limits = { .mpl_qlimit = 1 };
+            kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
+            if (kr == KERN_SUCCESS) {
+                return (struct us_internal_async *) cb;
+            }
+        }
+        /* Dropping the receive right destroys the port; any send right it
+         * carried becomes a dead name that the failing caller never uses. */
+        mach_port_mod_refs(self, cb->port, MACH_PORT_RIGHT_RECEIVE, -1);
     }
 
-    // Insert a send right into the port since we also use this to send
-    kr = mach_port_insert_right(self, cb->port, cb->port, MACH_MSG_TYPE_MAKE_SEND);
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
+    if (!fallthrough) {
+        loop->num_polls--;
     }
-
-    // Modify the port queue size to be 1 because we are only
-    // using it for notifications and not for any other purpose.
-    mach_port_limits_t limits = { .mpl_qlimit = 1 };
-    kr = mach_port_set_attributes(self, cb->port, MACH_PORT_LIMITS_INFO, (mach_port_info_t)&limits, MACH_PORT_LIMITS_INFO_COUNT);
-
-    if (UNLIKELY(kr != KERN_SUCCESS)) {
-        return NULL;
-    }
-
-    return (struct us_internal_async *) cb;
+    us_free(cb->machport_buf);
+    us_free(cb);
+    return NULL;
 }
 
 // identical code as for timer, make it shared for "callback types"

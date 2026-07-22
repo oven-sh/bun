@@ -5613,8 +5613,14 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
 
   async function runScript(source: string) {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    return { stdout: stdout.trim(), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    // stderr is returned (not asserted) so a failing case can show the
+    // child's stack trace; debug builds emit benign startup noise there.
+    return { stdout: stdout.trim(), stderr, exitCode };
   }
 
   const cases: Array<[string, string]> = [
@@ -5663,8 +5669,10 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
       fs.stat(${file}, (err, st) => {
         log.push("fs-cb:" + (err === null) + ":" + st.isFile());
         process.nextTick(() => log.push("tick-from-fs-cb"));
+        // Registered inside the fs callback so nextTick-before-setImmediate
+        // is the deterministic ordering being asserted, not a threadpool race.
+        setImmediate(() => log.push("setImmediate"));
       });
-      setImmediate(() => log.push("setImmediate"));
       process.on("exit", () => console.log(log.join(",")));
     `);
     expect(stdout).toBe("fs-cb:true:true,tick-from-fs-cb,setImmediate");
@@ -5672,10 +5680,9 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   });
 
   it("is transparent to fs.Dir callbacks", async () => {
+    const odir = JSON.stringify(tempDirWithFiles("cb-throw-opendir", { "file.txt": "x" }));
     const { stdout, exitCode } = await runScript(`
-      const odir = require("fs").mkdtempSync(require("os").tmpdir() + "/cb-throw-opendir-");
-      require("fs").writeFileSync(odir + "/file.txt", "x");
-      require("fs").opendir(odir, (err, dir) => {
+      require("fs").opendir(${odir}, (err, dir) => {
         if (err) throw err;
         dir.read((e, ent) => {
           console.log(ent && ent.name);
@@ -5687,7 +5694,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("leaves a non-callable symlink callback as an ignored handler, like node", async () => {
+  it("keeps a non-callable symlink callback as an ignored handler (Bun divergence: node throws)", async () => {
     const { stdout, exitCode } = await runScript(`
       require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
       setTimeout(() => console.log("quiet"), 50);

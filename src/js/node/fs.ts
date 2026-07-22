@@ -150,7 +150,7 @@ var access = function access(path, mode, callback) {
       options = undefined;
     }
 
-    callback = guardCallback(callback);
+    callback = ensureCallback(callback);
     fs.fstat(fd, options).then(function (stats) {
       callback(null, stats);
     }, callback);
@@ -270,10 +270,7 @@ var access = function access(path, mode, callback) {
       }
       ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
     }
-    if (!callback) {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
+    callback = ensureCallback(callback);
     fs.read(fd, buffer, offset, length, position).then(
       bytesRead => void callback(null, bytesRead, buffer),
       err => callback(err),
@@ -413,8 +410,9 @@ var access = function access(path, mode, callback) {
       callback = ensureCallback(type);
       type = undefined;
     } else if ($isCallable(callback)) {
-      // Not ensureCallback: node does not validate the 4-argument overload's
-      // callback, and a non-callable one must stay an ignored `.then` handler.
+      // Not ensureCallback: this preserves Bun's existing behavior where a
+      // non-callable 4th argument stays an ignored `.then` handler. (Node
+      // validates it and throws ERR_INVALID_ARG_TYPE synchronously.)
       callback = guardCallback(callback);
     }
 

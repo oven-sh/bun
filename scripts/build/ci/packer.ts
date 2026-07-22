@@ -30,10 +30,13 @@ export type PackerTemplateInput = {
   /** Local path of the agent.mjs bundle (uploaded to the VM). */
   agentPath: string;
   azure: {
-    clientId: string;
-    clientSecret: string;
+    /** The gallery lives in a subscription; a subscription id is a
+     * public resource identifier (present in every Azure resource id),
+     * not a credential. The service-principal SECRET and its auth
+     * siblings (client id, tenant id) are NOT template inputs — they
+     * reach Packer only through the ARM_* environment (machine.ts), so
+     * the rendered template written to disk never contains a secret. */
     subscriptionId: string;
-    tenantId: string;
     /** Where Packer creates its temporary build resources. Kept separate
      * so its 4-core bake VMs don't contend with CI runners for quota. */
     buildResourceGroup: string;
@@ -58,10 +61,10 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
   const nodeFolder = nodejsFolderName(image.nodejs, "windows", image.arch, null);
 
   const source: Record<string, unknown> = {
-    client_id: azure.clientId,
-    client_secret: azure.clientSecret,
-    subscription_id: azure.subscriptionId,
-    tenant_id: azure.tenantId,
+    // Credentials are deliberately absent: the azure-arm builder reads
+    // ARM_CLIENT_ID / ARM_CLIENT_SECRET / ARM_SUBSCRIPTION_ID /
+    // ARM_TENANT_ID from the environment, so nothing secret is written
+    // into the template file.
     // Source: the FLOATING marketplace base for this image entry.
     os_type: "Windows",
     image_publisher: image.base.publisher,

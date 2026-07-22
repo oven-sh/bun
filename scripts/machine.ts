@@ -1243,49 +1243,55 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
   });
   const templateDir = mkdtempSync(join(tmpdir(), "packer-"));
   const templatePath = join(templateDir, `${key}.pkr.json`);
-  writeFileSync(templatePath, JSON.stringify(template, null, 2));
-  console.log(`[packer] Template: ${templatePath}`);
+  try {
+    writeFileSync(templatePath, JSON.stringify(template, null, 2));
+    console.log(`[packer] Template: ${templatePath}`);
 
-  console.log("[packer] Initializing plugins...");
-  await spawnSafe([packerBin, "init", templatePath], { stdio: "inherit" });
+    console.log("[packer] Initializing plugins...");
+    await spawnSafe([packerBin, "init", templatePath], { stdio: "inherit" });
 
-  console.log(`[packer] Building ${imageName}`);
-  const packerArgs = [packerBin, "build", templatePath];
+    console.log(`[packer] Building ${imageName}`);
+    const packerArgs = [packerBin, "build", templatePath];
 
-  // Packer's azure-arm builder cleans up its temp pkr* resources on
-  // SIGINT/SIGTERM, but only if the signal reaches the packer process and
-  // it has time to finish the Azure deletes. Spawn directly and forward, or
-  // a Buildkite cancel orphans the VM/NIC/IP/disk/vnet/NSG/keyvault stack.
-  const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      ARM_CLIENT_ID: clientId,
-      ARM_CLIENT_SECRET: clientSecret,
-      ARM_SUBSCRIPTION_ID: subscriptionId,
-      ARM_TENANT_ID: tenantId,
-    },
-  });
-  let cancelled = false;
-  const forward = signal => {
-    cancelled = true;
-    console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
-    child.kill(signal);
-  };
-  process.on("SIGINT", forward);
-  process.on("SIGTERM", forward);
-  const [code, signal] = await new Promise(done => child.on("close", (c, s) => done([c, s])));
-  process.off("SIGINT", forward);
-  process.off("SIGTERM", forward);
-  if (cancelled) {
-    console.log("[packer] cleanup after cancel finished");
-    process.exit(1);
+    // Packer's azure-arm builder cleans up its temp pkr* resources on
+    // SIGINT/SIGTERM, but only if the signal reaches the packer process and
+    // it has time to finish the Azure deletes. Spawn directly and forward, or
+    // a Buildkite cancel orphans the VM/NIC/IP/disk/vnet/NSG/keyvault stack.
+    const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        ARM_CLIENT_ID: clientId,
+        ARM_CLIENT_SECRET: clientSecret,
+        ARM_SUBSCRIPTION_ID: subscriptionId,
+        ARM_TENANT_ID: tenantId,
+      },
+    });
+    let cancelled = false;
+    const forward = signal => {
+      cancelled = true;
+      console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
+      child.kill(signal);
+    };
+    process.on("SIGINT", forward);
+    process.on("SIGTERM", forward);
+    const [code, signal] = await new Promise(done => child.on("close", (c, s) => done([c, s])));
+    process.off("SIGINT", forward);
+    process.off("SIGTERM", forward);
+    if (cancelled) {
+      console.log("[packer] cleanup after cancel finished");
+      process.exit(1);
+    }
+    if (code !== 0) {
+      throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
+    }
+
+    console.log(`[packer] Image built successfully: ${imageName}`);
+  } finally {
+    // The template file is transient build input; never leave it (or its
+    // temp dir) behind on the standing build host.
+    rmSync(templateDir, { recursive: true, force: true });
   }
-  if (code !== 0) {
-    throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
-  }
-
-  console.log(`[packer] Image built successfully: ${imageName}`);
 }
 
 /**

@@ -1154,6 +1154,225 @@ describe("ES Decorators", () => {
     });
   });
 
+  // When a class has decorated members, private accesses are rewritten into
+  // __privateGet/__privateMethod helper calls. The `?.` tests guarding those
+  // accesses must be hoisted out of the chain so a nullish base still
+  // short-circuits the whole chain instead of reaching the helper.
+  // https://github.com/oven-sh/bun/issues/31910
+  describe.concurrent("optional chains through lowered private members", () => {
+    test("nullish base short-circuits lowered private gets and calls", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          static #f = 123;
+          static #m = function () { return { Foo }; };
+          @dec() direct(o) { return o?.#f; }
+          @dec() viaProp(o) { return o?.a.#f; }
+          @dec() callViaProp(o) { return o?.Foo.#m(); }
+          @dec() directCall(o) { return o?.#m(); }
+          @dec() afterGet(o) { return o?.a.#f.x; }
+        }
+        const f = new Foo();
+        console.log(f.direct(null), f.viaProp(undefined), f.callViaProp(null), f.directCall(undefined), f.afterGet(null));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined undefined undefined undefined undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("non-nullish chains produce the right values and `this`", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          static #f = 123;
+          static #m = function (...args) { return [this === Foo, args]; };
+          @dec() viaProp(o) { return o?.a.#f; }
+          @dec() callViaProp(o) { return o?.a.#m(1, 2); }
+          @dec() direct(o) { return o?.#f; }
+          @dec() directCall(o) { return o?.#m(3); }
+        }
+        const f = new Foo();
+        console.log(JSON.stringify([f.viaProp({ a: Foo }), f.callViaProp({ a: Foo }), f.direct(Foo), f.directCall(Foo)]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[123,[true,[1,2]],123,[true,[3]]]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("optional call of a lowered private tests the function value and keeps `this`", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          static #fn = null;
+          static #m = function (...args) { return [this === Foo, args]; };
+          @dec() nullishFn(o) { return o.#fn?.(1); }
+          @dec() optCall(o) { return o.#m?.(2); }
+          @dec() chainOptCall(o) { return o?.a.#m?.(3); }
+        }
+        const f = new Foo();
+        console.log(JSON.stringify([f.nullishFn(Foo), f.optCall(Foo), f.chainOptCall({ a: Foo }), f.chainOptCall(undefined)]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[null,[true,[2]],[true,[3]],null]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("chain base and computed keys evaluate exactly once and stay lazy", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        let baseEvals = 0;
+        let keyEvals = 0;
+        class Counter {
+          static #f = 5;
+          static #m = function (x) { return [this === Counter, x]; };
+          @dec() callChain(o) { return getBase(o)?.a.#m(42); }
+          @dec() computed(o, k) { return o?.[k()].#f; }
+        }
+        function getBase(o) { baseEvals++; return o; }
+        function key() { keyEvals++; return "k"; }
+        const c = new Counter();
+        const r1 = c.callChain({ a: Counter });
+        const r2 = c.callChain(undefined);
+        const r3 = c.computed({ k: Counter }, key);
+        const r4 = c.computed(null, () => { throw new Error("must not evaluate"); });
+        console.log(JSON.stringify([r1, r2, r3, r4]), baseEvals, keyEvals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[[true,42],null,5,null] 2 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("each `?.` in a multi-segment chain keeps its own test", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          static #f = 123;
+          static #g = { b: Foo };
+          static #n = null;
+          static #m = function (x) { return x * 2; };
+          @dec() twoOpt(o) { return o?.a?.b.#f; }
+          @dec() segHit(o) { return o?.a.#g?.b.#m(21); }
+          @dec() segNull(o) { return o?.a.#n?.b.#m(21); }
+        }
+        const f = new Foo();
+        console.log(f.twoOpt(null), f.twoOpt({ a: null }), f.twoOpt({ a: { b: Foo } }), f.segHit({ a: Foo }), f.segNull({ a: Foo }));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined undefined 123 42 undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("optional call at the segment start with a private access above it", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          static #f = 7;
+          @dec() callThenGet(o) { return o.x?.().#f; }
+          @dec() chainCallThenGet(o) { return o?.a.b?.().#f; }
+        }
+        const f = new Foo();
+        const withThis = { val: Foo, x() { return this.val; } };
+        console.log(
+          f.callThenGet({}),
+          f.callThenGet(withThis),
+          f.chainCallThenGet(undefined),
+          f.chainCallThenGet({ a: {} }),
+          f.chainCallThenGet({ a: { b: () => Foo } }),
+        );
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined 7 undefined undefined 7\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated class expressions declare the chain temporaries", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        let evals = 0;
+        const C = class {
+          static #m = function () { return { C, n: ++evals }; };
+          @dec() go(o) { return o?.C.#m().n; }
+        };
+        const c = new C();
+        console.log(c.go(undefined), c.go({ C }), evals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined 1 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private instance methods and getters short-circuit in chains", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          #p(n) { return [this instanceof Foo, n]; }
+          get #g() { return 9; }
+          @dec() method(o) { return o?.x.#p(1); }
+          @dec() getter(o) { return o?.x.#g; }
+        }
+        const f = new Foo();
+        console.log(JSON.stringify([f.method(null), f.method({ x: f }), f.getter(undefined), f.getter({ x: f })]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[null,[true,1],null,9]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("optional call of a super property keeps valid syntax and `this`", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Base {
+          hit() { return this; }
+        }
+        class Sub extends Base {
+          #f = 7;
+          @dec() go() { return super.hit?.().#f; }
+          @dec() goMissing() { return super.missing?.().#f; }
+          @dec() goComputed(k) { return super[k]?.().#f; }
+        }
+        const s = new Sub();
+        console.log(s.go(), s.goMissing(), s.goComputed("hit"));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("7 undefined 7\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("optional call keeps `this` when the callee chain has a private deeper in", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        let captured = null;
+        class Foo {
+          static #f = { b() { captured = this; return 1; } };
+          @dec() go(o) { return o?.#f.b?.(); }
+          @dec() isCaptured(o) { return captured === o?.#f; }
+          @dec() goMissing(o) { return o?.#f.missing?.(); }
+        }
+        const f = new Foo();
+        console.log(f.go(Foo), f.isCaptured(Foo), f.go(undefined), f.goMissing(Foo));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 true undefined undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("delete through a lowered private chain removes the property", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          static #f = { x: 1 };
+          @dec() del(o) { return delete o?.#f.x; }
+          @dec() has() { return "x" in Foo.#f; }
+        }
+        const f = new Foo();
+        console.log(f.del(undefined), f.has(), f.del(Foo), f.has());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true true false\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {

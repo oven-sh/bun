@@ -258,8 +258,8 @@ pub mod js_bundler {
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
                 outfile: OwnedString::default(),
-                autoload_dotenv: true,
-                autoload_bunfig: true,
+                autoload_dotenv: false,
+                autoload_bunfig: false,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
             }

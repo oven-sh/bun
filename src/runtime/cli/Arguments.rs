@@ -390,13 +390,13 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
-            "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
+            "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: false)"
         ),
         parse_param!(
             "--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable"
         ),
         parse_param!(
-            "--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)"
+            "--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: false)"
         ),
         parse_param!(
             "--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable"

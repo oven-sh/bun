@@ -6,7 +6,8 @@ import { itBundled } from "./expectBundled";
 // those at once SIGTERMs on the linux lanes. expectBundled already forces
 // backend:"api" cases to it.serial, so only the CLI cases would overlap.
 describe("bundler", () => {
-  // Test that .env files are loaded by default in standalone executables
+  // Test that .env files are NOT loaded by default in standalone executables
+  // (default was flipped to false so cwd cannot influence a compiled binary)
   itBundled("compile/AutoloadDotenvDefault", {
     compile: true,
     files: {
@@ -18,7 +19,25 @@ describe("bundler", () => {
       "/.env": `TEST_VAR=from_dotenv`,
     },
     run: {
-      stdout: "from_dotenv",
+      stdout: "not found",
+      setCwd: true,
+    },
+  });
+
+  // Test that .env files are NOT loaded by default (CLI backend)
+  itBundled("compile/AutoloadDotenvDefaultCLI", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "not found",
       setCwd: true,
     },
   });
@@ -63,7 +82,9 @@ describe("bundler", () => {
 
   // Test that process environment variables take precedence over .env files
   itBundled("compile/AutoloadDotenvWithExistingEnv", {
-    compile: true,
+    compile: {
+      autoloadDotenv: true,
+    },
     files: {
       "/entry.ts": /* js */ `
         console.log(process.env.TEST_VAR || "not found");
@@ -81,7 +102,9 @@ describe("bundler", () => {
     },
   });
 
-  // Test that bunfig.toml is loaded by default (preload is executed)
+  // Test that bunfig.toml is NOT loaded by default (preload is NOT executed)
+  // Default was flipped to false: a compiled binary launched with cwd in an
+  // untrusted directory must not execute that directory's bunfig preload.
   itBundled("compile/AutoloadBunfigDefault", {
     compile: true,
     files: {
@@ -98,7 +121,30 @@ console.log("PRELOAD");
       `,
     },
     run: {
-      stdout: "PRELOAD\nENTRY",
+      stdout: "ENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test that bunfig.toml is NOT loaded by default (CLI backend)
+  itBundled("compile/AutoloadBunfigDefaultCLI", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "ENTRY",
       setCwd: true,
     },
   });

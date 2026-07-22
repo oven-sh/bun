@@ -3082,7 +3082,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
      *
-     * @default true
+     * @default false
      */
     autoloadDotenv?: boolean;
     /**
@@ -3090,7 +3090,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
-     * @default true
+     * @default false
      */
     autoloadBunfig?: boolean;
     /**

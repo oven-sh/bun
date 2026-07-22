@@ -142,6 +142,7 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
+const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -915,18 +916,28 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (pauseOnConnect) {
       self.pause();
     }
-    if (server) {
-      const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-      if (typeof connectionListener === "function") {
-        server.prependOnceListener("secureConnection", connectionListener);
+    try {
+      if (server) {
+        const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+        if (typeof connectionListener === "function") {
+          server.prependOnceListener("secureConnection", connectionListener);
+        }
+        server.emit("secureConnection", self);
       }
-      server.emit("secureConnection", self);
-    }
-    // after secureConnection event we emmit secure and secureConnect
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
-    if (!pauseOnConnect) {
-      self.resume();
+      // after secureConnection event we emmit secure and secureConnect
+      self.emit("secure", self);
+      self.emit("secureConnect", verifyError);
+    } catch (err) {
+      // A throwing listener is a programmer error, not a TLS failure: Node
+      // crashes with an uncaught exception instead of feeding the socket
+      // error path (test-tls-handshake-exception).
+      process.nextTick(rethrowUncaught, err);
+    } finally {
+      // Keep the socket flowing even when the throw is absorbed by an
+      // uncaughtException handler, like Node's already-armed read state.
+      if (!pauseOnConnect) {
+        self.resume();
+      }
     }
   },
   error(socket, error) {
@@ -987,6 +998,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
   },
   binaryType: "buffer",
 } as const;
+
+function rethrowUncaught(err) {
+  throw err;
+}
 
 function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
   if (typeof rejectUnauthorized !== "undefined") {
@@ -1913,7 +1928,7 @@ Socket.prototype.connect = function connect(...args) {
         const socket = connection._handle;
         if (!upgradeDuplex && socket) {
           // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
-          upgradeDuplex = isNamedPipeSocket(socket);
+          upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
         }
         if (upgradeDuplex) {
           this[kupgraded] = connection;
@@ -1943,6 +1958,7 @@ Socket.prototype.connect = function connect(...args) {
               const [raw, tls] = result;
               // replace socket
               connection._handle = raw;
+              raw[kAdoptedTLSRaw] = true;
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
@@ -1963,7 +1979,7 @@ Socket.prototype.connect = function connect(...args) {
               const socket = connection._handle;
               if (!upgradeDuplex && socket) {
                 // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
-                upgradeDuplex = isNamedPipeSocket(socket);
+                upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
               }
               if (upgradeDuplex) {
                 this[kupgraded] = connection;
@@ -1989,6 +2005,7 @@ Socket.prototype.connect = function connect(...args) {
                   const [raw, tls] = result;
                   // replace socket
                   connection._handle = raw;
+                  raw[kAdoptedTLSRaw] = true;
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
@@ -2121,6 +2138,19 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // Enqueue closing the socket as a microtask, so that the socket can be
       // accessible when an `error` event is handled in the `next tick queue`.
       queueMicrotask(() => closeSocketHandle(this, isException, true));
+    } else if (this._handle[kAdoptedTLSRaw]) {
+      // Shared-fd TLS pair: node's close-callbacks phase runs after the check
+      // phase, so setImmediates registered at destroy() time must still see
+      // the pair alive (test-tls-socket-close). Defer close past them.
+      const handle = this._handle;
+      const self = this;
+      handle.pause?.();
+      setImmediate(() => {
+        setImmediate(() => {
+          handle.close(onSocketHandleClosed);
+          setImmediate(() => self.emit("close", isException));
+        });
+      });
     } else {
       closeSocketHandle(this, isException);
     }
@@ -2191,6 +2221,13 @@ Object.defineProperty(Socket.prototype, "pending", {
   },
 });
 
+// Queued/in-flight plain writes would be stranded on the retired TCP wrapper
+// if the fd were adopted; such sockets use the stream-level TLS engine, whose
+// ciphertext queues behind the pending writes (order + callbacks preserved).
+function hasUnflushedWrites(connection) {
+  return connection.writableLength > 0 || connection[kwriteCallback] != null;
+}
+
 function drainOnreadTail(self, fromRead?) {
   if (self[kOnreadTail] === undefined) return false;
   if (fromRead) self[kOnreadReadRequested] = true;
@@ -2259,10 +2296,10 @@ Socket.prototype.pause = function pause() {
 // state carried via `data` (mirrors tls.createServer's one-handler-for-all model).
 Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
   const socket = connection._handle;
-  if (!socket) {
-    // A generic Duplex (or a not-yet-connected net.Socket) has no native fd
-    // to adopt into a TLS socket; run the TLS engine over the stream itself.
-    // The returned events feed the stream's bytes into the engine and back.
+  if (!socket || connection.encrypted || hasUnflushedWrites(connection)) {
+    // No adoptable fd (generic Duplex / not yet connected), TLS over TLS (the
+    // fd belongs to the outer SSL layer), or pending plain writes that must
+    // flush first: run the TLS engine over the stream itself.
     const [result, events] = upgradeDuplexToTLS(connection, {
       data: this,
       tls,
@@ -2288,6 +2325,23 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       this.destroy();
       return;
     }
+    // Writes may have been queued between the wrap and this tick (a user
+    // 'connection' listener runs after the server's): those bytes must flush
+    // before any TLS output, so fall back to the stream-level engine.
+    if (hasUnflushedWrites(connection)) {
+      const [result, events] = upgradeDuplexToTLS(connection, {
+        data: this,
+        tls,
+        socket: serverHandlersFor(this),
+        isServer: true,
+      });
+      connection.on("data", events[0]);
+      connection.on("end", events[1]);
+      connection.on("drain", events[2]);
+      connection.on("close", events[3]);
+      this._handle = result;
+      return;
+    }
     // Bytes that already arrived before the wrap were pulled off the fd into
     // the connection's readable buffer; hand them to the TLS engine so the
     // handshake doesn't stall.
@@ -2306,6 +2360,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     }
     const [raw, tlsHandle] = result;
     connection._handle = raw;
+    raw[kAdoptedTLSRaw] = true;
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;

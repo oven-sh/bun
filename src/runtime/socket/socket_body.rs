@@ -1453,6 +1453,16 @@ impl<const SSL: bool> NewSocket<SSL> {
                             ptr::null_mut(),
                         );
                     }
+                    // A rejecting client must refuse a bad chain DURING the
+                    // handshake, like node observably does (its post-verify
+                    // destroy cancels the queued Finished; test-tls-close-error).
+                    if !this.acts_as_tls_server()
+                        && this.flags.get().contains(Flags::REJECT_UNAUTHORIZED)
+                    {
+                        tls_socket_functions::ffi::us_internal_ssl_set_inline_reject(
+                            boringssl_sys::SSL::opaque_ref(ssl_ptr),
+                        );
+                    }
                     if let Some(protos) = this.protos.get() {
                         if this.acts_as_tls_server() {
                             // Registered above (selector + ex_data); nothing

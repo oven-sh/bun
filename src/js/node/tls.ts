@@ -1437,7 +1437,11 @@ function Server(options, secureConnectionListener): void {
   this._handshakeTimeout = handshakeTimeout;
 
   this.on("connection", socket => {
-    if (!socket || socket.encrypted || socket instanceof TLSSocket) return;
+    // Skip only sockets this server's own native accept path already wrapped
+    // (those arrive as an encrypted TLSSocket with .server preassigned).
+    // Anything else - plain or TLS from another server - gets a server-side
+    // TLS layer, like Node's tls.Server wraps any injected duplex.
+    if (!socket || (socket.encrypted && socket.server === this)) return;
     let secureContext = this._sharedCreds;
     if (!secureContext) {
       try {

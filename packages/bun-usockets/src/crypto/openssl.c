@@ -174,6 +174,11 @@ static int us_ssl_socket_sni_ex_idx = -1;
  * owned by other engines (the JS-stream SSL wrapper used for TLS-over-duplex)
  * whose BIOs do not point at the loop's shared BIO data. */
 static int us_ssl_is_socket_ex_idx = -1;
+/* (SSL) inline-reject clients: (void*)1 when the rejectUnauthorized policy
+ * was installed, and the LAST X509 error recorded while walking the chain
+ * (node's ssl.verifyError() verdict) as (void*)(intptr_t). */
+static int us_ssl_inline_reject_enabled_ex_idx = -1;
+static int us_ssl_inline_reject_err_ex_idx = -1;
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
@@ -393,6 +398,8 @@ static void us_ex_idx_init(void) {
   us_ssl_socket_sni_ex_idx =
       SSL_get_ex_new_index(0, NULL, NULL, NULL, us_socket_sni_resolver_free);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_inline_reject_enabled_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_inline_reject_err_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
 }
@@ -483,6 +490,8 @@ static inline struct us_ssl_reneg_state_t *us_reneg_state(SSL *ssl) {
 extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 
 static void ssl_update_handshake(struct us_socket_t *s);
+static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
+static inline int ssl_gone(struct us_socket_t *s);
 
 /* ── BIO plumbing ─────────────────────────────────────────────────────────
  * The same shared mem-BIO pair is reused for every SSL* on a loop. The write
@@ -549,6 +558,15 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
    * are reported as written so the SSL state machine completes its error
    * path instead of retrying. */
   if (loop_ssl_data->ssl_socket && loop_ssl_data->ssl_socket->ssl_pending_detach) {
+    BIO_clear_retry_flags(bio);
+    return length;
+  }
+
+  /* Rejecting client whose chain verification failed: suppress the
+   * post-verify flight so the peer never sees the handshake complete
+   * (node's post-verify destroy cancels its queued Finished the same way). */
+  if (loop_ssl_data->ssl_socket &&
+      us_ssl_inline_reject_tripped(loop_ssl_data->ssl_socket)) {
     BIO_clear_retry_flags(bio);
     return length;
   }
@@ -925,6 +943,44 @@ static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
    * on_handshake. Returning 1 defers the decision to JS without aborting
    * mid-handshake - the same model as Node (crypto_tls.cc VerifyCallback). */
   return 1;
+}
+
+/* Rejecting client: keep walking (so the final verdict matches node's
+ * ssl.verifyError()) but remember the failure; the BIO hook and the
+ * handshake drive then keep the Finished off the wire and fail the socket. */
+static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
+  if (!preverify_ok) {
+    SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    if (ssl) {
+      SSL_set_ex_data(ssl, us_ssl_inline_reject_err_ex_idx,
+                      (void *)(intptr_t)X509_STORE_CTX_get_error(ctx));
+    }
+  }
+  return 1;
+}
+
+/* Whether this socket is a rejecting client whose chain verification failed:
+ * from that point on its handshake output is suppressed and the handshake is
+ * reported as failed. */
+static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
+  if (us_ssl_inline_reject_enabled_ex_idx < 0 || !s->ssl) return 0;
+  /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
+   * and established sockets exit here before any ex_data lookups. */
+  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
+  SSL *ssl = s_ssl(s);
+  if (!ssl || !SSL_get_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx)) return 0;
+  if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_err_ex_idx)) return 0;
+  /* A per-depth failure may be recovered by an alternate chain: only the
+   * final verdict rejects. */
+  return SSL_get_verify_result(ssl) != X509_V_OK;
+}
+
+/* Called from the Rust TLS socket layer for client sockets whose
+ * rejectUnauthorized policy must refuse a bad chain during the handshake. */
+void us_internal_ssl_set_inline_reject(SSL *ssl) {
+  us_ex_idx_ensure();
+  SSL_set_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx, (void *)1);
+  SSL_set_verify(ssl, SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
@@ -1596,7 +1652,33 @@ static int ssl_dispatch_parked_reason(struct us_socket_t *s) {
 }
 
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
+  /* Read before the state flip below turns tripped() off. */
+  int inline_rejected = us_ssl_inline_reject_tripped(s);
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+  /* Inline rejection: the rejecting client's post-verify flight was
+   * suppressed - the session must not be reported as established. */
+  if (inline_rejected) {
+    success = 0;
+  }
+  /* An inline-rejected handshake reports the X509 verdict node surfaces
+   * through ssl.verifyError() (UNABLE_TO_VERIFY_LEAF_SIGNATURE, ...), not
+   * the SSL protocol reason that may wrap it. */
+  if (!success && inline_rejected && s->ssl && s_ssl(s)) {
+    struct loop_ssl_data *loop_ssl_data =
+        (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data &&
+        loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+      loop_ssl_data->ssl_last_fatal_error[0] = 0;
+      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+    }
+    us_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
+    /* Nothing else will tear this connection down (the peer is still waiting
+     * for a Finished that will never come) - close unless JS already did. */
+    if (!ssl_gone(s) && !us_socket_is_closed(s)) {
+      us_socket_close(s, 0, NULL);
+    }
+    return;
+  }
   /* A fatal SSL protocol error (wrong version number, bad record, ...) was
    * recorded just before this failure: report it instead of the X509 verify
    * result so Node's tlsClientError / client error carries the OpenSSL
@@ -1815,6 +1897,14 @@ static void ssl_update_handshake(struct us_socket_t *s) {
 
   if (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) {
     ssl_close(s, 0, NULL);
+    return;
+  }
+
+  /* Inline rejection tripped during this drive: nothing more will arrive (a
+   * TLS 1.2 client would otherwise wait forever for the server's Finished).
+   * ssl_trigger_handshake reports the recorded X509 verdict and closes. */
+  if (us_ssl_inline_reject_tripped(s)) {
+    ssl_trigger_handshake(s, 0);
     return;
   }
 

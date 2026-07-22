@@ -150,9 +150,11 @@ impl BodyAbortListener {
         Response::ref_(response);
         // SAFETY: live for this scope via the ref taken above.
         let response_ref = unsafe { &*response };
-        let body = response_ref.get_body_value();
+        // R-2: each `get_body_value()` borrow is kept to its own statement;
+        // `get_body_readable_stream` and `readable.error()` both re-enter
+        // `&mut BodyValue` projections / JS.
         if !matches!(
-            body,
+            response_ref.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
             if let Some(readable) = response_ref.get_body_readable_stream(&global) {
@@ -160,7 +162,7 @@ impl BodyAbortListener {
                 readable.error(&global, reason);
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
-            let _ = body.to_error_instance(err, &global);
+            let _ = response_ref.get_body_value().to_error_instance(err, &global);
         }
         // May destroy `response` and free `*ctx`; do not touch either after.
         Response::unref(response);
@@ -172,6 +174,11 @@ impl Drop for BodyAbortListener {
         // `AbortSignal` is an `opaque_ffi!` ZST (S008); our +1 keeps it live.
         let signal = bun_opaque::opaque_deref(self.signal.as_ptr());
         signal.clean_native_bindings(core::ptr::from_mut(self).cast::<c_void>());
+        // The pending-activity count suppresses `eventListenersDidChange`'s
+        // "last observer of a timeout signal" deref; release it before our
+        // own ref so that path (if it runs from the final unref) cannot
+        // over-release a ref `cancel_all_timeout_objects` already took.
+        signal.pending_activity_unref();
         signal.unref();
     }
 }
@@ -525,6 +532,13 @@ impl Response {
         signal: &AbortSignal,
     ) {
         let refed = NonNull::new(signal.ref_()).expect("AbortSignal::ref_");
+        // `AbortSignal.timeout()` releases its extra self-ref from
+        // `eventListenersDidChange` when the last observer is removed.
+        // `cancel_all_timeout_objects` (pre-destructOnExit teardown) releases
+        // the same ref, so clearing the listener from `Response::destroy`
+        // during the exit sweep must not also trigger that path; a positive
+        // pending-activity count suppresses it until our ref is the only one.
+        signal.pending_activity_ref();
         let mut listener = Box::new(BodyAbortListener {
             signal: refed,
             response: this,

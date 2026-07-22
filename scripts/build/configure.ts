@@ -294,7 +294,6 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   generateCargoConfig(cfg);
   mark("generateCargoConfig");
 
-
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.
   // Check here so the error is at configure time with a clear hint.

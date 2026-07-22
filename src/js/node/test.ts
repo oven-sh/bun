@@ -1689,12 +1689,9 @@ function bunTest() {
   return jest(Bun.main);
 }
 
-// The node-style timeout is enforced entirely by executeTestNode (so a tiny
-// timeout with a synchronous body still passes, like Node). bun:test's own
-// watchdog measures the whole (done) => {} wrapper, so letting it fire would
-// (a) apply bun's 5s default to node:test files that, per Node, have no
-// default timeout, and (b) blame a "done callback" the user never wrote.
-// Disable it unconditionally; Infinity saturates to u32::MAX on the native side.
+// executeTestNode/runHook enforce the node-style timeout; bun:test's watchdog
+// would impose its 5s default (Node has none) and blame the wrapper's `done`.
+// Infinity saturates to u32::MAX on the native side.
 const kBunTestNoTimeout = { timeout: Infinity };
 
 function currentCollectionParent(): TestNode {

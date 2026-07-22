@@ -1,8 +1,8 @@
+import { describe, expect, it } from "bun:test";
 import { tls as COMMON_CERT } from "harness";
 import type { AddressInfo } from "net";
 import { once } from "node:events";
 import { connect, createServer, Server, TLSSocket } from "tls";
-import { describe, expect, it } from "bun:test";
 
 describe("pausing a TLS socket before the handshake does not stall it", () => {
   // Socket.prototype.pause() previously stopped native reads unconditionally,

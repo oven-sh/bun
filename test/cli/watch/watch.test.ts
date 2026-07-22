@@ -96,7 +96,9 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
 
     const existing = bunEnv.LD_PRELOAD;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--watch", "watchee.js"],
+      // --debug-crash-handler-use-trace-string skips the debug build's slow
+      // backtrace symbolication so the child exits promptly.
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
       cwd: String(dir),
       env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
       stdout: "pipe",
@@ -111,5 +113,4 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     expect(stdout).not.toContain("unreachable");
     expect(exitCode).not.toBe(0);
   },
-  20000,
 );

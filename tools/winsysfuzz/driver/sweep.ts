@@ -136,10 +136,32 @@ const harnessPath = /\\runs\\|\\cwd\b|\\wsf-\d+\.log|\\(stdout|stderr)\.txt|\bws
 // module's lifetime). Only handles bun opened for the workload's own I/O
 // (data files, pipes, sockets, keys) can be a leak worth reporting.
 const notWorkloadIo = /(Local\\|Global\\|BaseNamedObjects|WilError|\\SM0:|\.mui\b|\.dll\b|\.nls\b|\.(ts|tsx|js|mjs|cjs|mts|cts|jsx)$)/i;
+// Normalize per-instance name components so the baseline diff compares
+// KINDS of handle, not instances: libuv names child-stdio pipes
+// "\pipe\uv\<sentinel>-<pid>" - the pid differs per child, so identity
+// per child defeats the diff (a fault that merely runs a different child
+// "leaks" a fresh name). Collapse the pid; a genuine surplus of stdio
+// pipes over baseline (count) still registers.
+const normalizeLeak = (l: string) => l.trim().replace(/(\\pipe\\uv\\\d+)-\d+/i, "$1-<pid>");
 const cleanLeaks = (leaks: string[]) =>
-  leaks.map(l => l.trim()).filter(l => !harnessPath.test(l) && !notWorkloadIo.test(l));
-const baseLeakSet = new Set(cleanLeaks(baseTrace.leaks ?? []));
-const newLeaks = (leaks: string[]): string[] => [...new Set(cleanLeaks(leaks))].filter(l => !baseLeakSet.has(l));
+  leaks.map(normalizeLeak).filter(l => !harnessPath.test(l) && !notWorkloadIo.test(l));
+// Diff as a MULTISET: normalized names collapse instances of one kind, so
+// a leak is a count of that kind ABOVE the baseline's count (three stdio
+// pipes where the baseline held one), reported once with its surplus.
+const countKinds = (leaks: string[]) => {
+  const m = new Map<string, number>();
+  for (const l of cleanLeaks(leaks)) m.set(l, (m.get(l) ?? 0) + 1);
+  return m;
+};
+const baseLeakCounts = countKinds(baseTrace.leaks ?? []);
+const newLeaks = (leaks: string[]): string[] => {
+  const out: string[] = [];
+  for (const [k, n] of countKinds(leaks)) {
+    const over = n - (baseLeakCounts.get(k) ?? 0);
+    if (over > 0) out.push(over > 1 ? `${k} x${over}` : k);
+  }
+  return out;
+};
 
 // --- coordinates --------------------------------------------------------------
 // A coordinate = (syscall, key). The KEY is the syscall's immediate return

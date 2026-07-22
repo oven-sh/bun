@@ -35,7 +35,7 @@ pub struct StaticRoute {
     pub status_code: u16,
     pub blob: AnyBlob,
     pub cached_blob_size: u64,
-    pub has_content_disposition: bool,
+    pub has_date: bool,
     pub headers: Headers,
 }
 
@@ -102,11 +102,12 @@ impl StaticRoute {
         }
 
         let cached_blob_size = blob.size();
+        let has_date = headers.get(b"date").is_some();
         bun_core::heap::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
             blob,
             cached_blob_size,
-            has_content_disposition: false,
+            has_date,
             headers,
             server: Cell::new(options.server),
             status_code: options.status_code,
@@ -137,7 +138,7 @@ impl StaticRoute {
             ref_count: Cell::new(1),
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
-            has_content_disposition: self.has_content_disposition,
+            has_date: self.has_date,
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
@@ -213,10 +214,7 @@ impl StaticRoute {
                 }
             };
 
-            let mut has_content_disposition = false;
-
             if let Some(h) = response.get_init_headers_mut() {
-                has_content_disposition = h.fast_has(HTTPHeaderName::ContentDisposition);
                 h.fast_remove(HTTPHeaderName::TransferEncoding);
                 h.fast_remove(HTTPHeaderName::ContentLength);
             }
@@ -246,11 +244,12 @@ impl StaticRoute {
             }
 
             let cached_blob_size = blob.size();
+            let has_date = headers.get(b"date").is_some();
             return Ok(Some(bun_core::heap::into_raw(Box::new(StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
                 cached_blob_size,
-                has_content_disposition,
+                has_date,
                 headers,
                 server: Cell::new(None),
                 status_code: response.status_code(),
@@ -483,6 +482,11 @@ impl StaticRoute {
 
     fn do_write_headers(&self, resp: AnyResponse) {
         use bun_http_types::ETag::HeaderEntryColumns;
+        // Date is a singleton field (RFC 9110 §6.6.1); when the snapshot already
+        // carries one, suppress uWS's auto-Date so only the user's value is sent.
+        if self.has_date {
+            resp.mark_wrote_date_header();
+        }
         let entries = self.headers.entries.slice();
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
@@ -523,6 +527,8 @@ impl StaticRoute {
                 Method::HEAD => Self::on_head(this, resp),
                 _ => {
                     (*this).do_write_status(405, resp); // Method not allowed
+                    resp.write_header(b"Allow", b"GET, HEAD");
+                    resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(resp.should_close_connection());
                 }
             }

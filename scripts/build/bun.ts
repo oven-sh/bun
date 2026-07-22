@@ -17,9 +17,12 @@
  *   - "cpp-only": compile to libbun.a, skip rust/link (CI upstream)
  *   - "rust-only": codegen + cargo → libbun_rust.a (CI upstream)
  *   - "link-only": link pre-built artifacts (CI downstream)
+ *   - "rust-and-link": cargo + link; downloads cpp-only's archive (CI)
  *
- * cpp-only/rust-only/link-only are for the CI split where C++ and Rust
- * build in parallel on separate machines then meet for linking.
+ * The split modes are for CI where C++ and Rust build in parallel on
+ * separate machines. rust-and-link folds the rust + link steps onto one
+ * agent (cargo runs while cpp-only is still compiling elsewhere; the
+ * cpp archive is polled for and downloaded before ninja links).
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
@@ -161,6 +164,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
   if (cfg.mode === "link-only") {
     return emitLinkOnly(n, cfg);
+  }
+  if (cfg.mode === "rust-and-link") {
+    return emitRustAndLink(n, cfg, sources);
   }
 
   const exeName = bunExeName(cfg);
@@ -392,6 +398,19 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   };
   for (const src of cSources) compileC(src);
 
+  // InternalModuleRegistryConstants.S — `.incbin`s the bundled JS module sources
+  // so InternalModuleRegistry.cpp sees a tiny {offset, length} table instead of
+  // megabytes of byte-array initializers. The `.bin` payload is an implicit
+  // input: `.incbin` is opaque to depfiles, and the `.S` itself rarely changes.
+  // cFlagsFull carries --target/--sysroot/-march so a cross-compile's
+  // preprocessor picks the right __APPLE__/_WIN32 branch and object format.
+  cObjects.push(
+    cc(n, cfg, codegen.internalModulesAsm, {
+      flags: cFlagsFull,
+      implicitInputs: [codegen.internalModulesBin],
+    }),
+  );
+
   // Deps that contribute source files for bun to compile directly (via
   // provides.sources) instead of building a lib. Compile them here with
   // bun's full flag set and give each a phony so `--target <name>` builds
@@ -541,9 +560,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * Does NOT need: any C dep built, any cxx, PCH, link. ninja only pulls
  * what's depended on — lolhtml's configure/build rules are emitted but
  * unused (only its `.ref` fetch stamp is depended on by emitRust).
- *
- * Cross-compilation: see `rustCanCrossFromLinux()` in rust.ts for which
- * targets share a linux runner vs need a native agent.
  */
 function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
@@ -656,15 +672,97 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
 }
 
 /**
+ * rust-and-link mode: cargo build + link on one CI agent. The cpp archive
+ * and dep libs are downloaded from the sibling build-cpp step (ci.ts polls
+ * for its outcome and downloads before ninja runs); libbun_rust.a is built
+ * locally. Graph = emitRustOnly's cargo edge + emitLinkOnly's link edge.
+ *
+ * Expected downloaded artifacts (same paths cpp-only produced):
+ *   - libbun-profile.a            — from cpp-only's ar()
+ *   - deps/<name>/lib<name>.a     — from cpp-only's dep builds
+ *   - cache/webkit-<hash>/lib/... — WebKit prebuilt (same cache path)
+ */
+function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
+  const exeName = bunExeName(cfg);
+
+  n.comment("════════════════════════════════════════════════════════════════");
+  n.comment(`  Building ${exeName} (rust-and-link — cpp archive from buildkite)`);
+  n.comment("════════════════════════════════════════════════════════════════");
+  n.blank();
+
+  // ─── Rust (built here) ───
+  // lolhtml fetch + codegen + cargo — same as emitRustOnly. The cargo edge
+  // runs while build-cpp is still compiling on its own agent; by the time
+  // ninja reaches the link edge, ci.ts has already downloaded the archive.
+  const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
+  assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
+
+  const codegen = emitCodegen(n, cfg, sources);
+
+  const rustObjects = emitRust(n, cfg, {
+    codegenInputs: codegen.rustInputs,
+    codegenOrderOnly: codegen.rustOrderOnly,
+    rustSources: sources.rust,
+    vendorStamps: lolhtmlDep.outputs,
+  });
+
+  // ─── C++ archive + dep libs (downloaded, not built) ───
+  // Paths computed exactly as emitLinkOnly does — must match cpp-only's
+  // output layout. ninja sees them as source inputs (no build rule).
+  const depLibs: string[] = [];
+  for (const dep of allDeps) {
+    depLibs.push(...computeDepLibs(cfg, dep));
+  }
+  const archive = resolve(cfg.buildDir, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`);
+
+  // ─── Link ───
+  const flags = computeFlags(cfg);
+
+  n.comment("─── Link ───");
+  n.blank();
+
+  const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
+
+  const shims = emitShims(n, cfg);
+  const linkObjects = [archive, ...rustLtoLinkInputs(n, cfg, rustObjects), ...windowsRes];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
+  const exe = link(n, cfg, exeName, linkObjects, {
+    libs: depLibs,
+    flags: ldflags,
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
+  });
+
+  let strippedExe: string | undefined;
+  let dsym: string | undefined;
+  if (shouldStrip(cfg)) {
+    strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
+    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
+  }
+  if (strippedExe === undefined) n.phony("bun", [exe]);
+  emitSmokeTest(n, cfg, exe, exeName);
+
+  return {
+    exe,
+    strippedExe,
+    dsym,
+    deps: [lolhtmlDep],
+    codegen,
+    rustObjects,
+    objects: [],
+  };
+}
+
+/**
  * Smoke test: run the built executable with --revision. If it crashes or
  * errors, the build failed — typically means a link-time issue that the
  * linker didn't catch (missing symbol only referenced at init, ICU ABI
  * mismatch, etc.).
  */
 function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
-  // Cross-compiled binaries can't run on the build host. Skip the smoke
-  // test entirely — `ninja check` becomes a no-op alias for the exe.
-  if (cfg.crossTarget !== undefined) {
+  // Skip when the binary can't run on this host (different os/arch/abi) —
+  // `ninja check` becomes a no-op alias for the exe.
+  if (!cfg.canRunOnHost) {
     n.phony("check", [exe]);
     return;
   }

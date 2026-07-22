@@ -457,12 +457,10 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 if (otherString.find(substring) != WTF::notFound) {
                     return AsymmetricMatcherResult::PASS;
                 }
-            } else if (expectedTestValue.isCell() and expectedTestValue.asCell()->type() == RegExpObjectType) {
-                if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
-                    JSString* otherString = otherProp.toString(globalObject);
-                    if (regex->match(globalObject, otherString)) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
+            } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
+                JSString* otherString = otherProp.toString(globalObject);
+                if (regex->match(globalObject, otherString)) {
+                    return AsymmetricMatcherResult::PASS;
                 }
             }
         }
@@ -1149,12 +1147,17 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0)
-            return true;
-
-        if (right->isDetached() || left->isDetached()) [[unlikely]] {
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            if constexpr (!enableAsymmetricMatchers) {
+                // Node wraps each side in `new Uint8Array(buf)` to compare bytes, which
+                // throws on a detached ArrayBuffer; match that contract for node:assert/util.
+                throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+            }
             return false;
         }
+
+        if (byteLength == 0)
+            return true;
 
         const void* vector = left->data();
         const void* rightVector = right->data();
@@ -3433,12 +3436,6 @@ JSC::EncodedJSValue ZigString__toSyntaxErrorInstance(const ZigString* str, JSC::
 JSC::EncodedJSValue ZigString__toRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     return JSC::JSValue::encode(Zig::getRangeErrorInstance(str, globalObject));
-}
-
-static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject,
-    JSC::CallFrame* callFrame)
-{
-    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC::JSPromise*
@@ -6601,8 +6598,8 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
         uint64_t result = notFound;
         if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
             for (const auto& entry : *map) {
-                if (entry.key >= start && entry.key < result)
-                    result = entry.key;
+                if (entry.index() >= start && entry.index() < result)
+                    result = entry.index();
             }
         }
         return result;

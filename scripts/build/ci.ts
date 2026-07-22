@@ -194,6 +194,7 @@ export async function spawnWithAnnotations(
     console.error(`Command exited: code ${exitCode}`);
   }
 
+  utils.markBuildkiteStepReported();
   process.exit(exitCode ?? 1);
 }
 
@@ -352,23 +353,24 @@ export function computeBunTriplet(cfg: Config): string {
   let t = `bun-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
   if (cfg.abi === "android") t += "-android";
-  if (cfg.baseline) t += "-baseline";
+  // No `-baseline` suffix: x64 is always baseline and the historical
+  // `-baseline` names are published as release-side aliases.
   return t;
 }
 
 /**
- * Post-link packaging and upload for link-only mode. Runs AFTER ninja
- * succeeds — at that point bun-profile (and stripped bun) exist.
+ * Post-link packaging and upload for link-only / rust-and-link mode. Runs
+ * AFTER ninja succeeds — at that point bun-profile (and stripped bun) exist.
  *
  * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
-  if (!isBuildkite || cfg.mode !== "link-only") return;
+  if (!isBuildkite || (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link")) return;
 
   const exe = output.exe;
   if (exe === undefined) {
-    throw new BuildError("link-only packaging: output.exe unset");
+    throw new BuildError(`${cfg.mode} packaging: output.exe unset`);
   }
 
   const buildDir = cfg.buildDir;
@@ -380,11 +382,10 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Env vars match cmake's (BuildBun.cmake ~1462).
   // No setarch wrapper — cmake doesn't use one for features.mjs either
   // (only for the --revision smoke test).
-  // Cross-compiled binaries can't run on the build host — every field is a
-  // build-time constant, so generate the same payload host-side instead
-  // (the feature list is parsed out of src/analytics/lib.rs; see
-  // features-json.ts).
-  if (cfg.crossTarget !== undefined) {
+  // Binaries that can't run on this host: every field is a build-time
+  // constant, so generate the same payload host-side instead (the feature
+  // list is parsed out of src/analytics/lib.rs; see features-json.ts).
+  if (!cfg.canRunOnHost) {
     console.log("Generating features.json (host-side; cross-compiled binary cannot run here)...");
     writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
   } else {
@@ -494,19 +495,25 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
 }
 
 /**
- * Download artifacts from sibling buildkite steps before a link-only build.
- * Derives sibling step keys from BUILDKITE_STEP_KEY (swap `-build-bun` →
- * `-build-cpp` / `-build-rust`). Gunzips any .gz files after download.
+ * Download artifacts from sibling buildkite steps before a link-only /
+ * rust-and-link build. Derives sibling step keys from BUILDKITE_STEP_KEY
+ * (swap `-build-bun` → `-build-cpp` / `-build-rust`). Gunzips any .gz files
+ * after download.
+ *
+ * rust-and-link runs in parallel with build-cpp (no depends_on), so it
+ * POLLS `buildkite-agent step get outcome` for the cpp step until it passes
+ * before attempting the download. link-only has depends_on and skips the
+ * poll.
  *
  * Call BEFORE ninja — the downloaded files are ninja's link inputs.
  */
 export async function downloadArtifacts(cfg: Config): Promise<void> {
-  if (cfg.mode !== "link-only") return;
+  if (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link") return;
 
   const stepKey = process.env.BUILDKITE_STEP_KEY;
   if (stepKey === undefined) {
     throw new BuildError("BUILDKITE_STEP_KEY unset", {
-      hint: "link-only mode requires running inside a Buildkite job",
+      hint: `${cfg.mode} mode requires running inside a Buildkite job`,
     });
   }
 
@@ -518,17 +525,28 @@ export async function downloadArtifacts(cfg: Config): Promise<void> {
     });
   }
   const targetKey = m[1]!;
+  const cppStep = `${targetKey}-build-cpp`;
 
-  // Both downloads at once (buildkite-agent already parallelizes within a
-  // step's artifact set; this overlaps the two STEPS). Gunzip after BOTH
-  // complete — the rust .a is gzipped too on posix, and the .gz scan is a
-  // recursive walk so we want every artifact on disk first.
-  const dl = (suffix: "cpp" | "rust") => {
-    const step = `${targetKey}-build-${suffix}`;
+  // rust-and-link: no depends_on on build-cpp (it started alongside us so
+  // cargo could overlap). Poll its outcome; "passed" → download, any
+  // terminal failure → exit 1 with a clear message so the annotation points
+  // at build-cpp rather than a confusing "artifact not found" here.
+  if (cfg.mode === "rust-and-link") {
+    await waitForStepOutcome(cppStep);
+  }
+
+  const dl = (step: string) => {
     console.log(`Downloading artifacts from ${step}...`);
     return runAsync(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
   };
-  await Promise.all([dl("cpp"), dl("rust")]);
+  if (cfg.mode === "rust-and-link") {
+    // rust built locally — only the cpp archive + dep libs are fetched.
+    await dl(cppStep);
+  } else {
+    // link-only: both siblings. Overlap the two downloads; gunzip after both
+    // complete (the .gz scan is a recursive walk, so everything on disk first).
+    await Promise.all([dl(cppStep), dl(`${targetKey}-build-rust`)]);
+  }
 
   // Recursive: rust artifact lands under rust-target/<triple>/<profile>/.
   const gzFiles: string[] = [];
@@ -536,8 +554,11 @@ export async function downloadArtifacts(cfg: Config): Promise<void> {
     if (!existsSync(dir)) return;
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = resolve(dir, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.isFile() && e.name.endsWith(".gz")) gzFiles.push(relative(cfg.buildDir, p));
+      if (e.isDirectory()) {
+        // rust-and-link built rust locally; skip cargo's huge output tree.
+        if (cfg.mode === "rust-and-link" && e.name === "rust-target") continue;
+        walk(p);
+      } else if (e.isFile() && e.name.endsWith(".gz")) gzFiles.push(relative(cfg.buildDir, p));
     }
   };
   walk(cfg.buildDir);
@@ -576,6 +597,57 @@ function runAsync(argv: string[], cwd: string): Promise<void> {
       else rej(new BuildError(`${argv[0]} exited with code ${code}`, { hint: `Command: ${argv.join(" ")}` }));
     });
   });
+}
+
+/**
+ * Poll `buildkite-agent step get outcome --step <key>` until the step
+ * reaches a terminal state. Returns on "passed"; throws on any failure
+ * outcome so the caller exits 1 with a message that points at the real
+ * failing step (rather than a downstream "artifact not found").
+ */
+async function waitForStepOutcome(stepKey: string): Promise<void> {
+  const failed = new Set(["hard_failed", "soft_failed", "errored", "canceled", "cancelled"]);
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  const start = Date.now();
+  const deadlineMs = 60 * 60 * 1000;
+  let last = "";
+  console.log(`Waiting for ${stepKey} to finish...`);
+  for (;;) {
+    const result = spawnSync("buildkite-agent", ["step", "get", "outcome", "--step", stepKey], { encoding: "utf8" });
+    if (result.error) {
+      throw new BuildError(`Failed to spawn buildkite-agent`, { cause: result.error });
+    }
+    if (result.status !== 0) {
+      const err = (result.stderr ?? "").trim();
+      if (err !== last) {
+        console.log(`  buildkite-agent step get exited ${result.status}: ${err}`);
+        last = err;
+      }
+      if (Date.now() - start > deadlineMs) {
+        throw new BuildError(`buildkite-agent step get kept failing for ${stepKey}`, { hint: err });
+      }
+      await sleep(3000);
+      continue;
+    }
+    const outcome = (result.stdout ?? "").trim();
+    if (outcome !== last) {
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      console.log(`  ${stepKey} outcome: ${outcome || "(running)"} [${elapsed}s]`);
+      last = outcome;
+    }
+    if (outcome === "passed") return;
+    if (failed.has(outcome)) {
+      throw new BuildError(`Sibling step ${stepKey} ${outcome} — nothing to link`, {
+        hint: `See the ${stepKey} job for the real error; this step only downloads its artifacts.`,
+      });
+    }
+    if (Date.now() - start > deadlineMs) {
+      throw new BuildError(`Timed out after 60m waiting for ${stepKey}`, {
+        hint: `${stepKey} never reached a terminal outcome; check that job for a hang.`,
+      });
+    }
+    await sleep(3000);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -627,12 +699,37 @@ export function orderFileContext(): OrderFileContext {
 /** Only builds that link, on targets that use an order file, outside PRs. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
   if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
-  return cfg.mode === "full" || cfg.mode === "link-only";
+  return cfg.mode === "full" || cfg.mode === "link-only" || cfg.mode === "rust-and-link";
 }
 
-/** Tracing runs the binary we just linked, which a cross build cannot execute. */
-function canTraceOrderFile(cfg: Config): boolean {
-  return cfg.crossTarget === undefined;
+/** Tracing runs the binary we just linked, so the host must be able to execute it. */
+export function canTraceOrderFile(cfg: Config): boolean {
+  return cfg.canRunOnHost;
+}
+
+/**
+ * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
+ * shipping unordered with no way to recover on this host. Annotate so it is
+ * visible; the fix is tracing under qemu-user or on a native-arch step.
+ */
+export function reportOrderFileCannotTrace(cfg: Config): void {
+  const msg =
+    `${orderFileArtifact(cfg)}: nothing to inherit and this lane cross-compiles ` +
+    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered.`;
+  console.log(`~ symbol order: ${msg}`);
+  if (!isBuildkite) return;
+  utils.reportAnnotationToBuildKite({
+    style: "warning",
+    priority: 5,
+    label: "symbol order file",
+    content: utils.formatAnnotationToHtml({
+      filename: "scripts/build/ci.ts",
+      title: "symbol order file: cross-compiled lane cannot trace, shipping unordered",
+      content: msg,
+      source: "build",
+      level: "warning",
+    }),
+  });
 }
 
 /** Artifact name for the standalone order file: `bun-linux-x64.order`. */

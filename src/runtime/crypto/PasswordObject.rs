@@ -32,8 +32,6 @@ use bun_sha_hmac::SHA512;
 
 pub struct PasswordObject;
 
-impl PasswordObject {}
-
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
 pub enum Algorithm {
@@ -241,22 +239,7 @@ impl Default for Argon2Params {
     }
 }
 
-bun_core::comptime_string_map! {
-    pub static ALGORITHM_LABEL: Algorithm = {
-        b"argon2i" => Algorithm::Argon2i,
-        b"argon2d" => Algorithm::Argon2d,
-        b"argon2id" => Algorithm::Argon2id,
-        b"bcrypt" => Algorithm::Bcrypt,
-    };
-}
-
 impl Algorithm {
-    pub const ARGON2: Algorithm = Algorithm::Argon2id;
-
-    pub const LABEL: &'static __ComptimeStringMap_ALGORITHM_LABEL = &ALGORITHM_LABEL;
-
-    pub const DEFAULT: Algorithm = Algorithm::ARGON2;
-
     pub fn get(pw: &[u8]) -> Option<Algorithm> {
         if pw[0] != b'$' {
             return None;

@@ -242,6 +242,36 @@ function emitEOFIncomingMessage(self) {
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
+function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
+  if (aborted === NodeHTTPResponseAbortEvent.abort) {
+    this.destroy();
+    return;
+  }
+
+  // Incoming request-body bytes are socket activity: push the connection's
+  // inactivity timeout (socket.setTimeout / server.timeout) further out, like
+  // Node.js does for reads on the socket.
+  const socket = this.socket;
+  socket?._unrefTimer?.();
+
+  if (chunk && !this._dumped) {
+    if (!this.push(chunk)) {
+      // Like Node's parserOnBody: pause the connection once the buffer fills.
+      // Upgrade-with-body routes through its own handle so the socket's flow
+      // state stays with the upgrade listener; _read() balances it.
+      if (this.upgrade) this[kHandle]?.pause();
+      else if (socket && !socket.writableEnded) socket.pause();
+    }
+  }
+
+  if (isLast) {
+    emitEOFIncomingMessage(this);
+    // Like Node's parserOnMessageComplete: any readStop above left the shared
+    // socket's flowing=false, which would swallow the next request's 'pause'.
+    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+  }
+}
+
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
     throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
@@ -623,6 +653,7 @@ export {
   kUseDefaultPort,
   kWaitForProxyTunnel,
   noBodySymbol,
+  onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,

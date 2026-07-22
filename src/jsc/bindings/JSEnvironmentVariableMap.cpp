@@ -513,8 +513,10 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value))
-        JSC::getVM(globalObject).dateCache.resetIfNecessarySlow();
+    if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
+        WTF::timeZoneDidChange();
+        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
+    }
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {

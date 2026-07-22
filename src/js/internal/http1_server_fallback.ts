@@ -246,7 +246,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 // the socket to the HTTP/1 connection listener.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
-  const { HTTPParser, prepareError, calculateLenientFlags } = require("node:_http_common");
+  const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
@@ -354,8 +354,8 @@ function connectionListenerHTTP1(server, socket, options) {
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
     const expect = req.headers.expect;
-    if (expect !== undefined) {
-      if (String(expect).trim().toLowerCase() === "100-continue") {
+    if (expect !== undefined && versionMajor === 1 && versionMinor === 1) {
+      if (continueExpression.test(String(expect))) {
         if (server.listenerCount("checkContinue") > 0) {
           server.emit("checkContinue", req, res);
         } else {

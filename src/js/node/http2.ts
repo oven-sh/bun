@@ -4300,6 +4300,10 @@ class ServerHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      const requestPerf = stream[kPerfState];
+      if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
+        requestPerf.firstHeader = performance.now() - requestPerf.start;
+      }
       let rawheaders = headersTuple[0];
       let headers = headersTuple[1];
       if (self.#strictFieldWhitespaceValidation) {

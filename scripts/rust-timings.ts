@@ -89,10 +89,10 @@ interface Unit {
 
 function parseTimingsHtml(path: string): { units: Unit[]; total: number } {
   const html = readFileSync(path, "utf8");
-  const m = html.match(/const UNIT_DATA = (\[[\s\S]*?\n\]);/);
+  const m = html.match(/const UNIT_DATA = (\[[\s\S]*?\n?\]);/);
   if (!m) throw new Error(`no UNIT_DATA in ${path}`);
   const units: Unit[] = JSON.parse(m[1]);
-  const total = Math.max(...units.map(u => u.start + u.duration));
+  const total = units.length === 0 ? 0 : Math.max(...units.map(u => u.start + u.duration));
   return { units, total };
 }
 
@@ -118,7 +118,6 @@ function section(u: Unit, name: string): number {
  * inverting that map gives "who was I waiting on".
  */
 function criticalPath(units: Unit[]): Unit[] {
-  const byIdx = new Map(units.map(u => [u.i, u]));
   const waitsOn = new Map<number, { unit: Unit; at: number }[]>();
   for (const u of units) {
     for (const d of u.unblocked_units ?? []) {
@@ -152,7 +151,9 @@ function serialWindows(units: Unit[], maxActive: number, minDur: number): [numbe
   events.sort((a, b) => a[0] - b[0]);
   const out: [number, number, string[]][] = [];
   let active = 0;
-  let since: number | null = null;
+  // The build starts in a ≤maxActive window (nothing is running yet), so open
+  // the first window at t=0 rather than waiting for a downward crossing.
+  let since: number | null = 0;
   for (const [t, d] of events) {
     const was = active;
     active += d;
@@ -261,7 +262,11 @@ if (!existsSync(cfg.codegenDir) || !existsSync(join(repo, "vendor/lolhtml/Cargo.
     cwd: repo,
   });
   if (r.status !== 0) process.exit(1);
-  spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml"], { stdio: "inherit", cwd: repo });
+  const nr = spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml"], { stdio: "inherit", cwd: repo });
+  if (nr.error || nr.status !== 0) {
+    console.error(nr.error ? `ninja: ${nr.error.message}` : "ninja codegen/clone-lolhtml failed");
+    process.exit(1);
+  }
 }
 
 const inv = cargoBuildInvocation(cfg);

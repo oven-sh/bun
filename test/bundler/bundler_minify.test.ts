@@ -1331,6 +1331,45 @@ describe("bundler", () => {
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/30489
+  // Comments must not influence the renamer — two files that differ only
+  // in comments must produce byte-identical minified output.
+  //
+  // Stuff a 42-byte filler (past CharFreq.scanBig's 32-byte threshold)
+  // using characters that don't appear elsewhere in the source. Before
+  // the fix, those characters would leak into the histogram and reshape
+  // the chosen identifier letters; the expected output below pins the
+  // correct renamer output and so any leak makes the test fail.
+  const issue30489Baseline = /* js */ `
+    var aa = 1, bb = 2, cc = 3, dd = 4, ee = 5, ff = 6;
+    export function go() { return aa + bb + cc + dd + ee + ff; }
+  `;
+  // Use Buffer.alloc().toString() over "q".repeat() — faster in debug builds.
+  const issue30489Filler = Buffer.alloc(42, "q").toString();
+  // All variants must produce this exact minified output; any variant that
+  // differs means the comment's characters leaked into the renamer's histogram.
+  const issue30489ExpectedOutput = "var e=1,r=2,a=3,c=4,f=5,n=6;function o(){return e+r+a+c+f+n}export{o as go};\n";
+  const issue30489Variants = {
+    baseline: issue30489Baseline,
+    leadingLineComment: `// ${issue30489Filler}\n` + issue30489Baseline,
+    leadingBlockComment: `/* ${issue30489Filler} */\n` + issue30489Baseline,
+    midFileLineComment: issue30489Baseline.replace("export function", `// ${issue30489Filler}\nexport function`),
+    midFileBlockComment: issue30489Baseline.replace("export function", `/* ${issue30489Filler} */\nexport function`),
+    trailingLineComment: issue30489Baseline + `// ${issue30489Filler}\n`,
+    trailingBlockComment: issue30489Baseline + `/* ${issue30489Filler} */\n`,
+  };
+  for (const [variant, source] of Object.entries(issue30489Variants)) {
+    itBundled(`minify/CommentBleedIssue30489_${variant}`, {
+      files: { "/entry.js": source },
+      minifySyntax: true,
+      minifyIdentifiers: true,
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toBe(issue30489ExpectedOutput);
+      },
+    });
+  }
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

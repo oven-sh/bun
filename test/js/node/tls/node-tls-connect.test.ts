@@ -765,11 +765,45 @@ describe("rejectUnauthorized fails closed for anything other than an explicit fa
          });`,
       ],
       env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
-      stderr: "ignore",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("rejected DEPTH_ZERO_SELF_SIGNED_CERT");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr carries the one-time NODE_TLS_REJECT_UNAUTHORIZED process warning
+    // (with a stack trace), so it's captured for the failure diff but not
+    // constrained.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+      stdout: "rejected DEPTH_ZERO_SELF_SIGNED_CERT",
+      exitCode: 0,
+    });
+  });
+
+  it("server {requestCert: true, rejectUnauthorized: null} rejects an unverified client certificate", async () => {
+    const events: string[] = [];
+    const server = tls.createServer(
+      { cert: COMMON_CERT_.cert, key: COMMON_CERT_.key, requestCert: true, rejectUnauthorized: null as any },
+      s => {
+        events.push(`handler authorized=${s.authorized}`);
+        s.end();
+      },
+    );
+    server.on("tlsClientError", e => events.push(`tlsClientError ${(e as any).code ?? e.message}`));
+    server.on("secureConnection", s => events.push(`secureConnection authorized=${s.authorized}`));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const c = tls.connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        cert: COMMON_CERT_.cert,
+        key: COMMON_CERT_.key,
+        rejectUnauthorized: false,
+      });
+      c.on("error", () => {});
+      await once(c, "close");
+    } finally {
+      server.close();
+    }
+    expect(events).toEqual(["tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT"]);
+    expect(server._rejectUnauthorized).toBe(true);
   });
 });
 

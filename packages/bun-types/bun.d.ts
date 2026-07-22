@@ -3004,7 +3004,13 @@ declare module "bun" {
      * which can be used for bundle analysis, visualization, or integration with
      * other tools.
      *
-     * When `true`, the metafile JSON string is included in the {@link BuildOutput.metafile} property.
+     * - If set to one of: `true`, a string, or an object, the metafile data is populated into
+     *   the {@link BuildOutput.metafile} property.
+     *    - If set to a string containing a path (relative to {@link BuildConfig.outdir}), a
+     *      JSON metafile will additionally be written to that location.
+     *    - If set to an object, paths to write JSON and/or markdown formats can be
+     *      individually set (relative to {@link BuildConfig.outdir}), and the respective
+     *      metafiles will be written to those locations for any formats that were defined.
      *
      * @default false
      *
@@ -3013,21 +3019,66 @@ declare module "bun" {
      * const result = await Bun.build({
      *   entrypoints: ['./src/index.ts'],
      *   outdir: './dist',
+     *   // Enable population of the metafile property in the result object
      *   metafile: true,
      * });
-     *
-     * // Write metafile to disk for analysis
+     * 
      * if (result.metafile) {
-     *   await Bun.write('./dist/meta.json', result.metafile);
+     *   // Analyze inputs
+     *   for (const [path, meta] of Object.entries(result.metafile.inputs)) {
+     *     console.log(`${path}: ${meta.bytes} bytes`);
+     *   }
+     * 
+     *   // Analyze outputs
+     *   for (const [path, meta] of Object.entries(result.metafile.outputs)) {
+     *     console.log(`${path}: ${meta.bytes} bytes`);
+     *   }
+
+     *   // Save for external analysis tools
+     *   await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
      * }
      *
-     * // Parse and analyze the metafile
-     * const meta = JSON.parse(result.metafile!);
-     * console.log('Input files:', Object.keys(meta.inputs));
-     * console.log('Output files:', Object.keys(meta.outputs));
+     * ```
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   // Write metafile in JSON format to ./dist/meta.json
+     *   metafile: './meta.json',
+     * });
+     *
+     * // `metafile` property is also populated
+     * console.log(result.metafile)
+     *
+     * ```
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: {
+     *     // Write metafile in JSON format to ./dist/meta.json
+     *     json: 'meta.json',
+     *     // Write metafile in markdown format to ./dist/meta.md
+     *     markdown: 'meta.md',
+     *   }
+     * });
+     *
+     * // `metafile` property is also populated
+     * console.log(result.metafile)
+     *
      * ```
      */
-    metafile?: boolean;
+    metafile?:
+      | boolean
+      | string
+      | {
+          json?: string;
+          markdown?: string;
+        };
 
     outdir?: string;
 
@@ -3668,7 +3719,7 @@ declare module "bun" {
      * - **outputs**: every generated file with its byte size, the inputs that
      *   contributed to it, imports between chunks, and exports
      *
-     * Only present when {@link BuildConfig.metafile} is `true`.
+     * Only present when {@link BuildConfig.metafile} is enabled (`true`, string, or object).
      *
      * Use it for bundle size analysis, inspecting the dependency graph, or as
      * input to bundle analyzer tools.

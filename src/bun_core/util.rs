@@ -66,8 +66,9 @@ impl<T: Copy> Unaligned<T> {
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
-        // SAFETY: `#[repr(transparent)]` over `T` + the debug-asserted alignment
-        // make the layouts identical; `&mut` exclusivity is preserved.
+        // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
+        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
+        // layout. `&mut` exclusivity is preserved.
         unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
     }
 }

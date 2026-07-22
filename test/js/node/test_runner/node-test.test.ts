@@ -258,6 +258,22 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should run a top-level test() registered from a macrotask after module evaluation", async () => {
+    // Node keeps the root alive while a ref'd timer is pending and accepts late
+    // registrations; without the event-loop drain the setTimeout never fires and
+    // the late failing tests are silently dropped (run would be 1 pass / exit 0).
+    const { exitCode, stderr } = await runTests(["25-late-top-level.js"]);
+    expect(stderr).toContain("(pass) sync-registered");
+    expect(stderr).toContain("(fail) late failing");
+    expect(stderr).toContain("(pass) late passing");
+    expect(stderr).toContain("(pass) late async passing");
+    expect(stderr).toContain("(fail) late suite");
+    expect(stderr).toContain("late test is red");
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("2 fail");
+    expect(exitCode).toBe(1);
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

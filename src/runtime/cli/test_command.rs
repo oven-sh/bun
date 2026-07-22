@@ -3209,6 +3209,27 @@ impl TestCommand {
                     }
                 }
 
+                // node:test accepts top-level `test()` calls after execution
+                // has started (Node's root keeps running while a ref'd timer
+                // is pending). Keep ticking so those timers fire; the node:test
+                // shim runs the late tests inline and reports them itself.
+                // Gated on node:test having been used so a plain bun:test file
+                // that leaks a handle still exits promptly.
+                if buntest.node_test_drain {
+                    while vm.is_event_loop_alive() || buntest.node_test_pending_late > 0 {
+                        if buntest.wants_wakeup {
+                            buntest.wants_wakeup = false;
+                            vm.wakeup();
+                        }
+                        vm.event_loop_ref().auto_tick();
+                        vm.event_loop_ref().tick();
+                        while prev_unhandled_count < vm.unhandled_error_counter {
+                            vm.global().handle_rejected_promises();
+                            prev_unhandled_count = vm.unhandled_error_counter;
+                        }
+                    }
+                }
+
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };

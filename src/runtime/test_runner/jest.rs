@@ -534,6 +534,92 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
+/// Reached only from `node:test` on each top-level `test()`/`describe()`
+/// registration. Marks the file so the per-file loop drains the event loop
+/// after `Phase::Done` (Node keeps running while a ref'd timer is pending and
+/// accepts late registrations), and tells the shim whether collection is over
+/// so it can run the late test inline instead of tripping bun:test's
+/// "Cannot call test() inside a test" error.
+pub(crate) fn js_node_test_want_drain(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::FALSE);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    buntest.node_test_drain = true;
+    Ok(JSValue::from(buntest.phase != bun_test::Phase::Collection))
+}
+
+/// Reached only from `node:test` when a top-level test is registered after
+/// collection: brackets the inline run so the drain loop keeps spinning while
+/// the (possibly async) body is pending.
+pub(crate) fn js_node_test_late_begin(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    if let Some(buntest_strong) = bun_test::clone_active_strong() {
+        // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+        let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+        buntest.node_test_pending_late = buntest.node_test_pending_late.saturating_add(1);
+        buntest.wants_wakeup = true;
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Reached only from `node:test` when a late top-level test finishes: prints
+/// the per-test line, dumps the failure (if any), and bumps the summary so the
+/// run's pass/fail counts and exit code reflect it.
+pub(crate) fn js_node_test_late_report(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [name_arg, error_arg] = callframe.arguments_as_array::<2>();
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    buntest.node_test_pending_late = buntest.node_test_pending_late.saturating_sub(1);
+
+    let Some(reporter) = buntest.reporter else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let name_str = name_arg.to_bun_string(global)?;
+    let name = name_str.to_utf8();
+    let name_bytes = bstr::BStr::new(name.slice());
+    let passed = error_arg.is_undefined_or_null();
+
+    // Re-derive the BunTestRoot backref before printing; `on_before_print`
+    // must not observe a `&mut BunTest` held across it (stacked-borrows).
+    buntest.bun_test_root.on_before_print();
+
+    let colors = Output::enable_ansi_colors_stderr();
+    let mut line: Vec<u8> = Vec::new();
+    if passed {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>(pass)<r> {}\n", name_bytes);
+    } else {
+        let _ = bun_core::write_pretty!(&mut line, colors, "<r><red>(fail)<r> {}\n", name_bytes);
+    }
+    let _ = Output::error_writer().write_all(&line);
+
+    // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+    // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
+    // every BunTest.
+    let reporter: &mut CommandLineReporter = unsafe { &mut *reporter.as_ptr() };
+    if passed {
+        reporter.summary().pass += 1;
+    } else {
+        reporter.summary().fail += 1;
+        reporter.failures_to_repeat_buf.extend_from_slice(&line);
+        global.bun_vm().as_mut().run_error_handler(error_arg, None);
+    }
+    Output::flush();
+    Ok(JSValue::UNDEFINED)
+}
+
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a

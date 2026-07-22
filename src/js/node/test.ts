@@ -922,6 +922,12 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// Marks the file so the runner drains the event loop after tests finish (Node
+// keeps running late-registered top-level tests). Returns true when bun:test is
+// past collection so the shim runs the late test inline instead of registering.
+const wantDrainAndIsPastCollection = $newRustFunction("jest.rs", "jsNodeTestWantDrain", 0);
+const lateBegin = $newRustFunction("jest.rs", "jsNodeTestLateBegin", 0);
+const lateReport = $newRustFunction("jest.rs", "jsNodeTestLateReport", 2);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -1691,6 +1697,32 @@ function bunTest() {
   return jest(Bun.main);
 }
 
+// Top-level tests registered after bun:test left the collection phase (from a
+// macrotask: setTimeout, callback-driven fixture list) cannot be handed to
+// bun:test, so run them here. Node's root serializes late subtests; chain them
+// through one promise so overlapping late registrations do not interleave.
+let lateChain: Promise<void> = Promise.resolve();
+
+function runLateTopLevel(node: TestNode, fn: TestFn, skipped: boolean): Promise<undefined> {
+  lateBegin();
+  const run = async () => {
+    let failure: unknown;
+    try {
+      if (!skipped) failure = await executeTestNode(node, fn);
+    } catch (err) {
+      failure = err ?? makeTestFailure("test failed");
+    }
+    if (node.skipped || node.todoFlag || skipped) {
+      failure = undefined;
+    }
+    lateReport(node.fullName, failure);
+  };
+  // executeTestNode never rejects (it returns the failure); guard anyway so a
+  // thrown value cannot poison the chain and strand a later late test.
+  lateChain = lateChain.then(run, run);
+  return lateChain.then(() => undefined);
+}
+
 function bunTestOptions(options: TestOptions) {
   // The node-style timeout is enforced by executeTestNode itself so that a
   // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
@@ -1774,6 +1806,14 @@ function addTest(
   const parent = currentCollectionParent();
   const node = new TestNode(name, parent, options, false, false);
   node.ownTags = ownTags;
+
+  // A top-level test() registered from a macrotask after module evaluation
+  // reaches here (no ALS context), but bun:test would throw "inside a test" /
+  // "after the test run has completed". Node runs it as a root subtest.
+  if (wantDrainAndIsPastCollection()) {
+    const skipped = mode === "skip" || mode === "todo" || !!options.skip || !!options.todo;
+    return runLateTopLevel(node, fn, skipped);
+  }
 
   const { test } = bunTest();
   const passOptions = bunTestOptions(options);
@@ -1861,6 +1901,42 @@ function addSuite(
   const parent = currentCollectionParent();
   const suiteNode = new TestNode(name, parent, options, true, false);
   suiteNode.ownTags = ownTags;
+
+  // A late top-level describe() is built and run inline like a suite subtest
+  // of the root so its children's failures reach the summary.
+  if (wantDrainAndIsPastCollection()) {
+    if (mode === "skip" || options.skip) return Promise.resolve(undefined);
+    if (mode === "todo") suiteNode.todoFlag = true;
+    suiteNode.isExecutionPhase = true;
+    lateBegin();
+    let build: unknown;
+    try {
+      build = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
+    } catch (err) {
+      recordSuiteFailure(suiteNode, err);
+    }
+    const run = async () => {
+      if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
+        try {
+          await build;
+        } catch (err) {
+          recordSuiteFailure(suiteNode, err);
+        }
+      }
+      await drainSubtestChain(suiteNode);
+      for (const hook of suiteNode.hooks.after) {
+        try {
+          await runHook(hook, suiteNode, suiteNode.getSuiteCtx());
+        } catch (err) {
+          recordSuiteFailure(suiteNode, err);
+        }
+      }
+      const failure = suiteNode.failedSubtests > 0 && !suiteNode.todoFlag ? suiteNode.firstSubtestError : undefined;
+      lateReport(suiteNode.fullName, failure);
+    };
+    lateChain = lateChain.then(run, run);
+    return lateChain.then(() => undefined);
+  }
 
   const { describe } = bunTest();
   const wrapped = () => {

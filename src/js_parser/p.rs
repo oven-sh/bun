@@ -3581,10 +3581,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, crate::Error> {
         let wants_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
-        // Inside the macro runtime the visit pass will not evaluate nested macro
-        // calls (see the `is_macro_runtime` gate in visit_expr), so erasing this
-        // import would leave the call site with no binding. Keep it as a regular
-        // import instead so the outer macro can call the inner function at runtime.
+        // visit_expr won't evaluate nested macro calls when `is_macro_runtime` is set,
+        // so erasing this import would leave the call site with no binding. Keep it as
+        // a regular import so the outer macro can call the inner function at runtime.
         let is_macro = wants_macro && !self.options.features.is_macro_runtime;
         if wants_macro
             && self.options.features.is_macro_runtime

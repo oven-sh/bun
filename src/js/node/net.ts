@@ -3905,7 +3905,9 @@ function listenInCluster(
     require("node:dns").lookup(address, (err, ip, family) => {
       if (lookupListeningId !== server[kClusterListeningId]) return;
       if (err) {
-        setTimeout(emitErrorNextTick, 1, server, err);
+        // Node emits synchronously inside the (already async) dns.lookup callback:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
+        server.emit("error", err);
         return;
       }
       listenInCluster(

@@ -4,7 +4,8 @@
 //! per-process options, V8 flags, unknown flags, and missing required values
 //! with `ERR_WORKER_INVALID_EXEC_ARGV` (behavior verified on node v26.3.0).
 //! Bun's accept set = its own runtime flag tables (`RUNTIME_PARAMS_` +
-//! `TRANSPILER_PARAMS_`, minus process-global flags node also rejects) plus
+//! `TRANSPILER_PARAMS_` + `AUTO_OR_RUN_PARAMS`, minus process-global flags
+//! node also rejects) plus
 //! the node options in `NODE_FLAGS`. Deliberate supersets of node: Bun-only
 //! runtime flags, and `--expose-gc`/`--stack-trace-limit` (both honored
 //! per-worker here, so rejecting them to mimic node would be a regression).
@@ -185,9 +186,14 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
             bun_core::handle_oom(map.put(&key, spec));
         };
         // Bun's runtime flag surface first, then NODE_FLAGS overrides.
+        // AUTO_OR_RUN_PARAMS carries the run-surface flags (`--bun`,
+        // `--shell`, ...) that tooling forwards into worker
+        // execArgv/NODE_OPTIONS (Next.js propagates `--bun` from
+        // process.execArgv into its build workers' NODE_OPTIONS).
         for param in crate::cli::arguments::RUNTIME_PARAMS_
             .iter()
             .chain(crate::cli::arguments::TRANSPILER_PARAMS_)
+            .chain(crate::cli::arguments::AUTO_OR_RUN_PARAMS)
         {
             let value = match param.takes_value {
                 bun_clap::Values::None => ValueMode::None,

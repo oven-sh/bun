@@ -422,6 +422,24 @@ describe("execArgv option", async () => {
     );
   });
 
+  it("accepts Bun run-surface flags in execArgv and NODE_OPTIONS", () => {
+    // Next.js forwards `--bun` from process.execArgv into its build workers'
+    // NODE_OPTIONS; rejecting it broke `bun --bun next build`.
+    new Worker("1", { eval: true, execArgv: ["--bun"] }).unref();
+    new Worker("1", { eval: true, env: { NODE_OPTIONS: "--bun" } }).unref();
+    // A Bun flag does not disable validation of the rest of the value.
+    let err: any;
+    try {
+      new Worker("1", { eval: true, env: { NODE_OPTIONS: "--bun --nonexistent-options" } });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe(
+      "Initiated Worker with invalid NODE_OPTIONS env variable: --nonexistent-options is not allowed in NODE_OPTIONS",
+    );
+  });
+
   it("--require in execArgv runs before the worker entry", async () => {
     using dir = tempDir("worker-execargv-require", { "preload-a.js": "console.log('A');" });
     const w = new Worker("console.log('B');", {

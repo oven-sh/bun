@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
 import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // File API spec: Blob.text() is "UTF-8 decode" — it strips only the UTF-8 BOM
 // (EF BB BF). A leading FF FE is two invalid UTF-8 bytes, not a signal to switch
@@ -78,11 +78,7 @@ describe("UTF-16LE BOM is not sniffed by Blob/Response .text()", () => {
       console.log(JSON.stringify([a, b, c]));
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual([utf8, utf8, utf8]);
     expect(exitCode).toBe(0);

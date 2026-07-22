@@ -22,33 +22,6 @@ pub struct Range {
     pub right: Comparator,
 }
 
-impl fmt::Display for Range {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.left.op == Op::Unset && self.right.op == Op::Unset {
-            return Ok(());
-        }
-
-        if self.right.op == Op::Unset {
-            // Effectively dead path;
-            // the real formatting path is the buffered `Range::fmt(buf)` Formatter below.
-            write!(f, "{}", ComparatorDisplay)
-        } else {
-            write!(f, "{} {}", ComparatorDisplay, ComparatorDisplay,)
-        }
-    }
-}
-
-// Helper for Range's Display impl above.
-struct ComparatorDisplay;
-impl fmt::Display for ComparatorDisplay {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Intentionally emits nothing: no source buffer is available here, so the
-        // version's prerelease/build slices can't be rendered. Use `Comparator::fmt(buf)`
-        // (the buffered Formatter) for real output; this mirrors the unused upstream path.
-        Ok(())
-    }
-}
-
 impl Range {
     pub fn init_wildcard(version: Version, wildcard: Wildcard) -> Range {
         match wildcard {
@@ -146,9 +119,7 @@ impl Range {
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
         let has_left = self.has_left();
         let has_right = self.has_right();
 

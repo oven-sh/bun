@@ -119,7 +119,7 @@ pub fn generate_code_for_lazy_export(
                 fn visit_name(&mut self, ast: &BundlerStyleSheet, ref_: CssRef, idx: IndexInt) {
                     debug_assert!(ref_.can_be_composed());
                     let real_ref = ref_.to_real_ref(idx);
-                    let from_this_file = ref_.source_index(idx) == self.source_index;
+                    let from_this_file = idx == self.source_index;
                     if (from_this_file && self.inner_visited.is_set(ref_.inner_index() as usize))
                         || (!from_this_file && self.composes_visited.contains_key(&real_ref))
                     {
@@ -154,8 +154,7 @@ pub fn generate_code_for_lazy_export(
                     compose_loc: Loc,
                 ) {
                     let _ = self.arena;
-                    let syms: &SymbolList<'_> =
-                        &self.all_symbols[css_ref.source_index(idx) as usize];
+                    let syms: &SymbolList<'_> = &self.all_symbols[idx as usize];
                     // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
                     let loc = ast.local_scope.get(name).unwrap().loc;
@@ -517,7 +516,3 @@ pub fn generate_code_for_lazy_export(
 
     Ok(())
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

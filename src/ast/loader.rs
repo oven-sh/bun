@@ -1,9 +1,9 @@
 //! `Loader` + `SideEffects`.
 //!
-//! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES` /
-//! `LoaderOptional::from_api` live in `bun_options_types::LoaderExt` (would
-//! back-edge into the schema crate). `to_mime_type` / `from_mime_type` live in
-//! `bun_http_types` (would back-edge into `bun_http::MimeType`).
+//! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES`
+//! live in `bun_options_types::LoaderExt` (would back-edge into the schema
+//! crate). `to_mime_type` / `from_mime_type` live in `bun_http_types` (would
+//! back-edge into `bun_http::MimeType`).
 
 use enum_map::Enum;
 
@@ -63,59 +63,6 @@ bun_core::assert_ffi_discr!(
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
 );
-
-/// `Loader.Optional` — `enum(u8) { none = 254, _ }` niche-packed optional.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct LoaderOptional(pub(crate) u8);
-
-impl LoaderOptional {
-    pub const NONE: LoaderOptional = LoaderOptional(254);
-
-    #[inline]
-    pub const fn from_loader(l: Loader) -> LoaderOptional {
-        LoaderOptional(l as u8)
-    }
-
-    pub fn unwrap(self) -> Option<Loader> {
-        // PORTING.md §Forbidden patterns bars transmute-to-enum;
-        // exhaustive match so out-of-range tags are debug-asserted, never UB.
-        match self.0 {
-            0 => Some(Loader::Jsx),
-            1 => Some(Loader::Js),
-            2 => Some(Loader::Ts),
-            3 => Some(Loader::Tsx),
-            4 => Some(Loader::Css),
-            5 => Some(Loader::File),
-            6 => Some(Loader::Json),
-            7 => Some(Loader::Jsonc),
-            8 => Some(Loader::Toml),
-            9 => Some(Loader::Wasm),
-            10 => Some(Loader::Napi),
-            11 => Some(Loader::Base64),
-            12 => Some(Loader::Dataurl),
-            13 => Some(Loader::Text),
-            14 => Some(Loader::Bunsh),
-            15 => Some(Loader::Sqlite),
-            16 => Some(Loader::SqliteEmbedded),
-            17 => Some(Loader::Html),
-            18 => Some(Loader::Yaml),
-            19 => Some(Loader::Json5),
-            20 => Some(Loader::Md),
-            254 => None,
-            _ => {
-                debug_assert!(false, "LoaderOptional out of range: {}", self.0);
-                None
-            }
-        }
-    }
-}
-
-impl From<Loader> for LoaderOptional {
-    fn from(l: Loader) -> Self {
-        LoaderOptional(l as u8)
-    }
-}
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
 pub type LoaderHashTable = bun_collections::StringArrayHashMap<Loader>;

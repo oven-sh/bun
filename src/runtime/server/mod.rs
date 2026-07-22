@@ -107,8 +107,7 @@ pub use any_request_context::AnyRequestContext;
 #[path = "server_body.rs"]
 mod server_body;
 pub use server_body::{
-    AnyUserRouteList, BunInfo, GetOrStartLoadResult, PreparedRequestFor, ServePluginsCallback,
-    ServerInitContext,
+    BunInfo, GetOrStartLoadResult, PreparedRequestFor, ServePluginsCallback, ServerInitContext,
 };
 
 // ─── write_status ────────────────────────────────────────────────────────────
@@ -191,15 +190,6 @@ impl AnyRoute {
         }
     }
 
-    pub fn set_server(&self, server: Option<AnyServer>) {
-        match self {
-            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).server.set(server),
-            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).set_server(server),
-            AnyRoute::Html(r) => r.data().server.set(server),
-            AnyRoute::FrameworkRouter(_) => {} // DevServer holds its own .server
-        }
-    }
-
     // from_js / from_options / html_route_from_js — bodies live in
     // `server_body.rs` (`impl AnyRoute { … }`); same crate, separate file.
 }
@@ -208,7 +198,7 @@ impl AnyRoute {
 // Full state machine + intrusive refcount lives in `server_body.rs` (the
 // `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
 // so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
-pub use server_body::{PluginsResult, ServePlugins, ServePluginsState};
+pub use server_body::{ServePlugins, ServePluginsState};
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {
@@ -285,8 +275,6 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// promise in `deinit_if_we_can`, after which the Strong is dropped.
     pub all_closed_promise: jsc::JSPromiseStrong,
 
-    pub listen_callback: jsc::AnyTask::AnyTask,
-    // allocator field dropped — global mimalloc per §Allocators
     pub poll_ref: KeepAlive,
 
     pub flags: ServerFlags,
@@ -430,8 +418,6 @@ impl Drop for DetachRequestOnDrop {
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-    pub const SSL_ENABLED: bool = SSL;
-    pub const DEBUG_MODE: bool = DEBUG;
     pub const HAS_H3: bool = SSL;
 
     // ── raw-field accessors ──────────────────────────────────────────────────
@@ -452,22 +438,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.vm.get()
     }
 
-    /// Shared borrow of the intrusively-refcounted [`ServePlugins`] this
-    /// server holds a counted ref on (see field doc). Centralises the
-    /// `Option<NonNull>` deref so callers (`AnyServer::plugins`,
-    /// `get_plugins`) read it as a plain `Option<&T>`.
-    ///
-    /// # Safety (encapsulated)
-    /// `plugins` is set once from `ServePlugins::init` (heap-allocated, +1
-    /// ref) and released only in `Drop for NewServer`, so while `Some` the
-    /// pointee is live for `&self`'s duration. Single-threaded JS context;
-    /// no `&mut ServePlugins` is live across a `&self` borrow.
-    #[inline(always)]
-    pub fn plugins_ref(&self) -> Option<&ServePlugins> {
-        // `BackRef::get` encapsulates the deref under the counted-ref invariant.
-        self.plugins.as_ref().map(bun_ptr::BackRef::get)
-    }
-
     /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
     /// `&mut`) because the VM is mutated across re-entrant JS callbacks
     /// (`drain_microtasks`, event-loop ticks) while other `&VirtualMachine`
@@ -485,27 +455,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             jsc::VirtualMachine::get_mut_ptr()
         ));
         jsc::VirtualMachine::get_mut_ptr()
-    }
-
-    /// Raw pointer to the process-static H1 request pool. Returned as `*mut`
-    /// (not `&mut`) because the pool is mutated through both `&self`
-    /// (`release_request_context`) and request-dispatch paths; a `&mut`
-    /// accessor would alias across re-entrant request handling.
-    #[inline]
-    pub fn request_pool_ptr(
-        &self,
-    ) -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false> {
-        self.request_pool
-    }
-
-    /// Raw pointer to the process-static H3 request pool, or **null** if this
-    /// server never opened an H3 listener. See `request_pool_ptr` for why this
-    /// is `*mut`, not `&mut`.
-    #[inline]
-    pub fn h3_request_pool_ptr(
-        &self,
-    ) -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true> {
-        self.h3_request_pool
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -556,11 +505,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut port = *port;
                 if let Some(listener) = self.listener {
                     // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                    port = bun_opaque::opaque_deref_mut(listener).get_local_port() as u16;
+                    port = bun_opaque::opaque_deref_mut(listener)
+                        .get_local_port()
+                        .unwrap_or(port);
                 } else if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
                         // S012: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                        port = bun_opaque::opaque_deref_mut(h3l).get_local_port() as u16;
+                        port = bun_opaque::opaque_deref_mut(h3l)
+                            .get_local_port()
+                            .unwrap_or(port);
                     }
                 }
                 URLFormatter {
@@ -1970,9 +1923,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
         let port = bun_opaque::opaque_deref_mut(socket).get_local_port();
         self.h3_listener = Some(socket);
-        self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
-            .into_bytes()
-            .into_boxed_slice();
+        if let Some(port) = port {
+            self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
+                .into_bytes()
+                .into_boxed_slice();
+        }
         // An `http3_server` feature counter is not (yet) declared in
         // `bun_analytics`. No-op until it is.
     }
@@ -2062,10 +2017,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // don't enable `config.http3` don't pay either.
             h3_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
-            listen_callback: jsc::AnyTask::AnyTask {
-                ctx: None,
-                callback: |_| Ok(()),
-            },
             poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
             plugins: None,
@@ -2078,7 +2029,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The packed `AnyServer` is a pure function of the (now-stable) heap
         // address and the const variant tag; cache it so the per-request
         // `node:http` prologue is a plain field load instead of a tag match +
-        // `TaggedPointer::init`.
+        // `TaggedPtr::init`.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
         unsafe {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
@@ -2196,8 +2147,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
-            websocket.global_object =
-                bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
             websocket.handler.server = Some(any_server);
             websocket
@@ -2929,9 +2878,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             let h3_port: u16 = match this_ref.listener {
                                 // SAFETY: ls is a live uws ListenSocket FFI handle
                                 // (just set by on_listen).
-                                Some(ls) => {
-                                    bun_opaque::opaque_deref_mut(ls).get_local_port() as u16
-                                }
+                                Some(ls) => bun_opaque::opaque_deref_mut(ls)
+                                    .get_local_port()
+                                    .unwrap_or(port),
                                 None => port,
                             };
                             // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -3688,7 +3637,7 @@ impl AnyServer {
             AnyServerTag::DebugHTTPSServer => 1021,
         };
         // `TaggedPtr::to()` bit-casts the full packed word through `*mut c_void`.
-        bun_ptr::TaggedPointer::init(self.ptr, tag).to() as u64
+        bun_ptr::TaggedPtr::init(self.ptr, tag).to() as u64
     }
 
     /// Shared borrow of the process-static VM. Routes through
@@ -3769,14 +3718,6 @@ impl AnyServer {
         })
     }
 
-    pub fn plugins(&self) -> Option<&ServePlugins> {
-        any_server_dispatch!(self, |s| s.plugins_ref())
-    }
-
-    pub fn get_plugins(&self) -> PluginsResult<'_> {
-        any_server_dispatch!(self, |s| s.get_plugins())
-    }
-
     pub fn on_pending_request(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_pending_request())
     }
@@ -3796,14 +3737,6 @@ impl AnyServer {
 
     pub fn on_static_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
-    }
-
-    pub fn deinit_if_we_can(&mut self) {
-        any_server_dispatch_mut!(self, |s| s.deinit_if_we_can())
-    }
-
-    pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        any_server_dispatch!(self, |s| s.dev_server.as_deref())
     }
 
     pub fn stop(&mut self, abrupt: bool) {
@@ -3961,7 +3894,7 @@ pub mod http_server_agent {
                 this.next_server_id,
                 (*instance.vm()).hot_reload_counter as i32,
                 &url,
-                bun_core::Timespec::now_allow_mocked_time().ms() as f64,
+                bun_core::time::milli_timestamp() as f64,
                 instance.ptr.cast(),
             );
         }

@@ -182,7 +182,6 @@ pub struct Flags {
     pub disable_keepalive: bool,
     pub disable_decompression: bool,
     pub did_have_handshaking_error: bool,
-    pub force_last_modified: bool,
     pub redirected: bool,
     pub proxy_tunneling: bool,
     pub reject_unauthorized: bool,
@@ -213,7 +212,6 @@ impl Default for Flags {
             disable_keepalive: false,
             disable_decompression: false,
             did_have_handshaking_error: false,
-            force_last_modified: false,
             redirected: false,
             proxy_tunneling: false,
             reject_unauthorized: true,
@@ -381,7 +379,7 @@ impl HTTPClient<'_> {
         status_code: u32,
         headers: &[picohttp::Header],
     ) -> crate::Result<HeaderResult> {
-        let mut response = picohttp::Response {
+        let response = picohttp::Response {
             minor_version: 0,
             status_code,
             status: b"",
@@ -391,11 +389,7 @@ impl HTTPClient<'_> {
         // SAFETY: see fn doc — erased borrow is deep-copied by `clone_metadata`
         // before the backing storage is released.
         self.state.pending_response = Some(unsafe { response.detach_lifetime() });
-        let should_continue = self.handle_response_metadata(&mut response)?;
-        // handle_response_metadata may mutate `response` (e.g. the 304 rewrite
-        // for force_last_modified); clone_metadata reads pending_response, so
-        // re-sync. SAFETY: same lifetime erase as above.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
+        let should_continue = self.handle_response_metadata(&response)?;
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
         self.state.transfer_encoding = Encoding::Identity;
@@ -738,7 +732,7 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
 // Many of these fields can be moved to a packed struct and use less space
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
-// `if_modified_since`, `hostname`, and the borrowed `HTTPRequestBody::Bytes`
+// `hostname`, and the borrowed `HTTPRequestBody::Bytes`
 // payload — to the caller's storage. The original port erased these to `'static`
 // and lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
@@ -785,9 +779,6 @@ pub struct HTTPClient<'a> {
     pub custom_ssl_ctx: Option<http_context::HTTPContextRc<true>>,
     pub result_callback: HTTPClientResultCallback,
 
-    /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
-    /// This is a workaround for that.
-    pub if_modified_since: &'a [u8],
     pub request_content_len_buf: [u8; b"-4294967295".len()],
 
     pub http_proxy: Option<URL<'a>>,
@@ -2427,15 +2418,6 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"if-modified-since") => {
-                    if self.flags.force_last_modified && self.if_modified_since.is_empty() {
-                        // SAFETY: header_str() returns a slice into self.header_buf which outlives
-                        // this client; lifetime is erased here only because we don't yet thread
-                        // struct lifetime params. The borrow is valid for the life of `self`.
-                        self.if_modified_since =
-                            unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
-                    }
-                }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
                     if will_append {
                         override_host_header = true;
@@ -3818,18 +3800,14 @@ impl<'a> HTTPClient<'a> {
         // pending_response is already `Option<Response<'static>>` (set just above).
         // NOTE: copy (Response is Copy), do NOT .take() — clone_metadata() below
         // requires pending_response to remain Some.
-        let mut response: picohttp::Response<'static> = self.state.pending_response.unwrap();
-        let should_continue = match self.handle_response_metadata(&mut response) {
+        let response: picohttp::Response<'static> = self.state.pending_response.unwrap();
+        let should_continue = match self.handle_response_metadata(&response) {
             Ok(s) => s,
             Err(err) => {
                 self.close_and_fail::<IS_SSL>(err, socket);
                 return;
             }
         };
-        // handle_response_metadata may mutate `response`; mirror it back so
-        // clone_metadata() sees the up-to-date headers regardless of the
-        // content-encoding branch below.
-        self.state.pending_response = Some(response);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding
@@ -4992,10 +4970,9 @@ impl<'a> HTTPClient<'a> {
 
     pub fn handle_response_metadata(
         &mut self,
-        response: &mut picohttp::Response,
+        response: &picohttp::Response,
     ) -> crate::Result<ShouldContinue> {
         let mut location: &[u8] = b"";
-        let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
@@ -5121,13 +5098,6 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                h if h == hash_header_const(b"Last-Modified") => {
-                    pretend_304 = self.flags.force_last_modified
-                        && response.status_code > 199
-                        && response.status_code < 300
-                        && !self.if_modified_since.is_empty()
-                        && self.if_modified_since == header.value();
-                }
                 h if h == hash_header_const(b"Alt-Svc") => {
                     // Record regardless of *this* request's shape — a future
                     // request to the same origin may be h3-eligible even if this
@@ -5149,14 +5119,6 @@ impl<'a> HTTPClient<'a> {
 
         if self.verbose != HTTPVerboseLevel::None {
             print_response(response);
-        }
-
-        if pretend_304 {
-            response.status_code = 304;
-            // The wire-level message is a 200 with a real body that we are
-            // choosing not to read; don't pool a socket with that body still
-            // in its receive buffer.
-            self.state.flags.allow_keepalive = false;
         }
 
         // According to RFC 7230 section 3.3.3:

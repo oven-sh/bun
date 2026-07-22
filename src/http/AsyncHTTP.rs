@@ -25,7 +25,7 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 // `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,hostname,if_modified_since}`. Intrusive
+// payload, and `client.{header_buf,hostname}`. Intrusive
 // fields (`real`, `next`) are raw pointers and thus lifetime-erased; the
 // HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
@@ -201,7 +201,6 @@ fn make_client<'a>(
         tls_props: None,
         custom_ssl_ctx: None,
         result_callback: noop_callback(),
-        if_modified_since: b"",
         request_content_len_buf: [0u8; b"-4294967295".len()],
         http_proxy,
         proxy_settings: None,

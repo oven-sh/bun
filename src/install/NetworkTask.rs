@@ -570,9 +570,6 @@ impl NetworkTask {
                 ACCEPT_HEADER_VALUE
             };
             header_builder.count("Accept", accept_header);
-            if !last_modified.is_empty() && !etag.is_empty() {
-                header_builder.content.count(last_modified);
-            }
             header_builder.allocate()?;
 
             append_auth(&mut header_builder, scope);
@@ -584,16 +581,6 @@ impl NetworkTask {
             }
 
             header_builder.append("Accept", accept_header);
-
-            if !last_modified.is_empty() && !etag.is_empty() {
-                let appended = header_builder.content.append(last_modified);
-                // SAFETY: lifetime extension — the appended slice points into
-                // `header_builder.content`'s heap buffer, which is moved into
-                // `self.unsafe_http_client.request_header_buf` below and
-                // outlives the request. Detach the borrow so
-                // `header_builder.content` can be read again for `headers_buf`.
-                last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
-            }
         } else {
             let header_buf: &'static str = if needs_extended {
                 EXTENDED_HEADERS_BUF
@@ -636,8 +623,8 @@ impl NetworkTask {
             unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         // `header_builder.content` is intentionally leaked (ownership
         // transfers to the HTTP client). Forget it so
-        // `StringBuilder::drop` doesn't free the buffer that `headers_buf` /
-        // `last_modified` now alias.
+        // `StringBuilder::drop` doesn't free the buffer that `headers_buf`
+        // now aliases.
         let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
         // MaybeUninit overwrite — see field doc; old slot value is
@@ -675,22 +662,6 @@ impl NetworkTask {
         if PackageManager::verbose_install() {
             self.http_mut().verbose = HTTPVerboseLevel::Headers;
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
-        }
-
-        // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if !last_modified.is_empty()
-            && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304
-                .get()
-                .unwrap_or(false)
-        {
-            self.http_mut().client.flags.force_last_modified = true;
-            // SAFETY: lifetime extension — `last_modified` either points into
-            // the leaked `header_builder.content` buffer (reassigned above) or
-            // into the manifest's `string_buf`, which is the same allocation
-            // referenced by the `PackageManifest` we just cloned into
-            // `self.callback`. Both outlive the HTTP request.
-            self.http_mut().client.if_modified_since =
-                unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
 
         Ok(())

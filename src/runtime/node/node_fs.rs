@@ -7722,53 +7722,25 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
-                let errno = if matches!(err, crate::Error::FileNotFound) {
-                    if args.force {
-                        return Ok(());
-                    }
-                    E::ENOENT
-                } else {
-                    map_anyerror_to_errno_rm_tree(&err)
-                };
+                // `force` ignores a path that is already gone. A path whose
+                // ancestor component is not a directory can never exist, so
+                // `NotDir` belongs in that set next to `FileNotFound`.
+                if args.force && matches!(err, crate::Error::FileNotFound | crate::Error::NotDir) {
+                    return Ok(());
+                }
+                let errno = map_anyerror_to_errno_rm_tree(&err);
                 return Err(sys::Error::from_code(errno, sys::Tag::rm).with_path(args.path.slice()));
             }
             return Ok(());
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
-        // The original implementation mapped the unlink/rmdir error through a
-        // *narrow* table to an errno, defaulting to `EFAULT`. We go straight to
-        // `bun_sys::unlink`/`libc::rmdir` (raw errno), so route the result
-        // through `map_rm_errno_narrow` to preserve the EFAULT fallthrough
-        // (e.g. `EISDIR` with `recursive=false` must surface as `EFAULT`).
-        if let Err(err1) = sys::unlink(dest) {
-            let e1 = err1.get_errno();
-            // empirically, it seems to return AccessDenied when the
-            // file is actually a directory on macOS.
-            // Matches the original `IsDir|NotDir|AccessDenied` set; EPERM mapped
-            // to PermissionDenied (not AccessDenied) there, so raw EPERM is
-            // intentionally *not* in this set.
-            if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES) {
-                if let Some(Err(err2)) = Maybe::<()>::errno_sys_p(
-                    // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
-                    unsafe { libc::rmdir(dest.as_ptr().cast()) },
-                    sys::Tag::rmdir,
-                    args.path.slice(),
-                ) {
-                    let e2 = err2.get_errno();
-                    if e2 == E::ENOENT && args.force {
-                        return Ok(());
-                    }
-                    return Err(sys::Error::from_code(map_rm_errno_narrow(e2), sys::Tag::rm)
-                        .with_path(args.path.slice()));
-                }
+        if let Err(err) = sys::unlink(dest) {
+            let errno = err.get_errno();
+            if errno == E::ENOENT && args.force {
                 return Ok(());
             }
-            if e1 == E::ENOENT && args.force {
-                return Ok(());
-            }
-            return Err(sys::Error::from_code(map_rm_errno_narrow(e1), sys::Tag::rm)
-                .with_path(args.path.slice()));
+            return Err(sys::Error::from_code(errno, sys::Tag::rm).with_path(args.path.slice()));
         }
         Ok(())
     }
@@ -9501,11 +9473,9 @@ impl ReaddirEntry for Buffer {
     }
 }
 
-// There are three distinct error→errno tables: rmdir-recursive,
-// rm-recursive, and rm non-recursive unlink/rmdir. An earlier draft
-// collapsed them into one, which silently mapped AccessDenied→EPERM for `rm`
-// (Node returns EACCES there) and widened the narrow table. Split back out
-// per call site.
+// `rmdir` recursive (zig_delete_tree). Kept separate from the `rm` table below,
+// which maps AccessDenied to EACCES (what Node reports for `fs.rm`) rather than
+// EPERM.
 fn map_anyerror_to_errno(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
@@ -9546,19 +9516,6 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
         "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
         "FileNotFound" => E::ENOENT,
         "IsDir" => E::EISDIR,
-        _ => E::EFAULT,
-    }
-}
-
-// `rm` non-recursive unlink/rmdir fallback — narrower table; anything not
-// listed here falls through to EFAULT.
-//
-// `bun_sys::unlink`/`libc::rmdir` yield a raw errno. Notably raw EPERM —
-// like EISDIR/ENOTDIR/ENOTEMPTY — intentionally falls through to EFAULT here.
-fn map_rm_errno_narrow(e: E) -> E {
-    match e {
-        E::EACCES => E::EACCES,
-        E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
         _ => E::EFAULT,
     }
 }

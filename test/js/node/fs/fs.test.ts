@@ -2840,6 +2840,40 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
+
+  // "<file>/x" — an ancestor path component is a regular file, so unlink(2)
+  // answers ENOTDIR. Windows reports ERROR_PATH_NOT_FOUND (ENOENT) instead.
+  describe("when an ancestor path component is a regular file", () => {
+    it.skipIf(!isPosix)("reports ENOTDIR", async () => {
+      using dir = tempDir("rm-notdir", { afile: "x" });
+      const target = join(String(dir), "afile", "x");
+      const notDir = expect.objectContaining({ code: "ENOTDIR" });
+      const rmCallback = (options?: { force?: boolean; recursive?: boolean }) =>
+        new Promise<any>(resolve => (options === undefined ? fs.rm(target, resolve) : fs.rm(target, options, resolve)));
+
+      expect(() => rmSync(target)).toThrow(notDir);
+      await expect(promises.rm(target)).rejects.toThrow(notDir);
+      expect((await rmCallback())?.code).toBe("ENOTDIR");
+
+      for (const options of [{ force: true }, { recursive: true }]) {
+        expect(() => rmSync(target, options)).toThrow(notDir);
+        await expect(promises.rm(target, options)).rejects.toThrow(notDir);
+        expect((await rmCallback(options))?.code).toBe("ENOTDIR");
+      }
+    });
+
+    it("{ recursive: true, force: true } treats it as already gone", async () => {
+      using dir = tempDir("rm-notdir-force", { afile: "x" });
+      const target = join(String(dir), "afile", "x");
+
+      rmSync(target, { recursive: true, force: true });
+      await promises.rm(target, { recursive: true, force: true });
+      expect(await new Promise(resolve => fs.rm(target, { recursive: true, force: true }, resolve))).toBeNull();
+
+      // the regular file standing in for a directory is left alone
+      expect(existsSync(join(String(dir), "afile"))).toBe(true);
+    });
+  });
 });
 
 describe("rmdir", () => {

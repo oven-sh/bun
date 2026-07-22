@@ -138,13 +138,22 @@ interface Edge {
 function readNinjaLog(dir: string): Edge[] {
   const path = resolve(dir, ".ninja_log");
   if (!existsSync(path)) throw new Error(`no .ninja_log at ${path} — run a build first`);
-  // Last entry per output wins (ninja appends on every build).
+  // Timestamps are ms since THAT ninja invocation started, and ninja appends
+  // across runs, so entries from different runs have different time origins
+  // (which would make wall/parallelism nonsense). Entries are appended in
+  // completion order, so a drop in `end` marks a new run: keep only the last
+  // run's entries. The default clean flow has exactly one run, so this only
+  // matters for --no-build / --no-clean against an incrementally built dir.
   const byOut = new Map<string, Edge>();
+  let prevEnd = -1;
   for (const line of readFileSync(path, "utf8").split("\n")) {
     if (line.startsWith("#") || !line.includes("\t")) continue;
     const [s, e, , out] = line.split("\t");
     if (!out) continue;
-    byOut.set(out, { start: +s, end: +e, out });
+    const edge = { start: +s, end: +e, out };
+    if (edge.end < prevEnd) byOut.clear();
+    prevEnd = edge.end;
+    byOut.set(out, edge);
   }
   return [...byOut.values()];
 }

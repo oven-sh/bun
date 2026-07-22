@@ -412,6 +412,9 @@ describe("NODE_PATH test", () => {
 // https://nodejs.org/api/modules.html#loading-from-the-global-folders
 describe("global folders resolution", () => {
   const homeVar = isWindows ? "USERPROFILE" : "HOME";
+  // The runtime emits native-separator paths; normalize to forward slashes so the
+  // same `joinP` expectations hold on every platform.
+  const norm = (arr: string[]) => arr.map(p => p.replaceAll("\\", "/"));
 
   const fixture = {
     "home/.node_modules/gp-from-nm/index.js": "module.exports = 'FROM_HOME_NODE_MODULES';",
@@ -443,8 +446,8 @@ describe("global folders resolution", () => {
     const np = joinP(String(dir), "np");
     const { exitCode, stdout, stderr } = Bun.spawnSync({
       cmd: [bunExe(), "--no-install", "app.js"],
-      env: { ...bunEnv, [homeVar]: home, NODE_PATH: np },
-      cwd: proj,
+      env: { ...bunEnv, [homeVar]: join(String(dir), "home"), NODE_PATH: join(String(dir), "np") },
+      cwd: join(String(dir), "proj"),
     });
     const out = stdout.toString().trim();
     expect(stderr.toString()).toBe("");
@@ -458,20 +461,21 @@ describe("global folders resolution", () => {
     expect(result["gp-local"]).toBe("LOCAL_WINS"); // local node_modules before global folders
 
     // Module.globalPaths is populated
-    expect(result.globalPaths).toContain(np);
-    expect(result.globalPaths).toContain(joinP(home, ".node_modules"));
-    expect(result.globalPaths).toContain(joinP(home, ".node_libraries"));
+    const globalPaths = norm(result.globalPaths);
+    expect(globalPaths).toContain(np);
+    expect(globalPaths).toContain(joinP(home, ".node_modules"));
+    expect(globalPaths).toContain(joinP(home, ".node_libraries"));
     // Node orders globalPaths as [...NODE_PATH, .node_modules, .node_libraries, $PREFIX/lib/node]
-    expect(result.globalPaths.indexOf(np)).toBeLessThan(result.globalPaths.indexOf(joinP(home, ".node_modules")));
-    expect(result.globalPaths.indexOf(joinP(home, ".node_modules"))).toBeLessThan(
-      result.globalPaths.indexOf(joinP(home, ".node_libraries")),
+    expect(globalPaths.indexOf(np)).toBeLessThan(globalPaths.indexOf(joinP(home, ".node_modules")));
+    expect(globalPaths.indexOf(joinP(home, ".node_modules"))).toBeLessThan(
+      globalPaths.indexOf(joinP(home, ".node_libraries")),
     );
     // $PREFIX/lib/node is the last entry
-    expect(result.globalPaths[result.globalPaths.length - 1]).toEndWith(joinP("lib", "node"));
+    expect(globalPaths[globalPaths.length - 1]).toEndWith("lib/node");
 
     // require.resolve.paths() and Module._resolveLookupPaths() append the global folders
     // after the per-directory node_modules entries.
-    for (const paths of [result.resolvePaths, result.lookupPaths]) {
+    for (const paths of [norm(result.resolvePaths), norm(result.lookupPaths)]) {
       expect(paths).toContain(joinP(proj, "node_modules"));
       expect(paths).toContain(joinP(home, ".node_modules"));
       expect(paths).toContain(joinP(home, ".node_libraries"));
@@ -483,38 +487,37 @@ describe("global folders resolution", () => {
   it("resolves from $HOME/.node_modules when NODE_PATH is unset", () => {
     using dir = tempDir("global-folders", fixture);
     const home = joinP(String(dir), "home");
-    const proj = joinP(String(dir), "proj");
     const { exitCode, stdout, stderr } = Bun.spawnSync({
       cmd: [bunExe(), "--no-install", "app.js"],
-      env: { ...bunEnv, [homeVar]: home, NODE_PATH: "" },
-      cwd: proj,
+      env: { ...bunEnv, [homeVar]: join(String(dir), "home"), NODE_PATH: "" },
+      cwd: join(String(dir), "proj"),
     });
     expect(stderr.toString()).toBe("");
     const result = JSON.parse(stdout.toString().trim());
     expect(result["gp-from-nm"]).toBe("FROM_HOME_NODE_MODULES");
     expect(result["gp-from-lib"]).toBe("FROM_HOME_NODE_LIBRARIES");
     expect(result["gp-from-np"]).toBe("THREW:MODULE_NOT_FOUND");
-    expect(result.globalPaths).toContain(joinP(home, ".node_modules"));
+    expect(norm(result.globalPaths)).toContain(joinP(home, ".node_modules"));
     expect(exitCode).toBe(0);
   });
 
   it("returns MODULE_NOT_FOUND when HOME is unset and no global folder matches", () => {
     using dir = tempDir("global-folders", fixture);
-    const proj = joinP(String(dir), "proj");
     const env = { ...bunEnv, NODE_PATH: "" };
     delete env[homeVar];
     const { exitCode, stdout } = Bun.spawnSync({
       cmd: [bunExe(), "--no-install", "app.js"],
       env,
-      cwd: proj,
+      cwd: join(String(dir), "proj"),
     });
     const result = JSON.parse(stdout.toString().trim());
     expect(result["gp-from-nm"]).toBe("THREW:MODULE_NOT_FOUND");
     expect(result["gp-from-lib"]).toBe("THREW:MODULE_NOT_FOUND");
     expect(result["gp-local"]).toBe("LOCAL_WINS");
     // globalPaths still has $PREFIX/lib/node even without HOME
-    expect(result.globalPaths.length).toBeGreaterThanOrEqual(1);
-    expect(result.globalPaths[result.globalPaths.length - 1]).toEndWith(joinP("lib", "node"));
+    const globalPaths = norm(result.globalPaths);
+    expect(globalPaths.length).toBeGreaterThanOrEqual(1);
+    expect(globalPaths[globalPaths.length - 1]).toEndWith("lib/node");
     expect(exitCode).toBe(0);
   });
 });

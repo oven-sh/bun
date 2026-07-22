@@ -349,8 +349,6 @@ pub mod js_fns {
         hook!(on_test_finished, OnTestFinished);
     }
 }
-/// Compat alias for sibling drafts (jest.rs) that referenced `bun_test::HookKind`.
-pub use js_fns::GenericHookTag as HookKind;
 
 /// `Rc<BunTestCell>`: single-thread, weak-capable, interior-mutable shared handle.
 ///
@@ -429,6 +427,10 @@ pub struct BunTestRoot {
     /// so a never-settled promise's `+1` stays reachable; do not free orphans —
     /// a queued reaction may still consume them.
     pub pending_then_refs: std::cell::RefCell<Vec<*const RefData>>,
+    /// Monotonic per-`enter_file` counter. Exposed to JS so per-file module
+    /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
+    /// unchanged across iterations.
+    pub file_generation: u32,
 }
 
 impl BunTestRoot {
@@ -447,6 +449,7 @@ impl BunTestRoot {
             active_file: None,
             hook_scope,
             pending_then_refs: std::cell::RefCell::new(Vec::new()),
+            file_generation: 0,
         }
     }
 
@@ -505,6 +508,7 @@ impl BunTestRoot {
         let _g = group_begin!();
 
         debug_assert!(self.active_file.is_none());
+        self.file_generation = self.file_generation.wrapping_add(1);
 
         // Derive the stored backref from the TestRunner's *stable* storage
         // (the global `Jest::RUNNER` NonNull) rather than `self as *mut _`.
@@ -1421,11 +1425,6 @@ pub enum RefDataValue {
 }
 
 impl RefDataValue {
-    pub fn group<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ConcurrentGroup> {
-        let RefDataValue::Execution { group_index, .. } = self else { return None };
-        Some(&mut buntest.execution.groups[*group_index])
-    }
-
     pub fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
@@ -1966,17 +1965,6 @@ impl TestScheduleEntry {
     }
 }
 
-pub enum RunOneResult {
-    Done,
-    Execute { timeout: Timespec },
-}
-impl Default for RunOneResult {
-    fn default() -> Self {
-        RunOneResult::Execute { timeout: Timespec::EPOCH }
-    }
-}
-
-pub use super::timers::fake_timers::FakeTimers;
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
 pub use super::execution as Execution;

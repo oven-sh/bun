@@ -197,10 +197,11 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
-/// thread's). `WTFTimer` and the `timer_insert`/`timer_remove` hooks may be
-/// invoked off the VM's JS thread (the `All.lock` mutex exists for exactly
-/// that), so they must reach the heap through `vm.runtime_state` rather than
-/// the thread-local cache.
+/// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
+/// `All.wtf_timers` heap exists for exactly that), and the
+/// `timer_insert`/`timer_remove` hooks take `vm` from a tier that cannot see
+/// `RuntimeState`; both must reach the heap through `vm.runtime_state`
+/// rather than the thread-local cache.
 ///
 /// # Safety
 /// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
@@ -337,9 +338,24 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(core::mem::ManuallyDrop::new(
-            crate::webcore::body::HiveAllocator::init(),
-        )),
+        body_value_pool: {
+            // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
+            // ~100 KB pool in a stack temporary before moving it into the box (see
+            // `HiveArray::new_boxed`). Allocate it on the heap and initialize it in
+            // place instead — only the occupancy bitset is written.
+            let pool = crate::webcore::body::HiveAllocator::new_boxed();
+            // SAFETY: `new_boxed` leaks a `Box<HiveAllocator>`; reclaim ownership of
+            // that same allocation. `ManuallyDrop` is `repr(transparent)`, so
+            // `Box<ManuallyDrop<T>>` and `Box<T>` have identical layout — the wrapper
+            // only suppresses the inner drop, which is the behavior documented on the
+            // field.
+            unsafe {
+                Box::from_raw(
+                    pool.as_ptr()
+                        .cast::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>(),
+                )
+            }
+        },
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
@@ -1211,8 +1227,7 @@ unsafe fn timer_insert(
     let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_insert before init_runtime_state");
     // SAFETY: this leaf hook runs no JS, so a short-lived `&mut RuntimeState`
-    // does not alias anything. `Timer::All::insert` takes its own lock and
-    // re-derefs `t` per-field.
+    // does not alias anything. `Timer::All::insert` re-derefs `t` per-field.
     unsafe { &mut (*state).timer }.insert(t);
 }
 
@@ -1337,7 +1352,11 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data);
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(
+        global,
+        data,
+        JSValue::UNDEFINED,
+    );
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -1467,6 +1486,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
     cancel_all_timers,
+    close_dns_for_terminate,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1597,6 +1617,22 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
+}
+
+/// `RuntimeHooks::close_dns_for_terminate` — destroy the per-VM global DNS
+/// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
+/// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
+/// are all still live. See `Resolver::close_channel_for_terminate`.
+fn close_dns_for_terminate() {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
+    // of the `OnceCell` only (the resolver's own state is interior-mutable).
+    if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
+        gd.resolver.close_channel_for_terminate();
     }
 }
 
@@ -1814,7 +1850,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(formatter, &mut w);
+        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {
@@ -2095,8 +2131,6 @@ fn transpile_source_code_inner(
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
 
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            unsafe { (*jsc_vm).transpiled_count += 1 };
             // `Transpiler::reset_store`. Inline only the
             // block-store half; `AstAlloc` gets its own per-transpile state
             // below, so the side module's long-lived state is not touched.
@@ -2386,7 +2420,7 @@ fn transpile_source_code_inner(
                             bun_paths::fs::Path::init_with_namespace(spec_static, b"node");
                         fallback_source = bun_ast::Source {
                             path: fallback_path,
-                            contents: bun_ptr::Cow::Borrowed(code),
+                            contents: std::borrow::Cow::Borrowed(code),
                             ..Default::default()
                         };
                         virtual_source = Some(&fallback_source);
@@ -2487,7 +2521,6 @@ fn transpile_source_code_inner(
                     // `_fd_guard` scopeguard's tag is not invalidated by a
                     // fresh `&mut` (see Note on `_fd_guard`).
                     file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
-                    file_hash: Some(hash),
                     macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
@@ -2860,8 +2893,6 @@ fn transpile_source_code_inner(
                 }
 
                 // Link import records.
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                let start_count = unsafe { &*jsc_vm }.transpiler.linker.import_counter;
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
                 // `origin` is read-only and `linker` is JS-thread-exclusive.
                 unsafe {
@@ -2923,17 +2954,6 @@ fn transpile_source_code_inner(
                     }
                     return Err(crate::Error::AsyncModule);
                 }
-
-                if !macro_mode {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                    // VM; both fields are JS-thread-exclusive plain integers.
-                    unsafe {
-                        (*jsc_vm).resolved_count +=
-                            (*jsc_vm).transpiler.linker.import_counter - start_count;
-                    }
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                unsafe { (*jsc_vm).transpiler.linker.import_counter = 0 };
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
@@ -3023,12 +3043,9 @@ fn transpile_source_code_inner(
                         )
                     };
                     // The printer never took ownership of `module_info`;
-                    // explicit destroy (not Drop) mirrors the async-path
-                    // error arm.
+                    // drop it here mirroring the async-path error arm.
                     if print_result.is_err() {
-                        if let Some(mi) = module_info.take() {
-                            mi.destroy();
-                        }
+                        drop(module_info.take());
                     }
                     print_result?;
                 }
@@ -3971,7 +3988,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                         // logger-local `fs::Path` (NOT `bun_resolver::fs::Path`
                         // — see logger/lib.rs:32-). Re-init from `path.text`.
                         path: bun_paths::fs::Path::init(path_text),
-                        contents: bun_ptr::Cow::Borrowed(contents),
+                        contents: std::borrow::Cow::Borrowed(contents),
                         ..Default::default()
                     });
                     virtual_source = virtual_source_to_use.as_ref();
@@ -4989,9 +5006,6 @@ unsafe fn _resolve<'a>(
     let Some(result_path) = result.path_const() else {
         return Err(crate::Error::ModuleNotFound);
     };
-    // SAFETY: plain usize field.
-    unsafe { (*vm).resolved_count += 1 };
-
     // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
     // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
     // §allocators) — the same store `load_preloads` reads from. Transmute the

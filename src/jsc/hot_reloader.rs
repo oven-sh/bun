@@ -46,14 +46,6 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn watchlist(&self) -> Option<&bun_watcher::WatchList> {
-        match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => Some(&w.watchlist),
-            ImportWatcher::None => None,
-        }
-    }
-
-    #[inline]
     pub fn index_of(&self, hash: bun_watcher::HashType) -> Option<u32> {
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.index_of(hash),
@@ -763,17 +755,6 @@ where
         self.ctx.event_loop()
     }
 
-    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
-        if RELOAD_IMMEDIATELY {
-            unreachable!();
-        }
-
-        // `ctx` is a `BackRef<Ctx>` (Deref) and `event_loop_ref` is the safe
-        // accessor on the trait; the event loop is owned by `Ctx` and outlives
-        // the reloader.
-        EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task);
-    }
-
     /// # Safety
     /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)
     /// that outlives the leaked `NewHotReloader` allocated here — i.e. for the
@@ -1423,5 +1404,3 @@ fn __bun_jsc_enable_hot_module_reloading_for_bundler(
     // command leaks the CLI arena), and the box is leaked under --watch.
     unsafe { BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None) };
 }
-
-pub use crate::MarkedArrayBuffer as Buffer;

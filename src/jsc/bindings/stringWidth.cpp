@@ -3,11 +3,20 @@
 // regional indicator flags, keycaps and variation selectors) and Unicode East
 // Asian Width.
 //
+// Escape sequences are recognized by ANSI::consumeANSI() in ANSIHelpers.h, the
+// recognizer shared with Bun.stripANSI and Bun.wrapAnsi: CSI (ESC [ ... final),
+// OSC (ESC ] ... BEL/ST), the ST-terminated control strings (ESC P/X/^/_), the
+// two-byte Fe/Fs/Fp escapes (ESC 7, ESC c, ESC =) and the nF charset
+// designators (ESC ( B).
+//
+// The 8-bit C1 introducers (0x9B CSI, 0x9D OSC, 0x90/0x98/0x9E/0x9F control
+// strings) are recognized on all three encodings; on the UTF-8 path a C1
+// codepoint is the two-byte sequence 0xC2 0x9x, matched as that pair.
+//
 // The ASCII fast paths use explicit SIMD kernels from highway_strings.cpp
 // (highway_visible_latin1_width, highway_count_printable_ascii16,
 // highway_first_non_ascii*) so throughput does not depend on the compiler's
-// autovectorizer. Escape-sequence scanning reuses the WTF::SIMD helpers in
-// ANSIHelpers.h shared with stripANSI/wrapAnsi/sliceAnsi.
+// autovectorizer.
 //
 // Rust callers (console.table column sizing, the markdown ANSI renderer)
 // and sliceAnsi.cpp/wrapAnsi.cpp consume the `Bun__*` C exports at the bottom
@@ -33,7 +42,6 @@ extern "C" size_t highway_visible_utf16_width(const uint16_t* input, size_t len,
 extern "C" size_t highway_count_printable_ascii16(const uint16_t* input, size_t len);
 extern "C" size_t highway_first_non_ascii16(const uint16_t* input, size_t len);
 extern "C" size_t highway_first_non_ascii8(const uint8_t* input, size_t len);
-extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 
 namespace Bun {
 namespace StringWidth {
@@ -47,8 +55,9 @@ namespace StringWidth {
 //   bits 0-4  GraphemeBreakClass ordinal
 //   bits 5-6  width class: 0 zero-width, 1 narrow, 2 wide, 3 East Asian Ambiguous
 //   bit  7    Emoji property (with the isEmojiPresentation() early-outs baked in)
-// The kEastAsianWideRanges / kEastAsianAmbiguousRanges / kEmojiPresentationRanges
-// tables earlier in that header are the generator's source data.
+// The generator derives all three fields from the Unicode Character
+// Database version pinned in the script (EastAsianWidth.txt,
+// DerivedGeneralCategory.txt, emoji-data.txt).
 static constexpr uint8_t kFusedClassMask = 0x1F;
 static constexpr uint8_t kFusedWidthShift = 5;
 static constexpr uint8_t kFusedWidthMask = 0x3;
@@ -79,6 +88,8 @@ static_assert(widthFromFused(fusedClassify(0xAD), false) == 0); // soft hyphen
 static_assert(widthFromFused(fusedClassify(0x202E), false) == 0); // RLO: bidi control, zero width
 static_assert(widthFromFused(fusedClassify(0x2069), false) == 0); // PDI: bidi isolate, zero width
 static_assert(widthFromFused(fusedClassify(0x61C), false) == 0); // arabic letter mark, zero width
+static_assert(widthFromFused(fusedClassify(0x1BCA0), false) == 0); // shorthand format control, zero width
+static_assert(widthFromFused(fusedClassify(0x1D173), false) == 0); // musical format control, zero width
 static_assert(widthFromFused(fusedClassify(0x4E2D), false) == 2); // CJK ideograph: wide
 static_assert(widthFromFused(fusedClassify(0xFF21), false) == 2); // fullwidth A: wide
 static_assert(widthFromFused(fusedClassify(0xA7), false) == 1); // section sign: ambiguous, narrow by default
@@ -86,6 +97,11 @@ static_assert(widthFromFused(fusedClassify(0xA7), true) == 2); // section sign: 
 static_assert((fusedClassify(0x1F600) & kFusedEmojiBit) != 0); // emoji
 static_assert((fusedClassify(U'#') & kFusedEmojiBit) == 0); // '#': below the U+203C early-out
 static_assert((fusedClassify(0xFE0F) & kFusedEmojiBit) == 0); // VS16 handled separately
+static_assert(widthFromFused(fusedClassify(0x0591), false) == 0); // hebrew accent (Mn): zero width
+static_assert(widthFromFused(fusedClassify(0x1161), false) == 0); // hangul jungseong: zero width
+static_assert(widthFromFused(fusedClassify(0x1112), false) == 2); // hangul choseong: wide
+static_assert(widthFromFused(fusedClassify(0x4DC0), false) == 2); // yijing hexagram: wide since Unicode 16
+static_assert((fusedClassify(0x1FA89) & kFusedEmojiBit) != 0); // Unicode 16 emoji
 
 uint8_t visibleCodepointWidth(char32_t cp, bool ambiguousAsWide)
 {
@@ -470,20 +486,14 @@ struct GraphemeState {
         if (emojiBase && (skinTone || zwj))
             return 2;
 
-        // Handle variation selectors
+        // VS16 widens only a base with the Emoji property to emoji
+        // presentation; the fused emoji bit early-outs below U+203C, where
+        // (c) and (R) are the only non-keycap Emoji codepoints. Zero-width
+        // and narrow non-emoji bases keep their own width under VS15/VS16.
         if (vs15 || vs16) {
-            if (baseWidth == 2)
+            if (baseWidth == 2 || (vs16 && (emojiBase || firstCp == 0xA9 || firstCp == 0xAE)))
                 return 2;
-            if (vs16) {
-                // Digits, '#' and '*' with VS16 are keycap bases; plain ASCII
-                // stays narrow even with emoji presentation requested.
-                if ((firstCp >= 0x30 && firstCp <= 0x39) || firstCp == 0x23 || firstCp == 0x2A)
-                    return 1;
-                if (firstCp < 0x80)
-                    return 1;
-                return 2;
-            }
-            return 1;
+            return baseWidth;
         }
 
         return nonEmojiWidth;
@@ -514,17 +524,57 @@ size_t visibleLatin1Width(std::span<const uint8_t> input)
     return highway_visible_latin1_width(input.data(), input.size());
 }
 
-// Visible width treating ANSI escape sequences (ESC[...<final>, ESC]...BEL/ST)
-// as zero-width. Ref: https://cs.stanford.edu/people/miles/iso8859.html
+// Visible width treating ANSI escape sequences as zero-width (see the file
+// header for the grammar). Ref: https://cs.stanford.edu/people/miles/iso8859.html
 //
-// Implemented as a single-pass SIMD kernel (highway_strings.cpp): each chunk
-// is classified once into printable/escape bitmasks, so dense SGR input does
-// not pay a separate scan per escape sequence.
+// Implemented as a single-pass SIMD kernel (highway_strings.cpp): each chunk is
+// classified once into printable/escape bitmasks, so dense SGR input does not
+// pay a separate scan per escape sequence. That kernel carries its own scalar
+// mirror of ANSI::consumeANSI(), which stringWidth.test.ts cross-checks
+// against this one.
 size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input)
 {
     if (input.empty())
         return 0;
     return highway_visible_latin1_width_exclude_ansi(input.data(), input.size());
+}
+
+// Per-byte terminal width for Latin-1 with East Asian Ambiguous counted as
+// wide, derived from the fused table so both paths classify identically.
+static constexpr auto kLatin1AmbiguousAsWideWidth = []() constexpr {
+    std::array<uint8_t, 256> table {};
+    for (size_t i = 0; i < table.size(); i++)
+        table[i] = widthFromFused(fusedClassify(static_cast<char32_t>(i)), /* ambiguousAsWide */ true);
+    return table;
+}();
+static_assert(kLatin1AmbiguousAsWideWidth[0xA7] == 2); // section sign: ambiguous
+static_assert(kLatin1AmbiguousAsWideWidth[0xAD] == 0); // soft hyphen: ambiguous but zero-width
+static_assert(kLatin1AmbiguousAsWideWidth[0xA0] == 1); // nbsp: not ambiguous
+static_assert(kLatin1AmbiguousAsWideWidth[0x1B] == 0); // ESC: control
+
+size_t visibleLatin1WidthAmbiguousAsWide(std::span<const uint8_t> input)
+{
+    size_t width = 0;
+    for (const uint8_t c : input)
+        width += kLatin1AmbiguousAsWideWidth[c];
+    return width;
+}
+
+// Same ANSI grammar as visibleLatin1WidthExcludeANSI (ANSI::consumeANSI),
+// scalar because the ambiguous-as-wide option is rare.
+size_t visibleLatin1WidthExcludeANSIAmbiguousAsWide(std::span<const uint8_t> input)
+{
+    const uint8_t* p = input.data();
+    const uint8_t* const end = p + input.size();
+    size_t width = 0;
+    while (p != end) {
+        if (ANSI::isEscapeCharacter(*p)) {
+            p = ANSI::consumeANSI(p, end); // always makes progress
+            continue;
+        }
+        width += kLatin1AmbiguousAsWideWidth[*p++];
+    }
+    return width;
 }
 
 // ============================================================================
@@ -579,11 +629,11 @@ static char32_t decodeWTF8RuneMultibyte(const std::array<uint8_t, 4>& p, uint8_t
     return cp;
 }
 
-// UTF-8 width: ASCII runs go through `asciiWidth`, non-ASCII codepoints are
-// decoded and summed individually (no grapheme clustering — keeps the
-// historical behavior of the console.table / markdown renderer callers).
-template<typename AsciiWidthFn>
-static size_t visibleUTF8WidthImpl(std::span<const uint8_t> input, AsciiWidthFn asciiWidth)
+// UTF-8 width of a run with no escape sequences in it: ASCII runs are counted
+// in bulk, non-ASCII codepoints are decoded and summed individually (no
+// grapheme clustering — keeps the historical behavior of the console.table /
+// markdown renderer callers).
+static size_t visibleUTF8Width(std::span<const uint8_t> input)
 {
     std::span<const uint8_t> bytes = input;
     size_t len = 0;
@@ -594,7 +644,7 @@ static size_t visibleUTF8WidthImpl(std::span<const uint8_t> input, AsciiWidthFn 
         const size_t i = (!bytes.empty() && bytes[0] > 0x7F) ? 0 : highway_first_non_ascii8(bytes.data(), bytes.size());
         if (i == bytes.size())
             break;
-        len += asciiWidth(bytes.first(i));
+        len += visibleLatin1Width(bytes.first(i));
 
         const auto thisChunk = bytes.subspan(i);
         const uint8_t byte = thisChunk[0];
@@ -611,15 +661,39 @@ static size_t visibleUTF8WidthImpl(std::span<const uint8_t> input, AsciiWidthFn 
         bytes = bytes.subspan(std::min<size_t>(i + skip, bytes.size()));
     }
 
-    len += asciiWidth(bytes);
+    len += visibleLatin1Width(bytes);
     return len;
+}
+
+// Start of the next escape sequence in UTF-8 text: ESC, or the two-byte
+// encoding (0xC2 0x9x) of an 8-bit C1 introducer. nullptr if none.
+static const uint8_t* findEscapeIntroducerUTF8(const uint8_t* p, const uint8_t* end)
+{
+    while (true) {
+        const uint8_t* const q = ANSI::scanForAnyByte<0x1b, 0xc2>(p, end);
+        if (!q || *q == 0x1b)
+            return q;
+        if (q + 1 != end && q[1] >= 0x90 && ANSI::isEscapeCharacter(q[1]))
+            return q;
+        p = q + 1; // an ordinary U+0080-U+00BF codepoint
+    }
 }
 
 size_t visibleUTF8WidthExcludeANSI(std::span<const uint8_t> input)
 {
-    return visibleUTF8WidthImpl(input, [](std::span<const uint8_t> ascii) {
-        return visibleLatin1WidthExcludeANSI(ascii);
-    });
+    const uint8_t* p = input.data();
+    const uint8_t* const end = p + input.size();
+    size_t width = 0;
+
+    while (p != end) {
+        const uint8_t* const esc = findEscapeIntroducerUTF8(p, end);
+        width += visibleUTF8Width({ p, static_cast<size_t>((esc ? esc : end) - p) });
+        if (!esc)
+            break;
+        // *esc is an introducer, so consumeANSI() always makes progress.
+        p = ANSI::consumeANSI<true>(esc, end);
+    }
+    return width;
 }
 
 // Walk `len` bytes of `input` starting at `start`, accumulating visible width
@@ -671,58 +745,25 @@ static std::optional<size_t> utf8WalkRun(std::span<const uint8_t> input, size_t 
 
 size_t utf8IndexAtWidthExcludeANSI(std::span<const uint8_t> input, size_t maxWidth)
 {
-    std::span<const uint8_t> remaining = input;
+    const uint8_t* const begin = input.data();
+    const uint8_t* const end = begin + input.size();
+    const uint8_t* p = begin;
     size_t w = 0;
 
-    while (true) {
-        const size_t esc = highway_index_of_char(remaining.data(), remaining.size(), 0x1b);
-        if (esc == remaining.size())
+    while (p != end) {
+        const uint8_t* const esc = findEscapeIntroducerUTF8(p, end);
+        // Walk the visible run before the introducer.
+        const size_t runStart = static_cast<size_t>(p - begin);
+        const size_t runLen = static_cast<size_t>((esc ? esc : end) - p);
+        if (const auto stop = utf8WalkRun(input, runStart, runLen, maxWidth, w))
+            return *stop;
+        if (!esc)
             break;
 
-        // Walk the visible run before ESC.
-        const size_t runStart = static_cast<size_t>(remaining.data() - input.data());
-        if (const auto stop = utf8WalkRun(input, runStart, esc, maxWidth, w))
-            return *stop;
-        remaining = remaining.subspan(esc);
-
-        // Same CSI/OSC skip as visibleLatin1WidthExcludeANSI.
-        if (remaining.size() < 2)
-            return input.size();
-        if (remaining[1] == '[') {
-            if (remaining.size() < 3)
-                return input.size();
-            remaining = remaining.subspan(2);
-            const uint8_t* term = ANSI::scanForByteInRange<0x40, 0x7e>(remaining.data(), remaining.data() + remaining.size());
-            if (!term)
-                return input.size();
-            remaining = remaining.subspan(static_cast<size_t>(term - remaining.data()) + 1);
-        } else if (remaining[1] == ']') {
-            remaining = remaining.subspan(2);
-            while (true) {
-                const uint8_t* term = ANSI::scanForAnyByte<0x07, 0x9c, 0x1b>(remaining.data(), remaining.data() + remaining.size());
-                if (!term) {
-                    remaining = remaining.subspan(remaining.size());
-                    break;
-                }
-                const size_t t = static_cast<size_t>(term - remaining.data());
-                if (*term == 0x07 || *term == 0x9c) {
-                    remaining = remaining.subspan(t + 1);
-                    break;
-                }
-                if (t + 1 < remaining.size() && remaining[t + 1] == '\\') {
-                    remaining = remaining.subspan(t + 2);
-                    break;
-                }
-                remaining = remaining.subspan(t + 1);
-            }
-        } else {
-            remaining = remaining.subspan(1);
-        }
+        // Escape sequences count as zero-width and are always included in the
+        // prefix; an unterminated one consumes the rest of the input.
+        p = ANSI::consumeANSI<true>(esc, end);
     }
-
-    const size_t runStart = static_cast<size_t>(remaining.data() - input.data());
-    if (const auto stop = utf8WalkRun(input, runStart, remaining.size(), maxWidth, w))
-        return *stop;
     return input.size();
 }
 
@@ -767,252 +808,155 @@ static UTF16Decoded decodeUTF16Codepoint(std::span<const char16_t> input)
     return { unit, 1, false };
 }
 
-// Grapheme-cluster-aware width of UTF-16 text. When `excludeAnsiColors` is
-// set, CSI (ESC [ ... final) and OSC (ESC ] ... BEL/ST) sequences contribute
-// nothing; otherwise escape bytes are counted like ordinary codepoints.
-size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors, bool ambiguousAsWide)
-{
+// Grapheme-cluster-aware width accumulator for runs of UTF-16 text with no
+// escape sequences in them. State is carried between runs so a combining mark
+// that follows an escape sequence still joins the cluster before it.
+struct UTF16WidthAccumulator {
     size_t len = 0;
+    GraphemeState graphemeState;
     // Break class of the last *visible* codepoint, used for grapheme break
     // decisions (carried so each codepoint is classified only once). Escape
     // sequence bytes must not participate: a CSI final byte like 'm' would
     // otherwise wrongly join to a following combining mark.
-    bool hasPrevVisible = false;
     GraphemeBreakClass prevClass = GraphemeBreakClass::Other;
     GraphemeBreakState breakState = GraphemeBreakState::Default;
-    GraphemeState graphemeState;
-    bool saw1b = false; // saw ESC, deciding what follows
-    bool sawCsi = false; // inside CSI: ESC [
-    bool sawOsc = false; // inside OSC: ESC ]
+    bool hasPrevVisible = false;
+    const bool ambiguousAsWide;
 
-    while (true) {
-        // Bulk fast path: leading code units that are always their own
-        // grapheme cluster with a fixed width (ASCII, most Latin/Greek/
-        // Cyrillic letters, the main CJK/kana/Hangul-syllable/fullwidth
-        // blocks) are classified and counted in one SIMD pass
-        // (highway_visible_utf16_width). The last consumed unit seeds the
-        // grapheme state instead of being counted, so a combining mark, jamo
-        // or ZWJ immediately after the run still joins its cluster. Skipped
-        // when ambiguous-width characters count as wide (Greek/Cyrillic are
-        // East-Asian-Ambiguous) and while inside an escape sequence; the
-        // first-unit check skips the call when the next codepoint (surrogate
-        // pair, control, ESC) clearly needs the scalar path anyway.
-        if (!ambiguousAsWide && !saw1b && !sawCsi && !sawOsc && !input.empty()
-            && input[0] >= 0x20 && !U16_IS_SURROGATE(input[0])) {
-            size_t bulkWidth = 0;
-            const size_t consumed = highway_visible_utf16_width(
-                reinterpret_cast<const uint16_t*>(input.data()), input.size(), &bulkWidth);
-            if (consumed > 0) {
-                // Flush any pending grapheme cluster from preceding text.
-                if (graphemeState.count > 0)
-                    len += graphemeState.width();
+    explicit UTF16WidthAccumulator(bool ambiguousAsWide)
+        : ambiguousAsWide(ambiguousAsWide)
+    {
+    }
 
-                const char32_t lastCp = input[consumed - 1];
-                const uint8_t lastPacked = fusedClassify(lastCp);
-                len += bulkWidth - widthFromFused(lastPacked, ambiguousAsWide);
-                graphemeState.reset(lastCp, lastPacked, ambiguousAsWide);
-                hasPrevVisible = true;
-                prevClass = graphemeBreakClassFromFused(lastPacked);
-                breakState = GraphemeBreakState::Default;
-                input = input.subspan(consumed);
-                continue;
-            }
-        }
-
-        {
-            // Length of the leading all-ASCII (<= 0x7F) run. Peek the first
-            // unit before paying for a SIMD scan — runs of non-ASCII
-            // codepoints (CJK, emoji) would scan zero-length prefixes.
-            const size_t idx = (!input.empty() && input[0] > 0x7F)
-                ? 0
-                : highway_first_non_ascii16(reinterpret_cast<const uint16_t*>(input.data()), input.size());
-
-            // Fast path: bulk ASCII processing when not inside an escape
-            // sequence. ASCII chars are always their own graphemes, so they
-            // can be counted directly with SIMD.
-            if (idx > 0 && !saw1b && !sawCsi && !sawOsc) {
-                // If stripping ANSI, stop at the first ESC; otherwise process
-                // the entire run.
-                size_t bulkEnd = idx;
-                if (excludeAnsiColors) {
-                    const char16_t* esc = ANSI::scanForAnyByte<0x1b>(input.data(), input.data() + idx);
-                    bulkEnd = esc ? static_cast<size_t>(esc - input.data()) : idx;
-                }
-
-                if (bulkEnd > 0) {
-                    // Flush any pending grapheme from previous non-ASCII text.
-                    if (graphemeState.count > 0)
-                        len += graphemeState.width();
-
-                    // Count all but the last char in bulk using SIMD. The last
-                    // char seeds the grapheme state in case a combining mark
-                    // follows.
-                    if (bulkEnd > 1)
-                        len += countPrintableAscii16(input.first(bulkEnd - 1));
-
-                    const char32_t lastCp = input[bulkEnd - 1];
-                    const uint8_t lastPacked = fusedClassify(lastCp);
-                    graphemeState.reset(lastCp, lastPacked, ambiguousAsWide);
-                    hasPrevVisible = true;
-                    prevClass = graphemeBreakClassFromFused(lastPacked);
-                    breakState = GraphemeBreakState::Default;
-
-                    if (bulkEnd == idx) {
-                        input = input.subspan(idx);
-                        continue;
-                    }
-
-                    // Otherwise we hit ESC — start escape sequence handling.
-                    saw1b = true;
-                    input = input.subspan(bulkEnd + 1);
-                    continue;
-                }
-            }
-
-            size_t j = 0;
-            while (j < idx) {
-                // Bulk SIMD scans inside escape states — long CSI parameter
-                // strings and OSC payloads (URLs, titles) don't need per-unit
-                // processing.
-                if (sawCsi) {
-                    // CSI final byte is in [0x40, 0x7E].
-                    const char16_t* term = ANSI::scanForByteInRange<0x40, 0x7e>(input.data() + j, input.data() + idx);
-                    if (term) {
-                        saw1b = false;
-                        sawCsi = false;
-                        j = static_cast<size_t>(term - input.data()) + 1;
-                        continue;
-                    }
-                    // Terminator not in this ASCII run — stay in CSI state; the
-                    // non-ASCII codepoint handler below keeps parsing.
-                    break;
-                }
-                if (sawOsc) {
-                    // OSC payload terminates at BEL (0x07) or ESC + '\' (ST).
-                    const char16_t* term = ANSI::scanForAnyByte<0x07, 0x1b>(input.data() + j, input.data() + idx);
-                    if (term) {
-                        const size_t t = static_cast<size_t>(term - input.data());
-                        if (*term == 0x07) {
-                            saw1b = false;
-                            sawOsc = false;
-                            j = t + 1;
-                            continue;
-                        }
-                        // ESC found — peek the next unit for '\' (ST).
-                        if (t + 1 < idx && input[t + 1] == u'\\') {
-                            saw1b = false;
-                            sawOsc = false;
-                            j = t + 2;
-                            continue;
-                        }
-                        // Lone ESC inside OSC — skip it and keep scanning.
-                        j = t + 1;
-                        continue;
-                    }
-                    // Terminator not in this ASCII run — stay in OSC state.
-                    break;
-                }
-
-                // Per-unit path for everything else.
-                const char32_t cp = input[j];
-                j += 1;
-
-                if (saw1b) {
-                    if (cp == '[') {
-                        sawCsi = true;
-                        continue;
-                    }
-                    if (cp == ']') {
-                        sawOsc = true;
-                        continue;
-                    }
-                    if (cp == 0x1b) {
-                        // Another ESC — this one starts a new potential
-                        // sequence (ESC itself is zero-width anyway).
-                        continue;
-                    }
-                    // ESC followed by an ordinary char: the ESC is dropped,
-                    // the char is counted directly.
-                    len += visibleCodepointWidth(cp, ambiguousAsWide);
-                    saw1b = false;
-                    continue;
-                }
-                if (!excludeAnsiColors || cp != 0x1b) {
-                    const uint8_t packed = fusedClassify(cp);
-                    const GraphemeBreakClass cpClass = graphemeBreakClassFromFused(packed);
-                    if (hasPrevVisible) {
-                        if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
-                            len += graphemeState.width();
-                            graphemeState.reset(cp, packed, ambiguousAsWide);
-                        } else {
-                            graphemeState.add(cp, packed, ambiguousAsWide);
-                        }
-                    } else {
-                        graphemeState.reset(cp, packed, ambiguousAsWide);
-                    }
-                    hasPrevVisible = true;
-                    prevClass = cpClass;
-                    continue;
-                }
-                saw1b = true;
-            }
-            input = input.subspan(idx);
-        }
-
-        if (input.empty())
-            break;
-
-        // Decode one non-ASCII codepoint (input[0] > 0x7F).
-        const UTF16Decoded decoded = decodeUTF16Codepoint(input);
-        input = input.subspan(decoded.lengthInUnits);
-        // Skip invalid sequences and lone surrogates (treat as zero-width).
-        if (decoded.skip)
-            continue;
-        const char32_t cp = decoded.codePoint;
-
-        // Handle non-ASCII characters inside escape sequences.
-        if (sawOsc) {
-            // In OSC, look for BEL (0x07) or C1 ST (0x9C); the 7-bit ST
-            // (ESC \) only uses ASCII and is handled above. Non-ASCII chars
-            // inside OSC do not contribute to width.
-            if (cp == 0x07 || cp == 0x9c) {
-                saw1b = false;
-                sawOsc = false;
-            }
-            continue;
-        }
-        if (sawCsi) {
-            // CSI sequences only contain ASCII parameters and final bytes.
-            // A non-ASCII char ends the CSI sequence abnormally — don't count it.
-            saw1b = false;
-            sawCsi = false;
-            continue;
-        }
-        if (saw1b) {
-            // ESC followed by non-ASCII — not a valid sequence start; treat
-            // the char normally below.
-            saw1b = false;
-        }
-
+    void addCodepoint(char32_t cp)
+    {
         const uint8_t packed = fusedClassify(cp);
         const GraphemeBreakClass cpClass = graphemeBreakClassFromFused(packed);
-        if (hasPrevVisible) {
-            if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
-                len += graphemeState.width();
-                graphemeState.reset(cp, packed, ambiguousAsWide);
-            } else {
-                graphemeState.add(cp, packed, ambiguousAsWide);
-            }
-        } else {
+        if (!hasPrevVisible) {
             graphemeState.reset(cp, packed, ambiguousAsWide);
+        } else if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
+            len += graphemeState.width();
+            graphemeState.reset(cp, packed, ambiguousAsWide);
+        } else {
+            graphemeState.add(cp, packed, ambiguousAsWide);
         }
         hasPrevVisible = true;
         prevClass = cpClass;
     }
 
-    // Add the width of the final grapheme.
-    len += graphemeState.width();
-    return len;
+    // Seed the cluster state from the last codepoint of a bulk-counted run,
+    // flushing whatever cluster was pending before it. The codepoint's own
+    // width is not added here: a combining mark, jamo or ZWJ right after the
+    // run still joins its cluster, so the caller counts every unit but the
+    // last and lets GraphemeState::width() settle the final one.
+    void seedFromBulkRun(char32_t cp, uint8_t packed)
+    {
+        if (graphemeState.count > 0)
+            len += graphemeState.width();
+        graphemeState.reset(cp, packed, ambiguousAsWide);
+        hasPrevVisible = true;
+        prevClass = graphemeBreakClassFromFused(packed);
+        breakState = GraphemeBreakState::Default;
+    }
+
+    // Consumes text up to the end of `input`, or — when `stopAtEscape` — up to
+    // the first escape introducer (ESC or an 8-bit C1 introducer), which the
+    // caller then hands to the escape recognizer. Returns the number of code
+    // units consumed. ESC is below 0x20 and the C1 introducers are above 0x7F
+    // outside the bulk kernel's allowlist, so both bulk kernels already stop on
+    // them; only the ASCII run needs an extra scan, over a span that is already
+    // in cache.
+    size_t addRun(std::span<const char16_t> input, bool stopAtEscape = false)
+    {
+        const char16_t* const begin = input.data();
+        while (true) {
+            // Bulk fast path: leading code units that are always their own
+            // grapheme cluster with a fixed width (ASCII, most Latin/Greek/
+            // Cyrillic letters, the main CJK/kana/Hangul-syllable/fullwidth
+            // blocks) are classified and counted in one SIMD pass
+            // (highway_visible_utf16_width). Skipped when ambiguous-width
+            // characters count as wide (Greek/Cyrillic are East-Asian-
+            // Ambiguous); the first-unit check skips the call when the next
+            // codepoint (surrogate pair, control) clearly needs the scalar
+            // path anyway.
+            if (!ambiguousAsWide && !input.empty() && input[0] >= 0x20 && !U16_IS_SURROGATE(input[0])) {
+                size_t bulkWidth = 0;
+                const size_t consumed = highway_visible_utf16_width(
+                    reinterpret_cast<const uint16_t*>(input.data()), input.size(), &bulkWidth);
+                if (consumed > 0) {
+                    const char32_t lastCp = input[consumed - 1];
+                    const uint8_t lastPacked = fusedClassify(lastCp);
+                    seedFromBulkRun(lastCp, lastPacked);
+                    len += bulkWidth - widthFromFused(lastPacked, ambiguousAsWide);
+                    input = input.subspan(consumed);
+                    continue;
+                }
+            }
+
+            // Empty, or the caller's escape introducer is next — checked
+            // before the ASCII scan so an ESC does not trigger a scan whose
+            // result would be discarded.
+            if (input.empty() || (stopAtEscape && ANSI::isEscapeCharacter(input[0])))
+                break;
+
+            // Length of the leading all-ASCII (<= 0x7F) run, bounded by the
+            // next escape when `stopAtEscape` so neither scan reads past the
+            // current visible run. Peek the first unit before scanning — a
+            // non-ASCII lead (CJK, emoji) would scan a zero-length prefix.
+            size_t idx = 0;
+            if (input[0] <= 0x7F) {
+                size_t bound = input.size();
+                if (stopAtEscape) {
+                    if (const char16_t* const esc = ANSI::scanForAnyByte<0x1b>(input.data(), input.data() + input.size()))
+                        bound = static_cast<size_t>(esc - input.data());
+                }
+                idx = highway_first_non_ascii16(reinterpret_cast<const uint16_t*>(input.data()), bound);
+            }
+            if (idx > 0) {
+                const char32_t lastCp = input[idx - 1];
+                const uint8_t lastPacked = fusedClassify(lastCp);
+                seedFromBulkRun(lastCp, lastPacked);
+                if (idx > 1)
+                    len += countPrintableAscii16(input.first(idx - 1));
+                input = input.subspan(idx);
+                continue;
+            }
+
+            // Decode one non-ASCII codepoint (input[0] > 0x7F). Invalid
+            // sequences and lone surrogates are zero-width and do not update
+            // the grapheme state.
+            const UTF16Decoded decoded = decodeUTF16Codepoint(input);
+            input = input.subspan(decoded.lengthInUnits);
+            if (!decoded.skip)
+                addCodepoint(decoded.codePoint);
+        }
+        return static_cast<size_t>(input.data() - begin);
+    }
+
+    size_t finish() const { return len + graphemeState.width(); }
+};
+
+// Grapheme-cluster-aware width of UTF-16 text. When `excludeAnsiColors` is
+// set, escape sequences contribute nothing (see the file header for the
+// grammar); otherwise escape bytes are counted like ordinary codepoints.
+size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors, bool ambiguousAsWide)
+{
+    UTF16WidthAccumulator accumulator { ambiguousAsWide };
+    if (!excludeAnsiColors) {
+        accumulator.addRun(input);
+        return accumulator.finish();
+    }
+
+    const char16_t* p = input.data();
+    const char16_t* const end = p + input.size();
+    while (p != end) {
+        if (ANSI::isEscapeCharacter(*p)) {
+            p = ANSI::consumeANSI(p, end); // always makes progress
+            continue;
+        }
+        p += accumulator.addRun({ p, static_cast<size_t>(end - p) }, /* stopAtEscape */ true);
+    }
+    return accumulator.finish();
 }
 
 } // namespace StringWidth
@@ -1022,9 +966,11 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
 // console.table column sizing and the markdown ANSI renderer)
 // ============================================================================
 
-extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len)
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide)
 {
-    return StringWidth::visibleLatin1WidthExcludeANSI({ ptr, len });
+    return ambiguous_as_wide
+        ? StringWidth::visibleLatin1WidthExcludeANSIAmbiguousAsWide({ ptr, len })
+        : StringWidth::visibleLatin1WidthExcludeANSI({ ptr, len });
 }
 
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide)
@@ -1122,14 +1068,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStringWidth, (JSC::JSGlobalObject * global
     const bool ambiguousAsWide = !ambiguousIsNarrow;
     size_t width;
     if (view->is8Bit()) {
-        // 8-bit JSC strings are Latin-1. The Latin-1 path has never honored
-        // ambiguousIsNarrow (parity with the previous implementation), even
-        // though some Latin-1 codepoints are East-Asian-Ambiguous (§, ×, ÷, ...).
+        // 8-bit JSC strings are Latin-1.
         const auto span = view->span8();
         const std::span<const uint8_t> bytes { reinterpret_cast<const uint8_t*>(span.data()), span.size() };
-        width = countAnsiEscapeCodes
-            ? StringWidth::visibleLatin1Width(bytes)
-            : StringWidth::visibleLatin1WidthExcludeANSI(bytes);
+        if (ambiguousAsWide) {
+            width = countAnsiEscapeCodes
+                ? StringWidth::visibleLatin1WidthAmbiguousAsWide(bytes)
+                : StringWidth::visibleLatin1WidthExcludeANSIAmbiguousAsWide(bytes);
+        } else {
+            width = countAnsiEscapeCodes
+                ? StringWidth::visibleLatin1Width(bytes)
+                : StringWidth::visibleLatin1WidthExcludeANSI(bytes);
+        }
     } else {
         const auto span = view->span16();
         width = StringWidth::visibleUTF16Width({ span.data(), span.size() }, !countAnsiEscapeCodes, ambiguousAsWide);

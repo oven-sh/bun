@@ -73,33 +73,6 @@ pub mod jsc {
     }
 }
 
-// `bun_s3` is not a workspace crate (only `bun_s3_signing`). Webcore drafts
-// reference `bun_s3::{S3Credentials, ACL, ...}` for the S3-backed Blob store.
-// Forward the real `bun_s3_signing` types so `s3_stub::X` and
-// `bun_s3_signing::X` are the *same* type (avoids
-// `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
-// Remaining names without a real definition stay as opaque unit structs until
-// a real `bun_s3` crate exists.
-pub mod s3_stub {
-    macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
-        #[derive(Debug, Default)] pub struct $n;
-    )*};}
-    opaque!(
-        S3DeleteResult,
-        S3ListObjectsResult,
-        S3SimpleRequestResult,
-        S3DownloadStreamWrapper,
-        S3HttpSimpleTask,
-    );
-    // Real types now exist upstream — forward them.
-    pub use bun_s3_signing::{ACL, S3Credentials, S3CredentialsWithOptions, StorageClass};
-    // Real type now exists in webcore/s3/list_objects.rs — forward it so
-    // `s3_stub::S3ListObjectsOptions` and `s3::list_objects::S3ListObjectsOptions`
-    // are the same type (Store.rs imports via this path).
-    pub use crate::webcore::__s3_list_objects::S3ListObjectsOptions;
-    pub use crate::webcore::s3::MultiPartUploadOptions;
-}
-
 // Forward the real enums so `webcore::node_types::X` and
 // `crate::node::types::X` are the same type.
 pub mod node_types {
@@ -109,10 +82,8 @@ pub mod node_types {
 pub use crate::jsc::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
-// The lower-tier `bun_event_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
-// directly to avoid an event_loop→jsc upward dependency. This tier takes a
-// `&VirtualMachine` and reaches the queue via `vm.event_loop().deferred_tasks`.
-pub use bun_event_loop::auto_flusher;
+// Takes a `&VirtualMachine` and reaches the queue via
+// `vm.event_loop().deferred_tasks`.
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
 #[derive(Debug, Default)]
@@ -288,7 +259,6 @@ pub use file_reader::FileReader;
 
 #[path = "webcore/Sink.rs"]
 pub mod sink;
-pub use sink::Sink;
 
 #[path = "webcore/FileSink.rs"]
 pub mod file_sink;
@@ -369,14 +339,6 @@ pub mod __s3_simple_request;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
-    // Forward the credential / enum stubs so `crate::webcore::s3::{ACL, ...}`
-    // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
-    // These come from `s3_stub` until a real `bun_s3` crate exists.
-    pub use super::s3_stub::{
-        ACL, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3DownloadStreamWrapper,
-        S3HttpSimpleTask, S3ListObjectsOptions, S3ListObjectsResult, S3SimpleRequestResult,
-        StorageClass,
-    };
 
     // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.

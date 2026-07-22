@@ -201,16 +201,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ScopeError
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ScopeError {
-    #[error("no_value")]
-    NoValue,
-}
-
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,
@@ -246,7 +236,7 @@ mod draft {
     /// consumed by `E::Object::get_or_put_object`, which recurses once per
     /// `rope.next` link, so an unbounded header overflows the stack. Past the
     /// cap the remainder of the header (dots included) becomes the final
-    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
+    /// segment.
     const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1278,7 +1268,7 @@ mod draft {
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
                 npmrc_path,
-                bun_ast::ToSourceOpts { convert_bom: true },
+                bun_ast::ToSourceOptions { convert_bom: true },
             ) {
                 Ok(s) => s,
                 Err(err) => {

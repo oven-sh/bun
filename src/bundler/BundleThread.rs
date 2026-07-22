@@ -404,7 +404,3 @@ pub mod singleton {
         unsafe { BundleThread::enqueue(get::<C>(), completion.as_ptr()) };
     }
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

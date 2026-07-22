@@ -7,7 +7,7 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-use bun_threading::Mutex;
+use bun_threading::Guarded;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
@@ -419,8 +419,8 @@ impl DateHeaderTimer {
                 nsec: next.nsec,
             };
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
-            // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
+            // SAFETY: single JS thread; nothing `All::insert` touches
+            // overlaps `date_header_timer`, which `self` aliases.
             unsafe { (*Self::timer_all()).insert(elt) };
         }
     }
@@ -474,8 +474,8 @@ impl EventLoopDelayMonitor {
             nsec: next.nsec,
         };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
-        // `fake_timers`, disjoint from `event_loop_delay` which `self` aliases.
+        // SAFETY: single JS thread; nothing `All::insert` touches overlaps
+        // `event_loop_delay`, which `self` aliases.
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
@@ -560,7 +560,7 @@ pub use self::timeout_object::TimeoutObject;
 ///
 /// Returns a raw `NonNull` so the caller decides read vs. write:
 /// [`EventLoopTimer::less`] reads `.epoch()` on the heap-compare hot path;
-/// [`All::update`] writes `.set_epoch()` under the timer lock. The two
+/// [`All::update`] writes `.set_epoch()` on the JS thread. The two
 /// `internals.flags` arms store `Cell<TimerFlags>`; `Cell<T>` is
 /// `#[repr(transparent)]` so the `addr_of!` → `.cast()` is layout-sound.
 ///
@@ -606,7 +606,6 @@ pub use wtf_timer::WTFTimer;
 
 pub struct All {
     pub last_id: i32,
-    pub lock: Mutex,
     pub thread_id: std::thread::ThreadId,
     pub timers: TimerHeap,
     pub active_timer_count: i32,
@@ -626,13 +625,13 @@ pub struct All {
     pub fake_timers: FakeTimers,
     pub maps: Maps,
     pub date_header_timer: DateHeaderTimer,
+    pub wtf_timers: Guarded<TimerHeap>,
 }
 
 impl All {
     pub fn init() -> Self {
         Self {
             last_id: 1,
-            lock: Mutex::default(),
             thread_id: std::thread::current().id(),
             timers: TimerHeap::default(),
             active_timer_count: 0,
@@ -648,25 +647,36 @@ impl All {
             fake_timers: FakeTimers::default(),
             maps: Maps::default(),
             date_header_timer: DateHeaderTimer::default(),
+            wtf_timers: Guarded::init(TimerHeap::default()),
         }
     }
 
-    pub fn insert(&mut self, timer: *mut EventLoopTimer) {
-        self.lock.lock();
-        // Note: bun_threading::Mutex is lock()/unlock(), not RAII.
-        let r = self.insert_lock_held(timer);
-        self.lock.unlock();
-        r
+    #[inline]
+    fn assert_js_thread(&self) {
+        debug_assert!(
+            self.thread_id == std::thread::current().id(),
+            "timer::All: non-WTF timers may only be touched on the owning JS thread",
+        );
     }
 
-    fn insert_lock_held(&mut self, timer: *mut EventLoopTimer) {
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn insert(&mut self, timer: *mut EventLoopTimer) {
+        self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
-        // Note (§Forbidden aliased-&mut): `TimerHeap::insert` forms a
-        // fresh `&mut EventLoopTimer` via `(*a).heap()` for the same
-        // allocation, so we must NOT hold a `&mut *timer` across that call.
-        // Read `tag` and write `state`/`in_heap` via raw deref instead.
-        let allow_fake = unsafe { (*timer).tag }.allow_fake_timers();
-        if self.fake_timers.is_active() && allow_fake {
+        let tag = unsafe { (*timer).tag };
+        debug_assert!(tag != EventLoopTimerTag::WTFTimer, "use wtf_arm");
+
+        // Bump the global epoch into the per-timer flags so equal-deadline JS
+        // timers (setTimeout/setInterval/AbortSignal.timeout) fire in insertion
+        // order. Before heap insert: `EventLoopTimer::less` reads epoch as tiebreak.
+        // SAFETY: `timer` is live (caller contract).
+        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
+            self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
+            // SAFETY: `flags` points into the live container recovered above.
+            unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
+        }
+
+        if self.fake_timers.is_active() && tag.allow_fake_timers() {
             // SAFETY: see fn contract
             unsafe {
                 self.fake_timers.timers.insert(timer);
@@ -686,25 +696,9 @@ impl All {
     }
 
     /// Lazily `uv_timer_init` the
-    /// per-`All` libuv timer, then (re)start it for the soonest heap deadline.
-    /// On Windows there is no epoll/kqueue fallback; this `uv_timer_t` is the
-    /// ONLY thing that wakes `uv_run` for JS timers.
-    ///
-    /// Note (jsc/runtime crate cycle): `All` is a field
-    /// of `RuntimeState` (not `VirtualMachine`) and `RuntimeState` carries no
-    /// back-pointer to the owning VM, so the lazy-init block falls back to the
-    /// calling thread's
-    /// TLS VM/loop. That equivalence holds **only** on the owning JS thread;
-    /// `All.lock` exists precisely because `insert`/`update` may be entered
-    /// cross-thread (WTFTimer), where TLS would resolve to the wrong loop or
-    /// panic. The `debug_assert!` below makes that precondition loud. Once
-    /// initialized, the re-arm path reads the loop back from the handle itself
-    /// (`uv_handle_get_loop`), so the hot path is TLS-free and always targets
-    /// the loop the timer was actually registered on.
-    ///
-    /// TODO: thread `vm: *mut VirtualMachine` through
-    /// `insert`/`insert_lock_held`/`update` once
-    /// the `RuntimeHooks::timer_insert` slot widens — see jsc_hooks.rs.
+    /// per-`All` libuv timer, then (re)start it for the soonest deadline
+    /// across both heaps. On Windows there is no epoll/kqueue fallback; this
+    /// `uv_timer_t` is the ONLY thing that wakes `uv_run` for JS timers.
     #[cfg(windows)]
     fn ensure_uv_timer(&mut self) {
         // `vm` here means the OWNING VM (the one this timer is embedded in),
@@ -722,41 +716,53 @@ impl All {
             self.uv_timer.unref();
         }
 
-        if let Some(timer) = self.timers.peek() {
-            // SAFETY: `uv_timer.data` is non-null past the lazy-init block, so
-            // `uv_timer_init` has run and the handle's `loop` field points at
-            // the owning VM's live `uv_loop_t` (== `vm.uvLoop()` per spec).
-            unsafe { uv::uv_update_time(self.uv_timer.get_loop()) };
-            let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        let reg_next = self.timers.peek().map(|timer| {
             // SAFETY: `peek` returns a live heap node.
             let next = unsafe { &(*timer).next };
-            let next_ts = Timespec {
+            Timespec {
                 sec: next.sec,
                 nsec: next.nsec,
-            };
-            let wait = if next_ts.greater(&now) {
-                next_ts.duration(&now)
-            } else {
-                Timespec { sec: 0, nsec: 0 }
-            };
-
-            // minimum 1ms
-            // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
-            let wait_ms = core::cmp::max(1, wait.ms_unsigned());
-
-            // SAFETY: `uv_timer_init` ran above; the handle is live.
-            let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
-            // Restarting an overdue handle shifts the wakeup out by 1ms. Done
-            // on every insert, the already-due callback never runs.
-            if !(self.uv_timer.is_active() && due_in <= wait_ms) {
-                self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
             }
-
-            if self.active_timer_count > 0 {
-                self.uv_timer.ref_();
-            } else {
-                self.uv_timer.unref();
+        });
+        let wtf_next = self.wtf_timers.lock().peek().map(|timer| {
+            // SAFETY: `peek` returns a live heap node.
+            let next = unsafe { &(*timer).next };
+            Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
             }
+        });
+        let Some(next_ts) = Self::soonest(reg_next, wtf_next) else {
+            return;
+        };
+
+        // SAFETY: `uv_timer.data` is non-null past the lazy-init block, so
+        // `uv_timer_init` has run and the handle's `loop` field points at
+        // the owning VM's live `uv_loop_t` (== `vm.uvLoop()` per spec).
+        unsafe { uv::uv_update_time(self.uv_timer.get_loop()) };
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        let wait = if next_ts.greater(&now) {
+            next_ts.duration(&now)
+        } else {
+            Timespec { sec: 0, nsec: 0 }
+        };
+
+        // minimum 1ms
+        // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
+        let wait_ms = core::cmp::max(1, wait.ms_unsigned());
+
+        // SAFETY: `uv_timer_init` ran above; the handle is live.
+        let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
+        // Restarting an overdue handle shifts the wakeup out by 1ms. Done
+        // on every insert, the already-due callback never runs.
+        if !(self.uv_timer.is_active() && due_in <= wait_ms) {
+            self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+        }
+
+        if self.active_timer_count > 0 {
+            self.uv_timer.ref_();
+        } else {
+            self.uv_timer.unref();
         }
     }
 
@@ -781,13 +787,9 @@ impl All {
         unsafe { (*all).ensure_uv_timer() };
     }
 
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn remove(&mut self, timer: *mut EventLoopTimer) {
-        self.lock.lock();
-        self.remove_lock_held(timer);
-        self.lock.unlock();
-    }
-
-    fn remove_lock_held(&mut self, timer: *mut EventLoopTimer) {
+        self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         // Note (§Forbidden aliased-&mut): `TimerHeap::remove` forms a
         // fresh `&mut EventLoopTimer` via `(*v).heap()` for the same
@@ -815,18 +817,15 @@ impl All {
     /// # Safety
     /// `timer` must point to a live `EventLoopTimer` with whole-container
     /// provenance for its tag (see [`js_timer_flags_ptr`]).
-    // `timer` must stay `*mut`: the body forms only short-lived `&mut *timer`
-    // so re-entrant `remove_lock_held` does not alias an outstanding `&mut`
-    // (see Notes below); contract is documented in `# Safety`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
-        self.lock.lock();
+        self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         // Read `state` via raw deref so we don't hold a `&mut *timer` across
-        // `remove_lock_held` (which also `&mut`-derefs the same pointer);
-        // overlapping `&mut` is UB under Stacked Borrows.
+        // `remove` (which also `&mut`-derefs the same pointer); overlapping
+        // `&mut` is UB under Stacked Borrows.
         if unsafe { (*timer).state } == EventLoopTimerState::ACTIVE {
-            self.remove_lock_held(timer);
+            self.remove(timer);
         }
 
         // SAFETY: `timer` is still a valid live EventLoopTimer; safe to derive
@@ -835,26 +834,97 @@ impl All {
         // while `next` is `ElTimespec` — distinct types, so safe code cannot
         // construct the alias. Re-add a
         // `debug_assert!(!core::ptr::eq(time as *const _ as *const u8, &raw const (*timer).next as *const u8))`
-        // when the Timespec types unify (see the ElTimespec alias TODO at the
+        // when the Timespec types unify (see the ElTimespec alias note at the
         // top of this file).
         let timer_ref = unsafe { &mut *timer };
         timer_ref.next.sec = time.sec;
         timer_ref.next.nsec = time.nsec;
 
-        // Bump the global epoch and write it back
-        // into the per-timer flags so equal-deadline JS timers fire in
-        // refresh order.
-        // SAFETY: `timer` is live (caller contract); `timer_ref`'s last use
-        // is above so the raw `(*timer).tag` read inside is SB-clean.
-        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
-            self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
-            // SAFETY: exclusive under `self.lock`; `flags` points into the
-            // live container recovered above.
-            unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
-        }
+        // `insert` bumps the global epoch and writes it into the per-timer
+        // flags so equal-deadline JS timers fire in refresh order.
+        self.insert(timer);
+    }
 
-        self.insert_lock_held(timer);
-        self.lock.unlock();
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn wtf_arm(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
+        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
+        debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
+        {
+            let mut wtf = self.wtf_timers.lock();
+            // SAFETY: `timer` is live; its state and heap links only change under this guard.
+            unsafe {
+                if (*timer).state == EventLoopTimerState::ACTIVE {
+                    wtf.remove(timer);
+                }
+                (*timer).next.sec = time.sec;
+                (*timer).next.nsec = time.nsec;
+                wtf.insert(timer);
+                (*timer).state = EventLoopTimerState::ACTIVE;
+            }
+        }
+        #[cfg(windows)]
+        if self.thread_id == std::thread::current().id() {
+            self.ensure_uv_timer();
+        }
+    }
+
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn wtf_disarm(&mut self, timer: *mut EventLoopTimer) {
+        // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
+        debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
+        let mut wtf = self.wtf_timers.lock();
+        // SAFETY: `timer` is live; its state and heap links only change under this guard.
+        unsafe {
+            if (*timer).state == EventLoopTimerState::ACTIVE {
+                wtf.remove(timer);
+                (*timer).state = EventLoopTimerState::CANCELLED;
+            }
+        }
+    }
+
+    unsafe fn drain_due_wtf_timers(
+        this: *mut Self,
+        maybe_now: &mut Option<Timespec>,
+        vm: *mut (),
+    ) -> Option<Timespec> {
+        loop {
+            let min = {
+                // SAFETY: `this` is live; the guard drops before `fire`.
+                let mut wtf = unsafe { &(*this).wtf_timers }.lock();
+                let min = wtf.peek()?;
+                // SAFETY: `peek` returned a live heap node.
+                let min_next = unsafe {
+                    Timespec {
+                        sec: (*min).next.sec,
+                        nsec: (*min).next.nsec,
+                    }
+                };
+                let now = *maybe_now
+                    .get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
+                if min_next.greater(&now) {
+                    return Some(min_next);
+                }
+                let min = wtf.delete_min().expect("peek succeeded");
+                // SAFETY: `min` is the node `peek` returned above.
+                unsafe { (*min).state = EventLoopTimerState::FIRED };
+                min
+            };
+            let now = maybe_now.expect("set before the pop");
+            let el_now = ElTimespec {
+                sec: now.sec,
+                nsec: now.nsec,
+            };
+            // SAFETY: `min` is live; no guard or borrow of `All` is held here.
+            unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+        }
+    }
+
+    #[inline]
+    fn soonest(a: Option<Timespec>, b: Option<Timespec>) -> Option<Timespec> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(if a.greater(&b) { b } else { a }),
+            (a, b) => a.or(b),
+        }
     }
 
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
@@ -888,87 +958,49 @@ impl All {
         #[cfg(not(unix))]
         let _ = has_pending_immediate;
 
-        // Note (§Forbidden aliased-&mut): the WTFTimer arm below calls
-        // `(*min).fire(...)` → `WTFTimer__fire` → C++ may call back into
-        // `WTFTimer__update` → `(*runtime_state()).timer.update(...)`, minting
-        // a fresh `&mut All` to this same allocation while the outer
-        // `&mut self` is live → aliased-`&mut` UB. Mirror `drain_timers`:
-        // convert `self` to a raw pointer up-front and form *short-lived*
-        // `&mut *this` borrows only around `peek()`/`delete_min()`, dropping
-        // them before `fire()` so no `&mut All` is held across the re-entrant
-        // call.
-        //
-        // TODO: same caveat as `drain_timers` — the call-site auto-ref
-        // still creates a `&mut All` for the call frame; switch the signature
-        // to `this: *mut Self` (see the `get_timeout` call sites in jsc_hooks.rs).
         let this: *mut Self = self;
         let maybe_now: &mut Option<Timespec> = now_out;
-        loop {
-            // SAFETY: `this` derived from `&mut self`; short-lived exclusive
-            // borrow scoped to this `peek()` call only.
-            let Some(min) = (unsafe { &mut *this }).timers.peek() else {
-                break;
-            };
-            // SAFETY: peek returns a live heap node.
-            // Note (§Forbidden aliased-&mut): `delete_min()` writes
-            // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
-            // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
-            // deref and fire via raw deref (mirroring `drain_timers`).
-            let (min_next_sec, min_next_nsec, min_tag) =
-                unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
-            // Real clock: `self.timers` is the opt-out-of-fake-timers set, all
-            // armed in real-time units. Comparing against the mocked clock made
-            // internal pacing (GC, WTFTimer, test timeouts) spin on re-arm.
-            let now =
-                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
 
-            // bun_event_loop carries its own Timespec stub; compare field-wise.
-            let min_next = Timespec {
-                sec: min_next_sec,
-                nsec: min_next_nsec,
-            };
-            match now.order(&min_next) {
-                core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
-                    // Side-effect: potentially call the StopIfNecessary timer.
-                    if min_tag == EventLoopTimerTag::WTFTimer {
-                        // SAFETY: short-lived `&mut All` scoped to
-                        // `delete_min()`; dropped before `fire()`.
-                        let _ = unsafe { &mut *this }.timers.delete_min();
-                        let el_now = ElTimespec {
-                            sec: now.sec,
-                            nsec: now.nsec,
-                        };
-                        // SAFETY: `min` was just popped and is live; no `&mut`
-                        // to `All` or to `*min` is held across `fire()`, which
-                        // may re-enter `(*runtime_state()).timer`.
-                        unsafe { EventLoopTimer::fire(min, &el_now, vm) };
-                        continue;
-                    }
-                    *spec = Timespec { sec: 0, nsec: 0 };
-                    return true;
-                }
-                core::cmp::Ordering::Less => {
-                    *spec = min_next.duration(&now);
-                    if let Some(us) = quic_next_tick_us {
-                        if us >= 0 {
-                            Self::clamp_to_quic(spec, us);
-                        }
-                    }
+        // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
+        let wtf_next = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
+
+        // SAFETY: `this` is live, and only this thread touches the regular heap.
+        let reg_next = (unsafe { &*this }).timers.peek().map(|min| {
+            // SAFETY: `peek` returns a live heap node.
+            let next = unsafe { &(*min).next };
+            Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            }
+        });
+
+        let Some(next) = Self::soonest(wtf_next, reg_next) else {
+            if let Some(us) = quic_next_tick_us {
+                if us >= 0 {
+                    *spec = Timespec {
+                        sec: us / US_PER_S,
+                        nsec: (us % US_PER_S) * NS_PER_US,
+                    };
                     return true;
                 }
             }
-        }
+            return false;
+        };
 
-        if let Some(us) = quic_next_tick_us {
-            if us >= 0 {
-                *spec = Timespec {
-                    sec: us / US_PER_S,
-                    nsec: (us % US_PER_S) * NS_PER_US,
-                };
-                return true;
+        // Real clock: both heaps hold opt-out-of-fake-timers nodes armed in
+        // real-time units; the mocked clock made internal pacing spin on re-arm.
+        let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
+        if next.greater(&now) {
+            *spec = next.duration(&now);
+            if let Some(us) = quic_next_tick_us {
+                if us >= 0 {
+                    Self::clamp_to_quic(spec, us);
+                }
             }
+        } else {
+            *spec = Timespec { sec: 0, nsec: 0 };
         }
-        false
+        true
     }
 
     fn clamp_to_quic(spec: &mut Timespec, us: i64) {
@@ -981,33 +1013,28 @@ impl All {
         }
     }
 
-    /// Pop the next due timer (under lock). `now` is filled lazily on first
-    /// call so we don't pay for `clock_gettime` when the heap is empty.
+    /// Pop the next due timer. `now` is filled lazily on first call so we
+    /// don't pay for `clock_gettime` when the heap is empty.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
-        self.lock.lock();
-        let out = (|| {
-            let timer = self.timers.peek()?;
-            if !*has_set_now {
-                // Real clock: this heap is the opt-out-of-fake-timers set.
-                *now = Timespec::now(TimespecMockMode::ForceRealTime);
-                *has_set_now = true;
-            }
-            // SAFETY: peek returns a live heap node
-            let next = unsafe { &(*timer).next };
-            if (Timespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            })
-            .greater(now)
-            {
-                return None;
-            }
-            let deleted = self.timers.delete_min().expect("peek succeeded");
-            debug_assert!(core::ptr::eq(deleted, timer));
-            Some(timer)
-        })();
-        self.lock.unlock();
-        out
+        let timer = self.timers.peek()?;
+        if !*has_set_now {
+            // Real clock: this heap is the opt-out-of-fake-timers set.
+            *now = Timespec::now(TimespecMockMode::ForceRealTime);
+            *has_set_now = true;
+        }
+        // SAFETY: peek returns a live heap node
+        let next = unsafe { &(*timer).next };
+        if (Timespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        })
+        .greater(now)
+        {
+            return None;
+        }
+        let deleted = self.timers.delete_min().expect("peek succeeded");
+        debug_assert!(core::ptr::eq(deleted, timer));
+        Some(timer)
     }
 
     /// # Safety
@@ -1033,6 +1060,11 @@ impl All {
         // itself; switch it to `All::drain_timers(core::ptr::addr_of_mut!(
         // (*state).timer), vm)` and change this signature to `this: *mut Self`.
         let this: *mut Self = self;
+
+        let mut wtf_now: Option<Timespec> = None;
+        // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
+        let _ = unsafe { Self::drain_due_wtf_timers(this, &mut wtf_now, vm) };
+
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
         loop {
@@ -1142,11 +1174,6 @@ impl All {
     /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
     /// and the JS pin (`this_value` Strong) are released before the GC sweep.
     ///
-    /// Snapshots the heap under `lock` (cross-thread `WTFTimer__update` from
-    /// the GC scheduler thread can race the DFS otherwise), then cancels each
-    /// node *outside* the lock — `cancel()` re-enters [`All::remove`] which
-    /// re-acquires `lock` (non-recursive `bun_threading::Mutex`).
-    ///
     /// # Safety
     /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
     /// the live per-thread VM. Must run BEFORE JSC teardown
@@ -1162,11 +1189,7 @@ impl All {
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
-        // SAFETY: `this` is the live per-thread `All`; `lock` guards both heap
-        // roots against concurrent `WTFTimer` insert/remove from off-thread
-        // (GC scheduler thread). Lock/unlock is manual (non-RAII Mutex).
-        unsafe { (*this).lock.lock() };
-        // SAFETY: `this` live; both roots are heap roots or null.
+        // SAFETY: `this` is the live per-thread `All` (JS thread only).
         let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
         for root in roots {
             if !root.is_null() {
@@ -1208,9 +1231,6 @@ impl All {
                 _ => {}
             }
         }
-        // SAFETY: paired with the `lock()` above. Must release before the
-        // cancel loop — `cancel()` re-enters `All::remove` which re-locks.
-        unsafe { (*this).lock.unlock() };
 
         for internals in to_cancel {
             // SAFETY: each pointer was collected from the live heap; the

@@ -45,9 +45,12 @@ pub struct ServerConfig {
     /// If HMR is not enabled, then this field is ignored.
     pub enable_chrome_devtools_automatic_workspace_folders: bool,
 
-    pub on_error: Option<Strong>,
-    pub on_request: Option<Strong>,
-    pub on_node_http_request: Option<Strong>,
+    /// Raw shadow of the wrapper's `onError`/`onRequest`/`onNodeHTTPRequest`
+    /// WriteBarrier slots. The wrapper JSCell is the GC root; these are
+    /// `JSValue::ZERO` when unset and copied for hot-path dispatch reads.
+    pub on_error: JSValue,
+    pub on_request: JSValue,
+    pub on_node_http_request: JSValue,
 
     pub websocket: Option<WebSocketServerContext>,
 
@@ -58,7 +61,6 @@ pub struct ServerConfig {
     pub http3: bool,
     pub http1: bool,
 
-    pub is_node_http: bool,
     pub had_routes_object: bool,
 
     pub static_routes: Vec<StaticRouteEntry>,
@@ -81,9 +83,9 @@ impl Default for ServerConfig {
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
             enable_chrome_devtools_automatic_workspace_folders: true,
-            on_error: None,
-            on_request: None,
-            on_node_http_request: None,
+            on_error: JSValue::ZERO,
+            on_request: JSValue::ZERO,
+            on_node_http_request: JSValue::ZERO,
             websocket: None,
             reuse_port: false,
             id: Box::default(),
@@ -91,7 +93,6 @@ impl Default for ServerConfig {
             ipv6_only: false,
             http3: false,
             http1: true,
-            is_node_http: false,
             had_routes_object: false,
             static_routes: Vec::new(),
             negative_routes: Vec::new(),
@@ -141,14 +142,6 @@ impl DevelopmentOption {
 impl ServerConfig {
     pub fn is_development(&self) -> bool {
         self.development.is_development()
-    }
-
-    /// Parsed view over [`Self::base_uri`].
-    // PERF: re-parses on each call. The only out-of-module reader takes
-    // `href` (== `base_uri`) directly; in-module reads happen once in `from_js`.
-    #[inline]
-    pub fn base_url(&self) -> URL<'_> {
-        URL::parse(&self.base_uri)
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -274,9 +267,9 @@ impl ServerConfig {
                 .broadcast_console_log_from_browser_to_server_for_bake,
             enable_chrome_devtools_automatic_workspace_folders: self
                 .enable_chrome_devtools_automatic_workspace_folders,
-            on_error: self.on_error.take(),
-            on_request: self.on_request.take(),
-            on_node_http_request: self.on_node_http_request.take(),
+            on_error: self.on_error,
+            on_request: self.on_request,
+            on_node_http_request: self.on_node_http_request,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
@@ -284,7 +277,6 @@ impl ServerConfig {
             ipv6_only: self.ipv6_only,
             http3: self.http3,
             http1: self.http1,
-            is_node_http: self.is_node_http,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
@@ -496,12 +488,6 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
         resp: bun_uws_sys::AnyResponse,
     );
 }
-
-// NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
-// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse`. Re-export the
-// real types so any straggler reference resolves to the canonical opaque.
-pub use bun_uws_sys::AnyRequest as RequestUnion;
-pub use bun_uws_sys::AnyResponse as ResponseUnion;
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
@@ -1163,12 +1149,29 @@ impl ServerConfig {
         }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
-            let p = u16::try_from(
-                (port_.coerce::<i32>(global)?)
-                    .max(0)
-                    .min(i32::from(u16::MAX)),
-            )
-            .unwrap();
+            let number = port_.to_number(global)?;
+            if !number.is_finite() || number.fract() != 0.0 {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        field_name: b"options.port",
+                        msg: b"an integer",
+                        ..Default::default()
+                    },
+                ));
+            }
+            if !(0.0..=65535.0).contains(&number) {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        min: 0,
+                        max: 65535,
+                        field_name: b"options.port",
+                        ..Default::default()
+                    },
+                ));
+            }
+            let p = number as u16;
             if let Address::Tcp { port: tp, .. } = &mut args.address {
                 *tp = p;
             }
@@ -1313,8 +1316,10 @@ impl ServerConfig {
                     global.throw_invalid_arguments(format_args!("Expected error to be a function"))
                 );
             }
-            let on_error_snapshot = on_error.with_async_context_if_needed(global);
-            args.on_error = Some(Strong::create(on_error_snapshot, global));
+            // Raw value — async-context wrapping is deferred to the slot-write
+            // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
+            // rooted by the wrapper's WriteBarrier slot the moment it exists.
+            args.on_error = on_error;
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1326,8 +1331,7 @@ impl ServerConfig {
                     "Expected onNodeHTTPRequest to be a function",
                 )));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_node_http_request = Some(Strong::create(on_request, global));
+            args.on_node_http_request = on_request_;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1335,10 +1339,9 @@ impl ServerConfig {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_request = Some(Strong::create(on_request, global));
+            args.on_request = on_request_;
         } else if args.bake.is_none()
-            && args.on_node_http_request.is_none()
+            && args.on_node_http_request.is_empty()
             && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
                 && !opts.has_user_routes)
             && opts.is_fetch_required

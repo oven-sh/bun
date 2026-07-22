@@ -4,9 +4,6 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
-    // Set provisionally in `on_create`; the server overwrites it on
-    // adoption. LIFETIMES.tsv = JSC_BORROW — the global outlives the context.
-    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub handler: Handler,
 
     pub max_payload_length: u32, // default 16MB
@@ -29,15 +26,20 @@ pub struct Handler {
     pub on_pong: JSValue,
 
     pub app: Option<*mut c_void>,
+    /// Type-erased backref to the owning `NewServer`, set alongside `app`
+    /// in `set_routes` (so it is in place before any socket can upgrade and
+    /// refreshed whenever a reload installs a new context).
+    /// `ServerWebSocket::init` reads it to write the server JS wrapper into the
+    /// per-socket `m_server` traced slot (keeping the wrapper, and the `m_ws*`
+    /// handler slots it carries, reachable while any socket is connected), and
+    /// `ServerWebSocket` open/close events route the live-socket accounting
+    /// through it.
+    pub server: Option<super::AnyServer>,
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    /// Mutated through `&Handler` (the field is owned by
-    /// `ServerConfig.websocket` and only ever touched on the JS thread), so
-    /// it's a `Cell`.
-    pub active_connections: core::cell::Cell<usize>,
 
     /// used by publish()
     pub flags: HandlerFlags,
@@ -68,26 +70,23 @@ impl Handler {
         self.vm.get()
     }
 
-    #[inline]
-    pub fn active_connections_saturating_add(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_add(n));
-    }
-
-    /// See `active_connections_saturating_add`.
-    #[inline]
-    pub fn active_connections_saturating_sub(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_sub(n));
-    }
-
+    /// `on_error` must be copied to a stack local by the caller before any
+    /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
+    /// server can downgrade the wrapper (the sole GC root for `wsOnError`)
+    /// mid-handler, so a fresh `self.on_error` read after user JS could be a
+    /// freed cell.
     pub fn run_error_callback(
         &self,
+        on_error: JSValue,
         vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         error_value: JSValue,
     ) {
-        let on_error = self.on_error;
+        // Termination raised inside the preceding callback.call() cannot be
+        // cleared; entering JS again trips executeCallImpl's assertNoException.
+        if global_object.has_exception() {
+            return;
+        }
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[error_value])
@@ -117,9 +116,9 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
+            server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            active_connections: core::cell::Cell::new(0),
             flags: HandlerFlags::empty(),
         };
 
@@ -143,9 +142,10 @@ impl Handler {
                         key
                     )));
                 }
-                let cb = value.with_async_context_if_needed(global_object);
-                *field = cb;
-                cb.ensure_still_alive();
+                // Raw value — async-context wrapping is deferred to
+                // `NewServer::write_ws_handler_slots` so the wrapped fn is
+                // rooted by the wrapper's WriteBarrier slot immediately.
+                *field = value;
                 if i > 0 {
                     // anything other than "error" is considered valid.
                     valid = true;
@@ -160,30 +160,6 @@ impl Handler {
         Err(global_object.throw_invalid_arguments(format_args!(
             "WebSocketServerContext expects a message handler"
         )))
-    }
-
-    pub fn protect(&self) {
-        self.on_open.protect();
-        self.on_message.protect();
-        self.on_close.protect();
-        self.on_drain.protect();
-        self.on_error.protect();
-        self.on_ping.protect();
-        self.on_pong.protect();
-    }
-
-    pub fn unprotect(&self) {
-        if self.vm.is_shutting_down() {
-            return;
-        }
-
-        self.on_open.unprotect();
-        self.on_message.unprotect();
-        self.on_close.unprotect();
-        self.on_drain.unprotect();
-        self.on_error.unprotect();
-        self.on_ping.unprotect();
-        self.on_pong.unprotect();
     }
 }
 
@@ -200,14 +176,6 @@ impl WebSocketServerContext {
             close_on_backpressure_limit: self.close_on_backpressure_limit,
             ..Default::default()
         }
-    }
-
-    pub fn protect(&self) {
-        self.handler.protect();
-    }
-
-    pub fn unprotect(&self) {
-        self.handler.unprotect();
     }
 }
 
@@ -259,11 +227,8 @@ pub(crate) fn on_create(
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
     // Construct the struct with the handler and explicit defaults up front.
-    // The top-level `global_object` is provisionally set to the param; the
-    // server overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
-        global_object: bun_ptr::BackRef::new(global_object),
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
         max_lifetime: 0,
@@ -428,6 +393,5 @@ pub(crate) fn on_create(
         }
     }
 
-    server.protect();
     Ok(server)
 }

@@ -258,14 +258,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
-    /// Raw-TCP write that also reports a fatal send error; non-Connected and
-    /// TLS-wrapped sockets fall back to the plain write (no fatal signal).
-    pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
+    /// Raw-TCP write that also reports a fatal send error as the positive
+    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
+    /// sockets fall back to the plain write (no fatal signal).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),
-            duplex d => (d.encode_and_write(data), false),
-            pipe p => (p.encode_and_write(data), false),
-            else => (0, false),
+            duplex d => (d.encode_and_write(data), 0),
+            pipe p => (p.encode_and_write(data), 0),
+            else => (0, 0),
         )
     }
 
@@ -566,13 +567,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     // ── TLS ─────────────────────────────────────────────────────────────────
-
-    /// Kick TLS open (ClientHello / accept) on an already-connected socket.
-    pub fn start_tls(&self, is_client: bool) {
-        if let InternalSocket::Connected(s) = self.socket {
-            sock(s).open(is_client, None);
-        }
-    }
 
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
@@ -937,26 +931,11 @@ macro_rules! any_socket_forward {
 
 impl AnySocket {
     #[inline]
-    pub fn is_ssl(&self) -> bool {
-        matches!(self, AnySocket::SocketTls(_))
-    }
-    #[inline]
     pub fn socket(&self) -> &InternalSocket {
         match self {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
         }
-    }
-    #[inline]
-    pub fn ext<T>(&self) -> Option<*mut T> {
-        match self {
-            AnySocket::SocketTcp(s) => s.ext::<T>(),
-            AnySocket::SocketTls(s) => s.ext::<T>(),
-        }
-    }
-    #[inline]
-    pub fn terminate(&self) {
-        self.close(CloseCode::failure)
     }
     #[inline]
     pub fn group(&self) -> *mut SocketGroup {

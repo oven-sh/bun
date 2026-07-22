@@ -65,7 +65,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObje
 
     JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(JSValue::decode(thisValue));
     if (!keyObject) {
-        return JSValue::encode(jsUndefined());
+        return ERR::INVALID_THIS(scope, globalObject, "KeyObject"_s);
     }
 
     KeyObject& handle = keyObject->handle();

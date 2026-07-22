@@ -4,6 +4,7 @@ use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::Expect;
+use super::throw;
 
 pub(crate) fn to_have_last_returned_with(
     this: &Expect,
@@ -60,36 +61,35 @@ pub(crate) fn to_have_last_returned_with(
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
     if this.flags.get().not() {
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected mock function not to have last returned: <green>{}<r>\n",
-                    "But it did.\n",
-                ),
-                expected.to_fmt(&mut formatter),
+            concat!(
+                "\n\n",
+                "Expected mock function not to have last returned: <green>{}<r>\n",
+                "But it did.\n",
             ),
+            expected.to_fmt(&mut formatter),
         );
     }
 
     if calls_count == 0 {
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             signature,
-            format_args!(concat!("\n\n", "The mock function was not called.")),
+            concat!("\n\n", "The mock function was not called."),
         );
     }
 
     if last_call_threw {
-        return this.throw(
+        return throw!(
+            this,
             global_this,
             signature,
-            format_args!(
-                concat!("\n\n", "The last call threw an error: <red>{}<r>\n"),
-                last_error_value.to_fmt(&mut formatter),
-            ),
+            concat!("\n\n", "The last call threw an error: <red>{}<r>\n"),
+            last_error_value.to_fmt(&mut formatter),
         );
     }
 
@@ -103,20 +103,19 @@ pub(crate) fn to_have_last_returned_with(
             global_this: Some(global_this),
             not: false,
         };
-        return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
+        return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
     }
 
     // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
     // the same backing formatter. Use a second formatter for the received value —
     // `make_formatter` is a trivial struct init with no shared state between values.
     let mut formatter2 = super::make_formatter(global_this);
-    this.throw(
+    throw!(
+        this,
         global_this,
         signature,
-        format_args!(
-            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-            expected.to_fmt(&mut formatter),
-            last_return_value.to_fmt(&mut formatter2),
-        ),
+        "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
+        expected.to_fmt(&mut formatter),
+        last_return_value.to_fmt(&mut formatter2),
     )
 }

@@ -100,7 +100,10 @@ impl us_socket_t {
 
     /// Write that also reports a fatal (non-would-block) send error so the
     /// node:net path can fail the pending write instead of waiting forever.
-    pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
+    /// The second element is 0 on success, otherwise the positive errno of
+    /// the failed `send()` on POSIX, or 1 on Windows (WSA→errno mapping is
+    /// not wired up here yet).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         let mut fatal: i32 = 0;
         // SAFETY: `self` is a live `us_socket_t`; `data` is valid for its length
         // (clamped to i32) and `fatal` outlives the call as the out-parameter.
@@ -112,15 +115,11 @@ impl us_socket_t {
                 &raw mut fatal,
             )
         };
-        (written, fatal != 0)
+        (written, fatal)
     }
 
     pub fn is_shutdown(&self) -> bool {
         c::us_socket_is_shut_down(self) > 0
-    }
-
-    pub fn is_tls(&self) -> bool {
-        c::us_socket_is_tls(self) > 0
     }
 
     pub fn local_port(&self) -> i32 {
@@ -201,19 +200,6 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
-    /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
-    pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
-        if !self.is_tls() {
-            return None;
-        }
-        unsafe {
-            // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
-            c::us_socket_get_native_handle(self)
-                .cast::<bun_boringssl_sys::SSL>()
-                .as_mut()
-        }
-    }
-
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
     /// plain TCP. Consumers that want one or the other should call `ssl()` /
     /// `get_fd()` directly; this is the round-trip-to-JS form.
@@ -256,20 +242,6 @@ impl us_socket_t {
     /// arm and route straight to `BunSocket`.
     pub fn set_kind(&mut self, k: SocketKind) {
         c::us_socket_set_kind(self, k as u8);
-    }
-
-    /// Move this socket to a new group/kind, optionally resizing its ext.
-    /// Returns the (possibly relocated) socket; `self` is invalid after.
-    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
-    pub fn adopt(
-        &mut self,
-        g: &mut SocketGroup,
-        k: SocketKind,
-        old_ext: i32,
-        new_ext: i32,
-    ) -> Option<NonNull<us_socket_t>> {
-        // SAFETY: self and g are live; C may realloc and return a different us_socket_t*
-        unsafe { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
     }
 
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
@@ -519,7 +491,6 @@ mod c {
         pub(super) safe fn us_socket_kind(s: &us_socket_t) -> u8;
         pub(super) safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
         pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
-        pub(super) safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
 
         pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         #[cfg(not(windows))]
@@ -574,13 +545,6 @@ mod c {
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
 
-        pub(super) fn us_socket_adopt(
-            s: *mut us_socket_t,
-            group: *mut SocketGroup,
-            kind: u8,
-            old_ext_size: i32,
-            ext_size: i32,
-        ) -> *mut us_socket_t;
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,

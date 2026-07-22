@@ -755,25 +755,6 @@ impl VersionExt for Version {
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_core::comptime_string_map! {
-    static TAG_MAP: Tag = {
-        b"npm" => Tag::Npm,
-        b"git" => Tag::Git,
-        b"folder" => Tag::Folder,
-        b"github" => Tag::Github,
-        b"tarball" => Tag::Tarball,
-        b"symlink" => Tag::Symlink,
-        b"catalog" => Tag::Catalog,
-        b"dist_tag" => Tag::DistTag,
-        b"workspace" => Tag::Workspace,
-    };
-}
-
-#[inline]
-pub fn tag_from_bytes(bytes: &[u8]) -> Option<Tag> {
-    TAG_MAP.get(bytes).copied()
-}
-
 pub trait TagExt {
     fn cmp(self, other: Tag) -> Ordering;
     fn is_npm(self) -> bool;

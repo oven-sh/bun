@@ -39,6 +39,20 @@ pub(crate) fn enobufs_error_code(
     Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
 }
 
+/// libuv's ECANCELED code (`uv_udp_send` requests cancelled by close). Not a
+/// JS-side literal (unlike EBADF/EINVAL, ECANCELED's number differs across the
+/// POSIX platforms: Linux 125, Darwin 89, FreeBSD 85; synthetic -4081 on
+/// Windows), and NOT `process.binding("uv")` either: that binding negates the
+/// compiling host's <errno.h> value, which on Windows is the CRT's 105, not
+/// libuv's -4081. `UV_E` is the one table that is libuv-correct everywhere.
+#[bun_jsc::host_fn]
+pub(crate) fn ecanceled_error_code(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number_from_int32(-UV_E::CANCELED))
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///
@@ -168,18 +182,17 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 
-    // `validate_string` above guarantees `content.is_string()`, so
-    // `as_string()` returns a non-null live JSString*. `JSString` is an
-    // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
-    let str = bun_jsc::JSString::opaque_ref(content.as_string()).to_slice(global);
+    // `validate_string` accepts StringObject, so coerce to a primitive JSString
+    // before slicing.
+    let str = content.to_js_string(global)?.to_slice(global);
 
     let mut map = envloader::Map::init();
     let mut p = envloader::Loader::init(&mut map);
     p.load_from_string::<true, false>(str.slice())?;
     drop(p);
 
-    let obj = JSValue::create_empty_object(global, map.count());
-    for (k, v) in map.iter() {
+    let obj = JSValue::create_empty_object(global, map.map.count());
+    for (k, v) in map.map.iter() {
         obj.put(
             global,
             ZigString::init_utf8(k),

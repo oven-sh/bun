@@ -62,7 +62,7 @@ impl ResolveMessage {
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<*mut ResolveMessage> {
-        Err(global.throw_illegal_constructor("ResolveMessage"))
+        Err(global.throw_illegal_constructor())
     }
 
     #[crate::host_fn(getter)]
@@ -327,7 +327,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&this.msg.data.text).to_js(global))
+        Ok(ZigString::init_utf8(&this.msg.data.text).to_js(global))
     }
 
     #[crate::host_fn(getter)]
@@ -339,7 +339,7 @@ impl ResolveMessage {
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                ZigString::init(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
+                ZigString::init_utf8(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
             }
             // Unreachable in practice (ResolveMessage is only constructed for
             // `.resolve` metadata).
@@ -360,7 +360,7 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(if let Some(referrer) = &this.referrer {
-            ZigString::init(referrer).to_js(global)
+            ZigString::init_utf8(referrer).to_js(global)
         } else {
             JSValue::NULL
         })

@@ -14,6 +14,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
+import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -1244,6 +1245,54 @@ it("should support reloading", async () => {
       server.reload({ fetch: second });
       const response2 = await fetch(server.url.origin);
       expect(await response2.text()).toBe("second");
+    },
+  );
+});
+
+// Reloading a server that was CREATED as a node:http one re-applies node-compat mode to
+// the live, already-listening native context (reload -> set_routes); it must be an
+// idempotent no-op. On assert-enabled builds a real re-switch aborts the process, so the
+// repro runs in a subprocess. `bun --hot` takes this exact path on every reload.
+it("reload() of a node:http-backed server is not treated as a mode switch", async () => {
+  const code = `
+    const noop = function () {};
+    const server = Bun.serve({ port: 0, fetch: () => new Response("x"), onNodeHTTPRequest: noop });
+    server.reload({ fetch: () => new Response("y"), onNodeHTTPRequest: noop });
+    server.stop(true);
+    console.log("OK");
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OK\n");
+  expect(exitCode).toBe(0);
+});
+
+it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
+  // The server's kind is fixed when listen() sizes its connections' native
+  // per-socket block; a reload that smuggles in the node:http handler used by
+  // node's http.Server wrapper must be ignored, not flip the context into
+  // node-compat mode under connections allocated with the smaller block.
+  const first: Handler = () => new Response("first");
+  const second: Handler = () => new Response("second");
+  await runTest(
+    {
+      fetch: first,
+    },
+    async server => {
+      expect(await (await fetch(server.url.origin)).text()).toBe("first");
+      server.reload({
+        fetch: second,
+        // @ts-expect-error internal option used by node:http's Server
+        onNodeHTTPRequest: () => {
+          throw new Error("must never be routed");
+        },
+      });
+      // Fresh connections after the reload (fetch pools per-origin, so mix in
+      // explicit no-keepalive requests to force new native sockets).
+      for (let i = 0; i < 8; i++) {
+        const res = await fetch(server.url.origin, { headers: { connection: "close" } });
+        expect(await res.text()).toBe("second");
+      }
     },
   );
 });
@@ -2906,9 +2955,7 @@ it.concurrent("#20283", async () => {
 // copies the raw bytes and the underlying C socket layer truncates at the first NUL, so
 // `"127.0.0.1\0ignored"` behaves like `"127.0.0.1"` (or at worst surfaces as a catchable JS error).
 // A port that uses CString::new(...).expect(...) would panic and crash the process instead.
-// TODO(zig-rust-divergence): Rust port currently panics on interior NUL;
-// see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-it.todo("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
+it("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
   const script = `
     try {
       const server = Bun.serve({
@@ -3464,4 +3511,31 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// The node:http compat parser tolerates empty lines (and a bare CR/LF) before the
+// request-line like llhttp's s_start state. That leniency must stay behind the
+// node-http flag: Bun.serve still rejects a request that does not begin with the
+// request-line.
+it.each([
+  ["CRLF", "\r\n"],
+  ["bare LF", "\n"],
+  ["bare CR", "\r"],
+])("Bun.serve rejects a leading %s before the request-line", async (_label, prefix) => {
+  using server = serve({ port: 0, fetch: () => new Response("ok") });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(server.port, "127.0.0.1", () => {
+    socket.write(`${prefix}GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+  });
+  let received = "";
+  socket.on("data", chunk => {
+    received += chunk;
+  });
+  socket.on("error", reject);
+  socket.on("close", () => resolve(received));
+  const statusLine = (await promise).split("\r\n")[0];
+  socket.destroy();
+
+  expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });

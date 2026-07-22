@@ -46,9 +46,10 @@ pub struct RuntimeDevelopmentPair {
 bun_core::comptime_string_map! {
     pub static RUNTIME_MAP: RuntimeDevelopmentPair = {
         b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: None },
         b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        // TypeScript: "react-jsx" selects jsx/jsxs (production), "react-jsxdev" selects jsxDEV.
+        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(false) },
         b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
     };
 }
@@ -218,6 +219,9 @@ impl Pragma {
         hasher.update(&self.import_source.production);
         hasher.update(&self.classic_import_source);
         hasher.update(&self.package_name);
+        // `runtime` selects classic vs automatic emission; `development`
+        // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
+        hasher.update(&[self.runtime as u8, self.development as u8]);
     }
 
     pub fn import_source(&self) -> &[u8] {
@@ -251,12 +255,6 @@ impl Pragma {
         str
     }
 
-    pub fn is_react_like(&self) -> bool {
-        &*self.package_name == b"react"
-            || &*self.package_name == b"@emotion/jsx"
-            || &*self.package_name == b"@emotion/react"
-    }
-
     /// When `package_name` is the default `"react"`, this borrows the
     /// interned `defaults::IMPORT_SOURCE*` with zero allocations.
     pub fn set_import_source(&mut self) {
@@ -285,10 +283,6 @@ impl Pragma {
         out.extend_from_slice(pkg);
         out.extend_from_slice(suffix);
         Cow::Owned(out)
-    }
-
-    pub fn set_production(&mut self, is_production: bool) {
-        self.development = !is_production;
     }
 
     // "React.createElement" => ["React", "createElement"]

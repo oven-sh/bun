@@ -2,6 +2,7 @@ import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
+import os from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
 
@@ -2426,6 +2427,61 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.lastIndexOf("b", [])).toBe(-1);
       });
 
+      it("lastIndexOf/indexOf(Buffer, negativeOffset, 'ucs2') wraps against the raw byte length on odd-length haystacks", () => {
+        // Node's IndexOfBuffer wraps a negative byteOffset against the full byte
+        // length and only then floors to 16-bit units; truncating to even first
+        // makes `-byteLength` land before the start and miss present data.
+        const h3 = Buffer.from("bbc", "latin1"); // <62 62 63>
+        const n = Buffer.from("bb", "latin1"); // <62 62>
+        for (const enc of ["ucs2", "utf16le"]) {
+          expect(h3.lastIndexOf(n, -3, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, -2, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, 0, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, -4, enc)).toBe(-1);
+          expect(h3.indexOf(n, -3, enc)).toBe(0);
+          expect(h3.indexOf(n, -2, enc)).toBe(-1);
+          expect(h3.indexOf(n, -1, enc)).toBe(-1);
+          expect(h3.indexOf(n, 1, enc)).toBe(-1);
+        }
+
+        // Even-length haystack is unchanged.
+        expect(Buffer.from("bbcc", "latin1").lastIndexOf(n, -4, "ucs2")).toBe(0);
+
+        // 5-byte haystack: the wrapped offset must also floor to the correct
+        // 16-bit unit so the rightmost match is found.
+        const h5 = Buffer.from([0x62, 0x62, 0x62, 0x62, 0x63]);
+        expect(h5.lastIndexOf(n, -5, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(n, -3, "ucs2")).toBe(2);
+        expect(h5.lastIndexOf(n, -6, "ucs2")).toBe(-1);
+        // Odd-length needle: only the whole 16-bit unit participates.
+        const n3 = Buffer.from([0x62, 0x62, 0x62]);
+        expect(h5.lastIndexOf(n3, -5, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(n3, 0, "ucs2")).toBe(0);
+
+        // Empty Buffer needle on an odd-length haystack: the clamped result
+        // must reflect the raw-byte wrap, bounded by the even search end.
+        const empty = Buffer.alloc(0);
+        expect(h3.lastIndexOf(empty, -3, "ucs2")).toBe(0);
+        expect(h3.lastIndexOf(empty, -1, "ucs2")).toBe(2);
+        expect(h3.lastIndexOf(empty, 3, "ucs2")).toBe(2);
+        expect(h3.lastIndexOf(empty, undefined, "ucs2")).toBe(2);
+
+        // 1-byte haystack has no 16-bit units.
+        const h1 = Buffer.from([0x62]);
+        expect(h1.lastIndexOf(n, 0, "ucs2")).toBe(-1);
+        expect(h1.lastIndexOf(n, -1, "ucs2")).toBe(-1);
+        expect(h1.lastIndexOf(empty, 0, "ucs2")).toBe(0);
+
+        // String needles: Node's IndexOfString truncates the haystack length to
+        // even BEFORE wrapping (unlike IndexOfBuffer), so -byteLength on an
+        // odd-length haystack is before the start.
+        const sn = "\u6262"; // encodes as <62 62> in ucs2
+        expect(h3.lastIndexOf(sn, -3, "ucs2")).toBe(-1);
+        expect(h3.lastIndexOf(sn, -2, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(sn, -5, "ucs2")).toBe(-1);
+        expect(h5.lastIndexOf(sn, -3, "ucs2")).toBe(0);
+      });
+
       it("lastIndexOf(value, encoding) defaults to searching from the end", () => {
         // When the second argument is an encoding string (no byteOffset), the
         // search must start from the end of the buffer, matching Node.js.
@@ -4530,3 +4586,62 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
     });
   });
 });
+
+// MAX_LENGTH is 2**32 on 64-bit: a buffer of exactly that length must not
+// hit the uint32 truncation path that made toString()/write() see length 0.
+it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
+  "Buffer of length exactly MAX_LENGTH (2**32) supports toString/write without uint32 wrap",
+  async () => {
+    const script = `
+      const assert = require("assert");
+      const N = 2 ** 32;
+      const b = Buffer.alloc(N);
+      assert.strictEqual(b.length, N);
+      b.set([0x71, 0x72, 0x73], N - 3);
+
+      const out = {};
+      for (const enc of ["latin1", "utf8", "hex", "base64", "ucs2"]) {
+        try { b.toString(enc); out["full_" + enc] = "no throw"; }
+        catch (e) { out["full_" + enc] = e.code; }
+      }
+      out.ranged_latin1 = b.toString("latin1", N - 4, N);
+      out.ranged_hex = b.toString("hex", N - 4, N);
+      out.ranged_utf8_start0 = b.toString("utf8", 0, 3);
+      out.write_ret = b.write("xyz", N - 3);
+      out.after_write = b.toString("latin1", N - 3, N);
+      out.write_enc_ret = b.write("ab", N - 2, "latin1");
+      out.after_write_enc = b.toString("latin1", N - 2, N);
+      out.write_full = b.write("hi");
+      try { b.write("x", N + 1); out.write_oob = "no throw"; }
+      catch (e) { out.write_oob = e.code; }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        full_latin1: "ERR_STRING_TOO_LONG",
+        full_utf8: "ERR_STRING_TOO_LONG",
+        full_hex: "ERR_STRING_TOO_LONG",
+        full_base64: "ERR_STRING_TOO_LONG",
+        full_ucs2: "ERR_STRING_TOO_LONG",
+        ranged_latin1: "\x00qrs",
+        ranged_hex: "00717273",
+        ranged_utf8_start0: "\x00\x00\x00",
+        write_ret: 3,
+        after_write: "xyz",
+        write_enc_ret: 2,
+        after_write_enc: "ab",
+        write_full: 2,
+        write_oob: "ERR_OUT_OF_RANGE",
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

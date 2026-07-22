@@ -19,8 +19,8 @@ pub type Index = IndexType;
 //
 // Resolver code threads `*mut DirInfo` pervasively and
 // open-coded `unsafe { &*dir_info }` at ~50 read sites. The BSSMap backing
-// store is process-lifetime and append-only (slots are never freed; `reset()`
-// runs only at shutdown after all readers are gone), so a `Copy` handle that
+// store is process-lifetime and append-only (slots are never freed), so a
+// `Copy` handle that
 // `Deref`s to `&DirInfo` is sound: the pointee outlives every holder, and no
 // `&mut DirInfo` is ever materialized concurrently with a read — writes happen
 // only inside `dir_info_uncached` while filling a freshly-`put` slot, before
@@ -135,12 +135,10 @@ pub struct DirInfo {
     pub abs_path: &'static [u8],
     pub entries: Index,
     /// Is there a "package.json" file?
-    // `NonNull` (not `&'static`) so `reset()` can `drop_in_place` without a
-    // const→mut provenance cast. Read via `.package_json()`.
+    // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.package_json()`.
     pub package_json: Option<NonNull<PackageJSON>>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
-    // `NonNull` (not `&'static`) so `reset()` can `drop_in_place` without a
-    // const→mut provenance cast. Read via `.tsconfig_json()`.
+    // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.tsconfig_json()`.
     pub tsconfig_json: Option<NonNull<TSConfigJSON>>,
     /// If non-empty, this is the real absolute path resolving any symlinks
     // lifetime — slice into BSS-backed path storage; never individually freed
@@ -174,8 +172,7 @@ impl Default for DirInfo {
 /// [`DirInfo`] (`package_json` / `package_json_for_dependencies` /
 /// `tsconfig_json`). The pointee is interned in the resolver's process-lifetime
 /// PackageJSON / TSConfigJSON arena (see `intern_package_json` / the tsconfig
-/// merge loop); never freed until `reset()` at shutdown, after which no reader
-/// exists.
+/// merge loop); never freed for the life of the process.
 #[inline]
 fn arena_ref<T>(p: NonNull<T>) -> &'static T {
     // SAFETY: ARENA — see fn doc; pointee is process-lifetime, never freed
@@ -203,7 +200,7 @@ impl DirInfo {
     }
 
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve
-    /// mut-provenance for `reset()`; callers that only read go through here.
+    /// mut-provenance; callers that only read go through here.
     #[inline]
     pub fn package_json(&self) -> Option<&'static PackageJSON> {
         self.package_json.map(arena_ref)
@@ -226,16 +223,10 @@ impl DirInfo {
 
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // Route through `entries_at` directly (returns `Option<&mut EntriesOption>`)
-            // instead of round-tripping the safe `&mut DirEntry` through `get_entries`'s
-            // `*mut` return just to deref it back here. With `generation = 0` the
-            // generation-check re-read in `entries_at` is a no-op, so this is the
-            // same lookup `get_entries(0)` performs.
-            if let Some(fs::EntriesOption::Entries(entries)) =
-                fs::FileSystem::instance().fs.entries_at(self.entries, 0)
-            {
-                return entries.fd;
-            }
+            // `entries_at(_, 0)` never re-reads (`u16 < 0` is always false), so the
+            // lock it would take covers no mutation; go through the same plain
+            // `at_index` lookup `get_entries_const` uses.
+            return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);
         }
         Fd::INVALID
     }
@@ -264,6 +255,19 @@ impl DirInfo {
         let entries_ptr = fs::FileSystem::instance()
             .fs
             .entries_at(self.entries, generation)?;
+        match entries_ptr {
+            fs::EntriesOption::Entries(entries) => Some(&**entries),
+            fs::EntriesOption::Err(_) => None,
+        }
+    }
+
+    /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
+    /// hold `entries_mutex` (the mutex is non-recursive); see
+    /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
+    pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+        let entries_ptr = fs::FileSystem::instance()
+            .fs
+            .entries_at_locked(self.entries, generation)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,
@@ -398,26 +402,6 @@ impl Flags {
 /// Allows addressing individual flags as `DirInfo::Flag::X`.
 pub use Flags as Flag;
 
-impl DirInfo {
-    pub fn reset(&mut self) {
-        if let Some(p) = self.package_json.take() {
-            // SAFETY: `p` carries mut-provenance from `intern_package_json` (NonNull
-            // derived from the arena's `&mut Box<PackageJSON>`); this is the sole
-            // remaining owner at shutdown. `drop_in_place` releases its owned
-            // resources in-place (storage itself is BSS/cache-owned and not freed
-            // here).
-            unsafe { core::ptr::drop_in_place(p.as_ptr()) };
-        }
-        if let Some(t) = self.tsconfig_json.take() {
-            // SAFETY: `t` carries mut-provenance from `heap::alloc` in the
-            // tsconfig merge loop; this is the sole remaining owner at shutdown.
-            // `drop_in_place` releases its owned resources in-place (storage
-            // itself is BSS/cache-owned and not freed here).
-            unsafe { core::ptr::drop_in_place(t.as_ptr()) };
-        }
-    }
-}
-
 // Goal: Really fast, low allocation directory map exploiting cache locality where we don't worry about lifetimes much.
 // 1. Don't store the keys or values of directories that don't exist
 // 2. Don't expect a provided key to exist after it's queried
@@ -449,40 +433,4 @@ pub(crate) unsafe fn put_slot(
     unsafe { (*map).put(result, value) }.map_err(crate::Error::from)?;
     // SAFETY: `put` just assigned a non-sentinel, initialized index.
     Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
-}
-
-/// Resolver-side extension trait adapting `BSSMapInner`'s inherent surface to
-/// the resolver's error type (`crate::Error`) and pointer-return shape, plus
-/// `values_mut` which has no inherent equivalent. The name-colliding
-/// methods are shadowed by inherent methods under dot-syntax (Rust resolves
-/// inherent before trait), so the bodies below delegate without recursing.
-/// (`put` is NOT here: it must not take `&mut self` — see [`put_slot`].)
-pub trait HashMapExt {
-    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error>;
-    fn mark_not_found(&mut self, result: allocators::Result);
-    fn remove(&mut self, key: &[u8]) -> bool;
-    fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
-}
-impl HashMapExt for HashMap {
-    #[inline]
-    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<allocators::Result, crate::Error> {
-        // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
-        self.get_or_put(key).map_err(Into::into)
-    }
-    #[inline]
-    fn mark_not_found(&mut self, result: allocators::Result) {
-        // Inherent `BSSMapInner::mark_not_found` (inherent > trait); not recursive.
-        self.mark_not_found(result)
-    }
-    #[inline]
-    fn remove(&mut self, key: &[u8]) -> bool {
-        // Inherent `BSSMapInner::remove` (inherent > trait); not recursive.
-        self.remove(key)
-    }
-    #[inline]
-    fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo> {
-        // backing_buf slice only (overflow_list excluded). Inherent `values()`
-        // already returns `&mut [DirInfo]`.
-        self.values().iter_mut()
-    }
 }

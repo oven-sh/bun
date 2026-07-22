@@ -6,7 +6,7 @@
 //! In the future, this type will exclude `zero`, encoding it as `error.JSError`
 //! instead.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
@@ -25,13 +25,10 @@ use crate::{
 // The spec encoding is `i64`; the inner field is `usize`
 // (same width on all supported 64-bit targets — see the size assert below)
 // because leaf modules pattern-match on `.0` with pointer/unsigned arithmetic.
-// `BackingInt`/`from_raw` are the signed views where sign-correct math matters.
+// `from_raw` is the signed view where sign-correct math matters.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct JSValue(pub usize, PhantomData<*const ()>);
-
-/// Backing integer type for the encoded value.
-pub type BackingInt = i64;
 
 const _: () = assert!(
     core::mem::size_of::<JSValue>() == core::mem::size_of::<i64>(),
@@ -54,10 +51,6 @@ impl JSValue {
     /// Deleted is a special encoding used in JSC hash-map internals for the
     /// null state; it is re-used here for "not present".
     pub const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
-    /// Alias of [`Self::PROPERTY_DOES_NOT_EXIST`], kept for binding-name compatibility.
-    pub const PROPERTY_DOES_NOT_EXIST_ON_OBJECT: JSValue = Self::PROPERTY_DOES_NOT_EXIST;
-
-    pub const IS_POINTER: bool = false;
 
     /// Construct a JSValue from an opaque encoded bit-pattern.
     #[inline]
@@ -664,10 +657,6 @@ impl JSValue {
             )
         }
     }
-    pub fn from_date_string(global: &JSGlobalObject, s: &core::ffi::CStr) -> JSValue {
-        // SAFETY: `global` is live; `s` is a valid NUL-terminated C string.
-        unsafe { JSC__JSValue__dateInstanceFromNullTerminatedString(global, s.as_ptr()) }
-    }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
     }
@@ -788,26 +777,6 @@ impl JSValue {
             return num as i64; // saturating truncation
         }
         JSC__JSValue__toInt64(self)
-    }
-    /// `JSValue.asInt52()` — saturating-truncate
-    /// `as_number()` into i52 range, returned widened to i64. NaN → 0;
-    /// out-of-range / ±Inf saturate to i52 MIN/MAX.
-    #[inline]
-    pub fn as_int52(self) -> i64 {
-        debug_assert!(self.is_number());
-        const I52_MIN: i64 = -(1 << 51);
-        const I52_MAX: i64 = (1 << 51) - 1;
-        let num = self.as_number();
-        if num.is_nan() {
-            return 0;
-        }
-        if num <= I52_MIN as f64 {
-            return I52_MIN;
-        }
-        if num >= I52_MAX as f64 {
-            return I52_MAX;
-        }
-        num as i64
     }
     /// `JSValue.toU32()` — clamp `toInt64()` into
     /// `[0, u32::MAX]`. Negative → 0, overflow → `u32::MAX`. Distinct from
@@ -931,7 +900,7 @@ impl JSValue {
         E::from_js_value(self, global, property_name)
     }
     pub fn as_string(self) -> *mut JSString {
-        debug_assert!(self.is_string());
+        debug_assert!(self.is_string_literal());
         JSC__JSValue__asString(self)
     }
     /// `jsTypeString()` — calls `JSC::jsTypeStringForValue`, returning the
@@ -1058,6 +1027,20 @@ impl JSValue {
     }
     pub fn get_unix_timestamp(self) -> f64 {
         JSC__JSValue__getUnixTimestamp(self)
+    }
+    /// `Date.prototype.toISOString` output via JSC's date cache: `None` when
+    /// `self` is not a `Date` or its time value is `NaN`; years outside
+    /// 0000-9999 use ECMAScript's expanded `+YYYYYY`/`-YYYYYY` form.
+    pub fn to_iso_string<'a>(
+        self,
+        global: &JSGlobalObject,
+        buf: &'a mut [u8; 64],
+    ) -> Option<&'a [u8]> {
+        let len = JSC__JSValue__toISOString(self, global, buf);
+        if len <= 0 {
+            return None;
+        }
+        Some(&buf[..len as usize])
     }
     /// Returns `(ptr, len)` of the cell's `ClassInfo` name (static C string).
     pub fn get_class_info_name(self) -> Option<&'static [u8]> {
@@ -1478,10 +1461,6 @@ impl JSValue {
         let zs = bun_core::ZigString::init(key.as_ref());
         JSC__JSValue__deleteProperty(self, global, &zs)
     }
-    /// `JSValue.putBunString`.
-    pub fn put_bun_string(self, global: &JSGlobalObject, key: &bun_core::String, value: JSValue) {
-        JSC__JSValue__putBunString(self, global, key, value)
-    }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
     /// both non-numeric and numeric keys. Prefer [`put`] when the key is
     /// guaranteed non-numeric.
@@ -1527,6 +1506,25 @@ impl JSValue {
     #[track_caller]
     pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
         crate::call_check_slow(global, || JSC__JSValue__push(self, global, out))
+    }
+
+    /// `JSValue.getOptional` — loose, coercing property fetch.
+    /// Absent / `undefined` / `null` → `None`; anything else is run through
+    /// [`coerce`](Self::coerce) (ToNumber for integer `T`). Distinct from
+    /// [`get_optional_int`], which validates the property is already an
+    /// in-range integer and throws otherwise.
+    pub fn get_optional<T: CoerceTo>(
+        self,
+        global: &JSGlobalObject,
+        property_name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<T>> {
+        let Some(prop) = self.get(global, property_name)? else {
+            return Ok(None);
+        };
+        if prop.is_undefined_or_null() {
+            return Ok(None);
+        }
+        Ok(Some(prop.coerce::<T>(global)?))
     }
 
     /// `JSValue.getOptionalInt` — typed integer property
@@ -1737,13 +1735,6 @@ impl From<usize> for JSValue {
 }
 
 impl JSValue {
-    /// `JSValue.asEncoded` — view the encoded word as the
-    /// `EncodedJSValue` C union (used by the FFI fast-paths in `bun:ffi`).
-    #[inline]
-    pub fn as_encoded(self) -> ffi::EncodedJSValue {
-        ffi::EncodedJSValue { as_js_value: self }
-    }
-
     /// Generic value→JSValue conversion. Dispatch is via [`FromAny`],
     /// implemented for each supported leaf type.
     #[inline]
@@ -1907,6 +1898,24 @@ impl CoerceTo for i32 {
         v.coerce_to_i32(global)
     }
 }
+impl CoerceTo for i64 {
+    fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<i64> {
+        if v.is_int32() {
+            return Ok(v.as_int32() as i64);
+        }
+        if let Some(num) = v.get_number() {
+            return Ok(if num.is_nan() { 0 } else { num as i64 });
+        }
+        if v.is_big_int() {
+            return v.coerce_to_int64(global);
+        }
+        // `JSC__JSValue__coerceToInt64` falls through to 32-bit `toInt32` for
+        // non-number, non-BigInt cells (strings wrap at 2^31). Go through full
+        // ToNumber here so string inputs above 2^31 round-trip to i64.
+        let num = v.to_number(global)?;
+        Ok(if num.is_nan() { 0 } else { num as i64 })
+    }
+}
 
 /// Dispatch trait for `JSValue::to_enum::<E>()`; the string map is supplied
 /// per-enum via this trait.
@@ -1917,15 +1926,6 @@ pub trait FromJsEnum: Sized {
         property_name: &'static str,
     ) -> JsResult<Self>;
 }
-
-pub type PropertyIteratorFn = unsafe extern "C" fn(
-    global_object: *mut JSGlobalObject,
-    ctx_ptr: *mut c_void,
-    key: *mut bun_core::ZigString,
-    value: JSValue,
-    is_symbol: bool,
-    is_private_symbol: bool,
-);
 
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C" — JSC bindings (src/jsc/bindings/bindings.cpp). The .a/.o files
@@ -1960,10 +1960,6 @@ unsafe extern "C" {
         deallocator: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
     ) -> JSValue;
     safe fn JSBuffer__bufferFromLength(global: &JSGlobalObject, len: i64) -> JSValue;
-    fn JSC__JSValue__dateInstanceFromNullTerminatedString(
-        global: *const JSGlobalObject,
-        s: *const c_char,
-    ) -> JSValue;
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
@@ -2007,6 +2003,13 @@ unsafe extern "C" {
         exception: &mut ZigException,
     );
     safe fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
+    // safe: `&mut [u8; 64]` is ABI-identical to the non-null 64-byte out-buffer
+    // the C++ side requires (`Bun::toISOString` writes at most 28 bytes).
+    safe fn JSC__JSValue__toISOString(
+        this: JSValue,
+        global: &JSGlobalObject,
+        buf: &mut [u8; 64],
+    ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
     safe fn JSC__JSValue__getOwnByValue(
         this: JSValue,
@@ -2121,8 +2124,6 @@ pub enum ProxyField {
     Target = 0,
     Handler = 1,
 }
-/// Alias kept for binding-name compatibility.
-pub type ProxyInternalField = ProxyField;
 
 /// `JSValue.SerializedFlags`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -2259,11 +2260,6 @@ impl JSValue {
         }
         self.to_number(global)
     }
-    /// `JSValue.toU16` — truncating, clamped-at-zero.
-    #[inline]
-    pub fn to_u16(self) -> u16 {
-        (self.to_int32().max(0) as u32) as u16
-    }
 
     // ── Object / cell views. ───────────────
     /// Statically cast to a `JSCell*`; `None` for non-cells.
@@ -2327,16 +2323,6 @@ impl JSValue {
     }
 
     // ── Property access. ──────────────────────────
-    /// `JSValue.putZigString` — `JSC__JSValue__put` keyed by an existing
-    /// `ZigString` (avoids the temporary in [`JSValue::put`]).
-    pub fn put_zig_string(
-        self,
-        global: &JSGlobalObject,
-        key: &bun_core::ZigString,
-        value: JSValue,
-    ) {
-        JSC__JSValue__put(self, global, key, value)
-    }
     /// `JSValue.getOwn` — own-property lookup (no prototype walk).
     pub fn get_own(
         self,

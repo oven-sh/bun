@@ -72,17 +72,10 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
-        /// True for require calls like this: "try { require() } catch {}". In this
-        /// case we shouldn't generate an error if the path could not be resolved.
-        const IS_INSIDE_TRY_BODY = 1 << 7;
-
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
-
-        /// If a macro used <import>, it will be tracked here.
-        const WAS_INJECTED_BY_MACRO = 1 << 10;
 
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
@@ -129,22 +122,9 @@ pub enum Tag {
 
 impl Tag {
     #[inline]
-    pub fn is_runtime(self) -> bool {
-        self == Tag::Runtime
-    }
-
-    #[inline]
     pub fn is_internal(self) -> bool {
         (self as u8) >= (Tag::Runtime as u8)
     }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum PrintMode {
-    Normal,
-    ImportPath,
-    Css,
-    NapiModule,
 }
 
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no

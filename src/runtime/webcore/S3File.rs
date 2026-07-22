@@ -711,7 +711,7 @@ pub(crate) fn get_presign_url_from(
                     }
                 };
             }
-            if let Some(expires_) = options.get_optional_int::<i32>(global, "expiresIn")? {
+            if let Some(expires_) = options.get_optional::<i32>(global, "expiresIn")? {
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "expiresIn must be greather than 0"
@@ -973,7 +973,6 @@ pub mod exports {
 
 // C++ side defines `SYSV_ABI EncodedJSValue` (JSS3File.cpp).
 bun_jsc::jsc_abi_extern! {
-    safe fn BUN__createJSS3File(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue;
     // `&JSGlobalObject` discharges the only deref'd-param precondition; `blob`
     // is stored opaquely as `void* m_ctx` (module-private — sole caller is
     // `to_js_unchecked`, whose own signature carries the ownership-transfer
@@ -982,9 +981,4 @@ bun_jsc::jsc_abi_extern! {
         global: &JSGlobalObject,
         blob: *mut core::ffi::c_void,
     ) -> JSValue;
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn create_js_s3_file(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    BUN__createJSS3File(global, callframe)
 }

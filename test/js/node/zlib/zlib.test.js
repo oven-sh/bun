@@ -758,3 +758,11 @@ describe("dictionary buffer lifetime", () => {
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
   });
 });
+
+describe("crc32", () => {
+  it("rejects String objects", () => {
+    expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
+    expect(() => zlib.crc32(String.prototype)).toThrow(TypeError);
+    expect(zlib.crc32("abc")).toBe(891568578);
+  });
+});

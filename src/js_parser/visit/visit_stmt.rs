@@ -273,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "export {foo} from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
 
-        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
+        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
         VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
@@ -294,7 +294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let _name = p.load_name_from_ref(old_ref);
-                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
+                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name);
                 VecExt::append(&mut p.cur_scope().generated, ref_);
                 p.record_declared_symbol(ref_);
                 // Compaction: items[..j] is the kept prefix; items[i] is dead
@@ -310,7 +310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {
                 let _name = p.load_name_from_ref(item.name.ref_);
-                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
+                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name);
                 VecExt::append(&mut p.cur_scope().generated, ref_);
                 p.record_declared_symbol(ref_);
                 item.name.ref_ = ref_;
@@ -329,7 +329,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // "export * from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
-        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
+        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
         VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
@@ -458,7 +458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if !data.default_name.ref_.is_symbol() {
-                    data.default_name = p.create_default_name(expr.loc).expect("unreachable");
+                    data.default_name = p.create_default_name(expr.loc);
                 }
 
                 let should_emit_temp_var = p.options.features.react_fast_refresh
@@ -614,8 +614,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !data.default_name.ref_.is_symbol() {
-                            data.default_name =
-                                p.create_default_name(stmt.loc).expect("unreachable");
+                            data.default_name = p.create_default_name(stmt.loc);
                         }
 
                         // Capture the original function name before any `mem::take` below resets
@@ -809,8 +808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !data.default_name.ref_.is_symbol() {
-                            data.default_name =
-                                p.create_default_name(stmt.loc).expect("unreachable");
+                            data.default_name = p.create_default_name(stmt.loc);
                         }
 
                         // We only inject a name into classes when decorator lowering
@@ -1333,9 +1331,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
-        let ref_ = p
-            .new_symbol(js_ast::symbol::Kind::Label, name)
-            .expect("unreachable");
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
         p.cur_scope().label_ref = ref_;
         match data.stmt.data {
@@ -2314,6 +2310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
 
@@ -2339,7 +2336,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             value_stmts.into_bump_slice_mut(),
             all_values_are_pure,
         )?;
-        p.pop_scope();
         Ok(())
     }
 

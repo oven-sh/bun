@@ -30,7 +30,7 @@ pub use bun_event_loop::ConcurrentTask::{
 };
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::ManagedTask;
-pub use bun_event_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, MiniVM};
+pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
@@ -293,11 +293,6 @@ impl EventLoop {
             self.entered_event_loop_count -= 1;
         }
         result
-    }
-
-    #[inline]
-    pub fn get_vm_impl(&self) -> *mut VirtualMachine {
-        self.vm()
     }
 
     /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
@@ -810,6 +805,11 @@ impl EventLoop {
                 unsafe { __bun_cancel_pending_immediate(task, vm) };
             }
         }
+        // Free the deferred-task map's storage. The tasks must not be run (same rule as the
+        // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
+        // released it when the JSC teardown before this finalized it. A worker's VM box is
+        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing else frees it.
+        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
     }
 
     /// Note (§Dispatch): `task` is an erased
@@ -1178,32 +1178,6 @@ impl EventLoop {
             }
             _ => {}
         }
-    }
-
-    pub fn enqueue_task_concurrent_batch(
-        &self,
-        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
-    ) {
-        if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
-                panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
-            }
-        }
-        // Panic on an empty batch; `push_batch`'s first line is
-        // `set_next(last, null)`, so a null `last` would be UB, not a clean fail.
-        assert!(
-            !batch.front.is_null() && !batch.last.is_null(),
-            "enqueue_task_concurrent_batch: empty batch",
-        );
-        // SAFETY: asserted non-null above; `batch` was produced by `pop_batch`,
-        // so `last` is reachable from `front` and every node is live.
-        unsafe {
-            self.concurrent_tasks.push_batch(
-                core::ptr::NonNull::new_unchecked(batch.front),
-                core::ptr::NonNull::new_unchecked(batch.last),
-            )
-        };
-        self.wakeup();
     }
 }
 

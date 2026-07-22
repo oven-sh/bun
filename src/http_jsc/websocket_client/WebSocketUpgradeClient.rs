@@ -885,7 +885,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         debug_assert!(this.is_same_socket(socket));
 
-        #[cfg(debug_assertions)]
         debug_assert!(!socket.is_shutdown());
 
         // Handle proxy handshake response
@@ -1843,7 +1842,9 @@ impl<'a> Headers8Bit<'a> {
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
         self.slices
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| (pair[0].slice(), pair[1].slice()))
     }
 

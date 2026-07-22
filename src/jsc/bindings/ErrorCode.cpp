@@ -1508,6 +1508,13 @@ JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope,
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS, "The selected key encoding is incompatible with the key type"_s));
+    throwScope.release();
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& digest)
 {
     WTF::StringBuilder builder;
@@ -1609,10 +1616,10 @@ JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope& scope, JSC::JSGlobalObj
     WTF::StringBuilder builder;
     builder.append("The MIME syntax for a "_s);
     builder.append(part);
-    builder.append(" in "_s);
+    builder.append(" in \""_s);
     builder.append(input);
 
-    builder.append(" is invalid"_s);
+    builder.append("\" is invalid"_s);
     if (position != -1) {
         builder.append(" at "_s);
         builder.append(String::number(position));
@@ -2548,7 +2555,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     case ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_CONNECTED, "Not connected"_s));
     case ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Socket is not running"_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Not running"_s));
     case ErrorCode::ERR_INVALID_CURSOR_POS:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CURSOR_POS, "Cannot set cursor row without setting its column"_s));
     case ErrorCode::ERR_INVALID_HANDLE_TYPE:
@@ -2567,6 +2574,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNSHIFT_AFTER_END_EVENT, "stream.unshift() after end event"_s));
     case ErrorCode::ERR_STREAM_PUSH_AFTER_EOF:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PUSH_AFTER_EOF, "stream.push() after EOF"_s));
+    case ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END, "Trailing junk found after the end of the compressed stream"_s));
     case ErrorCode::ERR_STREAM_UNABLE_TO_PIPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Cannot pipe to a closed or destroyed stream"_s));
     case ErrorCode::ERR_ILLEGAL_CONSTRUCTOR:

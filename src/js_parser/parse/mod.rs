@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
             if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments::<false>()?; // isInsideJSXElement
+                let _ = p.skip_type_script_type_arguments::<false, false>()?; // isInsideJSXElement
             }
         }
 
@@ -313,9 +313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 break 'parse_template_part;
             }
-            if cfg!(debug_assertions) {
-                debug_assert!(p.lexer.token != T::TEndOfFile);
-            }
+            debug_assert!(p.lexer.token != T::TEndOfFile);
         }
 
         p.allow_in = old_allow_in;
@@ -596,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Are these arguments for a call to a function named "async"?
         if opts.is_async {
             p.log_expr_errors(&mut errors);
-            let async_ref = p.store_name_in_ref(b"async")?;
+            let async_ref = p.store_name_in_ref(b"async");
             let async_expr = p.new_expr(
                 E::Identifier {
                     ref_: async_ref,
@@ -641,7 +639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let name = LocRef {
             loc: p.lexer.loc(),
-            ref_: p.store_name_in_ref(p.lexer.identifier)?,
+            ref_: p.store_name_in_ref(p.lexer.identifier),
         };
         p.lexer.next()?;
         Ok(Some(name))
@@ -797,7 +795,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || p.lexer.token == T::TOpenBracket
                     {
                         if opts.lexical_decl != LexicalDecl::AllowAll {
-                            p.forbid_lexical_decl(token_range.loc)?;
+                            p.forbid_lexical_decl(token_range.loc);
                         }
 
                         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
@@ -832,7 +830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                 if opts.lexical_decl != LexicalDecl::AllowAll {
-                    p.forbid_lexical_decl(token_range.loc)?;
+                    p.forbid_lexical_decl(token_range.loc);
                 }
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
@@ -891,7 +889,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                         // It's an "await using" declaration if we get here
                         if opts.lexical_decl != LexicalDecl::AllowAll {
-                            p.forbid_lexical_decl(using_range.loc)?;
+                            p.forbid_lexical_decl(using_range.loc);
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);
                         opts.is_using_statement = true;
@@ -920,7 +918,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             decls: decls_slice,
                         });
                     }
-                    let r = p.store_name_in_ref(raw2)?;
+                    let r = p.store_name_in_ref(raw2);
                     break 'value p.new_expr(
                         E::Identifier {
                             ref_: r,
@@ -952,7 +950,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Parse the remainder of this expression that starts with an identifier
-        let ref_ = p.store_name_in_ref(raw)?;
+        let ref_ = p.store_name_in_ref(raw);
         let mut result = ExprOrLetStmt {
             stmt_or_expr: js_ast::StmtOrExpr::Expr(p.new_expr(
                 E::Identifier {
@@ -992,7 +990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                 }
 
-                let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                let ref_ = p.store_name_in_ref(name);
                 p.lexer.next()?;
                 return Ok(p.b(B::Identifier { r#ref: ref_ }, loc));
             }
@@ -1157,9 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TDotDotDot => {
                 p.lexer.next()?;
-                let ident_ref = p
-                    .store_name_in_ref(p.lexer.identifier)
-                    .expect("unreachable");
+                let ident_ref = p.store_name_in_ref(p.lexer.identifier);
                 let value = p.b(B::Identifier { r#ref: ident_ref }, p.lexer.loc());
                 p.lexer.expect(T::TIdentifier)?;
                 return Ok(B::Property {
@@ -1212,7 +1208,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
 
                 if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
-                    let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                    let ref_ = p.store_name_in_ref(name);
                     let value = p.b(B::Identifier { r#ref: ref_ }, loc);
                     let mut default_value: Option<Expr> = None;
                     if p.lexer.token == T::TEquals {
@@ -1541,6 +1537,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(stmts)
     }
 
+    /// One-token lookahead: advance past the current token, evaluate `pred`,
+    /// then unconditionally restore the lexer (including `is_log_disabled`).
+    #[inline]
+    pub(crate) fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let result = matches!(self.lexer.next(), Ok(())) && pred(self);
+        self.lexer.restore(&old_lexer);
+        result
+    }
+
+    #[inline]
+    fn check_for_arrow_after_the_current_token(&mut self) -> bool {
+        self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
+    }
+
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
     pub fn parse_async_prefix_expr(
@@ -1562,7 +1574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "async => {}"
                 T::TEqualsGreaterThan => {
                     if level.lte(Level::Assign) {
-                        let async_ref = p.store_name_in_ref(b"async")?;
+                        let async_ref = p.store_name_in_ref(b"async");
                         let arg_binding = p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
                         let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                             binding: arg_binding,
@@ -1588,36 +1600,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if level.lte(Level::Assign) {
                         // p.markLoweredSyntaxFeature();
 
-                        let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
-                        let arg_loc = p.lexer.loc();
-                        let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
-                        let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
-                            binding: arg_binding,
-                            ..Default::default()
-                        });
-                        p.lexer.next()?;
+                        // In TypeScript, "async <ident>" not followed by "=>" treats "async" as
+                        // a plain identifier (e.g. "async as T"), matching tsc's two-token
+                        // lookahead in isUnParenthesizedAsyncArrowFunctionWorker (TypeScript#8444).
+                        let is_arrow_fn = !Self::IS_TYPESCRIPT_ENABLED
+                            || p.check_for_arrow_after_the_current_token();
 
-                        let _ = p.push_scope_for_parse_pass(
-                            js_ast::scope::Kind::FunctionArgs,
-                            async_range.loc,
-                        )?;
+                        if is_arrow_fn {
+                            let ref_ = p.store_name_in_ref(p.lexer.identifier);
+                            let arg_loc = p.lexer.loc();
+                            let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
+                            let args: &'a mut [G::Arg] =
+                                p.arena.alloc_slice_fill_with(1, |_| G::Arg {
+                                    binding: arg_binding,
+                                    ..Default::default()
+                                });
+                            p.lexer.next()?;
 
-                        let mut data = FnOrArrowDataParse {
-                            allow_await: AwaitOrYield::AllowExpr,
-                            needs_async_loc: args[0].binding.loc,
-                            ..Default::default()
-                        };
-                        // Pop the scope on the error path too.
-                        let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
-                            Ok(body) => body,
-                            Err(e) => {
-                                p.pop_scope();
-                                return Err(e);
-                            }
-                        };
-                        arrow_body.is_async = true;
-                        p.pop_scope();
-                        return Ok(p.new_expr(arrow_body, async_range.loc));
+                            let _ = p.push_scope_for_parse_pass(
+                                js_ast::scope::Kind::FunctionArgs,
+                                async_range.loc,
+                            )?;
+
+                            let mut data = FnOrArrowDataParse {
+                                allow_await: AwaitOrYield::AllowExpr,
+                                needs_async_loc: args[0].binding.loc,
+                                ..Default::default()
+                            };
+                            // Pop the scope on the error path too.
+                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                                Ok(body) => body,
+                                Err(e) => {
+                                    p.pop_scope();
+                                    return Err(e);
+                                }
+                            };
+                            arrow_body.is_async = true;
+                            p.pop_scope();
+                            return Ok(p.new_expr(arrow_body, async_range.loc));
+                        }
                     }
                 }
 
@@ -1670,7 +1691,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // "async"
         // "async + 1"
-        let async_ref = p.store_name_in_ref(b"async")?;
+        let async_ref = p.store_name_in_ref(b"async");
         Ok(p.new_expr(
             E::Identifier {
                 ref_: async_ref,

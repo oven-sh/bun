@@ -821,7 +821,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: expr.loc,
             in_,
             left_in: ExprIn::default(),
-            is_stmt_expr: false,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -870,7 +869,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: left.loc,
                 in_: left_in,
                 left_in: ExprIn::default(),
-                is_stmt_expr: false,
             };
         }
 
@@ -920,14 +918,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
-        p.visit_expr_in_out(
-            &mut e_.target,
-            ExprIn {
-                has_chain_parent,
-                ..Default::default()
-            },
-        );
+        p.visit_expr_in_out(&mut e_.target, ExprIn::default());
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1044,19 +1035,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // like .e_import_identifier tracking works
                         // Reminder that this can only be done after
                         // `target` is visited.
-                        if let Some(rewrite) = p.maybe_rewrite_property_access(
-                            expr.loc,
-                            e_.target,
-                            s.data.slice(),
-                            unwrapped.loc,
-                            IdentifierOpts::default()
-                                .with_is_call_target(is_call_target)
-                                // .is_template_tag = is_template_tag,
-                                .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target),
-                        ) {
-                            *e = rewrite;
-                            return;
+                        if e_.optional_chain.is_none() {
+                            if let Some(rewrite) = p.maybe_rewrite_property_access(
+                                expr.loc,
+                                e_.target,
+                                s.data.slice(),
+                                unwrapped.loc,
+                                IdentifierOpts::default()
+                                    .with_is_call_target(is_call_target)
+                                    // .is_template_tag = is_template_tag,
+                                    .with_is_delete_target(is_delete_target)
+                                    .with_assign_target(in_.assign_target),
+                            ) {
+                                *e = rewrite;
+                                return;
+                            }
                         }
                     }
                 }
@@ -1081,9 +1074,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .e_number()
                                 .expect("infallible: variant checked")
                                 .to_usize();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(strings::is_all_ascii(&literal));
-                            }
+                            debug_assert!(strings::is_all_ascii(&literal));
                             if num < literal.len() {
                                 *e = p.new_expr(
                                     E::String {
@@ -1116,9 +1107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 *e = p.new_expr(E::Undefined {}, inlined.loc);
                                 return;
                             }
-                            if cfg!(debug_assertions) {
-                                debug_assert!(inlined.can_be_inlined_from_property_access());
-                            }
+                            debug_assert!(inlined.can_be_inlined_from_property_access());
                             *e = inlined;
                             return;
                         }
@@ -1230,13 +1219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
-                p.visit_expr_in_out(
-                    &mut e_.value,
-                    ExprIn {
-                        has_chain_parent: true,
-                        ..Default::default()
-                    },
-                );
+                p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
@@ -1256,7 +1239,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let side_effects = SideEffects::to_boolean(p, &e_.value.data);
-                        if side_effects.ok {
+                        if side_effects.ok
+                            && (side_effects.side_effects == SideEffects::NoSideEffects
+                                || p.expr_can_be_removed_if_unused(&e_.value))
+                        {
                             *e = p.new_expr(
                                 E::Boolean {
                                     value: !side_effects.value,
@@ -1866,11 +1852,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                has_chain_parent,
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
                 ..Default::default()
             },
@@ -2440,7 +2424,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            is_arrow: true,
             is_async: e_.is_async,
             ..Default::default()
         };

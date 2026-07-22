@@ -10,7 +10,7 @@ use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::fs::{FileSystem, Path as FsPath};
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Wyhash (final4 variant). Must stay stable so on-disk
 // `.pile` filenames/hashes remain interchangeable across versions.
@@ -41,7 +41,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
 /// written before #30888 carried `has_tla=false` for every module; the cache-HIT
 /// path reinstates the bug for any previously-cached TLA module (#30887).
-const EXPECTED_VERSION: u32 = 22;
+/// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
+/// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
+const EXPECTED_VERSION: u32 = 23;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -834,10 +836,6 @@ impl RuntimeTranspilerCache {
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
         Ok(entry)
-    }
-
-    pub fn is_eligible(&self, path: &FsPath<'_>) -> bool {
-        path.is_file()
     }
 
     pub fn to_file(

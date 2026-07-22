@@ -756,10 +756,6 @@ impl FileSink {
         Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
-    pub fn connect(&self, signal: streams::Signal) {
-        self.signal.set(signal);
-    }
-
     pub fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
         match stream_start {
             streams::Start::FileSink(file)
@@ -898,6 +894,31 @@ impl FileSink {
     pub fn finalize(&mut self) {
         // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
         // must not touch live JS cells.
+
+        // Shutdown never unwinds the writer: the loop stops ticking, so the
+        // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
+        // longer arrive, and a queued FlushPendingFileSinkTask never runs.
+        // Release them here (a piped stdout whose write once returned
+        // `.pending` otherwise strands its keep-alive ref forever and the sink
+        // leaks). Only under `is_shutting_down`: on a live VM those events
+        // still arrive and must keep the sink alive past the wrapper.
+        if let Some(vm) = self.js_vm() {
+            if vm.is_shutting_down() {
+                let this = std::ptr::from_mut::<Self>(self);
+                // SAFETY: `this` is the canonical allocation pointer (finalize
+                // receives the wrapper's `m_ctx`); the wrapper's +1 is still
+                // held until the trailing `deref` below, so neither release
+                // can free `this` mid-body. `clear_keep_alive_ref` is
+                // flag-gated, so a (theoretical) late `onClose` is a no-op.
+                unsafe { FileSink::clear_keep_alive_ref(this) };
+                if self.run_pending_later.has.get() {
+                    self.run_pending_later.has.set(false);
+                    // SAFETY: as above; balances the `ref_()` taken in
+                    // `run_pending_later()` for a task that will never run.
+                    unsafe { FileSink::deref(this) };
+                }
+            }
+        }
 
         // Per-wrapper accounting is on `ref_count` directly: each path that
         // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
@@ -1128,10 +1149,6 @@ impl FileSink {
         }
     }
 
-    pub fn sink(&mut self) -> crate::webcore::sink::Sink<'_> {
-        crate::webcore::sink::Sink::init(self)
-    }
-
     pub fn update_ref(&self, value: bool) {
         // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut self`
         // (the posix `PosixStreamingWriter` impls are `&self`); `with_mut`
@@ -1150,7 +1167,6 @@ impl FileSink {
 pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
 pub type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
-crate::impl_sink_handler!(FileSink);
 crate::impl_js_sink_abi!(FileSink, "FileSink");
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
@@ -1159,8 +1175,6 @@ crate::impl_js_sink_abi!(FileSink, "FileSink");
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
     const HAS_CONSTRUCT: bool = true;
-    const HAS_SIGNAL: bool = true;
-    const HAS_DONE: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const HAS_PROTECT_JS_WRAPPER: bool = true;
     const HAS_UPDATE_REF: bool = true;

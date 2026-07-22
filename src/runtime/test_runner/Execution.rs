@@ -93,6 +93,13 @@ pub struct Execution {
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
     pub on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
+    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
+    /// set/restored alongside it. `get_current_state_data()` can't name a
+    /// sequence inside a concurrent group; this can, for code re-entered from
+    /// the microtask drain inside `run_test_callback` (node:test's runtime
+    /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
+    /// stamped).
+    pub on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 
 pub struct ConcurrentGroup {
@@ -152,8 +159,6 @@ pub struct ExecutionSequence {
     pub test_entry: Option<NonNull<ExecutionEntry>>,
     pub remaining_repeat_count: u32,
     pub remaining_retry_count: u32,
-    pub flaky_attempt_count: usize,
-    pub flaky_attempts_buf: [FlakyAttempt; ExecutionSequence::MAX_FLAKY_ATTEMPTS],
     pub result: Result,
     pub executing: bool,
     pub started_at: Timespec,
@@ -164,15 +169,7 @@ pub struct ExecutionSequence {
     pub maybe_skip: bool,
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct FlakyAttempt {
-    pub result: Result,
-    pub elapsed_ns: u64,
-}
-
 impl ExecutionSequence {
-    pub(crate) const MAX_FLAKY_ATTEMPTS: usize = 16;
-
     pub(crate) fn init(
         first_entry: Option<NonNull<ExecutionEntry>>,
         test_entry: Option<NonNull<ExecutionEntry>>,
@@ -186,8 +183,6 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
-            flaky_attempt_count: 0,
-            flaky_attempts_buf: [FlakyAttempt::default(); Self::MAX_FLAKY_ATTEMPTS],
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -195,10 +190,6 @@ impl ExecutionSequence {
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
         }
-    }
-
-    pub(crate) fn flaky_attempts(&self) -> &[FlakyAttempt] {
-        &self.flaky_attempts_buf[0..self.flaky_attempt_count]
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -290,6 +281,7 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
+            on_stack_entry_data: core::cell::Cell::new(None),
         }
     }
 
@@ -520,7 +512,6 @@ impl Execution {
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
-            Execution::on_entry_completed(entry_ptr);
 
             sequence.executing = false;
             if sequence.maybe_skip {
@@ -544,18 +535,6 @@ impl Execution {
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
-                if sequence.flaky_attempt_count < ExecutionSequence::MAX_FLAKY_ATTEMPTS {
-                    let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
-                        0
-                    } else {
-                        sequence.started_at.since_now_force_real_time()
-                    };
-                    sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = FlakyAttempt {
-                        result: sequence.result,
-                        elapsed_ns,
-                    };
-                    sequence.flaky_attempt_count += 1;
-                }
                 sequence.remaining_retry_count -= 1;
                 Execution::reset_sequence(sequence);
                 return;
@@ -639,8 +618,6 @@ impl Execution {
             entry.timespec = Timespec::EPOCH;
         }
     }
-
-    fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
@@ -744,17 +721,13 @@ impl Execution {
             }
         }
 
-        // Preserve retry/repeat counts and flaky attempt history across reset
-        let saved_flaky_attempt_count = sequence.flaky_attempt_count;
-        let saved_flaky_attempts_buf = sequence.flaky_attempts_buf;
+        // Preserve retry/repeat counts across reset
         *sequence = ExecutionSequence::init(
             sequence.first_entry,
             sequence.test_entry,
             sequence.remaining_retry_count,
             sequence.remaining_repeat_count,
         );
-        sequence.flaky_attempt_count = saved_flaky_attempt_count;
-        sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -1010,22 +983,26 @@ fn step_sequence_one(
     if let Some(cb) = next_item.callback.as_ref() {
         group_log::log(format_args!("runSequence queued callback"));
 
+        let entry_data = EntryData {
+            sequence_index,
+            entry: next_item_ptr.as_ptr() as *const (),
+            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+        };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
-            entry_data: Some(EntryData {
-                sequence_index,
-                entry: next_item_ptr.as_ptr() as *const (),
-                remaining_repeat_count: sequence.remaining_repeat_count as i64,
-            }),
+            entry_data: Some(entry_data),
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
+        let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
         let on_stack_cell = &raw const this.on_stack_entry;
-        // SAFETY: `on_stack_cell` points into `buntest.execution`, which is
+        let on_stack_data_cell = &raw const this.on_stack_entry_data;
+        // SAFETY: both cells point into `buntest.execution`, which is
         // never moved during execution (arena-owned BunTest behind an Rc).
         let _restore = scopeguard::guard((), move |()| unsafe {
             (*on_stack_cell).set(prev_on_stack);
+            (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
         if BunTest::run_test_callback(

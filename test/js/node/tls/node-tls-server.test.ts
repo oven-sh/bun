@@ -1333,10 +1333,10 @@ describe("tls.createServer pauseOnConnect", () => {
         got += d;
       });
       cli.write("hello");
-      // Barrier: a round-trip the other way proves the client's write has
-      // traversed the event loop on the server side while still paused.
-      srv.write("ack");
-      await once(cli, "data");
+      // Wait for the bytes to land in the paused Duplex's buffer (proving they
+      // reached the server without a 'data' event). Polling avoids the ordering
+      // assumption a reverse round-trip barrier would rely on.
+      while (srv.readableLength < 5) await new Promise(r => setImmediate(r));
       expect({ got, flowing: srv.readableFlowing, readableLength: srv.readableLength }).toEqual({
         got: "",
         flowing: false,

@@ -1027,10 +1027,9 @@ function onconnection(err, clientHandle) {
   _socket._server = self;
 
   if (pauseOnConnect) {
-    // For TLS, only pause the JS stream: the native handle must keep reading so
-    // the TLS engine sees the handshake and FIN/close_notify; ServerHandlers.data
-    // applies backpressure at the highWaterMark and the paused Duplex buffers
-    // decrypted bytes until the user resume()s.
+    // For TLS, only pause the JS stream: the native handle keeps reading so the
+    // TLS engine sees the handshake and FIN; ServerHandlers.data buffers decrypted
+    // bytes into the paused Duplex and applies backpressure at highWaterMark.
     if (isTLS) Duplex.prototype.pause.$call(_socket);
     else _socket.pause();
   }

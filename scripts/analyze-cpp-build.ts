@@ -66,18 +66,12 @@ const buildDir = resolve(repo, flag("dir") || "build/time-trace");
   // On Windows, relative() across drive roots returns the absolute `to` path;
   // a buildDir on a different drive cannot contain the repo, so allow it.
   const repoFromBuild = relative(buildDir, repo);
-  const containsRepo = !(
-    repoFromBuild === ".." ||
-    repoFromBuild.startsWith(`..${sep}`) ||
-    isAbsolute(repoFromBuild)
-  );
+  const containsRepo = !(repoFromBuild === ".." || repoFromBuild.startsWith(`..${sep}`) || isAbsolute(repoFromBuild));
   // Refuse in-repo paths outside build/ (--dir src, --dir .git).
   const buildFromRepo = relative(repo, buildDir);
   const insideRepo = !(buildFromRepo.startsWith(`..${sep}`) || isAbsolute(buildFromRepo));
   if (containsRepo || (insideRepo && !buildFromRepo.startsWith(`build${sep}`))) {
-    console.error(
-      `refusing --dir ${JSON.stringify(buildDir)}: the clean step would rm -rf a repo path outside build/`,
-    );
+    console.error(`refusing --dir ${JSON.stringify(buildDir)}: the clean step would rm -rf a repo path outside build/`);
     process.exit(1);
   }
 }

@@ -495,6 +495,7 @@ pub(crate) mod tests {
             let _ = File::from_fd(Fd::stderr());
         }
         assert!(fstat(Fd::stdout()).is_ok());
+        assert!(fstat(Fd::stderr()).is_ok());
     }
 
     #[test]

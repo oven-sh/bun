@@ -2052,12 +2052,7 @@ impl<'a> Resolver<'a> {
                             None => continue,
                         }
                     };
-                    match self.check_package_path(
-                        abs_custom,
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    match self.check_package_path(abs_custom, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),

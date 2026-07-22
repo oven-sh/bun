@@ -74,11 +74,10 @@ impl<T> StoreRef<T> {
     /// constants). Mutation through the resulting `StoreRef` is UB.
     #[inline]
     pub const fn from_static(r: &'static T) -> Self {
-        // SAFETY: `r` is a non-null, aligned, dereferenceable `'static`
-        // reference. Provenance is shared/read-only: the pointee is *never*
-        // written through — `DerefMut` on a `StoreRef` produced here is UB and
+        // Provenance is shared/read-only: the pointee is *never* written
+        // through — `DerefMut` on a `StoreRef` produced here is UB and
         // callers must not do so (audited: only `Deref`/`get()` reads occur).
-        StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
+        StoreRef(NonNull::from_ref(r))
     }
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]

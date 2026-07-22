@@ -161,6 +161,59 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(sent).toBe(false);
 });
 
+// The v1/v2 trace string is decoded positionally by bun.report:
+// <platform char><command char><format version char><7-char commit sha><vlq...>.
+// The sha segment must be exactly the first 7 characters of the full revision;
+// a longer or shorter prefix shifts every following byte and the URL becomes
+// undecodable.
+test("crash report trace string embeds the 7-char commit sha", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+      "panic",
+      // Make debug builds take the fast trace-string path instead of
+      // spawning llvm-symbolizer, which can take tens of seconds.
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: mergeWindowEnvs([
+      bunEnv,
+      {
+        BUN_CRASH_REPORT_URL: server.url.toString(),
+        BUN_ENABLE_CRASH_REPORTING: "1",
+        GITHUB_ACTIONS: undefined,
+        CI: undefined,
+      },
+    ]),
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
+  expect(exitCode).not.toBe(0);
+
+  // The report URL is printed as <base>/<bun version>/<trace string...>.
+  const origin = server.url.origin;
+  const start = stderr.indexOf(`${origin}/`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const reportUrl = stderr.slice(start).split(/\s/, 1)[0];
+  const [, version, metadata] = new URL(reportUrl).pathname.split("/");
+  expect(version.length).toBeGreaterThan(0);
+
+  // metadata[0] is the platform char and metadata[1] the command char (one
+  // byte each), so the format version and sha always start at fixed offsets.
+  expect(metadata[2]).toMatch(/^[12]$/);
+  const expectedSha = Bun.revision ? Bun.revision.slice(0, 7) : "unknown";
+  expect(metadata.slice(3, 10)).toBe(expectedSha);
+});
+
 describe("automatic crash reporter", () => {
   for (const approach of ["panic", "segfault", "outOfMemory"]) {
     test(`${approach} should report`, async () => {

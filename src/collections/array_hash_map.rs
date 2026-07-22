@@ -1541,9 +1541,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// slice by reference; never freed on drop.
     #[inline]
     pub const fn borrowed(s: &'static [u8]) -> Self {
-        // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
-        // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
+        let ptr = core::ptr::NonNull::from_ref(s).cast::<u8>();
         Self {
             ptr,
             len_tag: s.len(),

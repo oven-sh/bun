@@ -2362,10 +2362,9 @@ mod draft {
     // shift every following VLQ byte, making bun.report unable to decode the URL.
     const GIT_SHA: &str = {
         const fn sha7(s: &'static str) -> &'static str {
-            let (head, _) = s.as_bytes().split_at(7);
-            // SAFETY: GIT_SHA is ASCII hex; the first 7 bytes are a valid UTF-8
-            // prefix. `split_at` const-panics if the input is shorter than 7.
-            unsafe { core::str::from_utf8_unchecked(head) }
+            // GIT_SHA is ASCII hex; `split_at` const-panics if the input is
+            // shorter than 7 bytes or byte 7 is not a char boundary.
+            s.split_at(7).0
         }
         if !Environment::GIT_SHA.is_empty() {
             sha7(Environment::GIT_SHA)

@@ -517,12 +517,16 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
       });
       const port = (wss.address() as import("node:net").AddressInfo).port;
       const client = new NodeWS(`ws://127.0.0.1:${port}/`);
-      await once(client, "open");
-      client.close();
-      const err = await closedCbErr;
-      expect(err).toBeInstanceOf(Error);
-      expect(err).not.toBeInstanceOf(TypeError);
-      expect((err as Error).message).toContain("WebSocket is not open: readyState 3 (CLOSED)");
+      try {
+        await once(client, "open");
+        client.close();
+        const err = await closedCbErr;
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(TypeError);
+        expect((err as Error).message).toContain("WebSocket is not open: readyState 3 (CLOSED)");
+      } finally {
+        client.terminate();
+      }
     } finally {
       wss.close();
     }

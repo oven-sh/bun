@@ -377,6 +377,11 @@ class InspectorCDPAdapter {
   // Current backend breakpointId -> the id the client knows (only entries that
   // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
+  // Profiler domain: tracking state plus the deferred Profiler.stop reply,
+  // answered when ScriptProfiler.trackingComplete delivers the samples.
+  #profilerTracking = false;
+  #profilerStartTime = 0;
+  #profilerStopClientId: number | string | undefined;
   // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
@@ -1006,6 +1011,44 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Heap.gc", undefined, id, method);
         return;
 
+      // V8's CPU profiler maps onto JSC's ScriptProfiler: track with samples,
+      // then reshape them into a V8 profile (#translateSamplingProfile).
+      case "Profiler.start":
+        // Set synchronously so a pipelined Profiler.stop is not rejected while
+        // the startTracking round-trip is still in flight.
+        this.#profilerTracking = true;
+        this.#sendToBackend(
+          "ScriptProfiler.startTracking",
+          { includeSamples: true },
+          null,
+          method,
+          (_result, error) => {
+            if (error) {
+              this.#profilerTracking = false;
+              this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+              return;
+            }
+            this.#replyToClient(id, {});
+          },
+        );
+        return;
+
+      case "Profiler.stop":
+        if (!this.#profilerTracking) {
+          this.#replyErrorToClient(id, -32000, "No recording profiles found");
+          return;
+        }
+        this.#profilerTracking = false;
+        this.#profilerStopClientId = id;
+        // The success reply waits for trackingComplete; only an error answers here.
+        this.#sendToBackend("ScriptProfiler.stopTracking", undefined, null, method, (_result, error) => {
+          if (error && this.#profilerStopClientId === id) {
+            this.#profilerStopClientId = undefined;
+            this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+          }
+        });
+        return;
+
       case "Console.enable":
       case "Console.disable":
       case "Console.clearMessages":
@@ -1028,9 +1071,8 @@ class InspectorCDPAdapter {
       case "Runtime.setAsyncCallStackDepth":
       case "Profiler.enable":
       case "Profiler.disable":
-      // Accepted and ignored. Bun can set a sampling interval
-      // (Bun__setSamplingInterval), but Profiler.start has no translation and
-      // is rejected as unknown, so no profile can observe the difference.
+      // Accepted and ignored: JSC's ScriptProfiler protocol exposes no
+      // sampling-interval control, so the hint cannot reach the backend.
       case "Profiler.setSamplingInterval":
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
@@ -1227,6 +1269,22 @@ class InspectorCDPAdapter {
         this.#translateConsoleMessage(params.message || {});
         return;
 
+      case "ScriptProfiler.trackingStart":
+        this.#profilerStartTime = params.timestamp ?? 0;
+        return;
+
+      case "ScriptProfiler.trackingComplete": {
+        const clientId = this.#profilerStopClientId;
+        this.#profilerStopClientId = undefined;
+        // Broadcast to every session sharing this backend: all of them learn
+        // tracking ended; only the one whose Profiler.stop is waiting replies.
+        this.#profilerTracking = false;
+        if (clientId === undefined) return;
+        this.#replyToClient(clientId, { profile: this.#translateSamplingProfile(params) });
+        this.#profilerStartTime = 0;
+        return;
+      }
+
       case "Bun.waitingForDisconnect":
         // The inspected thread reached exit and is blocking for this frontend.
         // Node: sessions that opted in get waitingForDisconnect; if *any*
@@ -1254,6 +1312,72 @@ class InspectorCDPAdapter {
         // JSC- and Bun-specific events have no CDP equivalent.
         return;
     }
+  }
+
+  // Rebuilds V8's CPUProfile tree from JSC's flat sample list: each sampled
+  // stack is walked caller-to-callee interning one node per call path, the
+  // leaf takes the hit, and timestamps become microsecond deltas.
+  #translateSamplingProfile(params: AnyObject): AnyObject {
+    const stackTraces: AnyObject[] = params.samples?.stackTraces ?? [];
+    const root: AnyObject = {
+      id: 1,
+      callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+      hitCount: 0,
+      children: [],
+    };
+    const nodes: AnyObject[] = [root];
+    const interned = new Map<string, AnyObject>();
+    const samples: number[] = [];
+    const timeDeltas: number[] = [];
+    const startTime = this.#profilerStartTime || (stackTraces.length ? (stackTraces[0].timestamp ?? 0) : 0);
+    let previous = startTime;
+    for (const trace of stackTraces) {
+      let parent = root;
+      const frames: AnyObject[] = trace.stackFrames ?? [];
+      // JSC reports frames innermost-first; the tree grows from the root.
+      for (let i = frames.length - 1; i >= 0; i--) {
+        const frame = frames[i];
+        const key = `${parent.id}\u0000${frame.sourceID}\u0000${frame.name}\u0000${frame.line}\u0000${frame.column}`;
+        let node = interned.$get(key);
+        if (!node) {
+          // JSC counts these lines and columns from 1; CDP counts from 0.
+          const location = this.#toOriginalLocation({
+            scriptId: frame.sourceID,
+            lineNumber: Math.max((frame.line ?? 1) - 1, 0),
+            columnNumber: Math.max((frame.column ?? 1) - 1, 0),
+          }) as AnyObject;
+          node = {
+            id: nodes.length + 1,
+            callFrame: {
+              functionName: frame.name ?? "",
+              scriptId: String(frame.sourceID ?? "0"),
+              url: toCdpUrl(frame.url ?? ""),
+              lineNumber: location.lineNumber,
+              columnNumber: location.columnNumber,
+            },
+            hitCount: 0,
+            children: [],
+          };
+          nodes.push(node);
+          parent.children.push(node.id);
+          interned.$set(key, node);
+        }
+        parent = node;
+      }
+      parent.hitCount++;
+      samples.push(parent.id);
+      const timestamp = Math.max(previous, typeof trace.timestamp === "number" ? trace.timestamp : previous);
+      timeDeltas.push(Math.round((timestamp - previous) * 1e6));
+      previous = timestamp;
+    }
+    const endTime = Math.max(params.timestamp ?? 0, previous);
+    return {
+      nodes,
+      startTime: Math.round(startTime * 1e6),
+      endTime: Math.round(endTime * 1e6),
+      samples,
+      timeDeltas,
+    };
   }
 
   #translateStackTrace(stackTrace: AnyObject | undefined): AnyObject | undefined {

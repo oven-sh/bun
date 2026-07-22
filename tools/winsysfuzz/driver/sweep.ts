@@ -663,6 +663,10 @@ const queueLines: string[] = [];
 for (const r of results) {
   const v = verdicts.get(r);
   if (!v) continue; // only verified findings enter the queue
+  // Admission: a HANG whose every standalone replay came back clean is a
+  // sweep-load artifact, not something worth a human look - it stays in
+  // the roll-up but does not enter the triage queue.
+  if (v.verdict === "load-dependent" && v.outcomes.every(o => o === "clean")) continue;
   const dedupeKey = r.crashSig ? `crash: ${r.crashSig.signature}` : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;
   queueLines.push(
     JSON.stringify({

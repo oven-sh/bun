@@ -121,13 +121,9 @@ test(
   timeout,
 );
 
-// The per-VM `node:fs` native binding (a Box<Binding> created once by
-// internal/fs/binding.ts) is anchored only by the GC wrapper's m_ctx slot,
-// which lives in the JSC heap (bmalloc). LSan does not scan bmalloc pages as
-// roots, so without __lsan_ignore_object it reports the main-thread singleton
-// as a 4104-byte leak once Rust's allocator internals push Bun::generateModule
-// past malloc_context_size. Covered by the dns.lookup test below too, but this
-// is the minimal repro and runs in a fraction of the time.
+// The per-VM node:fs Binding box is anchored only by the GC wrapper's m_ctx
+// inside the JSC heap, which LSan does not scan; without __lsan_ignore_object
+// the main-thread singleton is reported as a leak.
 test.skipIf(!isASAN)(
   "main-thread node:fs binding is not a false-positive LSan leak",
   async () => {

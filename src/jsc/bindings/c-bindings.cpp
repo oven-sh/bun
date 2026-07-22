@@ -485,6 +485,10 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
+// Startup snapshot of each stdio fd's F_GETFL (-1 = not captured). O_NONBLOCK
+// is per open file *description* (shared with parent shell/pipeline siblings);
+// leaving it set breaks later blocking writers. See Node.js ResetStdio().
+static int stdio_flags_to_restore[3] = { -1, -1, -1 };
 // Whether Bun itself has modified the termios of each stdio fd during this
 // process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
 // whether the exit-time termios restore should fire when Bun is acting as a
@@ -517,6 +521,28 @@ extern "C" void bun_restore_stdio()
     // where Bun is the foreground session owner and the startup snapshot is
     // the state the user expects back.
     const bool pipeline_producer = bun_stdio_tty[1] == 0;
+
+    // Restore the O_NONBLOCK bit to its startup value. fcntl is async-signal-safe.
+    for (int32_t fd = 0; fd < 3; fd++) {
+        if (stdio_flags_to_restore[fd] == -1)
+            continue;
+
+        int cur;
+        do
+            cur = fcntl(fd, F_GETFL);
+        while (cur == -1 && errno == EINTR);
+        if (cur == -1)
+            continue;
+
+        const int want_nonblock = stdio_flags_to_restore[fd] & O_NONBLOCK;
+        if ((cur & O_NONBLOCK) == want_nonblock)
+            continue;
+
+        int err;
+        do
+            err = fcntl(fd, F_SETFL, (cur & ~O_NONBLOCK) | want_nonblock);
+        while (err == -1 && errno == EINTR);
+    }
 
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
@@ -634,6 +660,12 @@ extern "C" void bun_initialize_process()
                 anyTTYs = true;
             }
         }
+
+        // Snapshot F_GETFL so bun_restore_stdio() can undo O_NONBLOCK we (or
+        // user code) set on the shared open file description.
+        do
+            stdio_flags_to_restore[fd] = fcntl(fd, F_GETFL);
+        while (stdio_flags_to_restore[fd] == -1 && errno == EINTR);
     }
 
     ASSERT(devNullFd_ == -1 || devNullFd_ > 2);
@@ -641,8 +673,12 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
+    const bool anyFlagsSnapshotted = stdio_flags_to_restore[0] != -1 || stdio_flags_to_restore[1] != -1 || stdio_flags_to_restore[2] != -1;
+
+    // Restore stdio state on signal death. The O_NONBLOCK restore matters even
+    // with no TTY (fully-piped / headless), so install whenever either kind of
+    // snapshot exists. Node.js registers its ResetStdio handlers unconditionally.
+    if (anyTTYs || anyFlagsSnapshotted) {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sigemptyset(&sa.sa_mask);

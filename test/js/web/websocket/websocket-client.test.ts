@@ -320,17 +320,29 @@ describe("WebSocket send/ping/pong with detached buffers", () => {
     });
   }
 
-  it.concurrent("send(Uint8Array subarray) sends only the view's bytes", async () => {
+  it.concurrent("send/ping/pong(Uint8Array subarray) transmit only the view's bytes", async () => {
     await withOpenSocket(async (ws, received) => {
       const ab = new ArrayBuffer(8);
       new Uint8Array(ab).set([1, 2, 3, 4, 5, 6, 7, 8]);
       const view = new Uint8Array(ab, 2, 4);
-      const echoed = new Promise<Buffer>(resolve => {
-        ws.onmessage = e => resolve(Buffer.from(e.data as ArrayBuffer));
-      });
+      const expected = Buffer.from([3, 4, 5, 6]);
+
+      const nextEcho = () =>
+        new Promise<Buffer>(resolve => {
+          ws.onmessage = e => resolve(Buffer.from(e.data as ArrayBuffer));
+        });
+
+      let echoed = nextEcho();
       ws.send(view);
-      expect(await echoed).toEqual(Buffer.from([3, 4, 5, 6]));
-      expect(received).toEqual([Buffer.from([3, 4, 5, 6])]);
+      expect(await echoed).toEqual(expected);
+
+      ws.ping(view);
+      ws.pong(view);
+      echoed = nextEcho();
+      ws.send(new Uint8Array([0xff]));
+      expect(await echoed).toEqual(Buffer.from([0xff]));
+
+      expect(received).toEqual([expected, expected, expected, Buffer.from([0xff])]);
     });
   });
 });

@@ -1132,3 +1132,27 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+// A pause() made inside the 'connection' handler must be honored after the
+// handler returns. onconnection previously called resume() unconditionally
+// after emit("connection"), which overrode the handler's pause(): inbound
+// bytes were emitted into the void, the kernel receive buffer drained, and the
+// writer saw 'drain' against a peer that would receive nothing after resume().
+// Runs in a subprocess so nothing in the test runner touches the stream's
+// flowing state.
+it("accepted socket honors pause() made inside the 'connection' handler", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "net-server-accepted-socket-pause-fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "flowing false",
+    "drainsWhilePaused 0 backpressured true",
+    "delivered true",
+  ]);
+  expect(exitCode).toBe(0);
+});

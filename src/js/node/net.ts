@@ -883,7 +883,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self.emit("secureConnect", verifyError);
     if (server?.pauseOnConnect) {
       self.pause();
-    } else {
+    } else if (self.readableFlowing === null) {
+      // See onconnection: honor a pause()/'data'/'readable' touched inside
+      // the secureConnection/secureConnect handlers.
       self.resume();
     }
   },
@@ -1063,8 +1065,15 @@ function onconnection(err, clientHandle) {
   }
 
   self.emit("connection", _socket);
-  // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-  if (!pauseOnConnect && !isTLS) {
+  // The handler may have paused (readableFlowing === false) or attached
+  // 'data'/'readable' (true/false). Forcing resume() over a handler's pause()
+  // put the stream into flowing mode with no listener: inbound bytes were
+  // emitted into the void and the writer saw 'drain' against a paused peer.
+  // null means the handler left the stream untouched; keep resuming there so
+  // a write-only handler's peer-close still tears the socket down (Node
+  // leaves it null and relies on libuv's UV_EOF readStop to release the loop,
+  // which would require accepted sockets to hold the loop on their own).
+  if (!pauseOnConnect && !isTLS && _socket.readableFlowing === null) {
     _socket.resume();
   }
 }

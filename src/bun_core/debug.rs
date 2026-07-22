@@ -330,12 +330,12 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// No trimming is needed — the walk starts on the faulting stack, so the
 /// signal handler's own frames (on the altstack) are never in the chain.
 ///
-/// Windows: `rbp` is not a reliable frame pointer across all linked code (the
-/// prebuilt JavaScriptCore and LLInt assembly do not maintain it), so an
-/// fp-walk derails at the C++ boundary. Use the native `.pdata`-based
-/// `RtlCaptureStackBackTrace` instead — it works with or without unwind tables
-/// since `.pdata` is always emitted — and trim the handler's own frames by
-/// scanning for `pc`. `fp` is unused on Windows.
+/// Windows: `fp` is the `*const CONTEXT` the VEH received (`EXCEPTION_POINTERS
+/// ::ContextRecord`). The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
+/// seeded from that context, so it starts at the fault frame and the handler's
+/// own frames are never in the chain. `rbp` is not a reliable frame pointer
+/// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
+/// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
@@ -344,34 +344,73 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     let mut n = 1usize;
     #[cfg(windows)]
     {
-        let _ = fp;
-        let cap = (out.len() - 1).min(u16::MAX as usize) as u32;
-        // SAFETY: out[1..] is valid for `cap` writes; hash ptr may be null.
-        let got = unsafe {
-            bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
-                0,
-                cap,
-                out[1..].as_mut_ptr().cast::<*mut core::ffi::c_void>(),
-                core::ptr::null_mut(),
-            )
-        } as usize;
-        // VEH runs on the faulting thread's stack, so the captured trace is
-        // [handler frames…][fault frame][callers…]. Trim everything above the
-        // first frame whose return address sits within a small tolerance of
-        // the fault `pc` (the call-site/return-address may be a few bytes
-        // off). If no match, keep the full trace rather than discard it.
-        const TOLERANCE: usize = 256;
-        let frames = &out[1..1 + got];
-        let skip = frames
-            .iter()
-            .take(12)
-            .position(|&a| a.abs_diff(pc) <= TOLERANCE)
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        if skip > 0 {
-            out.copy_within(1 + skip..1 + got, 1);
+        use bun_windows_sys::{CONTEXT, UNW_FLAG_NHANDLER, ntdll};
+        if fp == 0 {
+            // No CONTEXT available (should not happen for a real VEH fault).
+            return n;
         }
-        n += got - skip;
+        // SAFETY: `fp` is `EXCEPTION_POINTERS::ContextRecord` from the kernel;
+        // valid for the duration of the handler. Copy so RtlVirtualUnwind can
+        // mutate freely without touching the kernel's record.
+        let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
+        while n < out.len() {
+            #[cfg(target_arch = "x86_64")]
+            let control_pc = ctx.Rip;
+            #[cfg(target_arch = "aarch64")]
+            let control_pc = ctx.Pc;
+            if control_pc == 0 {
+                break;
+            }
+            let mut image_base: u64 = 0;
+            // SAFETY: `control_pc` is a code address from the fault context;
+            // `image_base` is valid for write; history table may be null.
+            let rf = unsafe {
+                ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
+            };
+            if rf.is_null() {
+                // Leaf function with no `.pdata` entry: manually pop the
+                // return address. On x64 it is at `[Rsp]`; on ARM64 it is in
+                // `Lr`.
+                #[cfg(target_arch = "x86_64")]
+                // SAFETY: `Rsp` is the fault thread's stack pointer restored by
+                // the previous unwind step; the return-address slot is mapped.
+                unsafe {
+                    ctx.Rip = *(ctx.Rsp as *const u64);
+                    ctx.Rsp += 8;
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    ctx.Pc = ctx.Lr;
+                }
+            } else {
+                let mut handler_data: *mut core::ffi::c_void = core::ptr::null_mut();
+                let mut establisher_frame: u64 = 0;
+                // SAFETY: `rf` and `image_base` came from RtlLookupFunctionEntry
+                // for `control_pc`; `ctx` is a valid local CONTEXT; out-params
+                // are valid for write; ContextPointers may be null.
+                unsafe {
+                    ntdll::RtlVirtualUnwind(
+                        UNW_FLAG_NHANDLER,
+                        image_base,
+                        control_pc,
+                        rf,
+                        &mut ctx,
+                        &mut handler_data,
+                        &mut establisher_frame,
+                        core::ptr::null_mut(),
+                    );
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            let next_pc = ctx.Rip;
+            #[cfg(target_arch = "aarch64")]
+            let next_pc = ctx.Pc;
+            if next_pc == 0 || next_pc == control_pc {
+                break;
+            }
+            out[n] = next_pc as usize;
+            n += 1;
+        }
     }
     #[cfg(not(windows))]
     {

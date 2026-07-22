@@ -862,9 +862,10 @@ mod draft {
     /// Where the crash trace is seeded from. Each call site has exactly one.
     #[derive(Clone, Copy)]
     pub enum TraceSeed<'a> {
-        /// Signal/exception handler saved the fault register context: walk frame
-        /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
-        /// becomes frame 0.
+        /// Signal/exception handler saved the fault register context. `pc`
+        /// becomes frame 0. POSIX: `fp` is the saved frame-pointer register and
+        /// the walk follows the fp chain. Windows: `fp` is the `*const CONTEXT`
+        /// from `EXCEPTION_POINTERS` and the walk uses `RtlVirtualUnwind`.
         Fault { pc: usize, fp: usize },
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
@@ -2072,9 +2073,15 @@ mod draft {
         // SAFETY: kernel provides a valid EXCEPTION_RECORD; ExceptionAddress is
         // the faulting instruction.
         let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
-        // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
-        // by `pc`; the frame-pointer slot is unused.
-        crash_handler(reason, TraceSeed::Fault { pc, fp: 0 });
+        // Windows: capture_from_context walks via RtlVirtualUnwind seeded from
+        // the fault CONTEXT, so the handler's own frames are never captured.
+        crash_handler(
+            reason,
+            TraceSeed::Fault {
+                pc,
+                fp: info.ContextRecord as usize,
+            },
+        );
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

@@ -1,7 +1,44 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("WebSocket upgrade", () => {
+  // https://github.com/oven-sh/bun/issues/2896
+  // A server that accepts the TCP connection but never answers the upgrade
+  // used to leave the WebSocket in CONNECTING forever: the handshake timeout
+  // was armed on the connecting socket, but usockets clears it when the
+  // socket opens and handle_open never re-armed it. With
+  // BUN_CONFIG_WS_HANDSHAKE_TIMEOUT=1 (usockets sweeps every 4 s, so the
+  // effective delay is ~4-8 s) the WebSocket should error and close.
+  test("fails the handshake when the server never responds", async () => {
+    const script = `
+      const net = require("node:net");
+      const srv = net.createServer(() => {});
+      srv.listen(0, "127.0.0.1", () => {
+        const port = srv.address().port;
+        const ws = new WebSocket("ws://127.0.0.1:" + port + "/");
+        const events = [];
+        ws.onopen = () => events.push("open");
+        ws.onerror = () => events.push("error");
+        ws.onclose = (e) => {
+          events.push("close:" + e.code);
+          console.log(JSON.stringify(events));
+          srv.close();
+        };
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual(["error", "close:1006"]);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   test("should send correct upgrade headers", async () => {
     const server = serve({
       hostname: "localhost",

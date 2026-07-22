@@ -99,6 +99,33 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
+  test("bun init falls back to --yes when stdin is not a TTY", async () => {
+    const temp = tempDirWithFiles("bun-init-no-tty", {});
+
+    // stdin is a pipe we never write to. Previously this hung at the template
+    // menu waiting for a keystroke that never arrives.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // No interactive menu rendered: no "Select a project template" prompt and
+    // no cursor-control escapes leaked into piped stdout.
+    expect(stdout).not.toContain("Select a project template");
+    expect(stdout).not.toContain("\x1b[");
+    expect(stderr).not.toContain("\x1b[");
+    expect(exitCode).toBe(0);
+
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+  }, 30_000);
+
   test("bun init in folder", async () => {
     const temp = tempDirWithFiles("bun-init-in-folder", {
       "mydir": {
@@ -208,10 +235,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       env: initEnv,
     });
     expect(await exited2).toBe(0);
-    expect(await stderr.text()).toMatchInlineSnapshot(`
-    "note: package.json already exists, configuring existing project
-    "
-  `);
+    // stdin is "ignore" (not a TTY), so this run behaves like `-y` and the
+    // "package.json already exists" note is suppressed just as it is for `-y`.
+    expect(await stderr.text()).toMatchInlineSnapshot(`""`);
     expect(await exited2).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
     expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`

@@ -250,6 +250,27 @@ impl UpdateInteractiveCommand {
         );
         Output::flush();
 
+        // The multi-select reads single keystrokes from raw-mode stdin. On a
+        // pipe (CI, spawn with stdio:'pipe') that either blocks forever or
+        // silently selects nothing on EOF while spraying cursor-control
+        // escapes into a non-TTY log. Refuse early, before resolving
+        // manifests. Tests that drive the UI via piped keystrokes set
+        // BUN_INTERNAL_INTERACTIVE_ASSUME_TTY=1 to bypass this.
+        if !Output::is_stdin_tty()
+            && !bun_core::env_var::feature_flag::BUN_INTERNAL_INTERACTIVE_ASSUME_TTY
+                .get()
+                .unwrap_or(false)
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>bun update --interactive<r> requires an interactive terminal."
+            );
+            bun_core::pretty_errorln!(
+                "Use <cyan>bun update<r> to update non-interactively, or <cyan>bun outdated<r> to list available updates."
+            );
+            Output::flush();
+            Global::exit(1);
+        }
+
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
         let silent = cli.silent;
 

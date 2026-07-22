@@ -1,0 +1,195 @@
+#!/bin/bash
+#
+# Runs as root after the payload has been copied to /usr/local/bin.
+# Mirrors the behavior of src/cli/install.sh so that a .pkg install lands in
+# the same state as `curl -fsSL https://bun.com/install | bash`:
+#
+#   - /usr/local/bin is on PATH (via /etc/paths.d, survives shells that
+#     don't already include it)
+#   - BUN_INSTALL is exported for the installing user so `bun add -g` and
+#     friends write to ~/.bun rather than a root-owned directory
+#   - ~/.bun/bin is on PATH so globally-installed package bins resolve
+#   - shell completions are installed
+#
+# Installer.app invokes this with:
+#   $1 = package path, $2 = target location, $3 = target volume, $4 = /
+# and sets $HOME/$USER to the *logged-in* user, not root, but that isn't
+# guaranteed for CLI installs — so resolve the console user explicitly.
+#
+set -euo pipefail
+
+BIN_DIR="/usr/local/bin"
+BUN_EXE="$BIN_DIR/bun"
+
+# ---------------------------------------------------------------------------
+# System-wide PATH entry
+# ---------------------------------------------------------------------------
+
+# /usr/local/bin is already in the default macOS PATH for login shells via
+# /etc/paths, but some contexts (LaunchAgents, cron, IDE-spawned shells)
+# don't source it. Adding an explicit paths.d entry is cheap and idempotent.
+mkdir -p /etc/paths.d
+printf '%s\n' "$BIN_DIR" > /etc/paths.d/200-bun
+
+# ---------------------------------------------------------------------------
+# Ensure the bunx symlink survived (pkgbuild preserves symlinks in the
+# payload, but be defensive in case a previous install left a real file
+# or directory — `ln -sf` into a directory creates the link *inside* it
+# on BSD, and `rm -f` on a directory exits 1 which would abort under -e).
+# ---------------------------------------------------------------------------
+
+if [[ -e "$BIN_DIR/bunx" && ! -L "$BIN_DIR/bunx" ]]; then
+  rm -rf "$BIN_DIR/bunx"
+fi
+ln -sf bun "$BIN_DIR/bunx"
+
+# ---------------------------------------------------------------------------
+# Per-user configuration
+# ---------------------------------------------------------------------------
+
+# Figure out who actually ran the installer. Installer.app exports $USER as
+# the console user, but `installer -pkg ... -target /` from a root shell does
+# not. Fall back to the console owner.
+CONSOLE_USER="${USER:-}"
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
+  CONSOLE_USER="$(stat -f%Su /dev/console 2>/dev/null || true)"
+fi
+
+# Headless / CI install with no console user — nothing per-user to do.
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
+  exit 0
+fi
+
+# NFSHomeDirectory may contain spaces; strip only the leading key, keep the
+# full path. `|| true` keeps set -e/pipefail from aborting on a dscl failure
+# (AD/LDAP account, offline directory service, recovery mode) — the
+# empty-string check below is the graceful exit.
+USER_HOME=$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | sed 's/^NFSHomeDirectory: //' || true)
+if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
+  exit 0
+fi
+
+BUN_INSTALL="$USER_HOME/.bun"
+
+# Create ~/.bun/bin so `bun add -g <pkg>` has somewhere to link into, and so
+# the PATH entry we add below points at something that exists. Best-effort:
+# an NFS home / quota / permission failure here mustn't make Installer.app
+# report the whole install as failed when bun is already in /usr/local/bin.
+sudo -u "$CONSOLE_USER" mkdir -p "$BUN_INSTALL/bin" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Shell profile: export BUN_INSTALL and put ~/.bun/bin on PATH.
+#
+# We append to every shell config that exists (or the user's login-shell
+# default if none do). The block is guarded so re-running the installer
+# doesn't duplicate it.
+#
+# This script runs as root, but every write into the user's home goes
+# through `sudo -u "$CONSOLE_USER" tee -a`, so it executes with the user's
+# own permissions. That is the security boundary: if ~/.zshrc is a symlink
+# (dotfile managers like chezmoi/stow/yadm do this routinely) the append
+# follows it, but can only succeed on files the user could already write —
+# a symlink to a root-owned file just fails with EACCES.
+# ---------------------------------------------------------------------------
+
+# The marker grep runs as $CONSOLE_USER for the same reason the tee does:
+# on NFS-mounted home dirs with root-squash, root is mapped to nobody and
+# can't read the user's rc file, so a root-level grep would fail with
+# EACCES and we'd append a duplicate block on every reinstall.
+has_marker() {
+  sudo -u "$CONSOLE_USER" grep -qF '# bun (installed via .pkg)' "$1" 2>/dev/null
+}
+
+# Returns 0 when the file was targeted (wrote the block, or it was already
+# present), non-zero when the path is unsuitable or the write failed.
+# Callers use the return to decide whether the ~/.zprofile fallback is
+# still needed. Every call site is in an `&&`/`||` context so a non-zero
+# return doesn't trip `set -e`.
+append_once() {
+  local file="$1"
+  # Skip anything that isn't (or doesn't resolve to) a regular file:
+  # directories, devices, and broken symlinks. `-e`/`-f` dereference, so
+  # a broken symlink has -e false — hence the `|| -L` to catch it.
+  [[ ( -e "$file" || -L "$file" ) && ! -f "$file" ]] && return 1
+  if [[ -f "$file" ]] && has_marker "$file"; then
+    return 0
+  fi
+  # No `|| true`: propagate tee's exit so a write that fails (EACCES on
+  # a symlink to a root-owned file, ENOSPC, …) is reflected in wrote_any
+  # and the ~/.zprofile fallback still fires.
+  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF
+
+# bun (installed via .pkg)
+export BUN_INSTALL="\$HOME/.bun"
+export PATH="\$BUN_INSTALL/bin:\$PATH"
+EOF
+}
+
+append_once_fish() {
+  local file="$1"
+  sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
+  [[ ( -e "$file" || -L "$file" ) && ! -f "$file" ]] && return 1
+  if [[ -f "$file" ]] && has_marker "$file"; then
+    return 0
+  fi
+  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF
+
+# bun (installed via .pkg)
+set --export BUN_INSTALL "\$HOME/.bun"
+set --export PATH "\$BUN_INSTALL/bin" \$PATH
+EOF
+}
+
+USER_SHELL="$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null | sed 's/^UserShell: //' || true)"
+wrote_any=0
+
+# zsh — macOS default shell.
+if [[ -f "$USER_HOME/.zshrc" || "$USER_SHELL" == */zsh ]]; then
+  append_once "$USER_HOME/.zshrc" && wrote_any=1
+fi
+
+# bash
+for rc in "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
+  if [[ -f "$rc" ]]; then
+    append_once "$rc" && wrote_any=1
+  fi
+done
+if [[ "$USER_SHELL" == */bash && ! -f "$USER_HOME/.bash_profile" && ! -f "$USER_HOME/.bashrc" ]]; then
+  append_once "$USER_HOME/.bash_profile" && wrote_any=1
+fi
+
+# fish — only if the user has actually set it up. `command -v fish` would
+# probe root's PATH (where Homebrew often has fish as a transitive dep) and
+# create config for users who've never touched it.
+if [[ -d "$USER_HOME/.config/fish" || "$USER_SHELL" == */fish ]]; then
+  append_once_fish "$USER_HOME/.config/fish/config.fish" && wrote_any=1
+fi
+
+# If none of the above targeted a file (either the login shell is something
+# else entirely, or the target paths exist but aren't regular files — e.g.
+# a broken dotfile manager left ~/.zshrc as a directory), fall back to
+# ~/.zprofile. zsh is the macOS default since Catalina. Skip for fish
+# users — fish never sources ~/.zprofile, so the write would just leave
+# a misleading file behind; they still get /usr/local/bin via paths.d.
+if [[ "$wrote_any" == "0" && "$USER_SHELL" != */fish ]]; then
+  append_once "$USER_HOME/.zprofile" || true
+fi
+
+# ---------------------------------------------------------------------------
+# Shell completions — best-effort, ignore failure.
+#
+# `bun completions` picks the target shell from $SHELL
+# (install_completions_command.zig); without forwarding USER_SHELL it
+# would see root's shell (or nothing) and, with IS_BUN_AUTO_UPDATE=true,
+# exit 0 having written nothing. Default to zsh — macOS default since
+# Catalina — when dscl couldn't resolve one.
+# ---------------------------------------------------------------------------
+
+sudo -u "$CONSOLE_USER" env \
+  HOME="$USER_HOME" \
+  BUN_INSTALL="$BUN_INSTALL" \
+  SHELL="${USER_SHELL:-/bin/zsh}" \
+  IS_BUN_AUTO_UPDATE=true \
+  "$BUN_EXE" completions >/dev/null 2>&1 || true
+
+exit 0

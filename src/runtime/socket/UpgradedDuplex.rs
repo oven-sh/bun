@@ -75,23 +75,14 @@ pub struct CertError {
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
 /// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
-/// `js_upgrade_duplex_to_tls` and applied by
-/// [`UpgradedDuplex::apply_server_verify`]. Ignored for client upgrades.
+/// `js_upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
+/// Ignored for client upgrades.
 #[derive(Clone, Copy)]
 pub(crate) struct ServerVerify {
     /// `requestCert` — whether to send a CertificateRequest at all.
     pub request_cert: bool,
     /// `rejectUnauthorized` — only meaningful when `request_cert` is set.
     pub reject_unauthorized: bool,
-}
-
-/// Never abort the handshake from inside BoringSSL: the verification result is
-/// read back as `verify_error` and enforced in JS. Mirrors `us_verify_callback`.
-unsafe extern "C" fn always_continue_server_verify(
-    _preverify_ok: core::ffi::c_int,
-    _store_ctx: *mut bun_boringssl_sys::X509_STORE_CTX,
-) -> core::ffi::c_int {
-    1
 }
 
 pub struct Handlers {
@@ -429,43 +420,6 @@ impl UpgradedDuplex {
         Ok(array)
     }
 
-    /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
-    ///
-    /// `us_ssl_ctx_from_options` turns on `SSL_VERIFY_PEER |
-    /// SSL_VERIFY_FAIL_IF_NO_PEER_CERT` whenever the options carry a `ca`,
-    /// because for a server that flag is what decides whether a
-    /// CertificateRequest is sent. Node instead keys that off `requestCert`
-    /// alone, so a server given `ca` but no `requestCert` must not ask for a
-    /// client certificate. The real-fd upgrade path already corrects this
-    /// per-SSL; without the same correction here a duplex-wrapped server
-    /// rejects every cert-less client with UNABLE_TO_GET_ISSUER_CERT.
-    ///
-    /// Client sockets are untouched: their verify mode is set by `SSLWrapper`
-    /// itself so `verify_error` is populated for the JS `rejectUnauthorized`
-    /// decision.
-    fn apply_server_verify(&mut self, is_client: bool, verify: ServerVerify) {
-        if is_client {
-            return;
-        }
-        let Some(ssl) = self.ssl() else { return };
-        let mode = if verify.request_cert {
-            bun_boringssl_sys::SSL_VERIFY_PEER
-                | if verify.reject_unauthorized {
-                    bun_boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT
-                } else {
-                    0
-                }
-        } else {
-            bun_boringssl_sys::SSL_VERIFY_NONE
-        };
-        // SAFETY: `ssl` is this wrapper's live `SSL*`, before any handshake
-        // byte has been processed. The callback always returns 1 so BoringSSL
-        // never aborts mid-flight; JS reads `verify_error` and decides.
-        unsafe {
-            bun_boringssl_sys::SSL_set_verify(ssl, mode, Some(always_continue_server_verify));
-        }
-    }
-
     pub(crate) fn start_tls(
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
@@ -487,8 +441,9 @@ impl UpgradedDuplex {
             },
         )?);
 
-        self.apply_server_verify(is_client, verify);
-        self.wrapper.as_mut().unwrap().start();
+        let wrapper = self.wrapper.as_mut().unwrap();
+        wrapper.set_server_verify(verify.request_cert, verify.reject_unauthorized);
+        wrapper.start();
         Ok(())
     }
 
@@ -526,8 +481,9 @@ impl UpgradedDuplex {
         // Success: disarm the errdefer.
         scopeguard::ScopeGuard::into_inner(ctx_guard);
 
-        self.apply_server_verify(is_client, verify);
-        self.wrapper.as_mut().unwrap().start();
+        let wrapper = self.wrapper.as_mut().unwrap();
+        wrapper.set_server_verify(verify.request_cert, verify.reject_unauthorized);
+        wrapper.start();
         Ok(())
     }
 

@@ -15,7 +15,7 @@
 
 import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { FAULTS, faultsFor, GENERIC_FAULTS, NEVER_FAULT } from "./faults";
+import { faultsFor, NEVER_FAULT } from "./faults";
 import { detectCrash, digestStacks, ensureDir, manifest, readTraceDir, replayCoordinate, stamp } from "./lib";
 const manifestNames = manifest.map(m => m.name);
 
@@ -82,80 +82,126 @@ if (!files.length) {
 }
 console.log(`wide: ${files.length} test file(s) across ${roots.length} root(s), ${jobs} parallel, ${nRules} rule(s)/file`);
 
-// --- callsite-agnostic schedules --------------------------------------------
-// "<syscall> * <hit> <mode> <status>": any callsite of that syscall, the
-// Nth (or every) occurrence. Hits are drawn low-to-mid (short tests have
-// few of any given call) with a chance of '*' = every occurrence.
-// Universal surface: the curated menu (preferred, drawn at full weight)
-// plus every other syscall the runtime hooks under the generic fault set
-// (drawn at lower weight) - nothing observed is un-faultable.
-const genericNames = manifestNames.filter(n => !(n in FAULTS) && !NEVER_FAULT.has(n));
-const curatedMenu: [string, typeof GENERIC_FAULTS][] = Object.entries(FAULTS);
-const drawSyscall = (): [string, typeof GENERIC_FAULTS] =>
-  rnd() < 0.7 ? pick(curatedMenu) : [pick(genericNames), GENERIC_FAULTS];
-// Startup floor - derived from evidence, not a hand-picked list. A
-// callsite-agnostic rule "<sys> * <hit>" counts occurrences from process
-// start, and the first dozens of occurrences of nearly EVERY syscall are
-// bootstrap (loader, JSC bring-up, the test runner's own init) - a low hit
-// kills or cripples the process before the test's own code runs, so the run
-// tests NOTHING; and again inside each spawned child, whose counter restarts
-// at its own startup. The floor is measured: run the test runner on a
-// trivial test (the startup every wide-pass run incurs) and a plain
-// process (the startup each spawned child incurs), count each syscall's
-// occurrences, take the max. Every rule's hit index must exceed its
-// syscall's startup count; a syscall that occurs during startup never gets
-// '*' (every occurrence necessarily includes the init ones).
-const startupFloor = new Map<string, number>();
+// --- the callsite census ----------------------------------------------------
+// Targeting by occurrence COUNT ("<sys> * <hit-past-startup>") tested
+// nothing on short programs: startup issues hundreds of the hot syscalls,
+// a short test's own code (or a spawned child) never reaches occurrence
+// N-hundred, and 55% of runs never fired - and a count-keyed hit doesn't
+// even land on the same occurrence twice, so hits didn't replay. Target by
+// CALLSITE instead: bun's syscall callsites are fixed RVAs in the binary,
+// the same in every program. Trace a broad sample of test files once
+// unfaulted (the census), union every (syscall, callsite-key) seen, and
+// subtract every key the startup probes touch - what remains is the
+// universe of PROGRAM callsites, drawable at hit 1..3 like the sweeper's
+// mask, but shared across the whole pass. Persisted beside the queue so a
+// later pass reuses it (a fresh census also runs when the binary changed).
+type Site = { sysName: string; key: string; seen: number };
+const censusPath = join(queueDir, "wide-census.json");
+const startupKeys = new Set<string>();
+const siteMap = new Map<string, Site>();
 {
-  const maskDir = join(workRoot, "runs", "startup-floor");
+  const maskDir = join(workRoot, "runs", "census");
   ensureDir(maskDir);
-  const trivial = join(maskDir, "wsf-trivial.test.ts");
-  await Bun.write(trivial, `import { test, expect } from "bun:test";\ntest("wsf-trivial", () => { expect(1).toBe(1); });\n`);
-  const probes: string[][] = [
-    ["test", trivial], // the test runner's own bring-up
-    ["-e", "0"], // a plain child process's bring-up
-  ];
-  for (const [i, args] of probes.entries()) {
-    const d = join(maskDir, `p${i}`);
-    await replayCoordinate({ bun: bun!, args, schedule: "", dir: d, timeoutMs, capture: false }).catch(() => null);
-    const t = await readTraceDir(d).catch(() => null);
-    // Occurrences across the whole probe run (all its processes merged) is
-    // a safe upper bound for any one process's startup count.
-    const counts = new Map<string, number>();
-    for (const r of t?.recs ?? []) {
-      if (r.entryOnly) continue;
-      const sys = manifestNames[r.sys];
-      if (sys) counts.set(sys, (counts.get(sys) ?? 0) + 1);
+  const bunTag = await Bun.file(bun!).exists() ? String((await Bun.file(bun!).stat()).size) + ":" + basename(bun!) : basename(bun!);
+  let cached: { bunTag?: string; startup?: string[]; sites?: Site[] } | null = null;
+  try {
+    cached = await Bun.file(censusPath).json();
+  } catch {}
+  if (cached && cached.bunTag === bunTag && cached.sites?.length) {
+    for (const k of cached.startup ?? []) startupKeys.add(k);
+    for (const s of cached.sites ?? []) siteMap.set(`${s.sysName} ${s.key}`, s);
+    console.log(`  census (cached, ${bunTag}): ${siteMap.size} program callsite(s), ${startupKeys.size} startup key(s)`);
+  } else {
+    // Startup keys: the test runner on a trivial test + a plain child.
+    const trivial = join(maskDir, "wsf-trivial.test.ts");
+    await Bun.write(trivial, `import { test, expect } from "bun:test";\ntest("wsf-trivial", () => { expect(1).toBe(1); });\n`);
+    for (const [i, args] of ([
+      ["test", trivial],
+      ["-e", "0"],
+    ] as string[][]).entries()) {
+      const d = join(maskDir, `startup${i}`);
+      await replayCoordinate({ bun: bun!, args, schedule: "", dir: d, timeoutMs, capture: false }).catch(() => null);
+      const t = await readTraceDir(d).catch(() => null);
+      for (const r of t?.recs ?? []) if (!r.entryOnly) startupKeys.add(`${manifestNames[r.sys]} ${r.key}`);
+      try {
+        rmSync(d, { recursive: true, force: true });
+      } catch {}
     }
-    for (const [sys, n] of counts) startupFloor.set(sys, Math.max(startupFloor.get(sys) ?? 0, n));
+    // The census: a diverse unfaulted sample of the frontier itself.
+    const shuffled = [...files];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const sample = shuffled.slice(0, 40);
+    console.log(`  census: tracing ${sample.length} sample file(s) unfaulted...`);
+    let done = 0;
+    let ci = 0;
+    const censusWorker = async () => {
+      for (;;) {
+        const i = ci++;
+        if (i >= sample.length) return;
+        const d = join(maskDir, `c${i}`);
+        await replayCoordinate({ bun: bun!, args: ["test", sample[i]], schedule: "", dir: d, timeoutMs, capture: false }).catch(
+          () => null,
+        );
+        const t = await readTraceDir(d, { faultsOnly: true }).catch(() => null);
+        for (const r of t?.recs ?? []) {
+          if (r.entryOnly) continue;
+          const sysName = manifestNames[r.sys];
+          if (!sysName || NEVER_FAULT.has(sysName) || !faultsFor(sysName)) continue;
+          // 'o:'-keyed calls are another module's own machinery - not bun's
+          // boundary; never a fault site (same rule as the sweeper).
+          if (r.key.startsWith("o:")) continue;
+          const id = `${sysName} ${r.key}`;
+          if (startupKeys.has(id)) continue;
+          const s = siteMap.get(id);
+          if (s) s.seen++;
+          else siteMap.set(id, { sysName, key: r.key, seen: 1 });
+        }
+        try {
+          rmSync(d, { recursive: true, force: true });
+        } catch {}
+        if (++done % 10 === 0) console.log(`  census: ${done}/${sample.length} traced, ${siteMap.size} program callsite(s)`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(jobs, 6) }, censusWorker));
+    await Bun.write(
+      censusPath,
+      JSON.stringify({ bunTag, startup: [...startupKeys], sites: [...siteMap.values()] }, null, 0),
+    );
+    console.log(`  census: ${siteMap.size} program callsite(s), ${startupKeys.size} startup key(s) excluded`);
   }
-  console.log(
-    `  startup floor: ${startupFloor.size} syscall(s) occur during bring-up (worst: ` +
-      [...startupFloor.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([s, n]) => `${s}=${n}`)
-        .join(", ") +
-      ")",
-  );
 }
+const sites = [...siteMap.values()];
+if (!sites.length) {
+  console.error("census found no program callsites - cannot target");
+  process.exit(1);
+}
+// Weight callsites by how many census files exercised them (broadly-used
+// call paths draw more) but keep every site drawable.
+const siteWeights = sites.map(s => 1 + Math.log2(1 + s.seen));
+const siteWeightSum = siteWeights.reduce((a, b) => a + b, 0);
+const pickSite = (): Site => {
+  let t = rnd() * siteWeightSum;
+  for (let i = 0; i < sites.length; i++) if ((t -= siteWeights[i]) <= 0) return sites[i];
+  return sites[sites.length - 1];
+};
+// "<syscall> <key> <hit> <mode> <status>": a specific program callsite at a
+// LOW hit index - the test's first/second call through that path, however
+// much startup traffic preceded it, and equally reachable in a spawned
+// child. A callsite key never drifts, so a hit replays.
 function drawSchedule(): string[] {
   const rules = new Set<string>();
   let guard = 0;
   while (rules.size < nRules && guard++ < nRules * 6) {
-    const [sysName, faults] = drawSyscall();
+    const site = pickSite();
+    const faults = faultsFor(site.sysName);
+    if (!faults) continue;
     const f = pick(faults);
-    const floor = startupFloor.get(sysName) ?? 0;
-    let hit: string | number;
-    if (floor === 0 && rnd() < 0.15) {
-      hit = "*"; // never occurs at startup: every-occurrence is safe
-    } else {
-      // Land past the bootstrap - startup count + 1 .. + spread - in the
-      // program's own execution (and past a spawned child's startup too).
-      const spread = rnd() < 0.6 ? 5 : 30;
-      hit = floor + 1 + Math.floor(rnd() * spread);
-    }
-    rules.add(`${sysName} * ${hit} ${f.mode} ${f.status}`);
+    const r = rnd();
+    const hit = r < 0.55 ? 1 : r < 0.85 ? 2 : 3;
+    rules.add(`${site.sysName} ${site.key} ${hit} ${f.mode} ${f.status}`);
   }
   return [...rules];
 }

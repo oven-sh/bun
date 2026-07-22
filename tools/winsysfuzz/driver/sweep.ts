@@ -14,6 +14,7 @@
 // CRASH and HANG are the bugs. Everything is deterministic: the coordinate
 // (syscall + callsite RVA + hit) plus the program replays the finding.
 
+import { rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import {
   classifySym,
@@ -52,10 +53,14 @@ const jobs = Math.max(1, +(flag("--jobs", "6") as string));
 const maxHits = Math.max(1, +(flag("--hits", "3") as string));
 const modFilter = flag("--modules")?.split(",");
 const sysFilter = flag("--syscalls")?.split(",");
-// Never-reused timestamped root: nothing is ever deleted; old sweeps accumulate.
+// Timestamped, never-reused root. Runs that find nothing are pruned as the
+// sweep goes; every finding keeps its full directory. Old sweeps accumulate.
 const workRoot = join(flag("--work", "C:\\wsfsweep") as string, stamp);
 const outPath = flag("--out", join(workRoot, "sweep-report.json")) as string;
 const planOnly = argv.includes("--plan-only"); // baseline + estimate, then stop
+// Keep run directories that found nothing (default: only findings, baselines
+// and verify replays are kept - a clean run is not a test case).
+const keepAllRuns = argv.includes("--keep-all-runs");
 
 // Injectable syscalls with realistic failure statuses. Being IN this table is
 // what makes a syscall a fault site — waits/scheduling/query-loops are
@@ -346,6 +351,18 @@ async function worker(w: number) {
 
     const res: Result = { job, outcome, exitCode: rr.exitCode, fired, ms: rr.ms, stdoutDiffers: rr.stdout !== base.stdout, crashSig: rr.crashSig ?? null };
     results.push(res);
+    // Retention: a run that found nothing is not a test case. Its outcome
+    // and the fired count are already recorded in the report, so the run
+    // directory (multi-MB trace + output) is deleted. Every finding -
+    // CRASH, HANG, slow, system-crash, expected-abort, driver-error - keeps
+    // its complete directory for triage and replay, as do baselines and
+    // the verify replays. --keep-all-runs opts out. Without this,
+    // continuous fuzzing fills the disk within hours.
+    if (!keepAllRuns && ["clean", "no-fire", "diverged", "error-exit"].includes(outcome)) {
+      try {
+        rmSync(rr.dir, { recursive: true, force: true });
+      } catch {}
+    }
     liveWriter.write(
       JSON.stringify({
         n: results.length,

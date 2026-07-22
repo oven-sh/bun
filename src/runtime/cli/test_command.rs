@@ -158,7 +158,13 @@ pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate:
                 last = i + 1;
             }
             b'\t' | b'\n' | b'\r' => {
-                // Valid XML 1.0 Char; pass through as-is.
+                // Valid XML 1.0 Char. Emit as a numeric reference so the literal
+                // byte survives attribute-value normalisation (XML 1.0 §3.3.3).
+                if i > last {
+                    writer.write_all(&str_[last..i])?;
+                }
+                write!(writer, "&#{};", c)?;
+                last = i + 1;
             }
             0..=0x1f => {
                 // Any other C0 control character is not a valid XML 1.0 Char and

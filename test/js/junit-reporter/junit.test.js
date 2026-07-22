@@ -471,6 +471,38 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("keeps the test body's error in <failure> when afterEach also throws", async () => {
+    const tmpDir = tempDirWithFiles("junit-aftereach", {
+      "package.json": "{}",
+      "after.test.js": `
+        import { test, afterEach } from "bun:test";
+        afterEach(() => { throw new Error("cleanup broke"); });
+        test("t", () => { throw new Error("actual test failure"); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const tc = result.testsuites.testsuite[0].testcase[0];
+    // The primary failure (from the test body) should win type/message;
+    // the afterEach error should be appended to the body.
+    expect(tc.failure[0].$.message).toContain("actual test failure");
+    expect(tc.failure[0]._).toContain("actual test failure");
+    expect(tc.failure[0]._).toContain("cleanup broke");
+    expect(exitCode).toBe(1);
+  });
+
   it("includes the error type, message and stack in <failure>", async () => {
     const tmpDir = tempDirWithFiles("junit-failure", {
       "package.json": "{}",

@@ -16,21 +16,27 @@ use bun_io::KeepAlive;
 use bun_threading::RwLock;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
-use crate::event_loop::{ConcurrentTask, ConcurrentTaskItem, EventLoop};
+use crate::event_loop::ConcurrentTask;
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 
-/// Close-once fence between a VM and every [`AnyTaskJob`] it schedules, so a
-/// pool-thread completion that lands after `worker.terminate()` frees the VM
-/// observes the free instead of pushing into the freed event loop.
+/// Close-once fence between a VM and every [`AnyTaskJob`] it schedules, so the
+/// pool-thread work body and completion either run entirely before
+/// `worker.terminate()` tears the VM down, or not at all.
 ///
 /// Each VM owns one `Arc` clone; each in-flight job holds another (so the gate
-/// itself outlives both). The pool-thread completion takes a read lock across
-/// its `enqueue_task_concurrent` push. [`crate::web_worker::WebWorker`]'s
-/// shutdown calls [`Self::close`] before draining the concurrent queue and
-/// deallocating the VM: taking the write lock waits out every in-flight reader
-/// (so their push is visible to the drain), and once `closed` is set any later
-/// completion returns without touching the VM. Same fence-then-drain shape as
+/// itself outlives both). The pool thread runs `ctx.run()` and the
+/// `enqueue_task_concurrent` push under a read lock: several ctxs read inputs
+/// from (and `Scrypt` writes its output into) JSC-heap-backed `ArrayBuffer`s,
+/// and the enqueue itself dereferences the embedded `EventLoop`, so both must
+/// be ordered before JSC-heap teardown and the VM free.
+///
+/// [`crate::web_worker::WebWorker`]'s shutdown calls [`Self::close`] before
+/// draining the concurrent queue, before JSC teardown, and before deallocating
+/// the VM. Taking the write lock waits out every in-flight reader (so the KDF
+/// finishes and its push is visible to the drain), and once `closed` is set
+/// any later pool task skips its body entirely. Same fence-then-drain shape as
 /// `ScriptExecutionContext::markTerminating` for the C++ `postTaskTo` path.
+/// Matches Node's behaviour of draining in-flight libuv work on env teardown.
 pub struct AnyTaskGate {
     closed: RwLock<bool>,
 }
@@ -43,31 +49,20 @@ impl AnyTaskGate {
     }
 
     /// Mark the owning VM as going away. Takes the write lock, so it returns
-    /// only after every concurrent [`Self::enqueue`] reader has released.
+    /// only after every concurrent [`Self::run_gated`] reader has released.
     pub fn close(&self) {
         *self.closed.write() = true;
     }
 
-    /// Push `task` onto `event_loop` if the gate is still open. The read lock
-    /// held across the push orders it before [`Self::close`] returns. Returns
-    /// `false` (caller retains `task`) when closed.
-    ///
-    /// # Safety
-    /// `event_loop` must be the `EventLoop` of the VM that owns this gate, and
-    /// [`Self::close`] must be called on it before that VM is freed.
-    unsafe fn enqueue(
-        &self,
-        event_loop: *const EventLoop,
-        task: NonNull<ConcurrentTaskItem>,
-    ) -> bool {
+    /// Run `body` under a read lock if the gate is open, else skip it. The
+    /// lock held across `body` orders it entirely before [`Self::close`]
+    /// returns. Returns `false` when closed (body not run).
+    fn run_gated(&self, body: impl FnOnce()) -> bool {
         let guard = self.closed.read();
         if *guard {
             return false;
         }
-        // SAFETY: caller contract — gate open ⇒ `close()` hasn't returned ⇒
-        // worker shutdown hasn't progressed past it ⇒ the VM (and its embedded
-        // event loop) is still live.
-        unsafe { (*event_loop).enqueue_task_concurrent(task) };
+        body();
         drop(guard);
         true
     }
@@ -105,13 +100,10 @@ pub trait AnyTaskJobCtx: Sized {
 /// e.g. a `JSPromiseStrong` field after scheduling.
 pub struct AnyTaskJob<C> {
     vm: bun_ptr::BackRef<VirtualMachine>,
-    /// Snapshot of `vm.global` / `vm.event_loop()` at `create` time, plus the
-    /// VM's gate, so the pool-thread [`Self::run_task`] never reads a field of
-    /// `vm` (which may be a worker freed by terminate() while the task ran).
-    /// `vm` itself is only dereferenced on the JS thread ([`Self::run_from_js`]).
+    /// The pool-thread [`Self::run_task`] only dereferences `vm` (and the
+    /// JSC-heap buffers `ctx` borrows) under this gate's read lock, so a
+    /// worker VM freed by terminate() is never touched. See [`AnyTaskGate`].
     gate: Arc<AnyTaskGate>,
-    global: *mut JSGlobalObject,
-    event_loop: *const EventLoop,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -140,8 +132,6 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let job = bun_core::heap::into_raw(Box::new(Self {
             vm,
             gate: Arc::clone(vm_ref.any_task_gate()),
-            global: core::ptr::from_ref(global).cast_mut(),
-            event_loop: vm_ref.event_loop(),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_task,
@@ -206,31 +196,31 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // in `create`; `task` points to `Self.task` and the job is live until
         // `run_from_js` reclaims it (or is leaked below).
         let this = unsafe { Self::from_task_ptr(task) };
-        let enqueued = {
-            // SAFETY: as above; exclusively owned on this thread until enqueue.
+        // SAFETY: `gate` was written in `create`; this thread exclusively owns
+        // `*this` until the enqueue below hands it to the JS thread. Cloned so
+        // the read lock can be held while `this` is reborrowed `&mut` inside.
+        let gate = Arc::clone(unsafe { &(*this).gate });
+        let ran = gate.run_gated(|| {
+            // SAFETY: gate open ⇒ worker shutdown hasn't passed `close()` ⇒
+            // the owning VM, its JSC heap (which `ctx.run` may read/write via
+            // `ArrayBuffer`-backed inputs/outputs), and its embedded event
+            // loop are all still live.
             let job = unsafe { &mut *this };
-            job.ctx.run(job.global);
-            // `ConcurrentTask::create` heap-allocates a fresh node; the queue
-            // takes ownership of it when the push succeeds.
-            let node = ConcurrentTask::create(job.any_task.task());
-            // SAFETY: `job.event_loop` is the owning VM's loop; worker shutdown
-            // closes the gate before freeing it (see `AnyTaskGate`).
-            if unsafe { job.gate.enqueue(job.event_loop, node) } {
-                true
-            } else {
-                // SAFETY: `node` came from `ConcurrentTask::create`
-                // (heap-owned) and was not handed to the queue.
-                unsafe { bun_core::heap::destroy(node.as_ptr()) };
-                false
-            }
-        };
-        if enqueued {
+            let vm = job.vm;
+            job.ctx.run(vm.global);
+            // `ConcurrentTask::create` heap-allocates; the queue takes
+            // ownership.
+            vm.event_loop_shared()
+                .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+        });
+        drop(gate);
+        if ran {
             return;
         }
-        // VM is gone (worker terminated mid-run). Drop our gate ref so the
-        // shared `Arc` can release once every in-flight job has observed the
-        // close.
-        // SAFETY: `this` is the sole owner (the `&mut` above has ended);
+        // Gate closed (worker terminated before this task was picked up). Drop
+        // our gate ref so the shared `Arc` can release once every scheduled
+        // job has observed the close.
+        // SAFETY: `this` is the sole owner (`run_gated` did not touch it);
         // `gate` was written in `create` and is never read again past this
         // point (the box is leaked below).
         unsafe { core::ptr::drop_in_place(core::ptr::addr_of_mut!((*this).gate)) };

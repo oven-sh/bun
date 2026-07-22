@@ -26,20 +26,26 @@
 # ships ClangCL. Runs everywhere else.
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
-# Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
-# within ONE globalThis.gc() + ONE setImmediate after the connect callback's
-# closure is unreferenced. The FinalizationRegistry spec gives no timing
-# guarantee for cleanup callbacks; JSC schedules them via DeferredWorkTimer
-# with no defined ordering relative to the immediate queue. The connect
-# listener IS removed (verified: listenerCount("secureConnect") === 0 in
-# done()) and the object IS collected (test passes 70/70 on darwin and
-# glibc Linux); on alpine x64 the FR callback delivery slips past the single
-# setImmediate after this PR's added module loads at process startup shift
-# the heap layout. The robust fix is gcUntil() rather than a single tick,
-# but the file is a verbatim upstream port. Quarantined on the failing
-# linux-x64-musl matrix only; still runs everywhere else (build 63145:
-# alpine 3.23 x64 + x64-baseline only).
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
+# Verbatim node v26.3.0 test asserting that a gcObject captured by the
+# 'secureConnect' listener's closure is collected by ONE globalThis.gc(), and
+# that its onGC() listener has fired by the next setImmediate().
+#
+# The cause is NOT onGC() delivery timing. common/gc.js now fires onGC()
+# listeners synchronously from inside gc() via a WeakRef sweep, so the listener
+# cannot arrive after the observing setImmediate() (build 73000 still failed
+# with that in place). collected === false therefore means the object is still
+# reachable when gc() returns: the full GC does not reclaim it on musl x64.
+#
+# Not a leak. The 'secureConnect' listener IS removed (listenerCount === 0 in
+# done()), the net twin (test-net-connect-memleak.js) passes, and this file
+# passes on darwin and glibc linux. The likely cause is JSC's conservative
+# stack scanning retaining the closure from a stale stack slot under musl's
+# stack layout, which no change to the harness or the test can control.
+# Unconfirmed: it has never reproduced off musl.
+#
+# Quarantined on the failing linux-x64-musl matrix only; runs everywhere else
+# (build 73000: alpine 3.23 x64 + x64-baseline).
+[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # gcObject survives the single gc() on musl x64; not an onGC() delivery-ordering issue
 
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public

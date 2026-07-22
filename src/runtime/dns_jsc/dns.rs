@@ -946,7 +946,7 @@ impl CAresNameInfo {
         // (JSC termination during worker teardown). Resolving with it would
         // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
         if !result.is_empty() {
-            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            let _ = promise.resolve_task(global_this, result);
         }
         // SAFETY: see fn contract.
         unsafe { Self::destroy(this) };
@@ -1771,7 +1771,7 @@ impl CAresReverse {
             // (JSC termination during worker teardown). Resolving with it would
             // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
             if !result.is_empty() {
-                let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+                let _ = promise.resolve_task(global_this, result);
             }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
@@ -1926,7 +1926,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             // (JSC termination during worker teardown). Resolving with it would
             // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
             if !result.is_empty() {
-                let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+                let _ = promise.resolve_task(global_this, result);
             }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
@@ -2109,7 +2109,7 @@ impl DNSLookup {
             // (JSC termination during worker teardown). Resolving with it would
             // trip `ASSERT(!target.isEmpty())` in `JSC__JSPromise__resolve`.
             if !result.is_empty() {
-                let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+                let _ = promise.resolve_task(global_this, result);
             }
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
@@ -4579,7 +4579,7 @@ impl Resolver {
                     array = super::options_jsc::result_any_to_js(result, new_global)
                         .ok()
                         .flatten()
-                        .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                        .unwrap_or(JSValue::ZERO);
                     prev_global = new_global;
                 }
 

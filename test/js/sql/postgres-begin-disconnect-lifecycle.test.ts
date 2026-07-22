@@ -50,6 +50,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       },
     );
 
+    p.catch(txReady.reject);
     const { tx, pid } = await txReady.promise;
     await adm`select pg_terminate_backend(${pid})`;
 

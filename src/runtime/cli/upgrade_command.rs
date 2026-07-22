@@ -530,7 +530,7 @@ impl UpgradeCommand {
                 }
             }
             for arg in args.iter().skip(2) {
-                if !Self::KNOWN_FLAGS.iter().any(|k| *k == arg) {
+                if !Self::KNOWN_FLAGS.contains(&arg) {
                     bun_core::pretty_error!(
                         "<r><red>error<r><d>:<r> unknown option <b>'{}'<r>",
                         bstr::BStr::new(arg),

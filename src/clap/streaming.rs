@@ -306,10 +306,15 @@ where
         };
         // Only tokens reaching here are being read as flags: option values and
         // `--` targets are pulled straight off `iter`, so they stay verbatim.
-        for (from, to) in self.short_aliases {
-            if full_arg == *from {
-                full_arg = to;
-                break;
+        // Restrict rewrites to flag-shaped tokens so a mapping can never touch
+        // the `-`/`--` sentinels or a positional, per the contract on
+        // `ParseOptions::short_aliases`.
+        if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
+            for (from, to) in self.short_aliases {
+                if full_arg == *from {
+                    full_arg = to;
+                    break;
+                }
             }
         }
         if full_arg == b"--" || full_arg == b"-" {

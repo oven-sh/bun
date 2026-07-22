@@ -1864,31 +1864,18 @@ impl<'a> ESModule<'a> {
                     };
                 }
 
-                // If pattern is false, subpath has non-zero length and target
-                // does not end with "/", throw an Invalid Module Specifier error.
                 if !PATTERN {
-                    if !subpath.is_empty() && !strings::ends_with_char(str, b'/') {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
-                            log.add_note_fmt(format_args!(
-                                "The target \"{}\" is invalid because it doesn't end with a \"/\"",
-                                bstr::BStr::new(str)
-                            ));
-                        }
-                        dedent!();
-
-                        return Resolution {
-                            path: Box::<[u8]>::from(str),
-                            status: Status::InvalidModuleSpecifier,
-                        };
-                    }
+                    // The only `<false>` callers pass `b""` (exact-key / "." main export);
+                    // the removed DEP0148 folder-mapping branch was the sole source of a
+                    // non-empty subpath without PATTERN.
+                    debug_assert!(subpath.is_empty());
                 }
 
-                // If the wildcard match (or trailing-slash remainder) taken from
-                // the import specifier contains any ".", ".." or "node_modules"
-                // segments, throw an Invalid Module Specifier error. Node's
-                // PACKAGE_TARGET_RESOLVE applies the same validation to
-                // patternMatch; without it the specifier can substitute "../"
-                // segments into the target and escape the package directory.
+                // If the wildcard match taken from the import specifier contains any
+                // ".", ".." or "node_modules" segments, throw an Invalid Module
+                // Specifier error. Node's PACKAGE_TARGET_RESOLVE applies the same
+                // validation to patternMatch; without it the specifier can substitute
+                // "../" segments into the target and escape the package directory.
                 if !subpath.is_empty() {
                     if let Some(invalid) = find_invalid_subpath_segment(subpath) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -1939,30 +1926,9 @@ impl<'a> ESModule<'a> {
                                 status: Status::PackageResolve,
                             };
                         } else {
-                            // Latent Windows bug (#30839): this branch runs when an
-                            // `imports` target is itself a package specifier
-                            // (e.g. `@myproject/resolver`) that we hand back to
-                            // package-resolve. Per the Node.js packages spec these
-                            // are URL-like specifiers and must keep forward slashes;
-                            // `Auto` normalizes them to `\` on Windows and the
-                            // scoped-name match fails, falling through to `main`.
-                            let parts2 = [str, subpath];
-                            let result = resolve_path::resolve_path::join_string_buf::<
-                                resolve_path::platform::Posix,
-                            >(
-                                &mut resolve_target_buf2.0, &parts2
-                            );
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
-                                log.add_note_fmt(format_args!(
-                                    "Resolved \".{}\" to \".{}\"",
-                                    bstr::BStr::new(str),
-                                    bstr::BStr::new(result)
-                                ));
-                            }
-                            let path = Box::<[u8]>::from(result);
                             dedent!();
                             return Resolution {
-                                path,
+                                path: Box::<[u8]>::from(str),
                                 status: Status::PackageResolve,
                             };
                         }
@@ -2058,22 +2024,15 @@ impl<'a> ESModule<'a> {
                         status,
                     };
                 } else {
-                    let parts2 = [package_url, str, subpath];
-                    let result = resolve_path::resolve_path::join_string_buf::<
-                        resolve_path::platform::Auto,
-                    >(&mut resolve_target_buf2.0, &parts2);
                     if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
-                            "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
-                            bstr::BStr::new(subpath),
-                            bstr::BStr::new(resolved_target),
-                            bstr::BStr::new(result)
+                            "Resolved to \".{}\"",
+                            bstr::BStr::new(resolved_target)
                         ));
                     }
-                    let path = Box::<[u8]>::from(result);
                     dedent!();
                     return Resolution {
-                        path,
+                        path: Box::<[u8]>::from(resolved_target),
                         status: Status::Exact,
                     };
                 }

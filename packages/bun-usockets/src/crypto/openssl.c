@@ -889,6 +889,44 @@ static void ssl_ctx_build_fail(SSL_CTX *ctx) {
   SSL_CTX_free(ctx);
 }
 
+/* BoringSSL's default accepted signature-algorithm list for verifying a peer's
+ * certificate (kVerifySignatureAlgorithms in its ssl/extensions.cc) omits
+ * Ed25519 and ECDSA P-521, so a client never advertises them in the
+ * signature_algorithms extension and cannot verify an Ed25519 or P-521 server
+ * certificate: the handshake fails and the peer certificate comes back empty,
+ * surfacing as a bogus hostname-verification failure. Node.js accepts both, so
+ * match Node's default verify list.
+ *
+ * This is the exact order Node.js (OpenSSL) advertises, restricted to the
+ * algorithms BoringSSL implements. Node additionally sends ed448,
+ * rsa_pss_pss_sha256/384/512, and the SHA-224/DSA legacy pairs, none of which
+ * BoringSSL has an SSL_SIGN_* value for, so they cannot be listed here. Node
+ * does not advertise rsa_pkcs1_sha1, so it is dropped too (BoringSSL's default
+ * kept it). The same list governs verifying client certificates when this
+ * mode-neutral CTX backs a server doing mTLS. */
+static const uint16_t us_verify_signature_algorithms[] = {
+    SSL_SIGN_ECDSA_SECP256R1_SHA256,
+    SSL_SIGN_ECDSA_SECP384R1_SHA384,
+    SSL_SIGN_ECDSA_SECP521R1_SHA512,
+    SSL_SIGN_ED25519,
+    SSL_SIGN_RSA_PSS_RSAE_SHA256,
+    SSL_SIGN_RSA_PSS_RSAE_SHA384,
+    SSL_SIGN_RSA_PSS_RSAE_SHA512,
+    SSL_SIGN_RSA_PKCS1_SHA256,
+    SSL_SIGN_RSA_PKCS1_SHA384,
+    SSL_SIGN_RSA_PKCS1_SHA512,
+};
+
+/* Shared so the QUIC client context (quic.c), which builds its own SSL_CTX
+ * instead of going through us_ssl_ctx_build_raw, advertises the same list.
+ * Returns 1 on success, 0 on failure (the caller must fail the context so it
+ * never silently falls back to BoringSSL's default, Ed25519/P-521-less list). */
+int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ssl_context) {
+  return SSL_CTX_set_verify_algorithm_prefs(
+      ssl_context, us_verify_signature_algorithms,
+      sizeof(us_verify_signature_algorithms) / sizeof(us_verify_signature_algorithms[0]));
+}
+
 /* Exported for quic.c (lsquic configures ALPN/transport-params on the SSL_CTX
  * directly) and as the body of us_ssl_ctx_from_options. */
 SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
@@ -909,6 +947,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   SSL_CTX_set_min_proto_version(ssl_context, options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);
   if (options.ssl_max_version) {
     SSL_CTX_set_max_proto_version(ssl_context, options.ssl_max_version);
+  }
+  /* Advertise Ed25519/P-521 as accepted peer signatures (see note above). */
+  if (!us_ssl_ctx_set_verify_signature_algorithms(ssl_context)) {
+    ssl_ctx_build_fail(ssl_context);
+    return NULL;
   }
 
   if (options.ssl_prefer_low_memory_usage) {

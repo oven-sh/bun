@@ -27,6 +27,7 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 extern X509_STORE *us_get_default_ca_store(void);
+extern int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx);
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
@@ -1137,6 +1138,8 @@ us_quic_socket_context_t *us_create_quic_client_context(
      * the system store on macOS/Windows. */
     SSL_CTX_set_cert_store(ssl, us_get_default_ca_store());
     SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
+    /* Accept Ed25519/P-521 peer signatures, matching the H1/H2 client. */
+    if (!us_ssl_ctx_set_verify_signature_algorithms(ssl)) { SSL_CTX_free(ssl); return NULL; }
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
         us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);

@@ -795,3 +795,44 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
   expect(stdout).toMatch(/second status=200 sessions=0\n$/);
   expect(exitCode).toBe(0);
 });
+
+// A self-signed Ed25519 server certificate (subjectAltName=DNS:localhost,IP:127.0.0.1).
+// The HTTP/3 client builds a process-global QUIC SSL_CTX; before the fix its
+// verify signature-algorithm list omitted Ed25519, so the TLS 1.3 handshake
+// against an Ed25519 server certificate failed during signature_algorithms
+// negotiation, before the verify callback ran (so rejectUnauthorized:false
+// could not mask it). https://github.com/oven-sh/bun/issues/32234
+const ed25519Tls = {
+  cert: `-----BEGIN CERTIFICATE-----
+MIIBazCCAR2gAwIBAgIUXx1d+m1qIfvFkQfDj83EgPtpiWEwBQYDK2VwMBwxGjAY
+BgNVBAMMEWVkMjU1MTktbG9jYWxob3N0MCAXDTI2MDYxMzE3MDAzOVoYDzIxMjYw
+NTIwMTcwMDM5WjAcMRowGAYDVQQDDBFlZDI1NTE5LWxvY2FsaG9zdDAqMAUGAytl
+cAMhAMMCjPccnWDCrbQbYljQdttVaNBXLPMbXNif77uAQ74jo28wbTAdBgNVHQ4E
+FgQUdDiLgr6rGXvtcb0iJOQG8UhtU28wHwYDVR0jBBgwFoAUdDiLgr6rGXvtcb0i
+JOQG8UhtU28wDwYDVR0TAQH/BAUwAwEB/zAaBgNVHREEEzARgglsb2NhbGhvc3SH
+BH8AAAEwBQYDK2VwA0EAkTJAjKuV75hiRCGJoLRLJw59ZbHFAcGch6yJwo27Z/xL
+Bjl/5AxuntMH6GFjzrhhyJj/K1JbXyLMGdR2iKFmCw==
+-----END CERTIFICATE-----`,
+  key: `-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIB0jQnQ25+PBL50z5GdZYH52qTBgdqTn8DRfFFMj88wv
+-----END PRIVATE KEY-----`,
+};
+
+test("connects to an Ed25519 server certificate over http3 (#32234)", async () => {
+  const edServer = Bun.serve({
+    port: 0,
+    tls: ed25519Tls,
+    http3: true,
+    http1: false,
+    fetch: () => new Response("ed25519 over h3"),
+  });
+  try {
+    const res = await fetch(`https://127.0.0.1:${edServer.port}/`, h3);
+    expect(await res.text()).toBe("ed25519 over h3");
+    expect(res.status).toBe(200);
+  } finally {
+    // Mirror afterAll: the pooled h3 session to this origin drains on lsquic's
+    // idle timeout, so stop(true) is not awaited.
+    edServer.stop(true);
+  }
+});

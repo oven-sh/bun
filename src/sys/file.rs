@@ -1,9 +1,9 @@
 //! `bun.sys.File` — high-level file handle.
 //!
-//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio
-//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
-//! are safe to drop). Use [`File::into_raw`] to hand the fd off,
-//! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
+//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio,
+//! so stdio-wrapping and default-constructed handles are safe to drop). Use
+//! [`File::into_raw`] to hand the fd off, [`File::borrow`] for a non-owning
+//! `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
 #![allow(clippy::module_inception)]
 
@@ -486,12 +486,13 @@ pub(crate) mod tests {
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();
-        // `File::stdin()` / `stdout()` wrap process-shared descriptors that the
-        // caller does not own. Dropping the wrapper must not tear down the test
-        // harness's output.
+        // A `File` wrapping a stdio descriptor must not close it on Drop: the
+        // caller does not own that fd. Dropping the wrapper must not tear down
+        // the test harness's output.
         for _ in 0..16 {
             let _ = File::stdin();
             let _ = File::stdout();
+            let _ = File::from_fd(Fd::stderr());
         }
         assert!(fstat(Fd::stdout()).is_ok());
     }

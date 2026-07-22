@@ -28,21 +28,20 @@ afterAll(dummyAfterAll);
 // still asserted end-to-end).
 const uglify_files = {
   ".gitattributes": "",
-  ".github/": "",
+  ".github/workflows/ci.yml": "",
   ".gitignore": "",
   "CONTRIBUTING.md": "",
   "LICENSE": "",
   "README.md": "",
-  "bin/": "",
   "bin/uglifyjs": "#!/usr/bin/env node\n",
-  "lib/": "",
+  "lib/minify.js": "",
   "package.json": JSON.stringify({
     name: "uglify-js",
     version: "3.14.1",
     bin: { uglifyjs: "bin/uglifyjs" },
   }),
-  "test/": "",
-  "tools/": "",
+  "test/mocha.js": "",
+  "tools/node.js": "",
 };
 beforeAll(() => {
   setGithubTarball("mishoo", "UglifyJS", "v3.14.1", makeGithubTarball("mishoo-UglifyJS-e219a9a", uglify_files));

@@ -1,5 +1,3 @@
-diff --git a/src/win/poll.c b/src/win/poll.c
-index ecc6cf3..361b0fc 100644
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
 @@ -115,7 +115,12 @@ static void uv__fast_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {

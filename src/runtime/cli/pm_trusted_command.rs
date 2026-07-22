@@ -948,7 +948,10 @@ impl TrustCommand {
                 },
             );
 
-            Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
             Output::print(format_args!("\n"));
         }
 

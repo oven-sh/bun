@@ -209,9 +209,9 @@ private:
              * (Node's socketOnEnd semantics). Without this flag the loop (and
              * openssl.c us_internal_ssl_on_end for TLS) force-closes the
              * socket right after dispatching onEnd, discarding the buffered
-             * response bytes. getBufferedAmount() counts the TLS spill, so
-             * onEnd's defer and onWritable's close gate are accurate for both
-             * transports. */
+             * response bytes. onEnd's defer and onWritable's close gate use
+             * hasFullyDrained(), which accounts for the TLS ciphertext spill,
+             * so they are accurate for both transports. */
             s->flags.allow_half_open = 1;
         }
 

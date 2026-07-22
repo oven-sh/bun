@@ -220,11 +220,11 @@ describe("backpressure", () => {
     // TLS variants of the it.each above: the server's TLS write-batch spill
     // (up to one 128 KiB ciphertext batch the kernel did not fully accept) is
     // reported as written by us_socket_write() while it sits in userspace, so
-    // getBufferedAmount() must count it before the post-FIN close gate fires.
-    // Looped a few times so the on_writable drain cycle is exercised past the
-    // first kernel-accepted write. This is also the client-side regression
-    // test for the Windows eof-drain (a half-closed client must read out the
-    // kernel receive buffer when AFD DISCONNECT is mapped to eof).
+    // the post-FIN close gate (hasFullyDrained()) must wait for it. Looped a
+    // few times so the on_writable drain cycle is exercised past the first
+    // kernel-accepted write. This is also the client-side regression test for
+    // the Windows eof-drain (a half-closed client must read out the kernel
+    // receive buffer when AFD DISCONNECT is mapped to eof).
     describe("https", () => {
       const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
       const tlsOptions = {

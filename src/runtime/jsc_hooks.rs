@@ -3390,9 +3390,11 @@ fn transpile_source_code_inner(
             // SAFETY: null-checked above; `global_object` is the live per-thread
             // `JSGlobalObject` for the FFI call.
             let global = unsafe { &*global_object };
-            // CSS imports have no runtime value; the bundler emits `{}` for the
-            // JS stub of a CSS entry (esbuild parity), so match that here instead
-            // of leaking the file path as the default export.
+            // The bundler emits `{}` as the JS stub for a plain CSS import
+            // (esbuild parity); match that here instead of leaking the file path
+            // as the default export. `.module.css` still diverges: the bundler
+            // emits a class-name map there, runtime CSS-module scoping is not
+            // implemented.
             if matches!(loader, L::Css) {
                 return Ok(OwnedResolvedSource::from(ResolvedSource {
                     jsvalue_for_export: JSValue::create_empty_object(global, 0),

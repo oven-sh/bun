@@ -202,6 +202,15 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
+  /* uv_poll_init_socket (win/poll.c) can fail either before uv__handle_init
+   * (ioctlsocket FIONBIO) or after it (getsockopt SO_PROTOCOL_INFOW). The
+   * latter leaves the handle linked into loop->handle_queue with
+   * submitted_events_* still unset. Zero first so, on failure, ->type
+   * distinguishes the two states and the fields uv__poll_close reads are 0
+   * rather than garbage. */
+  memset(p->uv_p, 0, sizeof(uv_poll_t));
+  p->uv_p->data = p;
+
   int rc;
 #if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
   ssize_t injected = 0;
@@ -212,17 +221,20 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 #endif
   rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
   if (rc < 0) {
-    /* libuv returns before uv__handle_init on failure (e.g. the FIONBIO
-     * ioctlsocket in win/poll.c), so uv_p is still the raw us_malloc block.
-     * uv_unref/uv_poll_start on it would read garbage, and so would
-     * us_poll_free's uv_is_closing check. Free it here and null the pointer
-     * so the caller's us_poll_free takes the !uv_p fast path. errno is set
-     * for the callers that capture it (context.c / loop.c / udp.c); on a
-     * real failure LIBUS_ERR (WSAGetLastError) still holds the winsock code
-     * that made ioctlsocket/CreateIoCompletionPort fail. */
     int saved = LIBUS_ERR;
-    us_free(p->uv_p);
-    p->uv_p = NULL;
+    if (p->uv_p->type == UV_POLL) {
+      /* uv__handle_init ran: the handle is in loop->handle_queue. Close it
+       * through libuv so it is unlinked; the caller's us_poll_free sees
+       * uv_is_closing and hands ownership to close_cb_free_poll. */
+      p->uv_p->data = 0;
+      uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
+    } else {
+      /* Never reached uv__handle_init: uv_p is still our raw block. Free it
+       * here and null the pointer so the caller's us_poll_free takes the
+       * !uv_p fast path (its uv_is_closing check would read garbage). */
+      us_free(p->uv_p);
+      p->uv_p = NULL;
+    }
     errno = saved ? saved : -rc;
     return rc;
   }

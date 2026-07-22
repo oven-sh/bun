@@ -158,10 +158,11 @@ describe("node:http server timeout enforcement", () => {
     const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
     server.headersTimeout = 200;
     server.requestTimeout = 800;
+    const codes: unknown[] = [];
     const fires = new Map<unknown, number>();
     // Log-only listener: records the error but does NOT destroy the socket.
     server.on("clientError", (err: any, socket) => {
-      expect(err.code).toBe("ERR_HTTP_REQUEST_TIMEOUT");
+      codes.push(err.code);
       fires.set(socket, (fires.get(socket) ?? 0) + 1);
     });
     const port = await listen(server);
@@ -173,6 +174,7 @@ describe("node:http server timeout enforcement", () => {
       c.setNoDelay(true);
       await once(c, "connect");
       c.write("GET / HTTP/1.1\r\nHost: a\r\n");
+      return c;
     };
     const nextDistinctSocket = () => {
       const before = fires.size;
@@ -187,14 +189,23 @@ describe("node:http server timeout enforcement", () => {
       return promise;
     };
     try {
-      // Two stalled connections opened one headersTimeout apart. By the time
-      // the second one expires, the first has been through several more
-      // sweeps with its socket still open (the listener never destroyed it).
+      // Three stalled connections opened one headersTimeout apart. By the time
+      // each later one expires, every earlier one has been through several
+      // more sweeps with its socket still open (the listener never destroyed
+      // it). The first connection also trickles more header bytes after its
+      // timeout to cover the slowloris case.
+      const first = await stall();
+      await nextDistinctSocket();
+      first.write("X-Slow: v\r\n");
       await stall();
       await nextDistinctSocket();
+      first.write("X-Slow: v\r\n");
       await stall();
       await nextDistinctSocket();
-      expect([...fires.values()]).toEqual([1, 1]);
+      expect({ codes, fires: [...fires.values()] }).toEqual({
+        codes: ["ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT", "ERR_HTTP_REQUEST_TIMEOUT"],
+        fires: [1, 1, 1],
+      });
     } finally {
       for (const c of clients) c.destroy();
       server.closeAllConnections();

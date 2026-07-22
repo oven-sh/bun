@@ -252,6 +252,11 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
+    /* Set once the headers/request timeout sweep has reported this message as
+     * expired; later sweeps skip the connection until the message completes.
+     * Mirrors Node's ConnectionsList::Expired() removing the parser from its
+     * active set (re-added by on_message_begin, i.e. only for a new message). */
+    bool requestTimeoutReported = false;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

@@ -1326,7 +1326,7 @@ impl BunTest {
                     // Each top-level exception starts a fresh capture so a retried
                     // test reports the final attempt rather than accumulating.
                     junit.last_failure = None;
-                    (junit as *mut crate::cli::test_command::JunitReporter).cast()
+                    core::ptr::from_mut(junit).cast()
                 }
                 None => core::ptr::null_mut(),
             }

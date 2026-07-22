@@ -73,9 +73,10 @@ describe("fetch() cache mode", () => {
       hostname: "127.0.0.1",
       fetch: req => new Response(JSON.stringify(Object.fromEntries(req.headers))),
     });
-    const h = (await (
-      await fetch(server.url, { headers: { "If-None-Match": '"abc"' } })
-    ).json()) as Record<string, string>;
+    const h = (await (await fetch(server.url, { headers: { "If-None-Match": '"abc"' } })).json()) as Record<
+      string,
+      string
+    >;
     expect({
       "cache-control": h["cache-control"],
       "pragma": h["pragma"],

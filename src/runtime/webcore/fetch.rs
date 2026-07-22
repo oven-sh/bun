@@ -1759,9 +1759,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     h.append(b"Cache-Control", b"no-cache");
                 }
             }
-            FetchCacheMode::Default
-            | FetchCacheMode::ForceCache
-            | FetchCacheMode::OnlyIfCached => {}
+            FetchCacheMode::Default | FetchCacheMode::ForceCache | FetchCacheMode::OnlyIfCached => {
+            }
         }
     }
 

@@ -579,7 +579,9 @@ impl CryptoHasher {
             );
         }
         let encoding_value = arguments.ptr[1];
-        let encoding = if encoding_value.is_cell() {
+        // Encoding only affects string inputs (same gate as JSHash.cpp); don't
+        // coerce it for Blob/Buffer inputs where it is ignored.
+        let encoding = if input.is_string() && encoding_value.is_cell() {
             Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8)
         } else {
             Encoding::Utf8

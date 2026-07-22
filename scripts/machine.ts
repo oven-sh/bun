@@ -17,6 +17,7 @@ import { azure } from "./azure.mjs";
 import { packerDownload } from "./build/ci/artifacts.ts";
 import { agentEntry } from "./build/ci/components/paths.ts";
 import { BOOTSTRAP_SOURCE_DIRS, LINUX_REMOTE_ROOT, linuxBootstrapCommand } from "./build/ci/delivery.ts";
+import { azureToken } from "./build/ci/existence.ts";
 import { imageName as computeImageName, imageEntry } from "./build/ci/naming.ts";
 import { windowsPackerTemplate } from "./build/ci/packer.ts";
 import { packer } from "./build/ci/spec.ts";
@@ -1115,17 +1116,6 @@ function getCloud(name) {
  * @property {SshKey[]} sshKeys
  */
 
-async function getAzureToken(tenantId, clientId, clientSecret) {
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
-  });
-  if (!response.ok) throw new Error(`Azure auth failed: ${response.status}`);
-  const data = await response.json();
-  return data.access_token;
-}
-
 /**
  * Build a Windows CI image with Packer (Azure only). Packer handles VM
  * creation, WinRM provisioning, sysprep, and gallery capture. Everything
@@ -1160,7 +1150,7 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
   const resourceGroup = await getSecret("AZURE_RESOURCE_GROUP");
 
   const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${image.gallery.resourceGroup}/providers/Microsoft.Compute/galleries/${image.gallery.name}/images/${imageName}`;
-  const token = await getAzureToken(tenantId, clientId, clientSecret);
+  const token = await azureToken(tenantId, clientId, clientSecret);
 
   // Idempotent by name: if this exact `${key}-${hash}` version already exists
   // (another branch with the same spec, or a retried bake), reuse it. Same

@@ -111,7 +111,9 @@ async function checkAzureGalleryVersion(image: Image, name: string, secrets: Sec
   return { image, name, exists: false, detail: `version present but ${state}; will re-bake` };
 }
 
-async function azureToken(tenant: string, clientId: string, clientSecret: string): Promise<string> {
+/** Azure client-credentials OAuth token for the management API. The single
+ * implementation shared by pipeline generation and machine.ts. */
+export async function azureToken(tenant: string, clientId: string, clientSecret: string): Promise<string> {
   const response = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
     method: "POST",
     signal: AbortSignal.timeout(120_000),

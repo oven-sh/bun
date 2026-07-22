@@ -541,6 +541,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
         self.js_value.try_get()
     }
+
+    /// Dispatch gate for a *new* HTTP request on the Bun.serve path: `None`
+    /// once the server has stopped listening (graceful or abrupt). Idle
+    /// keep-alive sockets are closed by `stop_listening`, but a request
+    /// already in the kernel buffer (or racing the close on a socket that was
+    /// in-flight at stop time) still reaches the trampoline; refuse it so the
+    /// stopped server never dispatches work that arrived after `stop()`.
+    /// node:http dispatch keeps the `Finalized`-only gate above because Node's
+    /// `server.close()` lets in-flight keep-alive connections continue.
+    pub fn js_value_for_new_request(&self) -> Option<JSValue> {
+        if !self.has_listener() {
+            return None;
+        }
+        self.js_value.try_get()
+    }
 }
 
 /// gcProtect every handler callback `ServerConfig::from_js` / `Handler::from_js`
@@ -1055,11 +1070,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
-        // Idle keep-alive sockets aren't counted in pending_requests, so the
-        // wrapper can have been finalized before this fires. Refuse and close
-        // rather than dispatching with a stale handler shadow.
+        // Refuse once the listener is gone (graceful or abrupt stop): an idle
+        // keep-alive socket that survived `stop()` must not dispatch new work.
+        // Also covers the post-finalize window.
         // SAFETY: `this` is the live server backref for this request.
-        let Some(js_value) = unsafe { &*this }.js_value_for_dispatch() else {
+        let Some(js_value) = unsafe { &*this }.js_value_for_new_request() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
@@ -1109,7 +1124,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let index = user_route.id;
 
         // SAFETY: `server` is the live backref stored in `user_route`.
-        let Some(server_js) = unsafe { &*server }.js_value_for_dispatch() else {
+        let Some(server_js) = unsafe { &*server }.js_value_for_new_request() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
@@ -1585,6 +1600,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     self.flags.insert(ServerFlags::TERMINATED);
                 }
             }
+            // A prior graceful stop already took the listener. An abrupt stop
+            // still needs to tear down surviving connections so a "graceful
+            // then force" shutdown can complete.
+            if abrupt && !self.flags.contains(ServerFlags::TERMINATED) {
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.app = None;
+                }
+                self.flags.insert(ServerFlags::TERMINATED);
+                if let Some(app) = self.app {
+                    self.deinit_running.set(true);
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).close();
+                    self.deinit_running.set(false);
+                }
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.server = None;
+                }
+            }
             return;
         };
         if abrupt || (self.pending_requests == 0 && !self.has_active_web_sockets()) {
@@ -1616,6 +1649,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
+            // Close every idle keep-alive connection: they have no in-flight
+            // work, are not counted in `pending_requests`, and with
+            // `idleTimeout: 0` would otherwise hold their fds forever. Any
+            // request that races this on a surviving socket is answered 503
+            // by the `js_value_for_new_request` gate. node:http's
+            // `server.close()` calls `closeIdleConnections()` itself and then
+            // keeps non-idle sockets serviceable per Node semantics, so skip.
+            if self.config.on_node_http_request.is_empty() {
+                if let Some(app) = self.app {
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).close_idle_connections();
+                }
+            }
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
@@ -1703,6 +1749,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
             matches!(self.js_value, jsc::JsRef::Finalized),
         );
+
+        // After a graceful stop, sweep idle keep-alive sockets as in-flight
+        // requests drain so their fds are released without waiting on the
+        // idle timeout. `TERMINATED`'s `app.close()` already tore them down.
+        // node:http owns its own idle-connection policy (Node keeps the socket
+        // serviceable after `close()` until its checking interval reaps it).
+        if !self.has_listener()
+            && self.config.on_node_http_request.is_empty()
+            && !self.flags.contains(ServerFlags::TERMINATED)
+            && !self.flags.contains(ServerFlags::DEINIT_SCHEDULED)
+        {
+            if let Some(app) = self.app {
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                bun_opaque::opaque_deref_mut(app).close_idle_connections();
+            }
+        }
 
         if self.pending_requests == 0
             && !self.has_listener()

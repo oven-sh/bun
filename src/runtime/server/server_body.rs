@@ -2490,15 +2490,22 @@ where
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        if self.has_listener() {
-            let abrupt = 'brk: {
-                if let Some(val) = abruptly {
-                    if val.is_boolean() && val.to_boolean() {
-                        break 'brk true;
-                    }
+        let abrupt = 'brk: {
+            if let Some(val) = abruptly {
+                if val.is_boolean() && val.to_boolean() {
+                    break 'brk true;
                 }
-                false
-            };
+            }
+            false
+        };
+        // `!deinit_running`: a `server.stop()` reached from a close callback
+        // that an outer `stop()`'s drain fired would re-enter `stop_listening`
+        // with a fresh `&mut self` under the outer frame's borrow.
+        if self.has_listener()
+            || (abrupt
+                && !self.flags.contains(ServerFlags::TERMINATED)
+                && !self.deinit_running.get())
+        {
             self.stop(abrupt);
         }
 
@@ -2506,7 +2513,9 @@ where
     }
 
     pub fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() {
+        if self.has_listener()
+            || (!self.flags.contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
+        {
             self.stop(true);
         }
         JSValue::UNDEFINED
@@ -2797,7 +2806,7 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
-        let Some(server_js) = server.js_value_for_dispatch() else {
+        let Some(server_js) = server.js_value_for_new_request() else {
             respond_stopped_503(resp);
             return;
         };
@@ -2885,7 +2894,7 @@ where
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
-        let Some(js_value) = self.js_value_for_dispatch() else {
+        let Some(js_value) = self.js_value_for_new_request() else {
             respond_stopped_503(resp);
             return;
         };
@@ -3180,7 +3189,7 @@ where
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
-        let Some(server_js) = server_ref.js_value_for_dispatch() else {
+        let Some(server_js) = server_ref.js_value_for_new_request() else {
             respond_stopped_503(resp);
             return;
         };
@@ -3271,6 +3280,12 @@ where
             // NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.
             Self::on_node_http_request_with_upgrade_ctx(self_ptr, req, resp, upgrade_ctx);
+            return;
+        }
+        // Bun.serve path from here on: refuse new work once the listener is
+        // gone, same gate as `on_request`.
+        if !this.has_listener() {
+            respond_stopped_503(resp);
             return;
         }
         if this.config.on_request.is_empty() {

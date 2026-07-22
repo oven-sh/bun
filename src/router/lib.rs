@@ -464,6 +464,16 @@ impl<'a> RouteLoader<'a> {
         root_dir_info: &DirInfo,
         base_dir: &[u8],
     ) -> Routes {
+        // `load` slices `entry.dir()` at `base_dir.len() - 1` expecting a separator there, and
+        // `route_dirname_len` below counts on the trailing one.
+        debug_assert!(
+            base_dir
+                .last()
+                .copied()
+                .is_some_and(bun_paths::resolve_path::is_sep_any),
+            "base_dir must end with a separator"
+        );
+
         let mut route_dirname_len: u16 = 0;
 
         // Call bun_paths directly to avoid the higher-tier bun_resolver dep.

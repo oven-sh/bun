@@ -308,11 +308,16 @@ impl FileSystemRouter {
             return Err(global_this.throw_value(err_value?));
         }
 
-        let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {
-            root_dir_info.abs_real_path
-        } else {
-            root_dir_info.abs_path
-        };
+        // `config.dir` is what `reload` loads routes against, and `RouteLoader` requires a
+        // trailing separator. `DirInfo.abs_path` only has one when the resolver happened to
+        // cache that spelling of the directory first.
+        let base_dir_str = strings::paths::clone_normalizing_separators(
+            if !root_dir_info.abs_real_path.is_empty() {
+                root_dir_info.abs_real_path
+            } else {
+                root_dir_info.abs_path
+            },
+        );
 
         // Note: `vm.refCountedString` is an interning cache — on a cache HIT it
         // returns the existing `*mut RefString` WITHOUT bumping the refcount.
@@ -335,7 +340,7 @@ impl FileSystemRouter {
             } else {
                 None
             },
-            base_dir: Some(claim(vm.ref_counted_string::<true>(base_dir_str, None))),
+            base_dir: Some(claim(vm.ref_counted_string::<true>(&base_dir_str, None))),
             asset_prefix: if !asset_prefix_slice.slice().is_empty() {
                 Some(claim(vm.ref_counted_string::<true>(
                     asset_prefix_slice.slice(),

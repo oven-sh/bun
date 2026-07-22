@@ -917,3 +917,66 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     signalCode: proc.signalCode,
   }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
 });
+
+// A failed relative resolve busts the router dir out of the resolver's caches; reaching it
+// again as the *parent* of the subdirectory router then caches it without a trailing slash,
+// which is the spelling `reload()` loads routes against.
+const poisonRootDirCache = (dirExpr: string) => /* ts */ `
+  try { Bun.resolveSync("./does-not-exist.ts", ${dirExpr}); } catch {}
+  new Bun.FileSystemRouter({ dir: path.join(${dirExpr}, "sub"), style: "nextjs", fileExtensions: [".tsx"] });
+`;
+
+it("reload() keeps route names when the root dir is cached without a trailing slash", async () => {
+  using dir = tempDir("fsr-reload-untrailed-root", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      ${poisonRootDirCache("pagesDir")}
+      const router = new Bun.FileSystemRouter({ dir: pagesDir, style: "nextjs", fileExtensions: [".tsx"] });
+      const before = Object.keys(router.routes).sort().join(" ");
+      router.reload();
+      console.log(before, "|", Object.keys(router.routes).sort().join(" "));
+    `,
+    "pages/b.tsx": "export default 1;\n",
+    "pages/sub/c.tsx": "export default 2;\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("/b /sub/c | /b /sub/c");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+});
+
+it("reload() terminates when the root dir is cached without a trailing slash", async () => {
+  // The off-by-one above leaves the index route with a one-character name, and route-pattern
+  // validation spins forever on the empty string that is left after its leading slash.
+  using dir = tempDir("fsr-reload-untrailed-root-index", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const pagesDir = path.join(import.meta.dir, "pages");
+      ${poisonRootDirCache("pagesDir")}
+      const router = new Bun.FileSystemRouter({ dir: pagesDir, style: "nextjs", fileExtensions: [".tsx"] });
+      router.reload();
+      console.log(Object.keys(router.routes).sort().join(" "), router.match("/")?.name);
+    `,
+    "pages/index.tsx": "export default 1;\n",
+    "pages/sub/c.tsx": "export default 2;\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("/ /sub/c /");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+});

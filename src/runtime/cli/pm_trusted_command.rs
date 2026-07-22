@@ -80,7 +80,26 @@ fn collect_isolated_untrusted_scripts(
                 if name == b"node_modules" || name.first() == Some(&b'.') {
                     continue;
                 }
-                entries.push((Box::from(name), ent.kind == bun_sys::EntryKind::SymLink));
+                // Fail closed: `DT_UNKNOWN` (NFS, FUSE, some overlayfs) must
+                // not let a symlinked global-store entry through. Resolve via
+                // lstat; treat an unresolvable kind as a symlink so the script
+                // is withheld rather than run inside the shared cache.
+                let in_global_store = match ent.kind {
+                    bun_sys::EntryKind::SymLink => true,
+                    bun_sys::EntryKind::Directory => false,
+                    #[cfg(not(windows))]
+                    bun_sys::EntryKind::Unknown => {
+                        match bun_sys::lstatat(store_fd, ent.name.as_zstr()) {
+                            Ok(st) => {
+                                bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                                    == bun_sys::EntryKind::SymLink
+                            }
+                            Err(_) => true,
+                        }
+                    }
+                    _ => true,
+                };
+                entries.push((Box::from(name), in_global_store));
             }
             Ok(None) => break,
             Err(e) => return Err(crate::Error::from(e)),
@@ -916,20 +935,22 @@ impl TrustCommand {
 
         debug_assert!(total_scripts_ran > 0 || total_global_store_packages > 0);
 
-        bun_core::pretty!(
-            " <green>{}<r> script{} ran across {} package{} ",
-            total_scripts_ran,
-            if total_scripts_ran > 1 { "s" } else { "" },
-            total_packages_with_scripts,
-            if total_packages_with_scripts > 1 {
-                "s"
-            } else {
-                ""
-            },
-        );
+        if total_scripts_ran > 0 {
+            bun_core::pretty!(
+                " <green>{}<r> script{} ran across {} package{} ",
+                total_scripts_ran,
+                if total_scripts_ran > 1 { "s" } else { "" },
+                total_packages_with_scripts,
+                if total_packages_with_scripts > 1 {
+                    "s"
+                } else {
+                    ""
+                },
+            );
 
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
-        Output::print(format_args!("\n"));
+            Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+            Output::print(format_args!("\n"));
+        }
 
         if total_global_store_packages > 0 {
             Output::print(format_args!("\n"));

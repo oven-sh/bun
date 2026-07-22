@@ -474,6 +474,10 @@ async function queueFinding(r: Result, v: Verify) {
   // completed operation does not retroactively report failure inside system
   // machinery. Repeatedly triaged not-real; suppressed as a class.
   if (r.job.mode === "post" && r.job.coord.key.startsWith("o:")) return;
+  // A stall whose fault sits INSIDE ntdll ('n:' key = loader/heap-internal
+  // machinery, mostly hit-1 startup) is a system-side slowdown, not bun's
+  // code path - repeatedly triaged not-bun on slow test targets.
+  if ((r.outcome === "stalled" || r.outcome === "slow") && r.job.coord.key.startsWith("n:")) return;
   const dedupeKey = r.crashSig
     ? `crash: ${r.crashSig.signature}`
     : `${r.job.coord.sysName} @ ${ownerFrame(r.job.coord).replace(/\+0x[0-9a-f]+/g, "")}`;

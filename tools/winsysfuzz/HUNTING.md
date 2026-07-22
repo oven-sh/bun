@@ -252,6 +252,12 @@ any callsite, and the runtime follows the WSABUF indirection.
   Correction (2026-07-22): `NtDeviceIoControlFile` is manifest id **90** in the
   regenerated table (not 210 as one earlier note assumed - 210 is
   `NtProtectVirtualMemory`). The compiled enum is correct (same codegen run);
-  the outstanding question is why an `afd:RECV` garbage rule never MATCHES
-  (`fired=0`) while `afd:SEND` does - to be settled by a match-site LogNote,
-  not further inference.
+  RESOLVED in part (match-site LogNote): the rule matcher is correct and the
+  workload's data path IS \Device\Afd (AFD_RECV 0x12017 x~1000/run); a stray
+  "foreign ioctl codes / second socket path" theory came from mis-sampling
+  six setup-time ioctls (GetAdaptersAddresses-class device controls) and is
+  WITHDRAWN - there is no second receive stack. The genuine open item is the
+  COMPLETION side: matched receives are recorded but no dequeued completion
+  is poisoned (count 0). The code ASSUMES AFD echoes the original
+  IO_STATUS_BLOCK pointer as the completion's ApcContext; that layout
+  assumption is unverified and is the next thing to instrument.

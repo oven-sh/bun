@@ -1301,6 +1301,19 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
     } else {
         *out_port = port;
     }
+#ifdef _WIN32
+    /* Listen before the socket is duplicated to workers, mirroring libuv's
+     * UV_HANDLE_SHARED_TCP_SOCKET handling (win/tcp.c). A dup of a listening
+     * socket deterministically hits the benign already-listening path in the
+     * worker; racing listen() calls on dups of a bound-only socket
+     * intermittently fail with WSAEINVAL (SO_ACCEPTCONN probes on protocol
+     * info snapshotted pre-listen). */
+    if (listen(fd, 512)) {
+        *error = WSAGetLastError();
+        bsd_close_socket(fd);
+        return LIBUS_SOCKET_ERROR;
+    }
+#endif
     return fd;
 }
 

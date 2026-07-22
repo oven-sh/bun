@@ -414,7 +414,7 @@ class ProxyAgent extends Dispatcher {
       throw new InvalidArgumentError("Proxy uri is mandatory");
     }
     const { uri, token, auth } = opts;
-    if (uri == null || (typeof uri !== "string" && !(uri instanceof URL))) {
+    if (!uri || (typeof uri !== "string" && !(uri instanceof URL))) {
       throw new InvalidArgumentError("Proxy uri is mandatory");
     }
     if (token != null && auth != null) {
@@ -434,6 +434,9 @@ class ProxyAgent extends Dispatcher {
   }
 }
 
+// The httpProxy/httpsProxy/noProxy selection is evaluated once for the
+// initial URL; native fetch only accepts a single proxy href, so on a redirect
+// the same proxy is reused and opts.noProxy is not re-consulted per hop.
 class EnvHttpProxyAgent extends Dispatcher {
   #httpProxy;
   #httpsProxy;
@@ -479,7 +482,7 @@ class EnvHttpProxyAgent extends Dispatcher {
     hostname = hostname.toLowerCase();
     if (hostname[0] === "[") hostname = hostname.slice(1, -1);
     if (this.#isNoProxy(hostname, port)) return "";
-    const proxy = protocol === "https:" ? (this.#httpsProxy ?? this.#httpProxy) : this.#httpProxy;
+    const proxy = protocol === "https:" ? this.#httpsProxy : this.#httpProxy;
     return proxy ?? "";
   }
 }

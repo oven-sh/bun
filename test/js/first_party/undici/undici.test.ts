@@ -453,6 +453,8 @@ describe("undici ProxyAgent / dispatcher", () => {
     expect(() => new (ProxyAgent as any)()).toThrow("Proxy uri is mandatory");
     expect(() => new (ProxyAgent as any)({})).toThrow("Proxy uri is mandatory");
     expect(() => new (ProxyAgent as any)(123)).toThrow("Proxy uri is mandatory");
+    expect(() => new (ProxyAgent as any)("")).toThrow("Proxy uri is mandatory");
+    expect(() => new (ProxyAgent as any)({ uri: "" })).toThrow("Proxy uri is mandatory");
   });
 
   it("EnvHttpProxyAgent noProxy match goes direct even with ambient HTTP_PROXY set", async () => {

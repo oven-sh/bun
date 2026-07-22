@@ -464,6 +464,19 @@ impl UpgradeCommand {
         if !SILENT {
             progress.expect("infallible: progress active").end();
             refresher.expect("infallible: progress active").refresh();
+
+            if use_canary {
+                bun_core::pretty_errorln!(
+                    "<r><red>error:<r> Canary builds are not available for this platform yet\n\n   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>\n  Filename: <b>{}<r>\n",
+                    if use_profile {
+                        Version::PROFILE_ZIP_FILENAME
+                    } else {
+                        Version::ZIP_FILENAME
+                    }
+                );
+                Global::exit(1);
+            }
+
             if let Some(name) = version.name() {
                 bun_core::pretty_errorln!(
                     "Bun v{} is out, but not for this platform ({}) yet.",

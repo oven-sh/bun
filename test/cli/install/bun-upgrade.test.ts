@@ -344,23 +344,21 @@ it("verifies the downloaded release archive against the digest reported by the r
   expect(matched.exitCode).toBe(1);
 });
 
-describe.each(["--stable", "--canary"] as const)("%s", flag => {
+describe.concurrent.each(["--stable", "--canary"] as const)("%s", flag => {
   const tagName = flag === "--canary" ? "canary" : "bun-v9.9.9";
   const archiveBody = "this is not a real zip archive";
 
-  it("refuses to download when the release asset has no checksum", async () => {
-    // An asset with a `digest` that is absent, null, or malformed must be
-    // treated as unverifiable: no download, no install, no execution.
-    for (const digest of [undefined, null, "", "sha256:not-hex", "md5:" + Buffer.alloc(16).toString("hex")]) {
+  // An asset with a `digest` that is absent, null, or malformed must be
+  // treated as unverifiable: no download, no install, no execution.
+  it.each([undefined, null, "", "sha256:not-hex", "md5:" + Buffer.alloc(16).toString("hex")])(
+    "refuses to download when the release asset digest is %p",
+    async digest => {
       const result = await runUpgrade({ tagName, archiveBody, digest, flag });
-      expect({ digest, stderr: result.stderr }).toEqual({
-        digest,
-        stderr: expect.stringContaining("did not return a sha256 checksum"),
-      });
+      expect(result.stderr).toContain("did not return a sha256 checksum");
       expect(result.downloaded).toBe(false);
       expect(result.exitCode).toBe(1);
-    }
-  });
+    },
+  );
 
   it("refuses to install when the downloaded archive does not match the checksum", async () => {
     const wrongDigest = `sha256:${Buffer.alloc(32, 0xab).toString("hex")}`;

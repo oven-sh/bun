@@ -71,8 +71,7 @@ describe("captured stdio drains on synchronous process.exit()", () => {
 describe("auto-piped stdio drains on synchronous process.exit()", () => {
   const N = 300;
   function parentScript(exitCall: string) {
-    const workerBody =
-      `for (let i = 0; i < ${N}; i++) console.log("W" + i);` + `console.error("WERR");` + exitCall;
+    const workerBody = `for (let i = 0; i < ${N}; i++) console.log("W" + i);` + `console.error("WERR");` + exitCall;
     return (
       `const { Worker } = require("node:worker_threads");` +
       `const w = new Worker(${JSON.stringify(workerBody)}, { eval: true });` +

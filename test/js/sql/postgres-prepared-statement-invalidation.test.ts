@@ -139,9 +139,7 @@ test("postgres: a 26000 on Bind evicts the cached statement and re-prepares unde
               out.push(pgBindComplete());
             } else {
               boundName = null;
-              out.push(
-                pgErrorResponse({ S: "ERROR", C: "26000", M: `prepared statement "${name}" does not exist` }),
-              );
+              out.push(pgErrorResponse({ S: "ERROR", C: "26000", M: `prepared statement "${name}" does not exist` }));
             }
             break;
           }
@@ -240,4 +238,3 @@ test("postgres: a 26000 on the re-prepared Bind is surfaced instead of retried a
     server.close();
   }
 });
-

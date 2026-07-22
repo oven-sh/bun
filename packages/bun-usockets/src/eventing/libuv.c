@@ -217,6 +217,22 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   return 0;
 }
 
+void us_internal_poll_restart(struct us_poll_t *p, struct us_loop_t *loop) {
+  (void) loop;
+  if (!p->uv_p) return;
+  uv_poll_start(p->uv_p, us_poll_events(p) | UV_DISCONNECT, poll_cb);
+}
+
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+void us_internal_poll_simulate_error_stop(struct us_poll_t *p, struct us_loop_t *loop) {
+  (void) loop;
+  /* uv_poll_stop zeroes handle->events and masks pending reqs, matching the
+   * state uv__fast_poll_process_poll_req's !REQ_SUCCESS branch leaves the
+   * handle in. The handle is not closed, so uv_poll_start still re-arms. */
+  if (p->uv_p) uv_poll_stop(p->uv_p);
+}
+#endif
+
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   if(!p->uv_p) return;
   if (us_poll_events(p) != events) {

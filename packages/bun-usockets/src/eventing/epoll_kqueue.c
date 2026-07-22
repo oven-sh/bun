@@ -655,6 +655,45 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     }
 }
 
+void us_internal_poll_restart(struct us_poll_t *p, struct us_loop_t *loop) {
+    int events = us_poll_events(p);
+#ifdef LIBUS_USE_EPOLL
+    struct epoll_event event;
+    event.events = events;
+    event.data.ptr = p;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, p->state.fd, &event);
+    } while (IS_EINTR(rc));
+    if (rc != 0 && errno == ENOENT) {
+        do {
+            rc = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
+        } while (IS_EINTR(rc));
+    }
+#else
+    /* EV_ADD is idempotent on kqueue. */
+    kqueue_change(loop->fd, p->state.fd, 0, events, p);
+#endif
+}
+
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+void us_internal_poll_simulate_error_stop(struct us_poll_t *p, struct us_loop_t *loop) {
+    int old_events = us_poll_events(p);
+#ifdef LIBUS_USE_EPOLL
+    struct epoll_event event;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
+    } while (IS_EINTR(rc));
+#else
+    if (old_events) {
+        kqueue_change(loop->fd, p->state.fd, old_events, 0, NULL);
+    }
+#endif
+    (void) old_events;
+}
+#endif
+
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     int old_events = us_poll_events(p);
     int new_events = 0;

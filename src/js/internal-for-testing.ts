@@ -328,7 +328,8 @@ export type SocketFaultSyscall =
   | "recvmsg"
   | "connect"
   | "accept"
-  | "ssl_loop_buffer";
+  | "ssl_loop_buffer"
+  | "listen_poll";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

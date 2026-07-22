@@ -17,6 +17,7 @@
 // clang-format off
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "quic.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -496,6 +497,32 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct us_socket_group_t *accept_group = listen_socket->accept_group;
                 struct us_loop_t *loop = accept_group->loop;
                 struct bsd_addr_t addr;
+
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+                {
+                    ssize_t injected = 0; int unused = 0;
+                    if (US_FAULT_CHECK(US_FAULT_LISTEN_POLL, us_poll_fd(p), injected, unused)) {
+                        us_internal_poll_simulate_error_stop(p, loop);
+                        error = 1;
+                    }
+                    (void) injected; (void) unused;
+                }
+#endif
+
+                if (error) {
+                    /* A poll-layer error on a listening socket. On libuv the
+                     * fast-poll !REQ_SUCCESS path (src/win/poll.c) zeroes
+                     * handle->events before invoking poll_cb with status < 0,
+                     * so no further AFD poll ioctl is submitted until
+                     * uv_poll_start runs again: without re-arming, the
+                     * listener stays alive but never accepts another
+                     * connection. Clear any latched SO_ERROR so a level-
+                     * triggered EPOLLERR does not spin, then re-arm;
+                     * epoll/kqueue registrations survive an error event so
+                     * the restart is an idempotent MOD/EV_ADD there. */
+                    (void) us_socket_get_error(&listen_socket->s);
+                    us_internal_poll_restart(p, loop);
+                }
 
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
                 if (client_fd == LIBUS_SOCKET_ERROR) {

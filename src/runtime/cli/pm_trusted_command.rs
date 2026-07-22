@@ -35,7 +35,7 @@ type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 ///
 /// Peer-hash suffixes are discovered by readdir rather than recomputing the
 /// Store: a package's entries are every directory name equal to
-/// `<name>@<res>` or prefixed `<name>@<res>+`.
+/// `<name>@<res>` or `<name>@<res>+<16 lowercase hex>`.
 fn collect_isolated_untrusted_scripts(
     log: &mut bun_ast::Log,
     lockfile: &Lockfile,
@@ -116,10 +116,18 @@ fn collect_isolated_untrusted_scripts(
         .into_bytes();
 
         for entry in &entries {
+            // Peer-hash suffix is `format!("+{:016x}", hash)` (Store.rs); constrain
+            // to that exact shape so semver build metadata (`foo@1.0.0+sha`) or
+            // `/`→`+` encoded tarball/folder paths don't over-match a shorter
+            // same-name prefix.
+            const PEER_HASH_SUFFIX_LEN: usize = 1 + 16;
             let matches = entry[..] == prefix[..]
-                || (entry.len() > prefix.len()
+                || (entry.len() == prefix.len() + PEER_HASH_SUFFIX_LEN
                     && entry[..prefix.len()] == prefix[..]
-                    && entry[prefix.len()] == b'+');
+                    && entry[prefix.len()] == b'+'
+                    && entry[prefix.len() + 1..]
+                        .iter()
+                        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
             if !matches {
                 continue;
             }
@@ -511,6 +519,10 @@ impl TrustCommand {
                 };
 
                 let total = scripts_list.total as usize;
+                // The isolated store is flat; this does not reconstruct the
+                // dependency-graph ordering the installer's own `Step::Scripts`
+                // gating provides. Hoisted `pm trust` has the same gap when
+                // everything hoists to depth 0.
                 let entry = scripts_at_depth.get_or_put(0usize)?;
                 if !entry.found_existing {
                     *entry.value_ptr = Vec::new();

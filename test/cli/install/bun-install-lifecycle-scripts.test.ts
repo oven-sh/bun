@@ -11,7 +11,7 @@ import {
   readdirSorted,
   runBunInstall,
   stderrForInstall,
-  tmpdirSync,
+  tempDir,
 } from "harness";
 import { join, sep } from "path";
 
@@ -4074,7 +4074,15 @@ describe("pm untrusted/trust under the isolated linker", () => {
       },
     });
 
-    const packageDir = tmpdirSync();
+    using dir = tempDir("pm-trust-isolated", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/b/package.json": JSON.stringify({
+        name: "ws-b",
+        version: "1.0.0",
+        dependencies: { [pkgName]: "1.0.0" },
+      }),
+    });
+    const packageDir = String(dir);
     const env = {
       ...baseEnv,
       BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
@@ -4082,19 +4090,6 @@ describe("pm untrusted/trust under the isolated linker", () => {
     await write(
       join(packageDir, "bunfig.toml"),
       `[install]\nregistry = "${server.url}"\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n`,
-    );
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
-    );
-    await mkdir(join(packageDir, "packages", "b"), { recursive: true });
-    await write(
-      join(packageDir, "packages", "b", "package.json"),
-      JSON.stringify({
-        name: "ws-b",
-        version: "1.0.0",
-        dependencies: { [pkgName]: "1.0.0" },
-      }),
     );
 
     // install: should report the blocked postinstall

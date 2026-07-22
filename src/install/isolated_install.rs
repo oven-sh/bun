@@ -2351,24 +2351,27 @@ pub(crate) fn install_isolated_packages(
                                 // The cache entry name is attacker-predictable,
                                 // so require a real directory (not a symlink)
                                 // before probing for package.json beneath it.
-                                let exists = crate::package_manager_real::directories::cache_entry_is_dir(
-                                    cache_dir,
-                                    pkg_cache_dir_subpath.slice_z(),
-                                ) && match pkg_res_tag {
-                                    ResolutionTag::Npm => {
-                                        // Reshaped for borrowck — capture length
-                                        // instead of `save()` so the path stays unborrowed.
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                        let exists = sys::exists_at(
-                                            cache_dir,
-                                            pkg_cache_dir_subpath.slice_z(),
-                                        );
-                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                        exists
-                                    }
-                                    _ => true,
-                                };
+                                let exists =
+                                    crate::package_manager_real::directories::cache_entry_is_dir(
+                                        cache_dir,
+                                        pkg_cache_dir_subpath.slice_z(),
+                                    ) && match pkg_res_tag {
+                                        ResolutionTag::Npm => {
+                                            // Reshaped for borrowck — capture length
+                                            // instead of `save()` so the path stays unborrowed.
+                                            let cache_dir_path_save = pkg_cache_dir_subpath.len();
+                                            pkg_cache_dir_subpath
+                                                .append(b"package.json")
+                                                .assume_ok();
+                                            let exists = sys::exists_at(
+                                                cache_dir,
+                                                pkg_cache_dir_subpath.slice_z(),
+                                            );
+                                            pkg_cache_dir_subpath.set_length(cache_dir_path_save);
+                                            exists
+                                        }
+                                        _ => true,
+                                    };
                                 if exists {
                                     installer.manager_mut().set_preinstall_state(
                                         pkg_id,

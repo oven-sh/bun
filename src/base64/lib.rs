@@ -966,8 +966,8 @@ pub mod zig_base64 {
 // LAYERING: hoisted from `bun_css::css_modules::hash` so `bun_bundler` can
 // call the *same* implementation without taking a hard dep on `bun_css` (and
 // without re-implementing the hash, which would diverge — see review of
-// `LinkerContext.rs::css_modules_hash_shim`). `bun_css` re-exports this as
-// `css_modules::hash` for its in-crate callers.
+// `LinkerContext.rs::css_modules_hash_shim`). `bun_css` wraps this as
+// `css_modules::hash` for its own hashing.
 //
 // Behavior: wyhash(u64) of the formatted args,
 // truncated to u32, url-safe-base64-encoded into a bump-allocated slice. If

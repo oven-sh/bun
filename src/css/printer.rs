@@ -525,7 +525,7 @@ impl<'a> Printer<'a> {
 
     /// Writes a CSS identifier to the underlying destination, escaping it
     /// as appropriate. If the `css_modules` option was enabled, then a hash
-    /// is added, and the mapping is added to the CSS module.
+    /// is added.
     pub(crate) fn write_ident(
         &mut self,
         ident: &'a [u8],

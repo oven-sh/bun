@@ -1338,7 +1338,7 @@ impl From<DecodeError> for crate::Error {
 
 impl PercentEncoding {
     fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
-        Self::decode_fault_tolerant::<_, false>(writer, input, None)
+        Self::decode_fault_tolerant::<_, false>(writer, input)
     }
 
     /// Decode percent-encoded input into allocated memory.
@@ -1364,9 +1364,7 @@ impl PercentEncoding {
     pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(
         writer: &mut W,
         input: &[u8],
-        needs_redirect: Option<&mut bool>,
     ) -> Result<u32, DecodeError> {
-        let mut needs_redirect = needs_redirect;
         let mut i: usize = 0;
         let mut written: u32 = 0;
         // unlike JavaScript's decodeURIComponent, we are not handling invalid surrogate pairs
@@ -1382,18 +1380,13 @@ impl PercentEncoding {
                             // i do not feel good about this
                             // create-react-app's public/index.html uses %PUBLIC_URL% in various tags
                             // This is an invalid %-encoded string, intended to be swapped out at build time by webpack-html-plugin
-                            // We don't process HTML, so rewriting this URL path won't happen
-                            // But we want to be a little more fault tolerant here than just throwing up an error for something that works in other tools
-                            // So we just skip over it and issue a redirect
-                            // We issue a redirect because various other tooling client-side may validate URLs
-                            // We can't expect other tools to be as fault tolerant
+                            // We don't process HTML, so rewriting this URL path won't happen,
+                            // but be more fault tolerant than erroring on something other tools
+                            // accept: skip over the `%PUBLIC_URL%` placeholder.
                             if i + b"PUBLIC_URL%".len() < input.len()
                                 && &input[i + 1..][..b"PUBLIC_URL%".len()] == b"PUBLIC_URL%"
                             {
                                 i += b"PUBLIC_URL%".len() + 1;
-                                if let Some(r) = needs_redirect.as_deref_mut() {
-                                    *r = true;
-                                }
                                 continue;
                             }
                             return Err(DecodeError::DecodingError);

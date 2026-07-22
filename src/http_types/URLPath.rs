@@ -49,11 +49,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
 
         let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
-        let n = PercentEncoding::decode_fault_tolerant::<_, true>(
-            &mut buf,
-            capped,
-            None,
-        )?;
+        let n = PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, capped)?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);
         // Freeze into a heap-stable Box and park it in `decoded_storage` before

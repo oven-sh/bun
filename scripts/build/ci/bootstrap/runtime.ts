@@ -268,17 +268,44 @@ function execute(command: string[], options: RunOptions): Promise<RunResult> {
   const printable = formatCommand(command);
   log(`$ ${printable}${options.cwd ? `   (cwd: ${options.cwd})` : ""}`);
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, ...options.env };
+    const env: Record<string, string | undefined> = { ...process.env, ...options.env };
     const path = childPath();
     if (path !== undefined) {
+      // Windows env var names are case-insensitive; a block carrying both
+      // "Path" and "PATH" is malformed. Normalize to exactly one key.
+      for (const key of Object.keys(env)) {
+        if (key !== "Path" && key.toUpperCase() === "PATH") delete env[key];
+      }
       env.Path = path;
-      env.PATH = path;
     }
-    const child = nodeSpawn(command[0]!, command.slice(1), {
-      cwd: options.cwd,
-      env,
-      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    });
+    // spawn() itself can throw synchronously (Windows EPERM/ENOENT when the
+    // executable can't be launched). Convert that into a report naming the
+    // command, the working directory, and the syscall — a bare "spawn
+    // EPERM" says none of that.
+    let child;
+    try {
+      child = nodeSpawn(command[0]!, command.slice(1), {
+        cwd: options.cwd,
+        env,
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      });
+    } catch (error) {
+      const e = error as NodeJS.ErrnoException;
+      const cwdNow = (() => {
+        try {
+          return process.cwd();
+        } catch {
+          return "<process cwd no longer exists>";
+        }
+      })();
+      reject(
+        new Error(
+          `could not launch ${JSON.stringify(command[0])} (${e.code ?? "?"} on ${e.syscall ?? "spawn"}); ` +
+            `cwd=${options.cwd ?? cwdNow}: ${e.message}`,
+        ),
+      );
+      return;
+    }
     let stdout = "";
     let stderr = "";
     child.stdout!.on("data", chunk => {

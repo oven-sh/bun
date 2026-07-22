@@ -100,6 +100,8 @@ export const cssInternals = {
 
 export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
+  getFeaturesAsVLQ: () => string;
+  getFeatureData: () => { is_canary: boolean; version: string; revision: string; features: string[]; generated_at: number };
   segfault: () => void;
   segfaultWithRegisters: () => void;
   panic: () => void;

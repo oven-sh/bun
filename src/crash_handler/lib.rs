@@ -2620,9 +2620,9 @@ mod draft {
         f
     };
 
-    // The v1/v2 trace-string
-    // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
-    // shift every following VLQ byte, making bun.report unable to decode the URL.
+    // The trace-string format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT`
+    // is 9 chars and would shift every following VLQ byte, making bun.report
+    // unable to decode the URL.
     const GIT_SHA: &str = {
         const fn sha7(s: &'static str) -> &'static str {
             let (head, _) = s.as_bytes().split_at(7);

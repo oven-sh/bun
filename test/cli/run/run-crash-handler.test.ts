@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
-const is_canary: boolean = (crash_handler as any).getFeatureData().is_canary;
+const is_canary = crash_handler.getFeatureData().is_canary;
 
 // CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
 // deliberate crashes must not upload there or the runner pins them on the

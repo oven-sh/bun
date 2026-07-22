@@ -410,6 +410,34 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if cmd == CommandTag::RunCommand
+            || cmd == CommandTag::AutoCommand
+            || cmd == CommandTag::TestCommand
+        {
+            if let Some(expr) = json.get(b"CA").or_else(|| json.get(b"ca")) {
+                self.expect_string(&expr)?;
+                let value = expr.as_string(self.bump).unwrap_or(b"");
+                if value == b"system" {
+                    self.ctx.runtime_options.ca_store =
+                        Some(bun_options_types::context::BunCAStore::System);
+                } else if value == b"openssl" {
+                    self.ctx.runtime_options.ca_store =
+                        Some(bun_options_types::context::BunCAStore::Openssl);
+                } else if value == b"bundled" {
+                    self.ctx.runtime_options.ca_store =
+                        Some(bun_options_types::context::BunCAStore::Bundled);
+                } else {
+                    self.add_error_format(
+                        expr.loc,
+                        format_args!(
+                            "Invalid CA value \"{}\". Expected one of: \"system\", \"openssl\", \"bundled\"",
+                            bstr::BStr::new(value)
+                        ),
+                    )?;
+                }
+            }
+        }
+
         if cmd == CommandTag::TestCommand {
             if let Some(test_) = json.get(b"test") {
                 if let Some(root) = test_.get(b"root") {

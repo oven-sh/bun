@@ -935,6 +935,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 ctx,
             )?;
         }
+        // Apply the bunfig-sourced CA store whether or not we just loaded it —
+        // it might have been parsed earlier (before the precedence block ran)
+        // or here. `apply_bunfig_ca_store` respects the CA-locked flag set by
+        // higher-precedence CLI flag / env var sources.
+        arguments::apply_bunfig_ca_store(ctx);
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
@@ -1154,6 +1159,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 ctx,
             )?;
         }
+        // Standalone executables don't go through `Arguments::parse`, so apply
+        // the bunfig-sourced CA store here. `apply_bunfig_ca_store` no-ops if
+        // a CLI flag or NODE_USE_SYSTEM_CA already locked the value upstream.
+        arguments::apply_bunfig_ca_store(ctx);
 
         // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
@@ -2401,6 +2410,11 @@ impl RunCommand {
                 ctx,
             );
         }
+        // Always apply — `.RunCommand` defers its bunfig load until now so the
+        // CA-store precedence block in `Arguments::parse` can't see `ca_store`.
+        // Even when bunfig was preloaded earlier (e.g. `--config`), the
+        // CA-locked flag prevents this from clobbering a CLI/env selection.
+        arguments::apply_bunfig_ca_store(ctx);
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
         if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {

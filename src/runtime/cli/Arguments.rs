@@ -678,19 +678,37 @@ pub(crate) static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBoo
 pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum BunCAStore {
-    Bundled,
-    Openssl,
-    System,
-}
+pub(crate) use bun_options_types::context::BunCAStore;
+
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+
+/// True once the CLI flag or `NODE_USE_SYSTEM_CA` env var has pinned
+/// `Bun__Node__CAStore`. A deferred bunfig load (e.g. `Run::boot` reading the
+/// local bunfig.toml after `Arguments::parse` returned) must not override that.
+pub(crate) static Bun__Node__CAStore_locked: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Apply `ctx.runtime_options.ca_store` (populated by the bunfig parser) to
+/// `Bun__Node__CAStore`, unless a higher-precedence source already pinned it.
+/// Safe to call more than once — subsequent calls are no-ops once the CA
+/// store is locked or the bunfig value is already applied.
+pub(crate) fn apply_bunfig_ca_store(ctx: &mut bun_options_types::context::ContextData) {
+    if !Bun__Node__CAStore_locked.load(core::sync::atomic::Ordering::Relaxed) {
+        if let Some(ca_store) = ctx.runtime_options.ca_store {
+            Bun__Node__CAStore.store(ca_store as u8, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let current = Bun__Node__CAStore.load(core::sync::atomic::Ordering::Relaxed);
+    Bun__Node__UseSystemCA.store(
+        current == BunCAStore::System as u8,
+        core::sync::atomic::Ordering::Relaxed,
+    );
+}
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
@@ -1286,7 +1304,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             Global::exit(1);
         }
 
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        // Precedence: CLI flag > NODE_USE_SYSTEM_CA env var > bunfig.toml `CA` > bundled (default).
+        // The CLI/env branches are authoritative and pin the lock flag so a later
+        // bunfig load (e.g. the deferred one in `Run::boot`) can't override them.
         let store: Option<BunCAStore> = if use_bundled_ca {
             Some(BunCAStore::Bundled)
         } else if use_openssl_ca {
@@ -1294,23 +1314,18 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
             Some(BunCAStore::System)
         } else {
-            // No CA flag — leave the FFI default (Bundled) in place. Avoids a
-            // `transmute<u8, BunCAStore>` round-trip through the atomic, which
-            // would be UB on an out-of-range discriminant.
             None
         };
         if let Some(store) = store {
             Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
-            // Back-compat boolean used by native code until fully migrated
-            Bun__Node__UseSystemCA.store(
-                store == BunCAStore::System,
-                core::sync::atomic::Ordering::Relaxed,
-            );
-        } else {
-            // `Bun__Node__UseSystemCA` is written unconditionally,
-            // even when no CA flag/env was supplied (default bundled ⇒ false).
-            Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
+            Bun__Node__CAStore_locked.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+
+        // Apply any bunfig-sourced value that was already loaded during this
+        // parse (.AutoCommand, .TestCommand, etc.). For .RunCommand the local
+        // bunfig isn't loaded until `Run::boot` — `apply_bunfig_ca_store` is
+        // called again from there.
+        apply_bunfig_ca_store(ctx);
     }
 
     if let (Some(port), true) = (opts.port, opts.origin.is_none()) {

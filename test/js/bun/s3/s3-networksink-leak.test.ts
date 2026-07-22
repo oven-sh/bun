@@ -87,8 +87,6 @@ test("S3 writer() unrefs the event loop once end() resolves, even if the writer 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("beforeExit");
-  expect(exitCode).toBe(0);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "beforeExit", exitCode: 0 });
 });

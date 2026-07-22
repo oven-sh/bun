@@ -268,6 +268,11 @@ impl Route {
             return;
         };
 
+        if !server.has_listener() {
+            super::server_body::respond_stopped_503_any(resp);
+            return;
+        }
+
         if server.config().is_development() {
             if let Some(dev) = server.dev_server_mut() {
                 // DevServer's HMR path is *uws.Request-typed; H3 isn't routed

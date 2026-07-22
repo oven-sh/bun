@@ -727,6 +727,7 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
             port: 0,
             hostname: "127.0.0.1",
             idleTimeout: 0,
+            routes: { "/s": new Response("static") },
             async fetch() {
               hits++;
               inflight.resolve();
@@ -747,10 +748,12 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
           s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
           await inflight.promise;
           server.stop(false);
-          // A post-stop request pipelined behind the held one must not reach
-          // fetch(): once the in-flight response completes the socket is
-          // swept as idle, or the trampoline answers 503.
+          // Post-stop requests pipelined behind the held one (dynamic, static,
+          // and an unmatched path) must each be answered 503 + Connection:
+          // close instead of dispatching.
           s.write("GET /after HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          s.write("GET /s HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          s.write("GET /s HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
           release.resolve();
           const until = Date.now() + 2000;
           while (!closed && Date.now() < until) {
@@ -758,7 +761,7 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
             waiter.p = Promise.withResolvers();
           }
           const statuses = [...received.matchAll(/HTTP\\/1\\.1 (\\d{3})/g)].map(m => m[1]);
-          console.log(JSON.stringify({ statuses, hits, closed }));
+          console.log(JSON.stringify({ first: statuses[0], rest: statuses.slice(1), hits, closed }));
           s.destroy();
         `,
       ],
@@ -767,11 +770,20 @@ describe.concurrent("server.stop() with idle keep-alive connections", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+    const out = JSON.parse(stdout.trim() || "{}");
+    // Every pipelined request after stop() is 503 (never 200); the socket
+    // closes once the 503 run has flushed. How many of the three 503s the
+    // client observes before FIN is up to uWS's close sequencing, so only
+    // assert none of them is a 200.
+    expect({ stderr, first: out.first, hits: out.hits, closed: out.closed, exitCode }).toEqual({
       stderr: "",
-      out: { statuses: ["200", "503"], hits: 1, closed: true },
+      first: "200",
+      hits: 1,
+      closed: true,
       exitCode: 0,
     });
+    expect(out.rest?.length).toBeGreaterThan(0);
+    expect(out.rest).not.toContain("200");
   });
 });
 

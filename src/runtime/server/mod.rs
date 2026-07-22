@@ -3182,10 +3182,16 @@ mod trampoline {
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         _req: *mut UwsRequest,
-        _user_data: *mut c_void,
+        user_data: *mut c_void,
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
+        // SAFETY: `user_data` is the `*mut NewServer<..>` registered in
+        // set_routes, live for the request's duration.
+        if !unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() }.has_listener() {
+            server_body::respond_stopped_503(resp);
+            return;
+        }
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
     }
@@ -3716,6 +3722,11 @@ impl AnyServer {
     #[inline]
     pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
         any_server_dispatch!(self, |s| s.js_value_for_dispatch())
+    }
+
+    #[inline]
+    pub fn has_listener(&self) -> bool {
+        any_server_dispatch!(self, |s| s.has_listener())
     }
 
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {

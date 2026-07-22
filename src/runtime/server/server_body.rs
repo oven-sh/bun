@@ -415,6 +415,15 @@ pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.end_without_body(!R::IS_H3);
 }
 
+/// [`respond_stopped_503`] for the `AnyResponse`-taking trampolines
+/// (StaticRoute / FileRoute / HTMLBundle). `AnyResponse` has no `RespLike`
+/// impl (its `IS_H3` is a runtime tag), so dispatch the close flag by variant.
+#[inline]
+pub(super) fn respond_stopped_503_any(resp: uws::AnyResponse) {
+    resp.write_status(b"503 Service Unavailable");
+    resp.end_without_body(!matches!(resp, uws::AnyResponse::H3(_)));
+}
+
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =

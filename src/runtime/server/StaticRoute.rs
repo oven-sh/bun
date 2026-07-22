@@ -259,6 +259,23 @@ impl StaticRoute {
         Ok(None)
     }
 
+    /// Refuse a request that arrived after `server.stop()`: the listener is
+    /// gone, so a surviving keep-alive socket must not keep dispatching to
+    /// this route. Same gate as `NewServer::js_value_for_new_request`.
+    ///
+    /// # Safety
+    /// `this` must point to a live heap-allocated `StaticRoute`.
+    unsafe fn refuse_if_stopped(this: *const Self, resp: AnyResponse) -> bool {
+        // SAFETY: caller contract.
+        if let Some(server) = unsafe { &*this }.server.get() {
+            if !server.has_listener() {
+                super::server_body::respond_stopped_503_any(resp);
+                return true;
+            }
+        }
+        false
+    }
+
     // HEAD requests have no body.
     /// # Safety
     /// `this` must point to a live heap-allocated `StaticRoute` produced by one of
@@ -266,6 +283,9 @@ impl StaticRoute {
     pub unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
+            if Self::refuse_if_stopped(this, resp) {
+                return;
+            }
             // Evaluate conditional request preconditions for HEAD with 200 status
             if (*this).status_code == 200 {
                 if Self::render_304_if_not_modified(this, &mut req, resp) {
@@ -314,6 +334,9 @@ impl StaticRoute {
     pub unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
+            if Self::refuse_if_stopped(this, resp) {
+                return;
+            }
             let method = Method::find(req.method()).unwrap_or(Method::GET);
             if method == Method::GET {
                 Self::on_get(this, req, resp);

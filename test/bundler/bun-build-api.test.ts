@@ -655,6 +655,35 @@ describe("Bun.build", () => {
         });
       });
     }
+
+    test.concurrent("onResolve /y filter is anchored at offset 0", async () => {
+      using dir = tempDir("plugin-filter-sticky", {
+        "entry.ts": `import a from "virt:a"; import b from "xvirt:b"; console.log(a, b);`,
+      });
+      const resolved: string[] = [];
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "sticky",
+            setup(b) {
+              // /virt:/y must match "virt:a" (offset 0) but not "xvirt:b" (offset 1).
+              b.onResolve({ filter: /virt:/y }, args => {
+                resolved.push(args.path);
+                return { path: args.path, namespace: "virt" };
+              });
+              b.onResolve({ filter: /^xvirt:/ }, args => ({ path: args.path, namespace: "virt" }));
+              b.onLoad({ filter: /./, namespace: "virt" }, args => ({
+                contents: `export default ${JSON.stringify(args.path)};`,
+                loader: "js",
+              }));
+            },
+          },
+        ],
+      });
+      expect({ success: result.success, resolved }).toEqual({ success: true, resolved: ["virt:a"] });
+    });
   });
 
   test.concurrent("hash considers cross chunk imports", async () => {

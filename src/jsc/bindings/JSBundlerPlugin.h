@@ -51,15 +51,18 @@ public:
             : m_pattern(pattern.isolatedCopy())
             , m_allocator(WTF::makeUnique<WTF::BumpPointerAllocator>())
         {
-            // Global/Sticky/HasIndices control JS iteration state and result
-            // shape, not whether a path matches; drop them so the compiled
-            // pattern only carries flags that affect matching.
+            // Global and HasIndices control JS iteration state and result shape,
+            // not whether a path matches, so drop them. Sticky is kept: the Yarr
+            // interpreter honors it (a sticky pattern only matches at the start
+            // offset), and for native onBeforeParse plugins this match is the
+            // sole gate with no JS-side re-check.
             constexpr auto semanticFlags = OptionSet<Yarr::Flags> {
                 Yarr::Flags::IgnoreCase,
                 Yarr::Flags::Multiline,
                 Yarr::Flags::DotAll,
                 Yarr::Flags::Unicode,
                 Yarr::Flags::UnicodeSets,
+                Yarr::Flags::Sticky,
             };
             Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
             Yarr::YarrPattern yarrPattern(m_pattern, flags & semanticFlags, errorCode);

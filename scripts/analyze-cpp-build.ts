@@ -34,7 +34,7 @@
 
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 
 function run(argv: string[], opts: SpawnSyncOptions): void {
   const r = spawnSync(argv[0]!, argv.slice(1), opts);
@@ -55,7 +55,17 @@ const flag = (name: string, dflt?: string): string | undefined => {
 const has = (name: string) => args.includes(`--${name}`);
 
 const repo = resolve(import.meta.dir, "..");
-const buildDir = resolve(repo, flag("dir", "build/time-trace")!);
+const buildDir = resolve(repo, flag("dir") || "build/time-trace");
+// The default clean step is rmSync(buildDir, {recursive}). Refuse any buildDir
+// that is the repo root or an ancestor of it (which is what --dir "", --dir .,
+// --dir / all resolve to) so a typo can't recursively delete the checkout.
+{
+  const repoFromBuild = relative(buildDir, repo);
+  if (repoFromBuild === "" || !(repoFromBuild === ".." || repoFromBuild.startsWith(`..${sep}`))) {
+    console.error(`refusing --dir ${JSON.stringify(buildDir)}: contains the repository root`);
+    process.exit(1);
+  }
+}
 const lto = flag("lto", "on");
 const top = Number(flag("top", "25"));
 const noBuild = has("no-build");

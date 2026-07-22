@@ -129,7 +129,15 @@ if (!baseTrace) {
 // process holding its own cwd is normal) is our artifact, not a bun leak,
 // and the unique name defeats a plain baseline diff.
 const harnessPath = /\\runs\\|\\cwd\b|\\wsf-\d+\.log|\\(stdout|stderr)\.txt|\bwsffeed\b|\bwsfchaos\b|\bwsfsweep\b/i;
-const cleanLeaks = (leaks: string[]) => leaks.map(l => l.trim()).filter(l => !harnessPath.test(l));
+// Not a workload I/O leak: OS-owned named objects (WER/WIL and other
+// Local\ / Global\ / BaseNamedObjects sections the system creates in-
+// process on demand), loader resource files (.mui/.dll/.nls sections), and
+// bun's own module sources (a source file it keeps open/mapped for the
+// module's lifetime). Only handles bun opened for the workload's own I/O
+// (data files, pipes, sockets, keys) can be a leak worth reporting.
+const notWorkloadIo = /(Local\\|Global\\|BaseNamedObjects|WilError|\\SM0:|\.mui\b|\.dll\b|\.nls\b|\.(ts|tsx|js|mjs|cjs|mts|cts|jsx)$)/i;
+const cleanLeaks = (leaks: string[]) =>
+  leaks.map(l => l.trim()).filter(l => !harnessPath.test(l) && !notWorkloadIo.test(l));
 const baseLeakSet = new Set(cleanLeaks(baseTrace.leaks ?? []));
 const newLeaks = (leaks: string[]): string[] => [...new Set(cleanLeaks(leaks))].filter(l => !baseLeakSet.has(l));
 

@@ -781,8 +781,7 @@ impl Encoding {
             .throw()
     }
 
-    /// Thin assertion wrapper over `encode_with_max_size`; currently has no
-    /// callers (CryptoHasher.rs uses `encode_with_max_size` directly).
+    /// Thin assertion wrapper over `encode_with_max_size`.
     #[inline]
     pub fn encode_with_size(
         self,

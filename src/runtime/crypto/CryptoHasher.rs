@@ -262,12 +262,20 @@ impl CryptoHasher {
             string_value.get_zig_string(global)?
         };
 
-        // Parse the output/options argument before decoding `input`: option
-        // getters can run user JS that detaches or resizes the input buffer,
-        // so all user-JS re-entry must happen before the input pointer is
-        // captured.
+        // Reading options-object properties (.get) can run user getters, and
+        // decoding a StringObject input can run [Symbol.toPrimitive]. Both are
+        // user-JS re-entry points that may detach or resize a buffer argument.
+        // Do every such read before any raw pointer is captured: option reads
+        // first, then input decode (captures the input pointer), then finally
+        // wrap the output TypedArray (captures the output pointer) with no
+        // user JS in between.
         let mut output_length: Option<u32> = None;
-        let output: Option<StringOrBuffer> = match arg_at(2) {
+        let mut deferred_output_buffer: Option<JSValue> = None;
+        let mut output: Option<StringOrBuffer> = match arg_at(2) {
+            Some(arg) if arg.js_type().is_array_buffer_like() => {
+                deferred_output_buffer = Some(arg);
+                None
+            }
             Some(arg) => match StringOrBuffer::from_js(global, arg)? {
                 Some(v) => Some(v),
                 None => {
@@ -303,7 +311,6 @@ impl CryptoHasher {
             None => None,
         };
 
-        // Node.BlobOrStringOrBuffer
         let input = {
             let Some(arg) = arg_at(1) else {
                 return Err(
@@ -318,6 +325,10 @@ impl CryptoHasher {
                 }
             }
         };
+
+        if let Some(arg) = deferred_output_buffer {
+            output = StringOrBuffer::from_js(global, arg)?;
+        }
 
         Self::hash_(global, algorithm, &input, output, output_length)
     }

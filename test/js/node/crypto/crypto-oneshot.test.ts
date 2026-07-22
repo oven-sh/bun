@@ -117,6 +117,26 @@ describe("crypto.hash", () => {
     expect(result).toBe(crypto.createHash("sha256").update(Buffer.alloc(0)).digest("hex"));
     expect(result).not.toBe(expected);
   });
+
+  test("input ToPrimitive cannot invalidate the output buffer mid-call", () => {
+    const outAB = new ArrayBuffer(64, { maxByteLength: 64 });
+    const outView = new Uint8Array(outAB);
+    let called = 0;
+    class Evil extends String {
+      [Symbol.toPrimitive]() {
+        called++;
+        outAB.resize(0);
+        return "abc";
+      }
+    }
+    // The output-buffer form is a Bun extension; the third-argument TypedArray
+    // must not have its backing pointer captured before input coercion runs.
+    expect(() => Bun.CryptoHasher.hash("sha256", new Evil("abc"), outView)).toThrow(
+      /TypedArray must be at least 32 bytes/,
+    );
+    expect(called).toBe(1);
+    expect(outView.byteLength).toBe(0);
+  });
   const input = readFileSync(path("utf8_test_text.txt"));
   [
     "blake2b256",

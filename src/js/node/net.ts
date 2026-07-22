@@ -154,6 +154,11 @@ const kUserUnrefed = Symbol("kUserUnrefed");
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
+// Holds the Duplex TLS data feeder when a named-pipe net.Socket is upgraded via
+// `tls.connect({ socket })`. Its native pipe handle is left in place and keeps
+// delivering post-upgrade bytes, so the raw data handlers route them straight to
+// the TLS layer instead of re-emitting them as cleartext `data`.
+const kDuplexTLSData = Symbol("kDuplexTLSData");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -321,6 +326,14 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // See SocketHandlers2.data: a named-pipe socket upgraded via
+    // `tls.connect({ socket })` feeds post-upgrade bytes to the TLS layer here
+    // instead of re-emitting them as cleartext `data`.
+    const feedTLSData = self[kDuplexTLSData];
+    if (feedTLSData !== undefined) {
+      feedTLSData(buffer);
+      return;
+    }
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -660,6 +673,15 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // A server-accepted named-pipe socket upgraded via `tls.connect({ socket })`
+    // keeps this handler active (its native handle is not swapped out). Feed the
+    // post-upgrade bytes to the TLS layer instead of re-emitting them as
+    // cleartext `data`. See SocketHandlers2.data.
+    const feedTLSData = self[kDuplexTLSData];
+    if (feedTLSData !== undefined) {
+      feedTLSData(buffer);
+      return;
+    }
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -1104,6 +1126,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // After `tls.connect({ socket })` over a named pipe the native pipe handle is
+    // not swapped out, so it keeps delivering post-upgrade bytes here. Feed them
+    // to the TLS layer directly instead of re-emitting them as cleartext `data`
+    // on the original socket (which would re-enter a user `data` listener).
+    const feedTLSData = self[kDuplexTLSData];
+    if (feedTLSData !== undefined) {
+      feedTLSData(buffer);
+      return;
+    }
     if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
@@ -1472,6 +1503,7 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kDuplexTLSData] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -1568,6 +1600,13 @@ function Socket(options?) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
+        // See SocketHandlers2.data: post-upgrade named-pipe bytes feed the TLS
+        // layer, not the onread callback.
+        const feedTLSData = self[kDuplexTLSData];
+        if (feedTLSData !== undefined) {
+          feedTLSData(buffer);
+          return;
+        }
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {
@@ -1814,9 +1853,12 @@ Socket.prototype.connect = function connect(...args) {
         // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
         this._undestroy();
         const socket = connection._handle;
-        if (!upgradeDuplex && socket) {
-          // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
-          upgradeDuplex = isNamedPipeSocket(socket);
+        // A named-pipe net.Socket reuses the Duplex TLS wrapper, but unlike a
+        // plain Duplex its native pipe handle is left in place and keeps firing
+        // its raw data handler after the upgrade.
+        const namedPipe = !upgradeDuplex && !!socket && isNamedPipeSocket(socket);
+        if (namedPipe) {
+          upgradeDuplex = true;
         }
         if (upgradeDuplex) {
           this[kupgraded] = connection;
@@ -1825,7 +1867,13 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
-          connection.on("data", events[0]);
+          if (namedPipe) {
+            // Route the native handle's post-upgrade reads straight to the TLS
+            // layer so they never re-emit as `data` on the original socket.
+            connection[kDuplexTLSData] = events[0];
+          } else {
+            connection.on("data", events[0]);
+          }
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
@@ -1864,9 +1912,11 @@ Socket.prototype.connect = function connect(...args) {
                 return;
               }
               const socket = connection._handle;
-              if (!upgradeDuplex && socket) {
-                // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
-                upgradeDuplex = isNamedPipeSocket(socket);
+              // See the synchronous branch above: a named-pipe net.Socket keeps
+              // its native handle after the Duplex TLS upgrade.
+              const namedPipe = !upgradeDuplex && !!socket && isNamedPipeSocket(socket);
+              if (namedPipe) {
+                upgradeDuplex = true;
               }
               if (upgradeDuplex) {
                 this[kupgraded] = connection;
@@ -1875,7 +1925,11 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
-                connection.on("data", events[0]);
+                if (namedPipe) {
+                  connection[kDuplexTLSData] = events[0];
+                } else {
+                  connection.on("data", events[0]);
+                }
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
@@ -3827,6 +3881,9 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  // A reused socket may have fed a TLS wrapper on a prior named-pipe upgrade;
+  // clear the stale feeder so its data handlers surface bytes normally again.
+  self[kDuplexTLSData] = undefined;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

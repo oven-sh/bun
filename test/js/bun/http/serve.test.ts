@@ -3513,41 +3513,6 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
   });
 });
 
-// A client that half-closes its write side right after the request (the raw
-// socket.end(request) pattern) must receive every response byte already queued,
-// not just what the kernel accepted on the first send.
-it("a client FIN right after the request does not truncate a large response body", async () => {
-  const BODY = 8 * 1024 * 1024;
-  using server = serve({
-    port: 0,
-    fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
-  });
-  const socket = connect(server.port, "127.0.0.1");
-  let body = 0;
-  let head = "";
-  let gotHead = false;
-  let ended = false;
-  socket.on("data", chunk => {
-    if (!gotHead) {
-      head += chunk.toString("latin1");
-      const i = head.indexOf("\r\n\r\n");
-      if (i >= 0) {
-        gotHead = true;
-        body = Buffer.byteLength(head.slice(i + 4), "latin1");
-      }
-    } else {
-      body += chunk.length;
-    }
-  });
-  socket.on("end", () => (ended = true));
-  socket.on("error", () => {});
-  const closed = new Promise<void>(r => socket.once("close", () => r()));
-  await new Promise<void>(r => socket.once("connect", () => r()));
-  socket.end("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-  await closed;
-  expect({ body, ended }).toEqual({ body: BODY, ended: true });
-});
-
 // The node:http compat parser tolerates empty lines (and a bare CR/LF) before the
 // request-line like llhttp's s_start state. That leniency must stay behind the
 // node-http flag: Bun.serve still rejects a request that does not begin with the

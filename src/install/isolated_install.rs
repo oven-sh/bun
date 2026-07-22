@@ -2684,8 +2684,7 @@ pub(crate) fn install_isolated_packages(
                 }
                 let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
                 let alias = dep.name.slice(string_buf);
-                let truncated_dep_name_hash =
-                    dep.name_hash as crate::TruncatedPackageNameHash;
+                let truncated_dep_name_hash = dep.name_hash as crate::TruncatedPackageNameHash;
                 let is_trusted = installer
                     .trusted_dependencies_from_update_requests
                     .get(&truncated_dep_name_hash)

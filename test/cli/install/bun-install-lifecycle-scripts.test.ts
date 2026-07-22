@@ -4054,8 +4054,7 @@ describe("pm untrusted/trust under the isolated linker", () => {
       },
     };
     const tgz = makeTarball(pj);
-    const integrity =
-      "sha512-" + new Bun.CryptoHasher("sha512").update(tgz).digest("base64");
+    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tgz).digest("base64");
 
     await using server = Bun.serve({
       port: 0,
@@ -4114,14 +4113,7 @@ describe("pm untrusted/trust under the isolated linker", () => {
       expect(await exited).toBe(0);
     }
 
-    const storePkgDir = join(
-      packageDir,
-      "node_modules",
-      ".bun",
-      `${pkgName}@1.0.0`,
-      "node_modules",
-      pkgName,
-    );
+    const storePkgDir = join(packageDir, "node_modules", ".bun", `${pkgName}@1.0.0`, "node_modules", pkgName);
     expect(await exists(storePkgDir)).toBe(true);
     expect(await exists(join(storePkgDir, "RAN-marker"))).toBe(false);
 
@@ -4158,8 +4150,6 @@ describe("pm untrusted/trust under the isolated linker", () => {
     }
 
     expect(await exists(join(storePkgDir, "RAN-marker"))).toBe(true);
-    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([
-      pkgName,
-    ]);
+    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
   });
 });

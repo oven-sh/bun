@@ -1099,9 +1099,13 @@ it("SNICallback runs even when the requested servername matches the bind hostnam
   });
   server.listen(0, "localhost");
   await once(server, "listening");
-  const port = (server.address() as AddressInfo).port;
-  // host: "localhost" defaults servername to "localhost" - the bind hostname.
-  const client = connect({ port, host: "localhost", rejectUnauthorized: false });
+  const { address, port } = server.address() as AddressInfo;
+  // Dial the bound IP directly: on a host with ::1 in /etc/hosts but no
+  // non-loopback IPv6, listen("localhost") binds ::1 while connect("localhost")
+  // resolves under ADDRCONFIG and only sees 127.0.0.1 (matches Node), so a
+  // hostname connect would ECONNREFUSED. The SNI servername is what must match
+  // the bind hostname, not the dial target.
+  const client = connect({ port, host: address, servername: "localhost", rejectUnauthorized: false });
   await once(client, "secureConnect");
   expect(sniCalls).toBe(1);
   // The peer certificate must be the SNICallback's RSA cert, not COMMON_CERT.

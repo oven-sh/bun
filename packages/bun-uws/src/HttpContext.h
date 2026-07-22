@@ -663,9 +663,18 @@ private:
         size_t bufferedAmount = asyncSocket->getBufferedAmount();
         if (bufferedAmount > 0) {
             /* Try to flush pending data from the socket's buffer to the network */
-            asyncSocket->flush();
+            size_t flushed = asyncSocket->flush();
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
+                if constexpr (IsNodeHttp) {
+                    /* onEnd deferred close for these bytes; a writable event that
+                     * moves nothing (EPIPE) means the peer is gone and this would
+                     * otherwise spin onWritable/onEnd until idle timeout. */
+                    if (flushed == 0
+                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
+                        return asyncSocket->close();
+                    }
+                }
                 /* Socket buffer is not completely empty yet
                 * - Reset the timeout to prevent premature connection closure
                 * - This allows time for another writable event or new request

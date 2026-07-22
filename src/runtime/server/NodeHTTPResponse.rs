@@ -1829,6 +1829,11 @@ impl NodeHTTPResponse {
             return false;
         }
 
+        // Drained (or nothing was pinned): disarm the native callback so
+        // HttpContext::onEnd's `onWritable != nullptr` check does not mistake
+        // this stale shim for a pending write. callOnWritable borrowed the slot
+        // and would otherwise restore it; a later backpressured write re-arms.
+        response.clear_on_writable();
         response.corked(|| self.on_drain_corked(offset));
         // return true means we may have something to drain
         true

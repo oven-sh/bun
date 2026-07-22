@@ -589,8 +589,16 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
     } else if (fault_ == Fault::Delay) {
       // Real status returns after a deterministic pause at this coordinate.
       // The nested NtDelayExecution passes through unlogged (depth > 0).
-      Sleep((DWORD)injected_);
-      tag = " !D";
+      // A close issued from inside a system DLL ('n'/'o' key) is that
+      // module's own bookkeeping; delaying it only manufactures system-side
+      // stalls. Delays land on bun-issued ('b') and API-boundary ('k') calls.
+      char kt = KeyOf(frames_[0]).tag;
+      if (sys_ == SYS_NtClose && (kt == 'n' || kt == 'o')) {
+        tag = "";
+      } else {
+        Sleep((DWORD)injected_);
+        tag = " !D";
+      }
     } else if (fault_ == Fault::Mangle) {
       bool applied = false;
       // Only a synchronous success has a filled IO_STATUS_BLOCK to mangle;

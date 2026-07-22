@@ -181,17 +181,21 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
 // The per-VM node:fs Binding box is anchored only by the GC wrapper's m_ctx
 // inside the JSC heap, which LSan does not scan; without __lsan_ignore_object
 // the main-thread singleton is reported as a leak.
-test.skipIf(!isASAN)("require('node:fs') is LSan-clean on the main thread", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `require("node:fs");`],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-}, 60_000);
+test.skipIf(!isASAN)(
+  "require('node:fs') is LSan-clean on the main thread",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:fs");`],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  },
+  60_000,
+);

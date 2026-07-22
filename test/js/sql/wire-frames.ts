@@ -117,6 +117,16 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
   return buf;
 }
 
+// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
+export function pgParameterStatus(name: string, value: string): Buffer {
+  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 NotificationResponse: Byte1('A') Int32(len) Int32(pid) String(channel) String(payload)
+export function pgNotificationResponse(pid: number, channel: string, payload: string): Buffer {
+  return pgRaw("A", Buffer.concat([pgInt32(pid), pgCString(channel), pgCString(payload)]));
+}
+
 // PostgreSQL FE/BE protocol §55.7 generic backend message: Byte1(type) Int32(len = 4 + body.length) body
 // Low-level escape hatch for fault-injection tests that need a deliberately malformed body,
 // or (via `declaredLength`) a length field that lies about the body it precedes.

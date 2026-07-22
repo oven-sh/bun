@@ -18,9 +18,9 @@ impl CommandComplete {
         &mut self,
         mut reader: NewReader<Container>,
     ) -> crate::Result<()> {
-        reader.length()?;
+        let remaining = (reader.length()? - 4) as usize;
 
-        let tag = reader.read_z()?;
+        let (tag, _) = reader.string_within(remaining)?;
         *self = Self { command_tag: tag };
         Ok(())
     }

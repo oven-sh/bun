@@ -24,10 +24,10 @@ impl ErrorResponse {
     ) -> Result<Self, AnyPostgresError> {
         // A length of exactly 4 is an empty message (no fields); `length()`
         // already rejected anything smaller.
-        let remaining_bytes = reader.length()? - 4;
+        let remaining_bytes = (reader.length()? - 4) as usize;
         if remaining_bytes > 0 {
             return Ok(Self {
-                messages: FieldMessage::decode_list::<Container>(reader)?,
+                messages: FieldMessage::decode_list::<Container>(reader, remaining_bytes)?,
             });
         }
         Ok(Self::default())

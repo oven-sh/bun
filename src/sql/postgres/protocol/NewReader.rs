@@ -116,6 +116,23 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.wrapped.read_z()
     }
 
+    /// Read a NUL-terminated string whose terminator must appear within the
+    /// next `limit` bytes. Returns `InvalidMessage` (not `ShortRead`) when it
+    /// does not: the caller has already established via `length()` that those
+    /// bytes are the message body, so a missing terminator is a framing
+    /// violation, not a partial read. Returns the string without its NUL and
+    /// the total bytes consumed (string + NUL).
+    pub fn string_within(&mut self, limit: usize) -> Result<(Data, usize), AnyPostgresError> {
+        let view = self.wrapped.peek();
+        let bound = view.len().min(limit);
+        let Some(zero) = view[..bound].iter().position(|&b| b == 0) else {
+            return Err(AnyPostgresError::InvalidMessage);
+        };
+        let data = self.wrapped.read(zero)?;
+        self.wrapped.skip(1);
+        Ok((data, zero + 1))
+    }
+
     #[inline]
     pub fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         if !self.wrapped.ensure_length(count) {

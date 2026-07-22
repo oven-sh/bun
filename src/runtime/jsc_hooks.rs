@@ -2146,8 +2146,6 @@ fn transpile_source_code_inner(
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
 
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            unsafe { (*jsc_vm).transpiled_count += 1 };
             // `Transpiler::reset_store`. Inline only the
             // block-store half; `AstAlloc` gets its own per-transpile state
             // below, so the side module's long-lived state is not touched.
@@ -2538,7 +2536,6 @@ fn transpile_source_code_inner(
                     // `_fd_guard` scopeguard's tag is not invalidated by a
                     // fresh `&mut` (see Note on `_fd_guard`).
                     file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
-                    file_hash: Some(hash),
                     macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
@@ -2937,8 +2934,6 @@ fn transpile_source_code_inner(
                 }
 
                 // Link import records.
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                let start_count = unsafe { &*jsc_vm }.transpiler.linker.import_counter;
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
                 // `origin` is read-only and `linker` is JS-thread-exclusive.
                 unsafe {
@@ -3000,17 +2995,6 @@ fn transpile_source_code_inner(
                     }
                     return Err(crate::Error::AsyncModule);
                 }
-
-                if !macro_mode {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                    // VM; both fields are JS-thread-exclusive plain integers.
-                    unsafe {
-                        (*jsc_vm).resolved_count +=
-                            (*jsc_vm).transpiler.linker.import_counter - start_count;
-                    }
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                unsafe { (*jsc_vm).transpiler.linker.import_counter = 0 };
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
@@ -3100,12 +3084,9 @@ fn transpile_source_code_inner(
                         )
                     };
                     // The printer never took ownership of `module_info`;
-                    // explicit destroy (not Drop) mirrors the async-path
-                    // error arm.
+                    // drop it here mirroring the async-path error arm.
                     if print_result.is_err() {
-                        if let Some(mi) = module_info.take() {
-                            mi.destroy();
-                        }
+                        drop(module_info.take());
                     }
                     print_result?;
                 }
@@ -5086,9 +5067,6 @@ unsafe fn _resolve<'a>(
     let Some(result_path) = result.path_const() else {
         return Err(crate::Error::ModuleNotFound);
     };
-    // SAFETY: plain usize field.
-    unsafe { (*vm).resolved_count += 1 };
-
     // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
     // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
     // §allocators) — the same store `load_preloads` reads from. Transmute the

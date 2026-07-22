@@ -967,7 +967,7 @@ pub(crate) fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     &path[_start_dot.._end]
 }
 
-pub use bun_paths::is_sep_posix_t;
+pub use bun_paths::resolve_path::is_sep_posix_t;
 // Node `path.win32.isPathSeparator` accepts BOTH `/` and `\` — semantically
 // `is_sep_any_t`, NOT `is_sep_win32_t` (which is `\`-only). Keep the Node name.
 pub use bun_paths::is_sep_any_t as is_sep_windows_t;

@@ -131,9 +131,29 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
         return Exception { InvalidURLError, url };
     }
     m_url = WTF::move(completeURL);
+    m_searchParamsDirty = false;
     if (m_searchParams)
         m_searchParams->updateFromAssociatedURL();
     return {};
+}
+
+// The update steps invoked on URLSearchParams::{append,set,delete,sort} set
+// m_searchParamsDirty instead of eagerly re-serializing m_url on every call so
+// that N appends through url.searchParams stay O(N) instead of O(N^2). All
+// reads of m_url (href/toJSON/fullURL) call this first to reconcile.
+void DOMURL::flushPendingSearchParamsUpdate() const
+{
+    if (!m_searchParamsDirty) [[likely]]
+        return;
+    m_searchParamsDirty = false;
+    auto* self = const_cast<DOMURL*>(this);
+    if (!self->m_searchParams)
+        return;
+    auto serialized = self->m_searchParams->toString();
+    if (serialized.isEmpty())
+        self->m_url.setQuery({});
+    else
+        self->m_url.setQuery(WTF::move(serialized));
 }
 
 String DOMURL::createObjectURL(ScriptExecutionContext& scriptExecutionContext, Blob& blob)

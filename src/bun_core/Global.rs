@@ -154,8 +154,6 @@ impl Default for DumpStackTraceOptions {
         }
     }
 }
-/// Alias for `DumpStackTraceOptions`; also re-exported from `bun_crash_handler`.
-pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
 /// T0 fallback prints raw return
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
@@ -464,6 +462,7 @@ pub mod debug_flags {
         let _ = str_;
         false
     }
+
     #[inline]
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
@@ -810,11 +809,6 @@ pub fn mimalloc_cleanup(force: bool) {
 // 2. if I want to configure allocator later
 #[inline]
 pub fn configure_allocator(_: AllocatorConfiguration) {}
-
-#[cold]
-pub fn notimpl() -> ! {
-    Output::panic(core::format_args!("Not implemented yet!!!!!"));
-}
 
 // Make sure we always print any leftover
 #[cold]

@@ -3171,20 +3171,6 @@ impl RemoteImageDownload {
 }
 
 impl RunCommand {
-    pub fn ls(ctx: &mut ContextData) -> crate::Result<()> {
-        let args = ctx.args.clone();
-
-        let arena: &'static bun_alloc::Arena = runner_arena();
-        let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.options.env.prefix = Box::default();
-
-        this_transpiler.resolver.care_about_bin_folder = true;
-        this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.configure_linker();
-        Ok(())
-    }
-
     /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
     fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];

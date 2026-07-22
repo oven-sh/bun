@@ -66,9 +66,6 @@ impl<T, const BUFFER_CAPACITY: usize> Drop for BoundedArrayAligned<T, BUFFER_CAP
     }
 }
 
-/// Inherent assoc types are unstable, so this is exposed as a free alias.
-pub type BoundedBuffer<T, const N: usize> = [MaybeUninit<T>; N];
-
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     /// Set the actual length of the slice.
     /// Returns error.Overflow if it exceeds the length of the backing array.
@@ -141,56 +138,12 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.slice()[i] = item;
     }
 
-    /// Return the maximum length of a slice.
-    pub fn capacity(&self) -> usize {
-        BUFFER_CAPACITY
-    }
-
     /// Check that the slice can hold at least `additional_count` items.
     pub fn ensure_unused_capacity(&self, additional_count: usize) -> Result<(), OverflowError> {
         if self.len + additional_count > BUFFER_CAPACITY {
             return Err(OverflowError::Overflow);
         }
         Ok(())
-    }
-
-    /// Increase length by 1, returning a pointer to the new item.
-    pub fn add_one(&mut self) -> Result<&mut T, OverflowError> {
-        self.ensure_unused_capacity(1)?;
-        Ok(self.add_one_assume_capacity())
-    }
-
-    /// Increase length by 1, returning pointer to the new item.
-    /// Asserts that there is space for the new item.
-    pub fn add_one_assume_capacity(&mut self) -> &mut T {
-        debug_assert!(self.len < BUFFER_CAPACITY);
-        self.len += 1;
-        let i = self.len - 1;
-        // SAFETY: index `i` is within `[0..len)`; caller treats the slot as uninitialized
-        // and must write before reading.
-        unsafe { &mut *self.buffer[i].as_mut_ptr() }
-    }
-
-    /// Resize the slice, adding `n` new elements, which have `undefined` values.
-    /// The return value is a pointer to the array of uninitialized elements.
-    pub fn add_many_as_array<const N: usize>(&mut self) -> Result<&mut [T; N], OverflowError> {
-        let prev_len = self.len;
-        self.resize(self.len + N)?;
-        let ptr = self.buffer[prev_len..][..N].as_mut_ptr().cast::<[T; N]>();
-        // SAFETY: `[prev_len .. prev_len+N]` is within capacity after resize; caller must
-        // initialize before reading.
-        Ok(unsafe { &mut *ptr })
-    }
-
-    /// Resize the slice, adding `n` new elements, which have `undefined` values.
-    /// The return value is a slice pointing to the uninitialized elements.
-    pub fn add_many_as_slice(&mut self, n: usize) -> Result<&mut [T], OverflowError> {
-        let prev_len = self.len;
-        self.resize(self.len + n)?;
-        let s = &mut self.buffer[prev_len..][..n];
-        // SAFETY: `[prev_len .. prev_len+n]` is within capacity after resize; caller must
-        // initialize before reading.
-        Ok(unsafe { &mut *(std::ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) })
     }
 
     /// Remove and return the last element from the slice, or return `None` if the slice is empty.
@@ -214,86 +167,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     // Returns `&mut [MaybeUninit<T>]` instead of `&mut [T]` because the region is
     // uninitialized by definition.
 
-    /// Insert `item` at index `i` by moving `slice[n .. slice.len]` to make room.
-    /// This operation is O(N).
-    pub fn insert(&mut self, i: usize, item: T) -> Result<(), OverflowError> {
-        if i > self.len {
-            return Err(OverflowError::Overflow);
-        }
-        let _ = self.add_one()?;
-        // Reshaped for borrowck.
-        let s_len = self.len;
-        // SAFETY: ranges are within `[0..len)`; src and dst overlap, hence `ptr::copy` (memmove).
-        unsafe {
-            let base = self.buffer.as_mut_ptr();
-            core::ptr::copy(base.add(i), base.add(i + 1), s_len - 1 - i);
-        }
-        self.buffer[i].write(item);
-        Ok(())
-    }
-
-    /// Insert slice `items` at index `i` by moving `slice[i .. slice.len]` to make room.
-    /// This operation is O(N).
-    pub fn insert_slice(&mut self, i: usize, items: &[T]) -> Result<(), OverflowError>
-    where
-        T: Copy,
-    {
-        self.ensure_unused_capacity(items.len())?;
-        self.len += Length::try_from(items.len()).expect("int cast");
-        let len = self.len;
-        // SAFETY: ranges are within `[0..len)` after the length bump; overlapping memmove.
-        unsafe {
-            let base = self.buffer.as_mut_ptr();
-            core::ptr::copy(
-                base.add(i),
-                base.add(i + items.len()),
-                len - items.len() - i,
-            );
-        }
-        self.slice()[i..][..items.len()].copy_from_slice(items);
-        Ok(())
-    }
-
-    /// Replace range of elements `slice[start..][0..len]` with `new_items`.
-    /// Grows slice if `len < new_items.len`.
-    /// Shrinks slice if `len > new_items.len`.
-    pub fn replace_range(
-        &mut self,
-        start: usize,
-        len: usize,
-        new_items: &[T],
-    ) -> Result<(), OverflowError>
-    where
-        T: Copy,
-    {
-        let after_range = start + len;
-        // Reshaped for borrowck.
-        let range_len = after_range - start;
-
-        if range_len == new_items.len() {
-            self.slice()[start..after_range][..new_items.len()].copy_from_slice(new_items);
-        } else if range_len < new_items.len() {
-            let first = &new_items[..range_len];
-            let rest = &new_items[range_len..];
-            self.slice()[start..after_range][..first.len()].copy_from_slice(first);
-            self.insert_slice(after_range, rest)?;
-        } else {
-            self.slice()[start..after_range][..new_items.len()].copy_from_slice(new_items);
-            let after_subrange = start + new_items.len();
-            // Reshaped for borrowck — read and write per element instead of
-            // holding overlapping `const_slice()`/`slice()` borrows.
-            let tail_len = self.len - after_range;
-            for i in 0..tail_len {
-                let item = self.const_slice()[after_range + i];
-                self.slice()[after_subrange..][i] = item;
-            }
-            self.len = Length::try_from(self.len - len + new_items.len()).expect("int cast");
-            // Removing `len` items and inserting `new_items.len()` items
-            // yields `self.len - len + new_items.len()`.
-        }
-        Ok(())
-    }
-
     /// Extend the slice by 1 element.
     pub fn append(&mut self, item: T) -> Result<(), OverflowError> {
         // A plain `*slot = item` write would drop the (uninitialized) prior occupant
@@ -312,43 +185,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         // Write into the `MaybeUninit` slot directly so no drop runs on the previous
         // (uninitialized) contents.
         self.buffer[i].write(item);
-    }
-
-    /// Remove the element at index `i`, shift elements after index
-    /// `i` forward, and return the removed element.
-    /// Asserts the slice has at least one item.
-    /// This operation is O(N).
-    pub fn ordered_remove(&mut self, i: usize) -> T
-    where
-        T: Copy,
-    {
-        let newlen = self.len - 1;
-        if newlen == i {
-            return self.pop().unwrap();
-        }
-        let old_item = self.get(i);
-        // Reshaped for borrowck.
-        for j in 0..(newlen - i) {
-            let v = self.get(i + 1 + j);
-            self.slice()[i + j] = v;
-        }
-        // The slot past the new len is left as-is.
-        self.len = newlen;
-        old_item
-    }
-
-    /// Remove the element at the specified index and return it.
-    /// The empty slot is filled from the end of the slice.
-    /// This operation is O(1).
-    pub fn swap_remove(&mut self, i: usize) -> T {
-        if self.len - 1 == i {
-            return self.pop().unwrap();
-        }
-        // SAFETY: `i < len-1` and the old last element is moved into slot `i`.
-        let old_item = unsafe { self.buffer[i].assume_init_read() };
-        let last = self.pop().unwrap();
-        self.buffer[i].write(last);
-        old_item
     }
 
     /// Append the slice of items to the slice.
@@ -371,33 +207,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         let new_len: usize = old_len + items.len();
         self.len = Length::try_from(new_len).expect("int cast");
         self.slice()[old_len..][..items.len()].copy_from_slice(items);
-    }
-
-    /// Append a value to the slice `n` times.
-    /// Allocates more memory as necessary.
-    pub fn append_n_times(&mut self, value: T, n: usize) -> Result<(), OverflowError>
-    where
-        T: Copy,
-    {
-        let old_len = self.len;
-        self.resize(old_len + n)?;
-        let end = self.len;
-        self.slice()[old_len..end].fill(value);
-        Ok(())
-    }
-
-    /// Append a value to the slice `n` times.
-    /// Asserts the capacity is enough.
-    pub fn append_n_times_assume_capacity(&mut self, value: T, n: usize)
-    where
-        T: Copy,
-    {
-        let old_len: usize = self.len;
-        let new_len: usize = old_len + n;
-        self.len = Length::try_from(new_len).expect("int cast");
-        debug_assert!(self.len <= BUFFER_CAPACITY);
-        let end = self.len;
-        self.slice()[old_len..end].fill(value);
     }
 }
 

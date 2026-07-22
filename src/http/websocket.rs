@@ -99,47 +99,23 @@ impl WebsocketHeader {
     }
 
     #[inline]
-    pub const fn bits(self) -> u16 {
-        self.0
-    }
-
-    #[inline]
     pub const fn len(self) -> u8 {
         ((self.0 >> Self::LEN_SHIFT) & Self::LEN_MASK) as u8
-    }
-    #[inline]
-    pub fn set_len(&mut self, v: u8) {
-        self.0 = (self.0 & !(Self::LEN_MASK << Self::LEN_SHIFT))
-            | ((v as u16 & Self::LEN_MASK) << Self::LEN_SHIFT);
     }
 
     #[inline]
     pub const fn mask(self) -> bool {
         (self.0 >> Self::MASK_SHIFT) & 1 != 0
     }
-    #[inline]
-    pub fn set_mask(&mut self, v: bool) {
-        self.0 = (self.0 & !(1u16 << Self::MASK_SHIFT)) | ((v as u16) << Self::MASK_SHIFT);
-    }
 
     #[inline]
     pub fn opcode(self) -> Opcode {
         Opcode::from_raw(((self.0 >> Self::OPCODE_SHIFT) & Self::OPCODE_MASK) as u8)
     }
-    #[inline]
-    pub fn set_opcode(&mut self, v: Opcode) {
-        self.0 = (self.0 & !(Self::OPCODE_MASK << Self::OPCODE_SHIFT))
-            | ((v as u16 & Self::OPCODE_MASK) << Self::OPCODE_SHIFT);
-    }
 
     #[inline]
     pub const fn rsv(self) -> u8 {
         ((self.0 >> Self::RSV_SHIFT) & Self::RSV_MASK) as u8
-    }
-    #[inline]
-    pub fn set_rsv(&mut self, v: u8) {
-        self.0 = (self.0 & !(Self::RSV_MASK << Self::RSV_SHIFT))
-            | ((v as u16 & Self::RSV_MASK) << Self::RSV_SHIFT);
     }
 
     #[inline]
@@ -155,10 +131,6 @@ impl WebsocketHeader {
     #[inline]
     pub const fn final_(self) -> bool {
         (self.0 >> Self::FINAL_SHIFT) & 1 != 0
-    }
-    #[inline]
-    pub fn set_final(&mut self, v: bool) {
-        self.0 = (self.0 & !(1u16 << Self::FINAL_SHIFT)) | ((v as u16) << Self::FINAL_SHIFT);
     }
 
     pub fn write_header(self, writer: &mut impl std::io::Write, n: usize) -> std::io::Result<()> {

@@ -62,16 +62,6 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 # test-http-max-http-headers.js is vendored.
 test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns test-http-max-http-headers.js which is not vendored
 
-# Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
-# the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
-# swallowed by the silent-exit-0 eval bug (uncaught throw in a CJS -e script
-# exited 0 with empty stderr), so this test false-passed everywhere - the
-# same ~14KB-per-watch growth (~70MB over 5000 iterations) reproduces on
-# unmodified main once the error actually surfaces. Needs a PathWatcher
-# investigation; the #29854 resolved_path fix covers only the ~path-length
-# portion.
-[ DARWIN ] test/js/node/watch/fs.watch.test.ts [ FAIL ] # pre-existing leak, false-positive pass before the eval exception fix
-
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
@@ -83,24 +73,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests failed due to ASAN: SEGV on unknown address
 [ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
 
-# worker.terminate() lands while a process.* lazy PropertyCallback builder
-# (stdout/stderr/stdin/nextTick/mainModule, via setupWorkerStdio) is in JS;
-# tryClearException() refuses to clear the TerminationException, so the
-# builder returns with it pending and reifyStaticProperty reports the slot
-# found, tripping JSC's "ASSERTION FAILED: !scope.exception() || !result"
-# in getOwnPropertyDescriptor / JSValue::get. Tracked in #34095; fix PRs
-# #33966 and #33418. x64-asan only (e.g. builds 75570, 75601); release
-# lanes are unaffected. Remove once either fix PR lands.
-[ ASAN ] test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js [ CRASH ] # #34095: JSC assertion when terminate() interrupts a lazy PropertyCallback builder
-# The stress test is the bun-owned 8×10-worker amplification of the above,
-# but on CI it only ever hits JSC::ExceptionScope::assertNoException at
-# ExceptionScope.h:61 (6/6: builds 75493/75495/75514/75597/75604/75606),
-# which #33966 reports still reproducing at ~1/4000 workers AFTER its
-# lazy-builder fix ("termination landing later in the bootstrap, after the
-# stdio builders have completed"). Tracked separately in #34690; this entry
-# is NOT removable with the one above.
-[ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
-
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
 
@@ -110,7 +82,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests timed out due to ASAN
 [ ASAN ] test/js/bun/spawn/spawn.test.ts [ TIMEOUT ]
 [ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ]
-[ ASAN ] test/js/bun/typescript/type-export.test.ts [ TIMEOUT ] # bun build --compile is slow under ASAN
 
 # Tests failed due to memory leaks
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
@@ -159,23 +130,4 @@ test/js/node/test/parallel/test-child-process-advanced-serialization.js [ FAIL ]
 # primary distributing accepted connections; the upstream test's expectations
 # only hold on the distributing model. Passes on macOS, Windows and FreeBSD.
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
-
-# Pre-existing on main (flagged [pre-existing] by ci:errors, e.g. build 61989 on
-# darwin-14-aarch64 and build 62204 on darwin-26-aarch64, both at the
-# `expect(e.name).toBe("TimeoutError")` assertions). The two connect-race cases
-# assume connect() to TEST-NET-1 (192.0.2.1) stays in EINPROGRESS so the
-# AbortSignal.timeout wins; that only holds when the host has a default route that
-# silently blackholes the SYN. The darwin CI agents have no route to 192.0.2.1 and
-# return an immediate ENETUNREACH/EHOSTUNREACH, so the connect error wins the race
-# and fetch rejects with a generic "Error" instead of "TimeoutError" (verified: a
-# fast-failing connect to 127.0.0.1:1 reproduces the same connect-error-beats-timeout
-# outcome locally — correct behavior, not a bun abort bug). Consistently fails on
-# darwin-26 (no route), intermittently on darwin-14 (routing varies per agent).
-# Quarantined on darwin; still runs on Linux/Windows where the route blackholes
-# reliably. Follow-up: rewrite without the external-IP dependence (repo rule forbids
-# contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
-
-
-# node:http servers cannot listen on Windows named pipes yet (ENOENT from
-# uv_pipe bind), so common.PIPE-based http tests cannot run there.

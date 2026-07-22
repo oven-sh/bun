@@ -23,7 +23,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
-use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
@@ -33,12 +32,6 @@ use bun_uws::Loop as UwsLoop;
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
-
-/// The platform's native event loop type.
-#[cfg(not(windows))]
-pub type PlatformEventLoop = UwsLoop;
-#[cfg(windows)]
-pub type PlatformEventLoop = bun_sys::windows::libuv::Loop;
 
 // ─── Upward link-time externs (LAYERING) ────────────────────────────────────
 // The bodies live in `bun_runtime` (which
@@ -51,11 +44,6 @@ unsafe extern "Rust" {
     /// stores/forwards it. Defined in `bun_runtime::webcore::blob`.
     /// No caller-side preconditions (by-value args, allocates fresh).
     pub safe fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
-    /// Returns the thread's `*mut jsc::VirtualMachine`.
-    /// Backs `JsKind::get_vm()`. Defined in
-    /// `bun_runtime::jsc_hooks`. No caller-side preconditions (reads a
-    /// thread-local; wrong-thread is a logic error, not UB).
-    safe fn __bun_js_vm_get() -> *mut ();
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -77,8 +65,6 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
 /// FIFO of raw task pointers (tasks are intrusive nodes; the queue does not own them).
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
 
-pub type Task = AnyTaskWithExtraContext;
-
 pub struct MiniEventLoop<'a> {
     pub tasks: Queue,
     pub concurrent_tasks: ConcurrentTaskQueue,
@@ -97,14 +83,6 @@ pub struct MiniEventLoop<'a> {
     pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
     pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
     pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
-    // SAFETY: erased `*mut webcore::blob::Store` (tier-6). Constructed via
-    // `__bun_stdio_blob_store_new` with ref_count=2: one owning intrusive ref
-    // held by this MiniEventLoop (intentionally never released — the
-    // MiniEventLoop is a never-freed thread-lifetime singleton),
-    // one for the eventual Blob consumer. If a teardown path is ever added it
-    // must release via `__bun_stdio_blob_store_deinit`, as `rare_data.rs` does.
-    pub stdout_store: Option<NonNull<()>>,
-    pub stderr_store: Option<NonNull<()>>,
 }
 
 thread_local! {
@@ -239,16 +217,6 @@ impl<'a> MiniEventLoop<'a> {
         self.env
     }
 
-    #[inline]
-    pub fn get_vm_impl(&mut self) -> &mut MiniEventLoop<'a> {
-        self
-    }
-
-    pub fn throw_error(&mut self, err: &sys::Error) {
-        bun_core::pretty_errorln!("{}", err);
-        Output::flush();
-    }
-
     pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
         // `boxed_zeroed` avoids the 256 KiB stack temporary `Box::new([0u8; N])`
         // would create in debug builds.
@@ -266,13 +234,6 @@ impl<'a> MiniEventLoop<'a> {
             // guarantees `ctx` is valid until the callback fires.
             unsafe { cb(ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr())) };
         }
-    }
-
-    pub fn file_polls(&mut self) -> &mut FilePollStore {
-        if self.file_polls_.is_none() {
-            self.file_polls_ = Some(Box::new(FilePollStore::init()));
-        }
-        self.file_polls_.as_mut().unwrap()
     }
 
     /// Raw-pointer variant of [`file_polls`] for re-entrant callers.
@@ -319,8 +280,6 @@ impl<'a> MiniEventLoop<'a> {
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
             pipe_read_buffer: None,
-            stdout_store: None,
-            stderr_store: None,
         }
     }
 
@@ -411,26 +370,6 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
-    /// embedded `AnyTaskWithExtraContext`; the task is written there and pushed onto
-    /// `self.tasks` (the local non-concurrent FIFO).
-    ///
-    /// # Safety
-    /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
-    /// and `ctx` is non-null and live for the task's duration.
-    pub unsafe fn enqueue_task<C>(
-        &mut self,
-        ctx: *mut C,
-        callback: fn(*mut C, *mut ()),
-        field_offset: usize,
-    ) {
-        // SAFETY: caller contract — see fn `# Safety`.
-        let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
-        // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
-        unsafe { task.write(New::<C, ()>::init(ctx, callback)) };
-        self.tasks.write_item(task).expect("unreachable");
-    }
-
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
     pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
@@ -463,41 +402,6 @@ impl<'a> MiniEventLoop<'a> {
 
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
-    }
-
-    /// Lazy-init helper shared by [`stderr`]/[`stdout`]: `fstat → __bun_stdio_blob_store_new → cache`.
-    /// The store is built with intrusive `ref_count = 2`.
-    #[inline]
-    fn lazy_stdio_store(slot: &mut Option<NonNull<()>>, fd: Fd, is_atty: bool) -> *mut () {
-        if slot.is_none() {
-            let mut mode: Mode = 0;
-            if let Ok(stat) = sys::fstat(fd) {
-                mode = stat.st_mode as Mode;
-            }
-            let store = __bun_stdio_blob_store_new(fd, is_atty, mode);
-            *slot = NonNull::new(store);
-        }
-        slot.unwrap().as_ptr()
-    }
-
-    /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
-    pub fn stderr(&mut self) -> *mut () {
-        // NB: deliberately uses `Fd::from_uv(2)` here, not
-        // `Fd::stderr()` — Windows uv-fd vs native-handle distinction. Do not "tidy".
-        Self::lazy_stdio_store(
-            &mut self.stderr_store,
-            Fd::from_uv(2),
-            Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal,
-        )
-    }
-
-    /// Returns an erased `*mut webcore::blob::Store`. Callers in tier-6 cast back.
-    pub fn stdout(&mut self) -> *mut () {
-        Self::lazy_stdio_store(
-            &mut self.stdout_store,
-            Fd::stdout(),
-            Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal,
-        )
     }
 }
 
@@ -545,101 +449,5 @@ impl<'a> Drop for MiniEventLoop<'a> {
     fn drop(&mut self) {
         // `tasks.deinit()` is implicit via Queue's Drop.
         debug_assert!(self.concurrent_tasks.is_empty());
-    }
-}
-
-// ───────────────────────────── MiniVM ─────────────────────────────
-
-pub struct MiniVM<'a> {
-    // LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()`
-    // mutates the loop (lazy-inits the store). Hold `&'a mut` instead of
-    // casting `&T`→`&mut T` (UB, and forbidden by PORTING.md "no raw pointers to silence
-    // borrowck").
-    pub mini: &'a mut MiniEventLoop<'a>,
-}
-
-impl<'a> MiniVM<'a> {
-    pub fn init(inner: &'a mut MiniEventLoop<'a>) -> MiniVM<'a> {
-        MiniVM { mini: inner }
-    }
-
-    #[inline]
-    pub fn loop_(&self) -> &MiniEventLoop<'a> {
-        &*self.mini
-    }
-
-    #[inline]
-    pub fn platform_event_loop(&self) -> *mut PlatformEventLoop {
-        bun_io::uws_to_native(self.mini.loop_ptr())
-    }
-
-    #[inline]
-    pub fn increment_pending_unref_counter(&self) {
-        // MiniEventLoop has no pending_unref_counter (only `jsc.VirtualMachine` does).
-        let _ = self;
-        panic!("FIXME TODO");
-    }
-
-    #[inline]
-    pub fn file_polls(&mut self) -> &mut FilePollStore {
-        self.mini.file_polls()
-    }
-}
-
-// ───────────────────────────── EventLoopKind ─────────────────────────────
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum EventLoopKind {
-    Js,
-    Mini,
-}
-
-pub trait EventLoopKindT {
-    type Loop;
-    type Ref;
-    fn get_vm() -> Self::Ref;
-}
-
-pub struct JsKind;
-pub struct MiniKind;
-
-impl EventLoopKindT for JsKind {
-    // SAFETY: erased `jsc::EventLoop` / `jsc::VirtualMachine` (tier-6).
-    type Loop = *mut ();
-    type Ref = *mut ();
-    fn get_vm() -> Self::Ref {
-        __bun_js_vm_get()
-    }
-}
-
-impl EventLoopKindT for MiniKind {
-    type Loop = MiniEventLoop<'static>;
-    // Returning `&'static mut` would let two `get_vm()` calls (or
-    // `get_vm()` + `init_global()`) hold overlapping `&mut` — UB. Return the raw
-    // pointer (matches `JsKind::Ref = *mut ()`); callers reborrow scoped `&mut`.
-    type Ref = *mut MiniEventLoop<'static>;
-    fn get_vm() -> Self::Ref {
-        // Caller must have called `init_global()` first.
-        // No `&mut` materialized here — raw-ptr-only access.
-        GLOBAL.with(|g| g.get())
-    }
-}
-
-// ───────────────────────────── AbstractVM ─────────────────────────────
-
-/// Wraps either a `*VirtualMachine` or a `*MiniEventLoop`: a trait implemented for both.
-pub trait AbstractVM<'a> {
-    type Wrapped;
-    fn abstract_vm(self) -> Self::Wrapped;
-}
-
-// `impl AbstractVM for &VirtualMachine` cannot live here
-// without naming the tier-6 `VirtualMachine` type. The impl moves to
-// `bun_runtime` (move-in pass), which constructs `JsVM { vm, vtable }`.
-
-impl<'a> AbstractVM<'a> for &'a mut MiniEventLoop<'a> {
-    type Wrapped = MiniVM<'a>;
-    fn abstract_vm(self) -> MiniVM<'a> {
-        MiniVM::init(self)
     }
 }

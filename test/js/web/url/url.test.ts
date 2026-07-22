@@ -255,6 +255,132 @@ describe("url", () => {
   });
 });
 
+describe("url.searchParams lazy href sync", () => {
+  // The URLSearchParams update steps are applied lazily to the associated
+  // URL's serialized string: each getter below must observe the change without
+  // any intermediate href read having forced a sync.
+  it("reflects mutations in every URL getter and across component setters", () => {
+    const u = new URL("http://user:pw@host:81/path?initial=1#frag");
+    const sp = u.searchParams;
+
+    sp.append("a", "1");
+    sp.append("b", "2");
+    sp.set("initial", "x");
+    expect({
+      href: u.href,
+      search: u.search,
+      toString: u.toString(),
+      toJSON: u.toJSON(),
+      hash: u.hash,
+      pathname: u.pathname,
+      protocol: u.protocol,
+      origin: u.origin,
+      username: u.username,
+      password: u.password,
+      host: u.host,
+      hostname: u.hostname,
+      port: u.port,
+      spSize: sp.size,
+      spString: sp.toString(),
+      inspect: Bun.inspect(u).includes("initial=x&a=1&b=2"),
+    }).toEqual({
+      href: "http://user:pw@host:81/path?initial=x&a=1&b=2#frag",
+      search: "?initial=x&a=1&b=2",
+      toString: "http://user:pw@host:81/path?initial=x&a=1&b=2#frag",
+      toJSON: "http://user:pw@host:81/path?initial=x&a=1&b=2#frag",
+      hash: "#frag",
+      pathname: "/path",
+      protocol: "http:",
+      origin: "http://host:81",
+      username: "user",
+      password: "pw",
+      host: "host:81",
+      hostname: "host",
+      port: "81",
+      spSize: 3,
+      spString: "initial=x&a=1&b=2",
+      inspect: true,
+    });
+
+    // Setting an unrelated component while a searchParams mutation is pending
+    // must keep the pending query.
+    sp.append("c", "3");
+    u.pathname = "/p2";
+    expect({ href: u.href, get: sp.get("c") }).toEqual({
+      href: "http://user:pw@host:81/p2?initial=x&a=1&b=2&c=3#frag",
+      get: "3",
+    });
+
+    sp.set("d", "4");
+    u.hash = "#h2";
+    expect(u.href).toBe("http://user:pw@host:81/p2?initial=x&a=1&b=2&c=3&d=4#h2");
+
+    // Setting search directly discards any pending searchParams mutation
+    // (the new search wins) and rebuilds searchParams from it.
+    sp.append("dropped", "y");
+    u.search = "?only=1";
+    expect({ href: u.href, entries: [...sp] }).toEqual({
+      href: "http://user:pw@host:81/p2?only=1#h2",
+      entries: [["only", "1"]],
+    });
+
+    // Setting href discards any pending searchParams mutation and rebuilds
+    // searchParams from the new href.
+    sp.append("dropped", "z");
+    u.href = "https://other/?n=v";
+    expect({ href: u.href, entries: [...sp] }).toEqual({
+      href: "https://other/?n=v",
+      entries: [["n", "v"]],
+    });
+
+    // Deleting all params removes the '?' entirely.
+    sp.delete("n");
+    expect({ href: u.href, search: u.search, size: sp.size }).toEqual({
+      href: "https://other/",
+      search: "",
+      size: 0,
+    });
+
+    // sort() is also a mutation; href must reflect the sorted order.
+    sp.append("z", "1");
+    sp.append("a", "2");
+    sp.sort();
+    expect(u.search).toBe("?a=2&z=1");
+  });
+
+  // N appends through a URL-bound URLSearchParams used to re-serialize and
+  // re-parse the full href on every mutation, so 10000 appends ran for tens of
+  // seconds. With the sync deferred to the next href/search read, this is O(N)
+  // and finishes near-instantly; the spawn timeout is the discriminator.
+  test("N appends through url.searchParams are O(N), not O(N^2)", async () => {
+    const fixture = `
+      const N = 10000;
+      const u = new URL("http://h/");
+      for (let i = 0; i < N; i++) u.searchParams.append("k" + i, "v" + i);
+      const href = u.href;
+      if (u.searchParams.size !== N) throw new Error("size=" + u.searchParams.size);
+      if (!href.startsWith("http://h/?k0=v0&")) throw new Error("href=" + href.slice(0, 40));
+      if (!href.endsWith("&k9999=v9999")) throw new Error("hrefEnd=" + href.slice(-20));
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 60_000);
+});
+
 describe("object URL prefix check", () => {
   // The "blob:" prefix check dispatches on encoding and only reads
   // prefix.len() code units; these inputs must not be transcoded first.

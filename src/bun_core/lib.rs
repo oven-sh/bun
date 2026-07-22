@@ -61,7 +61,7 @@ pub use string::{
     SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
     WTFStringImplStruct, ZigString, ZigStringSlice,
 };
-pub use string::{StringPointer, Tag, slice_to_nul, slice_to_nul_mut};
+pub use string::{StringPointer, Tag, slice_to_nul};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Low-tier homes for types the merged `string` module needs that previously
@@ -289,11 +289,6 @@ pub mod path_sep {
     }
 
     #[inline(always)]
-    pub fn is_sep_win32_t<T: PathByte>(c: T) -> bool {
-        c == T::from_u8(b'\\')
-    }
-
-    #[inline(always)]
     pub fn is_sep_any_t<T: PathByte>(c: T) -> bool {
         c == T::from_u8(b'/') || c == T::from_u8(b'\\')
     }
@@ -383,23 +378,6 @@ pub mod vec {
         // already-written prefix stays in spare capacity and is *leaked* (not
         // dropped) — sound, and acceptable for the constant/`Default`/index
         // fills this helper targets.
-        unsafe { v.set_len(prev + n) };
-    }
-
-    /// Append `n` copies of `value` to `v`.
-    ///
-    /// Unlike `v.extend(repeat_n(value, n))` or a `for _ { v.push(value) }` loop,
-    /// this reserves once and fills via `[MaybeUninit<T>]::fill` (lowers to
-    /// `memset` for byte-sized `T`, vectorized stores for wider `Copy` types) —
-    /// no per-element `RawVec` capacity branch in the hot loop.
-    #[inline]
-    pub fn push_n<T: Copy>(v: &mut Vec<T>, value: T, n: usize) {
-        v.reserve(n);
-        let prev = v.len();
-        v.spare_capacity_mut()[..n].fill(core::mem::MaybeUninit::new(value));
-        // SAFETY: `reserve(n)` ⇒ `spare_capacity_mut().len() >= n`, so `[..n]`
-        // is in-bounds; every slot in it was just initialized via `fill`, and
-        // `T: Copy` means no drop obligations are skipped.
         unsafe { v.set_len(prev + n) };
     }
 
@@ -1177,20 +1155,19 @@ pub use fmt::{
 // ──────────────────────────────────────────────────────────────────────────
 pub use crate::string::immutable::{
     CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
-    SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, UNICODE_REPLACEMENT_STR, UUID_LEN,
-    WHITESPACE_CHARS, append, cat, concat_alloc_t, concat_with_length, contains_char,
-    contains_scalar, copy, count_char, decode_hex_to_bytes, decode_hex_to_bytes_truncate,
-    encode_bytes_to_hex, ends_with_any, ends_with_char, ends_with_char_or_is_zero_length,
-    ends_with_comptime, eql_any_comptime, eql_comptime, eql_comptime_utf16, format_escapes,
-    has_prefix, has_prefix_case_insensitive, has_prefix_comptime, has_prefix_comptime_utf16,
-    has_suffix_comptime, index_of, index_of_scalar, index_of_t, is_all_whitespace, is_ip_address,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, join, last_index_of, last_index_of_t,
-    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
-    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
-    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
-    trim_spaces, trim_suffix, trim_suffix_comptime, utf8_byte_sequence_length, utf16_eql_string,
-    without_prefix, without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
+    SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
+    concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
+    decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
+    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
+    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
+    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
+    is_all_whitespace, is_ip_address, is_npm_package_name, is_npm_package_name_ignore_length,
+    is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8, join, last_index_of,
+    last_index_of_t, length_of_leading_whitespace_ascii, memmem, order, order_t,
+    percent_encode_write, sort_asc, sort_desc, split, starts_with_case_insensitive_ascii,
+    starts_with_char, str_utf8, to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix,
+    trim_prefix_comptime, trim_suffix, utf8_byte_sequence_length, utf16_eql_string, without_prefix,
+    without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
 };
 
 #[allow(deprecated)]
@@ -1199,14 +1176,13 @@ pub use crate::fmt::{
     HEX_DECODE_TABLE, HEX_INVALID, LOWER_HEX_TABLE, PathFormatOptions, QuotedFormatter, Raw,
     SizeFormatter, SizeFormatterOptions, SliceCursor, TruncatedHash32, UPPER_HEX_TABLE, VecWriter,
     buf_print, buf_print_infallible, buf_print_len, buf_print_z, buf_print_z_infallible, bytes,
-    bytes_to_hex_lower, bytes_to_hex_lower_string, count, count_float, count_int, digit_count,
-    digit_count_i64, digit_count_u64, double, fast_digit_count, fmt_os_path, fmt_path, fmt_path_u8,
-    fmt_path_u16, format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper,
-    hex_char_lower, hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u8, hex_u16,
-    hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii,
-    parse_f32, parse_f64, parse_hex_prefix, parse_hex_to_int, parse_hex4,
-    parse_int as parse_int_radix, parse_num, print_int, quote, raw, s, size, size_f64, size_i64,
-    truncated_hash32, truncated_hash32_bytes, utf16,
+    bytes_to_hex_lower, bytes_to_hex_lower_string, count, count_float, digit_count,
+    digit_count_i64, digit_count_u64, double, fmt_os_path, fmt_path, fmt_path_u8, fmt_path_u16,
+    format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper, hex_char_lower,
+    hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u16, hex_upper, hex2_lower,
+    hex2_upper, hex4_upper, int_as_bytes, parse_ascii, parse_f32, parse_f64, parse_hex_prefix,
+    parse_hex_to_int, parse_hex4, parse_int as parse_int_radix, parse_num, print_int, quote, raw,
+    s, size, truncated_hash32, truncated_hash32_bytes, utf16,
 };
 
 /// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]
@@ -1532,12 +1508,6 @@ pub(crate) mod strings_impl {
     #[inline]
     pub const fn u16_is_trail(c: u16) -> bool {
         (c & 0xFC00) == 0xDC00
-    }
-
-    /// ICU `U16_IS_SURROGATE` — either half, `0xD800..=0xDFFF`.
-    #[inline]
-    pub const fn u16_is_surrogate(c: u16) -> bool {
-        (c & 0xF800) == 0xD800
     }
 
     /// ICU `U16_GET_SUPPLEMENTARY` — combine a *known-valid* lead+trail into a
@@ -2453,13 +2423,6 @@ pub mod ffi {
         &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
     }
 
-    /// Mutable variant of [`slice_to_nul`].
-    #[inline]
-    pub fn slice_to_nul_mut(buf: &mut [u8]) -> &mut [u8] {
-        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        &mut buf[..n]
-    }
-
     /// Heap-allocate a `T` filled with zero bytes. Safe by virtue of the
     /// [`Zeroable`] bound (the all-zero bit pattern is a valid `T`).
     #[inline]
@@ -2868,14 +2831,6 @@ pub mod asan {
         __asan_unpoison_memory_region(ptr.cast(), size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
-    }
-    #[inline]
-    pub fn poison_slice<T>(s: &[T]) {
-        poison(s.as_ptr().cast(), core::mem::size_of_val(s))
-    }
-    #[inline]
-    pub fn unpoison_slice<T>(s: &[T]) {
-        unpoison(s.as_ptr().cast(), core::mem::size_of_val(s))
     }
     #[inline]
     pub fn assert_unpoisoned<T>(ptr: *const T) {

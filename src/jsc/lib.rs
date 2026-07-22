@@ -40,18 +40,7 @@ use core::ffi::{c_char, c_void};
 // See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
 // symbol-naming contract the macros uphold.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{JsClass, JsClassDerive, codegen_cached_accessors, host_call, host_fn};
-
-/// The calling convention used for JavaScript functions <> Native.
-///
-/// Rust cannot express an ABI as a runtime value
-/// — `extern "..."` takes a string literal, not an expression. The
-/// `#[bun_jsc::host_fn]` / `#[bun_jsc::host_call]` attribute macros emit the
-/// correct ABI per-target instead. See PORTING.md §FFI / §JSC types.
-#[cfg(all(windows, target_arch = "x86_64"))]
-pub const CONV: &str = "sysv64";
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-pub const CONV: &str = "C";
+pub use bun_jsc_macros::{JsClass, codegen_cached_accessors, host_call, host_fn};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
@@ -77,8 +66,6 @@ pub mod js_cell;
 pub mod js_error_code;
 #[path = "JSMap.rs"]
 pub mod js_map;
-#[path = "JSPromiseRejectionOperation.rs"]
-pub mod js_promise_rejection_operation;
 #[path = "JSRuntimeType.rs"]
 pub mod js_runtime_type;
 #[path = "JSUint8Array.rs"]
@@ -93,8 +80,6 @@ pub mod script_execution_status;
 pub mod sizes;
 #[path = "SourceProvider.rs"]
 pub mod source_provider;
-#[path = "SourceType.rs"]
-pub mod source_type;
 #[path = "TextCodec.rs"]
 pub mod text_codec;
 #[path = "URLSearchParams.rs"]
@@ -120,12 +105,6 @@ pub mod schema_api {
 
     impl StackFrameScope {
         pub const NONE: Self = Self(0);
-        pub const EVAL: Self = Self(1);
-        pub const MODULE: Self = Self(2);
-        pub const FUNCTION: Self = Self(3);
-        pub const GLOBAL: Self = Self(4);
-        pub const WASM: Self = Self(5);
-        pub const CONSTRUCTOR: Self = Self(6);
     }
 
     /// Line/column position of a stack frame (FFI layout shared with C++).
@@ -237,9 +216,8 @@ pub mod weak;
 pub mod zig_string;
 
 pub use self::js_value::{
-    BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
-    PropertyIteratorFn, Protected as ProtectedJSValue, ProxyField, ProxyInternalField,
-    SerializedFlags, SerializedScriptValue,
+    CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
+    Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
 };
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete
@@ -446,14 +424,12 @@ pub use self::getter_setter::GetterSetter;
 pub use self::js_cell::{JSCell, JsCell};
 pub use self::js_error_code::{DOMExceptionCode, JSErrorCode};
 pub use self::js_map::JSMap;
-pub use self::js_promise_rejection_operation::JSPromiseRejectionOperation;
 pub use self::js_runtime_type::JSRuntimeType;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
 pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
-pub use self::source_type::SourceType;
 pub use self::text_codec::TextCodec;
 pub use self::url_search_params::URLSearchParams;
 pub use self::zig_error_type::ZigErrorType;
@@ -498,8 +474,6 @@ pub mod virtual_machine_exports;
 pub mod any_promise;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
-#[path = "DeferredError.rs"]
-pub mod deferred_error;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
 #[path = "host_object.rs"]
@@ -539,8 +513,6 @@ pub mod bun_cpu_profiler;
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
-#[path = "codegen.rs"]
-pub mod codegen_mod;
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
 #[path = "ConcurrentPromiseTask.rs"]
@@ -754,17 +726,11 @@ impl From<JsError> for crate::CrateError {
 /// (no interpolation — message *is* the literal) or a pre-expanded
 /// `format_args!(..)` (interpolation already applied — message *is* the
 /// `Arguments` value). This trait dispatches both shapes onto the canonical
-/// [`JSGlobalObject::throw`] / [`JSGlobalObject::throw_invalid_arguments`]
-/// without requiring every caller to wrap a literal in `format_args!("")`.
+/// [`JSGlobalObject::throw`] without requiring every caller to wrap a literal
+/// in `format_args!("")`.
 pub trait ThrowFmtArgs: Sized {
     /// `globalThis.throw(fmt, args)` — throw a generic `Error`.
     fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError;
-    /// `globalThis.throwInvalidArguments(fmt, args)` — throw `ERR_INVALID_ARG_TYPE`.
-    fn dispatch_throw_invalid_arguments(
-        self,
-        global: &JSGlobalObject,
-        fmt: &'static str,
-    ) -> JsError;
 }
 impl ThrowFmtArgs for () {
     #[inline]
@@ -774,27 +740,11 @@ impl ThrowFmtArgs for () {
         // so `create_error_instance` hits its static-string fast path.
         global.throw(format_args!("{fmt}"))
     }
-    #[inline]
-    fn dispatch_throw_invalid_arguments(
-        self,
-        global: &JSGlobalObject,
-        fmt: &'static str,
-    ) -> JsError {
-        global.throw_invalid_arguments(format_args!("{fmt}"))
-    }
 }
 impl ThrowFmtArgs for core::fmt::Arguments<'_> {
     #[inline]
     fn dispatch_throw(self, global: &JSGlobalObject, _fmt: &'static str) -> JsError {
         global.throw(self)
-    }
-    #[inline]
-    fn dispatch_throw_invalid_arguments(
-        self,
-        global: &JSGlobalObject,
-        _fmt: &'static str,
-    ) -> JsError {
-        global.throw_invalid_arguments(self)
     }
 }
 
@@ -809,10 +759,8 @@ pub use bun_core::heap;
 pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
-    JSHostFn, JSHostFnZig, JSHostFnZigWithContext, JSHostFunctionTypeWithContext,
-    from_js_host_call, from_js_host_call_generic, host_construct_result, host_fn_result,
-    host_setter_result, to_js_host_call, to_js_host_fn, to_js_host_fn_result,
-    to_js_host_fn_with_context,
+    JSHostFn, JSHostFnZig, from_js_host_call, from_js_host_call_generic, host_construct_result,
+    host_fn_result, host_setter_result, to_js_host_call, to_js_host_fn_result,
 };
 pub use self::host_object::{HostFnEntry, create_host_function_object};
 
@@ -823,7 +771,7 @@ pub use self::host_object::{HostFnEntry, create_host_function_object};
 // ──────────────────────────────────────────────────────────────────────────
 #[doc(hidden)]
 pub mod __macro_support {
-    use super::{JSGlobalObject, JSValue, JsError, JsResult};
+    use super::{JSGlobalObject, JSValue, JsResult};
 
     /// Normalizes a host-fn body's return type to `JsResult<JSValue>` so the
     /// proc-macro can wrap bodies that return either `JSValue` or
@@ -841,36 +789,6 @@ pub mod __macro_support {
         #[inline]
         fn into_host_fn_result(self) -> JsResult<JSValue> {
             self
-        }
-    }
-
-    /// Normalizes a `construct` body's return type — `*mut T`, `Box<T>`, or
-    /// `JsResult<_>` of either — to a nullable `*mut c_void`.
-    pub trait IntoConstructResult {
-        fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void>;
-    }
-    impl<T> IntoConstructResult for *mut T {
-        #[inline]
-        fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            Ok(self.cast())
-        }
-    }
-    impl<T> IntoConstructResult for alloc::boxed::Box<T> {
-        #[inline]
-        fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            Ok(bun_core::heap::into_raw(self).cast())
-        }
-    }
-    impl<T> IntoConstructResult for JsResult<*mut T> {
-        #[inline]
-        fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            self.map(|p| p.cast())
-        }
-    }
-    impl<T> IntoConstructResult for JsResult<alloc::boxed::Box<T>> {
-        #[inline]
-        fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            self.map(|b| bun_core::heap::into_raw(b).cast())
         }
     }
 
@@ -912,30 +830,6 @@ pub mod __macro_support {
         R: super::host_fn::IntoHostSetterReturn,
     {
         super::host_fn::host_setter_result(global, f)
-    }
-
-    /// Construct result mapping: `JsResult<*mut T>` → `*mut c_void` (null on
-    /// throw). Matches generate-classes.ts:
-    /// `extern void* ${T}Class__construct(JSGlobalObject*, CallFrame*)`.
-    #[inline]
-    pub fn host_fn_construct_result<T: IntoConstructResult>(
-        global: &JSGlobalObject,
-        r: T,
-    ) -> *mut ::core::ffi::c_void {
-        match r.into_construct_ptr() {
-            Ok(p) => p,
-            Err(JsError::OutOfMemory) => {
-                global.throw_out_of_memory_value();
-                ::core::ptr::null_mut()
-            }
-            Err(_) => {
-                debug_assert!(
-                    global.has_exception(),
-                    "JsClass construct: JsError without pending exception"
-                );
-                ::core::ptr::null_mut()
-            }
-        }
     }
 }
 
@@ -987,7 +881,6 @@ mod __macro_smoke {
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
 pub use self::cached_bytecode::CachedBytecode;
-pub use self::deferred_error::DeferredError;
 pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
 pub use self::zig_stack_frame::ZigStackFrame;
@@ -1000,7 +893,7 @@ pub use abort_signal::{AbortSignal, AbortSignalRef};
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
 pub use self::js_global_object::{GlobalRef, JSGlobalObject};
-pub use self::vm::{HeapType, Lock as ApiLock, VM};
+pub use self::vm::VM;
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
 /// min/max are `i128` so every
@@ -1052,8 +945,6 @@ pub mod resolved_source_tag {
         pub const Javascript: Self = Self(0);
         pub const PackageJsonTypeModule: Self = Self(1);
         pub const PackageJsonTypeCommonjs: Self = Self(2);
-        pub const Wasm: Self = Self(3);
-        pub const Object: Self = Self(4);
         pub const File: Self = Self(5);
         pub const Esm: Self = Self(6);
         pub const JsonForObjectLoader: Self = Self(7);
@@ -1156,7 +1047,6 @@ impl BuiltinName {
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
     pub const Status: Self = Self::status;
-    pub const StatusText: Self = Self::statusText;
     pub const Url: Self = Self::url;
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
@@ -1280,10 +1170,6 @@ unsafe extern "C" {
         code: u8,
     ) -> JSValue;
     safe fn ZigString__toValueGC(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
-    safe fn ZigString__toAtomicValue(
-        this: &bun_core::ZigString,
-        global: &JSGlobalObject,
-    ) -> JSValue;
     // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
     safe fn ZigString__toJSONObject(this: &bun_core::ZigString, global: &JSGlobalObject)
     -> JSValue;
@@ -1317,14 +1203,6 @@ impl JSGlobalObject {
     #[inline]
     pub fn throw2(&self, fmt: &'static str, args: impl ThrowFmtArgs) -> JsError {
         args.dispatch_throw(self, fmt)
-    }
-
-    /// Two-arg shim for mechanically-ported `throwInvalidArguments(fmt, .{…})`
-    /// call sites. Dispatches via [`ThrowFmtArgs`].
-    #[doc(hidden)]
-    #[inline]
-    pub fn throw_invalid_arguments2(&self, fmt: &'static str, args: impl ThrowFmtArgs) -> JsError {
-        args.dispatch_throw_invalid_arguments(self, fmt)
     }
 
     /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).toJS()` — Node-compat error
@@ -1551,11 +1429,10 @@ pub use self::event_loop as EventLoop;
 pub mod any_task_job;
 pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
 pub use self::event_loop::{
-    AbstractVM, AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask,
-    ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
-    EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
-    JsTerminatedResult, ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask,
-    Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
+    AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentPromiseTask,
+    ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
+    GarbageCollectionController, JsTerminated, JsTerminatedResult, ManagedTask, MiniEventLoop,
+    PosixSignalHandle, PosixSignalTask, Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
 };
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
@@ -1563,8 +1440,6 @@ pub type PlatformEventLoop = bun_uws::Loop;
 pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
-/// Deprecated: Remove all of these please.
-pub use self::sizes as Sizes;
 /// Deprecated: Use `bun_core::ZigString`
 #[deprecated]
 pub type ZigString = bun_core::ZigString;
@@ -1595,16 +1470,11 @@ pub use self::node_path::{ThreadSafe, Unprotect};
 /// full API surface.
 #[allow(non_snake_case)]
 pub mod WebCore {
-    pub use crate::webcore_types::store::{Store, StoreRef};
-    pub use crate::webcore_types::{Blob, MAX_SIZE, SizeType};
+    pub use crate::webcore_types::Blob;
 }
-/// Lower-case alias + nested `blob` namespace.
+/// Lower-case alias.
 pub mod webcore {
-    pub use crate::webcore_types::{Blob, MAX_SIZE, SizeType};
-    pub mod blob {
-        pub use crate::webcore_types::store::*;
-        pub use crate::webcore_types::{MAX_SIZE, SizeType};
-    }
+    pub use crate::webcore_types::Blob;
 }
 /// `jsc.Node` (deprecated alias) — `PathLike`/`PathOrFileDescriptor`
 /// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
@@ -1762,9 +1632,6 @@ pub trait ZigStringJsc: Sized {
     /// `ZigString.toJS` — copies into a GC-managed `JSString` (or hands an
     /// external value if globally allocated).
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toAtomicValue` — interns the string as a `JSC::Identifier`
-    /// (atom). Prefer for short strings that will be compared by identity.
-    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.toExternalValue` — transfers ownership of a globally-allocated
     /// buffer to JSC's external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
@@ -1816,10 +1683,6 @@ impl ZigStringJsc for bun_core::ZigString {
             return self.to_external_value(global);
         }
         ZigString__toValueGC(self, global)
-    }
-    #[inline]
-    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toAtomicValue(self, global)
     }
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
@@ -2079,24 +1942,6 @@ impl Ref {
 }
 
 pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);
-
-/// Wrap a typed `fn(&mut Context)` as an `extern "C" fn(*mut c_void)`.
-pub fn opaque_wrap<Context, F>() -> OpaqueCallback
-where
-    F: FnTyped<Context>,
-{
-    extern "C" fn callback<Context, F: FnTyped<Context>>(ctx: *mut c_void) {
-        // SAFETY: caller guarantees ctx is a valid *mut Context.
-        let context: &mut Context = unsafe { bun_ptr::callback_ctx::<Context>(ctx) };
-        F::call(context);
-    }
-    callback::<Context, F>
-}
-
-/// Helper trait for [`opaque_wrap`].
-pub trait FnTyped<Context> {
-    fn call(this: &mut Context);
-}
 
 /// Legacy alias for [`ErrorCode`] (`src/jsc/ErrorCode.rs`) — the same type
 /// under both names.

@@ -1,7 +1,16 @@
 import { dlopen } from "bun:ffi";
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, libcPathForDlopen, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  fileDescriptorLeakChecker,
+  isLinux,
+  isPosix,
+  isWindows,
+  libcPathForDlopen,
+  tmpdirSync,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, constants as fsConstants, openSync } from "node:fs";
 import { join } from "node:path";

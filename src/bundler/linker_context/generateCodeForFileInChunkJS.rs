@@ -945,7 +945,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 }
 
 pub struct DeclCollector {
-    pub decls: Vec<DeclInfo>,
+    pub(crate) decls: Vec<DeclInfo>,
     pub arena: *const Bump,
 }
 
@@ -969,7 +969,7 @@ impl DeclCollector {
     /// Remaining `s_import` statements (external, non-bundled) don't need
     /// handling here; their bindings are recorded separately in
     /// `postProcessJSChunk` by scanning the original AST import records.
-    pub fn collect_from_stmts(
+    pub(crate) fn collect_from_stmts(
         &mut self,
         stmts: &[Stmt],
         r: &mut renamer::Renamer<'_, '_>,

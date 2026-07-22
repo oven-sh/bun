@@ -214,7 +214,7 @@ pub mod dir_iterator {
             &self.native[..self.native.len() - 1]
         }
         #[inline]
-        pub fn as_slice(&self) -> &[OSPathChar] {
+        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
             self.slice()
         }
         /// Borrow the entry name as UTF-8 bytes (no NUL). On POSIX this is the
@@ -231,7 +231,7 @@ pub mod dir_iterator {
         }
         #[cfg(not(windows))]
         #[inline]
-        pub fn as_zstr(&self) -> &bun_core::ZStr {
+        pub(crate) fn as_zstr(&self) -> &bun_core::ZStr {
             // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
             // `borrow()` debug_assert.
             unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
@@ -911,7 +911,7 @@ pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
 }
 
 pub mod coreutils_error_map;
-pub mod libuv_error_map;
+pub(crate) mod libuv_error_map;
 #[path = "SignalCode.rs"]
 pub mod signal_code;
 pub use signal_code::SignalCode;
@@ -969,7 +969,7 @@ impl AsFd for &Dir {
 // same syscall ABI; `linux_syscall.rs` carries its own
 // `#![cfg(any(linux, android))]` so the gates stay in lockstep.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub(crate) mod linux_syscall;
+mod linux_syscall;
 
 #[inline]
 pub fn is_regular_file(mode: Mode) -> bool {
@@ -984,7 +984,7 @@ pub use bun_errno::{E, GetErrno, S, SystemErrno, e_from_negated, get_errno};
 /// unrecognised code. The pointer is thread-local and valid until the next
 /// call on the same thread; both C++ callers consume it immediately.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
+extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
     // `SystemErrno::init` has a per-target signature: `i64` on every POSIX
     // target (Linux/Darwin/FreeBSD), generic `SystemErrnoInit` on Windows.
     // Feed it the widest signed int and let each impl narrow.
@@ -1022,7 +1022,7 @@ pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_c
 /// # Safety
 /// `ptr[0..=len]` must be a valid NUL-terminated path slice for the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
+unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
     // SAFETY: caller (C++) guarantees `ptr[0..=len]` is a valid NUL-terminated
     // path slice for the duration of the call.
     let path = unsafe { ZStr::from_raw(ptr, len) };
@@ -1104,7 +1104,8 @@ pub struct Renameat2Flags {
 
 impl Renameat2Flags {
     #[inline]
-    pub fn int(self) -> u32 {
+    #[cfg(unix)]
+    fn int(self) -> u32 {
         let mut flags: u32 = 0;
         #[cfg(target_os = "macos")]
         {
@@ -1545,7 +1546,7 @@ impl From<Tag> for &'static str {
 /// Max single read/write count: Linux caps at 0x7ffff000;
 /// Darwin/BSD use signed 32-bit byte counts.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub const MAX_COUNT: usize = 0x7ffff000;
+const MAX_COUNT: usize = 0x7ffff000;
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 pub const MAX_COUNT: usize = i32::MAX as usize;
 #[cfg(windows)]
@@ -1558,7 +1559,7 @@ pub const MAX_COUNT: usize = u32::MAX as usize;
 // them locally as `safe fn` (instead of routing through the `libc` crate's
 // `unsafe extern fn` items) drops the per-call-site `unsafe { }` block.
 #[cfg(unix)]
-pub(crate) mod safe_libc {
+mod safe_libc {
     use core::ffi::c_int;
     // `close` is a libc symbol std relies on; this is an FFI import (not a
     // competing definition) with the canonical signature.
@@ -2415,7 +2416,7 @@ mod posix_impl {
     }
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
     #[inline]
-    pub fn mkdir_recursive_at(dir: impl AsFd, sub_path: &[u8]) -> Maybe<()> {
+    pub(crate) fn mkdir_recursive_at(dir: impl AsFd, sub_path: &[u8]) -> Maybe<()> {
         let dir = dir.as_fd();
         mkdir_recursive_at_mode(dir, sub_path, 0o755)
     }
@@ -2983,7 +2984,7 @@ mod posix_impl {
 
     // ── fcntl/dup/pipe/io group ──
     pub type FcntlInt = isize;
-    pub fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
+    pub(crate) fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
         // Attach the fd to the error.
         loop {
             // SAFETY: `fd` is a live descriptor; `arg` is passed by value and
@@ -3046,7 +3047,7 @@ mod posix_impl {
     // ── socket primitives (recv/send/socketpair) ──
     // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
     // exposed for shell/pipe IPC.
-    pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
+    fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // macOS: single `recvfrom$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
@@ -3064,7 +3065,7 @@ mod posix_impl {
         );
         Ok(n as usize)
     }
-    pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
+    fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
         // `buf.len` is passed un-clamped (only `recv` clamps);
         // forward the full length and let the kernel decide.
         // macOS: single `sendto$NOCANCEL`, no EINTR retry.
@@ -3092,11 +3093,11 @@ mod posix_impl {
         send(fd, buf, SEND_FLAGS_NONBLOCK)
     }
     #[cfg(unix)]
-    pub const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
+    const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
     // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
     // (Darwin defines MSG_NOSIGNAL=0x80000).
     #[cfg(unix)]
-    pub const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -3519,7 +3520,8 @@ pub struct TimeLike {
 }
 impl TimeLike {
     #[inline]
-    pub fn to_timespec(self) -> libc::timespec {
+    #[cfg(unix)]
+    fn to_timespec(self) -> libc::timespec {
         libc::timespec {
             tv_sec: self.sec as _,
             tv_nsec: self.nsec as _,
@@ -4566,7 +4568,7 @@ fn read_fill_vec(
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlatformIoVecConst {
-    pub base: *const u8,
+    base: *const u8,
     pub len: usize,
 }
 // SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec (S021).
@@ -5390,7 +5392,7 @@ pub mod linux {
     /// Errno; aliased to `bun_errno::E`.
     pub type Errno = super::E;
     #[inline]
-    pub fn errno() -> c_int {
+    fn errno() -> c_int {
         super::last_errno()
     }
 
@@ -5400,7 +5402,7 @@ pub mod linux {
     /// `E::AGAIN`/`E::INTR` (no `E` prefix).
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
-    pub struct E(pub u16);
+    pub struct E(u16);
     impl E {
         pub const SUCCESS: E = E(0);
         pub const PERM: E = E(libc::EPERM as u16);
@@ -5658,7 +5660,7 @@ pub mod linux {
             }
         }
         #[inline]
-        pub fn disable() {
+        pub(crate) fn disable() {
             RWF_STATE.store(-1, core::sync::atomic::Ordering::Relaxed);
         }
     }
@@ -5968,7 +5970,7 @@ pub mod macho {
     #[derive(Clone, Copy)]
     pub struct load_command {
         pub cmd: u32,
-        pub cmdsize: u32,
+        cmdsize: u32,
     }
 
     /// `<mach-o/loader.h> segment_command_64`.
@@ -5977,7 +5979,7 @@ pub mod macho {
     pub struct segment_command_64 {
         pub cmd: u32,
         pub cmdsize: u32,
-        pub segname: [u8; 16],
+        segname: [u8; 16],
         pub vmaddr: u64,
         pub vmsize: u64,
         pub fileoff: u64,
@@ -7936,7 +7938,7 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
 }
 /// Windows-only `makePath` over UTF-16. On POSIX, transcodes
 /// to UTF-8 and delegates to `mkdir_recursive_at`.
-pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
+fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // Transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
     let mut buf = bun_paths::PathBuffer::default();
     let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
@@ -8461,7 +8463,7 @@ pub mod net {
     #[derive(Clone, Copy)]
     pub struct Address {
         /// Generic storage; `family()` discriminates.
-        pub any: sockaddr_storage,
+        any: sockaddr_storage,
     }
     impl Address {
         /// Construct from a borrowed `*const sockaddr`.
@@ -8814,9 +8816,10 @@ pub mod make_path {
 /// `BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS` is on).
 #[derive(Default, Clone, Copy)]
 pub struct WindowsSymlinkOptions {
+    #[cfg(windows)]
     pub directory: bool,
 }
-pub static WINDOWS_SYMLINK_HAS_FAILED: core::sync::atomic::AtomicBool =
+static WINDOWS_SYMLINK_HAS_FAILED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 impl WindowsSymlinkOptions {
     #[inline]
@@ -9109,12 +9112,7 @@ pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr
     }
 }
 /// `moveFileZSlow`: open source, unlink, copy to dest.
-pub fn move_file_z_slow(
-    from_dir: Fd,
-    filename: &ZStr,
-    to_dir: Fd,
-    destination: &ZStr,
-) -> Maybe<()> {
+fn move_file_z_slow(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     let in_handle = openat(
         from_dir,
         filename,
@@ -9127,7 +9125,7 @@ pub fn move_file_z_slow(
     r
 }
 /// `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
-pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
+fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     #[cfg(unix)]
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
@@ -9175,7 +9173,7 @@ pub type RenameOptions = RenameatConcurrentlyOptions;
 /// `moveFileZSlowMaybe`. Thin wrapper
 /// (`renameatConcurrently` falls back through here).
 #[inline]
-pub fn move_file_z_slow_maybe(
+fn move_file_z_slow_maybe(
     from_dir: Fd,
     filename: &ZStr,
     to_dir: Fd,
@@ -9209,7 +9207,7 @@ pub fn renameat_concurrently(
 }
 
 /// `renameatConcurrentlyWithoutFallback`.
-pub fn renameat_concurrently_without_fallback(
+fn renameat_concurrently_without_fallback(
     from_dir_fd: Fd,
     from: &ZStr,
     to_dir_fd: Fd,

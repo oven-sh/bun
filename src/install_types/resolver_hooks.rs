@@ -345,7 +345,7 @@ pub enum URI {
 }
 
 impl URI {
-    pub fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+    pub(crate) fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         match (lhs, rhs) {
             (URI::Local(l), URI::Local(r)) | (URI::Remote(l), URI::Remote(r)) => {
                 strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
@@ -417,7 +417,7 @@ impl TarballInfo {
 /// deep-copy it. `git`/`github` (`Repository`) hold no heap data.
 #[repr(C)]
 pub union DependencyVersionValue {
-    pub uninitialized: (),
+    pub(crate) uninitialized: (),
 
     pub npm: ManuallyDrop<NpmInfo>,
     pub dist_tag: TagInfo,
@@ -609,8 +609,8 @@ pub trait NegatableEnum: Copy + Eq {
 /// single bitset via [`combine`](Self::combine).
 #[derive(Clone, Copy)]
 pub struct Negatable<T: NegatableEnum> {
-    pub added: T,
-    pub removed: T,
+    pub(crate) added: T,
+    pub(crate) removed: T,
     pub had_wildcard: bool,
     pub had_unrecognized_values: bool,
 }
@@ -817,14 +817,14 @@ impl OperatingSystem {
     pub const NONE: Self = Self(0);
     pub const ALL: Self = Self(Self::ALL_VALUE);
 
-    pub const AIX: u16 = 1 << 1;
-    pub const DARWIN: u16 = 1 << 2;
-    pub const FREEBSD: u16 = 1 << 3;
-    pub const LINUX: u16 = 1 << 4;
-    pub const OPENBSD: u16 = 1 << 5;
-    pub const SUNOS: u16 = 1 << 6;
+    pub(crate) const AIX: u16 = 1 << 1;
+    pub(crate) const DARWIN: u16 = 1 << 2;
+    pub(crate) const FREEBSD: u16 = 1 << 3;
+    pub(crate) const LINUX: u16 = 1 << 4;
+    pub(crate) const OPENBSD: u16 = 1 << 5;
+    pub(crate) const SUNOS: u16 = 1 << 6;
     pub const WIN32: u16 = 1 << 7;
-    pub const ANDROID: u16 = 1 << 8;
+    pub(crate) const ANDROID: u16 = 1 << 8;
 
     pub const ALL_VALUE: u16 = Self::AIX
         | Self::DARWIN
@@ -884,12 +884,12 @@ pub struct Libc(pub u8);
 
 impl Libc {
     pub const NONE: Self = Self(0);
-    pub const ALL: Self = Self(Self::ALL_VALUE);
+    pub(crate) const ALL: Self = Self(Self::ALL_VALUE);
 
-    pub const GLIBC: u8 = 1 << 1;
-    pub const MUSL: u8 = 1 << 2;
+    pub(crate) const GLIBC: u8 = 1 << 1;
+    pub(crate) const MUSL: u8 = 1 << 2;
 
-    pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
+    pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
     // TODO: runtime libc detection
 
@@ -902,7 +902,7 @@ impl Libc {
         Self::ALL
     }
     #[inline]
-    pub fn has(self, other: u8) -> bool {
+    pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
     }
 }
@@ -921,17 +921,17 @@ impl Architecture {
     pub const NONE: Self = Self(0);
     pub const ALL: Self = Self(Self::ALL_VALUE);
 
-    pub const ARM: u16 = 1 << 1;
-    pub const ARM64: u16 = 1 << 2;
-    pub const IA32: u16 = 1 << 3;
-    pub const MIPS: u16 = 1 << 4;
-    pub const MIPSEL: u16 = 1 << 5;
-    pub const PPC: u16 = 1 << 6;
-    pub const PPC64: u16 = 1 << 7;
-    pub const S390: u16 = 1 << 8;
-    pub const S390X: u16 = 1 << 9;
-    pub const X32: u16 = 1 << 10;
-    pub const X64: u16 = 1 << 11;
+    pub(crate) const ARM: u16 = 1 << 1;
+    pub(crate) const ARM64: u16 = 1 << 2;
+    pub(crate) const IA32: u16 = 1 << 3;
+    pub(crate) const MIPS: u16 = 1 << 4;
+    pub(crate) const MIPSEL: u16 = 1 << 5;
+    pub(crate) const PPC: u16 = 1 << 6;
+    pub(crate) const PPC64: u16 = 1 << 7;
+    pub(crate) const S390: u16 = 1 << 8;
+    pub(crate) const S390X: u16 = 1 << 9;
+    pub(crate) const X32: u16 = 1 << 10;
+    pub(crate) const X64: u16 = 1 << 11;
 
     pub const ALL_VALUE: u16 = Self::ARM
         | Self::ARM64
@@ -1279,7 +1279,7 @@ impl Features {
         }
     }
 
-    pub const MAIN: Self = Self {
+    pub(crate) const MAIN: Self = Self {
         check_for_duplicate_dependencies: true,
         dev_dependencies: true,
         is_main: true,

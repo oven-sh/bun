@@ -53,9 +53,9 @@ pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     alloc: ArenaPtr,
 }
 
-pub struct BuildResult<Impl: ValidSelectorImpl> {
-    pub specificity_and_flags: SpecificityAndFlags,
-    pub components: Vec<GenericComponent<Impl>, ArenaPtr>,
+pub(crate) struct BuildResult<Impl: ValidSelectorImpl> {
+    pub(crate) specificity_and_flags: SpecificityAndFlags,
+    pub(crate) components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
 impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
@@ -144,10 +144,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     ///     order requires additional allocations, and undoing the reversal when serializing the
     ///     selector. So we could just change this code to store the components in the same order
     ///     as the source.
-    pub(crate) fn build_with_specificity_and_flags(
-        &mut self,
-        spec: SpecificityAndFlags,
-    ) -> BuildResult<Impl> {
+    fn build_with_specificity_and_flags(&mut self, spec: SpecificityAndFlags) -> BuildResult<Impl> {
         // Capture combinators.len() before borrowing simple_selectors.slice().
         let combinators_len = self.combinators.len();
 
@@ -213,7 +210,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     }
 }
 
-pub(crate) fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
+fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     let midpoint = s.len() - at;
     (&s[0..midpoint], &s[midpoint..])
 }

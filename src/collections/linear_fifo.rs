@@ -211,7 +211,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    pub fn realign(&mut self) {
+    fn realign(&mut self) {
         let buf_len = self.buf_len();
         if buf_len - self.head >= self.count {
             // this copy overlaps
@@ -394,7 +394,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Read data from the fifo into `dst`, returns number of items copied.
-    pub fn read(&mut self, dst: &mut [T]) -> usize
+    fn read(&mut self, dst: &mut [T]) -> usize
     where
         T: Copy,
     {
@@ -424,7 +424,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns the first section of writable buffer.
     /// Note that this may be of length 0.
-    pub fn writable_slice(&mut self, offset: usize) -> &mut [T] {
+    fn writable_slice(&mut self, offset: usize) -> &mut [T] {
         let buf_len = self.buf_len();
         if offset > buf_len {
             return &mut [];
@@ -466,7 +466,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Appends the data in `src` to the fifo.
     /// You must have ensured there is enough space.
-    pub fn write_assume_capacity(&mut self, src: &[T])
+    fn write_assume_capacity(&mut self, src: &[T])
     where
         T: Copy,
     {

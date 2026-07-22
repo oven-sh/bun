@@ -17,7 +17,7 @@ use bun_options_types::schema::api;
 pub(crate) struct ApiLoader(pub u8);
 impl ApiLoader {
     /// `_none = 254`.
-    pub(crate) const NONE: Self = Self(api::Loader::_none as u8);
+    const NONE: Self = Self(api::Loader::_none as u8);
 
     /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
     /// already established and the C++ caller honoured the `BunLoaderType`
@@ -34,7 +34,7 @@ impl ApiLoader {
 // `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
 // invokes this with the coerced args directly — there is no CallFrame here.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__findPath(
+extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
     request_bun_str: BunString,
     paths_maybe: *mut JSArray,
@@ -248,7 +248,7 @@ pub fn find_longest_registered_extension<'a>(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModify(
+extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
     str: &BunString,
     loader: ApiLoader,
@@ -261,7 +261,7 @@ pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModify(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
+extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
     str: &BunString,
 ) {

@@ -227,7 +227,7 @@ impl Feature {
     /// Returns whether all of the given browser targets support this feature
     /// natively, without fallback.
     #[allow(clippy::match_same_arms)]
-    pub fn is_compatible(self, browsers: &Browsers) -> bool {
+    pub(crate) fn is_compatible(self, browsers: &Browsers) -> bool {
         match self {
             Feature::Selectors2 => {
                 if let Some(version) = browsers.ie {
@@ -5470,7 +5470,7 @@ impl Feature {
 
     /// Returns whether *any* of the given browser targets supports this
     /// feature natively.
-    pub fn is_partially_compatible(self, targets: &Browsers) -> bool {
+    pub(crate) fn is_partially_compatible(self, targets: &Browsers) -> bool {
         // Generic implementation in terms of `is_compatible` —
         // probe each browser field one at a time.
         macro_rules! probe {

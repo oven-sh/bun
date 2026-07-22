@@ -22,17 +22,17 @@ pub type Map =
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
 pub struct RefString {
-    pub ptr: *const u8,
-    pub len: usize,
-    pub hash: Hash,
+    pub(crate) ptr: *const u8,
+    pub(crate) len: usize,
+    pub(crate) hash: Hash,
     // `impl` is a Rust keyword — renamed to `impl_`.
-    pub impl_: WTFStringImpl,
+    pub(crate) impl_: WTFStringImpl,
 
     // No per-instance allocator — non-AST crate uses the
     // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
     // frees via `heap::take`.
-    pub ctx: Option<NonNull<c_void>>,
-    pub on_before_deinit: Option<Callback>,
+    pub(crate) ctx: Option<NonNull<c_void>>,
+    pub(crate) on_before_deinit: Option<Callback>,
 }
 
 impl RefString {
@@ -43,7 +43,7 @@ impl RefString {
         bun_core::String::adopt_wtf_impl(self.impl_).to_js(global)
     }
 
-    pub fn compute_hash(input: &[u8]) -> u32 {
+    pub(crate) fn compute_hash(input: &[u8]) -> u32 {
         bun_hash::XxHash32::hash(0, input)
     }
 
@@ -88,7 +88,7 @@ impl RefString {
     /// SAFETY: `this` must be the unique live reference to a `RefString`
     /// previously allocated via `heap::alloc` (or equivalent). After this
     /// call `this` is dangling.
-    pub unsafe fn destroy(this: *mut RefString) {
+    pub(crate) unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
         // `Box<RefString>`-allocated value whose `ptr`/`len` describe a
         // `Box<[u8]>`-allocated buffer. All raw derefs and `from_raw` calls

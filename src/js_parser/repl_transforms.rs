@@ -21,7 +21,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
-    pub fn apply_repl_transforms<'bump>(
+    pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,

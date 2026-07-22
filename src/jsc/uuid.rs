@@ -217,7 +217,7 @@ impl UUID7 {
         print_bytes(&self.to_bytes(), buf);
     }
 
-    pub fn to_uuid(self) -> UUID {
+    pub(crate) fn to_uuid(self) -> UUID {
         let bytes: [u8; 16] = self.to_bytes();
         UUID { bytes }
     }
@@ -240,19 +240,19 @@ pub struct UUID5 {
 pub mod namespaces {
     use super::*;
 
-    pub(crate) const DNS: &[u8; 16] = &[
+    const DNS: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub const URL: &[u8; 16] = &[
+    pub(crate) const URL: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub(crate) const OID: &[u8; 16] = &[
+    const OID: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub(crate) const X500: &[u8; 16] = &[
+    const X500: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
@@ -296,7 +296,7 @@ impl UUID5 {
         UUID5 { bytes }
     }
 
-    pub fn to_bytes(self) -> [u8; 16] {
+    pub(crate) fn to_bytes(self) -> [u8; 16] {
         self.bytes
     }
 
@@ -304,7 +304,7 @@ impl UUID5 {
         print_bytes(&self.to_bytes(), buf);
     }
 
-    pub fn to_uuid(self) -> UUID {
+    pub(crate) fn to_uuid(self) -> UUID {
         let bytes: [u8; 16] = self.to_bytes();
         UUID { bytes }
     }

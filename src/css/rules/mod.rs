@@ -171,7 +171,7 @@ impl<R> Default for CssRuleList<R> {
 // field walk and route those fields through the `dc::*` passthroughs below.
 // Once an upstream type grows its own `deep_clone(&self, &Arena)`, swap the
 // `dc::foo(&x, bump)` call for `x.deep_clone(bump)` and delete the helper.
-pub(super) mod dc {
+mod dc {
     use bun_alloc::Arena;
 
     /// `DeclarationBlock::deep_clone` — field-walk over both
@@ -184,7 +184,7 @@ pub(super) mod dc {
     /// belongs there, not here, and collapses when `CssRule<'bump, R>`
     /// re-threads the arena lifetime.
     #[inline]
-    pub(crate) fn decl_block<'bump>(
+    fn decl_block<'bump>(
         this: &crate::DeclarationBlock<'bump>,
         bump: &'bump Arena,
     ) -> crate::DeclarationBlock<'bump> {
@@ -308,7 +308,7 @@ pub(super) mod dc {
 // ─── shared serialization helpers for leaf rules ──────────────────────────
 
 /// `DeclarationBlock` block serialization.
-pub(super) fn decl_block_to_css(
+fn decl_block_to_css(
     decls: &css::DeclarationBlock<'_>,
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
@@ -344,10 +344,7 @@ pub(super) fn decl_block_to_css(
 /// canonical `impl VendorPrefix` block in lib.rs hasn't grown a `to_css`
 /// yet and `rules/` is the only caller.
 #[inline]
-pub(super) fn vendor_prefix_to_css(
-    prefix: css::VendorPrefix,
-    dest: &mut Printer,
-) -> Result<(), PrintErr> {
+fn vendor_prefix_to_css(prefix: css::VendorPrefix, dest: &mut Printer) -> Result<(), PrintErr> {
     use css::VendorPrefix as VP;
     match prefix.bits() {
         b if b == VP::WEBKIT.bits() => dest.write_str("-webkit-"),
@@ -361,7 +358,7 @@ pub(super) fn vendor_prefix_to_css(
 /// Port of `CustomIdentFns.toCss` → `Printer.writeIdent` with CSS-module
 /// custom-ident scoping.
 #[inline]
-pub(super) fn custom_ident_to_css(
+fn custom_ident_to_css(
     ident: &css::css_values::ident::CustomIdent,
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
@@ -378,7 +375,7 @@ pub(super) fn custom_ident_to_css(
 /// non-css-module path (the only one any current rule reaches) is
 /// `--` + `serialize_name(rest)`.
 #[inline]
-pub(super) fn dashed_ident_to_css(
+fn dashed_ident_to_css(
     ident: &css::css_values::ident::DashedIdent,
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
@@ -392,7 +389,7 @@ pub(super) fn dashed_ident_to_css(
 /// optimization — omitting it diverges output (e.g. `@media not all
 /// { a{color:red} }` must be removed).
 impl<R> media::MediaRule<R> {
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
@@ -411,7 +408,7 @@ impl<R> CssRule<R> {
     /// emitted only in the ancestor's final pass: a style rule with its own
     /// vendor prefixes overrides `Printer::vendor_prefix`, so its output is
     /// identical in every ancestor pass.
-    pub(crate) fn is_deferred_to_final_prefix_pass(&self) -> bool {
+    fn is_deferred_to_final_prefix_pass(&self) -> bool {
         match self {
             CssRule::Style(style) => !style.vendor_prefix.is_empty(),
             CssRule::Nesting(nesting) => !nesting.style.vendor_prefix.is_empty(),
@@ -423,7 +420,7 @@ impl<R> CssRule<R> {
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
 impl<R> CssRuleList<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
 
@@ -439,32 +436,6 @@ impl<R> CssRuleList<R> {
             // pass emits.
             if dest.skip_prefixed_nested_rules && rule.is_deferred_to_final_prefix_pass() {
                 continue;
-            }
-
-            // Skip @import rules if collecting dependencies.
-            if let CssRule::Import(import_rule) = rule
-                && dest.remove_imports
-            {
-                let dep = if dest.dependencies.is_some() {
-                    Some(css::dependencies::Dependency::Import(
-                        css::dependencies::ImportDependency::new(
-                            dest.arena,
-                            import_rule,
-                            dest.filename(),
-                            dest.local_names,
-                            dest.symbols,
-                        ),
-                    ))
-                } else {
-                    None
-                };
-
-                if let Some(deps) = dest.dependencies.as_mut() {
-                    if let Some(d) = dep {
-                        deps.push(d);
-                    }
-                    continue;
-                }
             }
 
             if first {
@@ -490,7 +461,7 @@ impl<R> CssRuleList<R> {
         Ok(())
     }
 
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
@@ -640,7 +611,7 @@ impl<R> CssRuleList<R> {
         Ok(())
     }
 
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {
@@ -923,7 +894,7 @@ pub(crate) struct StyleRuleKey {
 }
 
 impl StyleRuleKey {
-    pub(crate) fn new<R>(list: &[CssRule<R>], index: usize) -> Self {
+    fn new<R>(list: &[CssRule<R>], index: usize) -> Self {
         let hash = match &list[index] {
             CssRule::Style(rule) => rule.hash_key(),
             _ => 0,
@@ -946,11 +917,7 @@ pub(crate) struct StyleRuleKeyMap {
 impl StyleRuleKeyMap {
     /// Find and remove an earlier index whose rule `is_duplicate` of
     /// `rules[key.index]`.
-    pub(crate) fn remove_duplicate<R>(
-        &mut self,
-        rules: &[CssRule<R>],
-        key: &StyleRuleKey,
-    ) -> Option<usize> {
+    fn remove_duplicate<R>(&mut self, rules: &[CssRule<R>], key: &StyleRuleKey) -> Option<usize> {
         let bucket = self.buckets.get_mut(&key.hash)?;
         let CssRule::Style(rule) = &rules[key.index] else {
             return None;
@@ -973,11 +940,11 @@ impl StyleRuleKeyMap {
     }
 
     /// Record the rule's index under its style-rule key for later dedup lookups.
-    pub(crate) fn insert(&mut self, key: StyleRuleKey) {
+    fn insert(&mut self, key: StyleRuleKey) {
         self.buckets.entry(key.hash).or_default().push(key.index);
     }
 
-    pub(crate) fn clear(&mut self) {
+    fn clear(&mut self) {
         self.buckets.clear();
     }
 }
@@ -1015,7 +982,7 @@ pub(crate) struct StyleRuleMergeState {
 /// declarations, then attempt the merge-with-previous cascade that a
 /// declaration merge enables (the re-minified declarations may now equal the
 /// previous rule's, allowing a selector merge, and so on).
-pub(crate) fn flush_pending_style_merge<R>(
+fn flush_pending_style_merge<R>(
     rules: &mut Vec<CssRule<R>>,
     state: &mut StyleRuleMergeState,
     context: &mut MinifyContext<'_, '_>,
@@ -1102,7 +1069,7 @@ fn cached_is_compatible<R>(
 /// `minify_style_arm`); the cascade always settles it first.
 /// `sty_compat` / `last_compat` cache `is_compatible` for the respective
 /// argument.
-pub(crate) fn merge_style_rules<R>(
+fn merge_style_rules<R>(
     sty: &mut style::StyleRule<R>,
     last_style_rule: &mut style::StyleRule<R>,
     context: &mut MinifyContext<'_, '_>,
@@ -1203,8 +1170,8 @@ pub use crate::Location;
 /// Printer's nesting cursor — linked list of parent selector lists used to
 /// resolve `&` during serialization.
 pub struct StyleContext<'a> {
-    pub selectors: &'a crate::selectors::SelectorList,
-    pub parent: Option<&'a StyleContext<'a>>,
+    pub(crate) selectors: &'a crate::selectors::SelectorList,
+    pub(crate) parent: Option<&'a StyleContext<'a>>,
 }
 
 /// Upper bound on the number of selectors that compiling nested rules away for
@@ -1219,7 +1186,7 @@ pub struct StyleContext<'a> {
 /// expanded selectors already corresponds to megabytes of output — so exceeding
 /// it is reported as a `selector_expansion_limit_exceeded` minify error
 /// instead.
-pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
+pub(crate) const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
@@ -1232,28 +1199,28 @@ pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 // making `Stylesheet::minify`'s stack-local handlers unusable.
 pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
-    pub arena: &'bump bun_alloc::Arena,
-    pub targets: &'a css::targets::Targets,
-    pub handler: &'a mut css::DeclarationHandler<'bump>,
-    pub important_handler: &'a mut css::DeclarationHandler<'bump>,
-    pub handler_context: css::PropertyHandlerContext<'bump>,
+    pub(crate) arena: &'bump bun_alloc::Arena,
+    pub(crate) targets: &'a css::targets::Targets,
+    pub(crate) handler: &'a mut css::DeclarationHandler<'bump>,
+    pub(crate) important_handler: &'a mut css::DeclarationHandler<'bump>,
+    pub(crate) handler_context: css::PropertyHandlerContext<'bump>,
     /// Class/id names known to be unused (tree-shaking input).
     // `selector::is_unused` currently borrows `&ArrayHashMap<&[u8], ()>`; the
     // owning `MinifyOptions` stores `Box<[u8]>` keys — reconcile to a
     // single key type with `Borrow<[u8]>` lookup.
-    pub unused_symbols: &'a bun_collections::ArrayHashMap<Box<[u8]>, ()>,
+    pub(crate) unused_symbols: &'a bun_collections::ArrayHashMap<Box<[u8]>, ()>,
     /// Pre-scanned `@custom-media` definitions, if the feature is enabled.
-    pub custom_media:
+    pub(crate) custom_media:
         Option<bun_collections::ArrayHashMap<Box<[u8]>, custom_media::CustomMediaRule>>,
-    pub extra: &'a css::StylesheetExtra,
-    pub css_modules: bool,
+    pub(crate) extra: &'a css::StylesheetExtra,
+    pub(crate) css_modules: bool,
     /// First minification error encountered (surfaced out-of-band).
-    pub err: Option<css::error::MinifyError>,
+    pub(crate) err: Option<css::error::MinifyError>,
     /// How many copies of the current rule's selectors compiling the enclosing
     /// nesting for the targets will produce — the product of the enclosing
     /// style rules' selector-list lengths. `1` at the top level.
-    pub selector_expansion_multiplier: u32,
+    pub(crate) selector_expansion_multiplier: u32,
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
-    pub selector_expansion_total: u32,
+    pub(crate) selector_expansion_total: u32,
 }

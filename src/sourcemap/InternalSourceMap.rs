@@ -95,7 +95,7 @@ use crate::vlq::decode as vlq_decode;
 use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer};
 
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
-pub const SYNC_INTERVAL: usize = 64;
+pub(crate) const SYNC_INTERVAL: usize = 64;
 
 pub const HEADER_SIZE: usize = 32;
 
@@ -116,12 +116,12 @@ pub struct InternalSourceMap {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct SyncEntry {
-    pub generated_line: i32,
-    pub generated_column: i32,
-    pub byte_offset: u32,
-    pub original_line: i32,
-    pub original_column: i32,
-    pub source_index: i32,
+    pub(crate) generated_line: i32,
+    pub(crate) generated_column: i32,
+    pub(crate) byte_offset: u32,
+    pub(crate) original_line: i32,
+    pub(crate) original_column: i32,
+    pub(crate) source_index: i32,
 }
 
 const _: () = assert!(size_of::<SyncEntry>() == 24);
@@ -146,7 +146,7 @@ impl SyncEntry {
 
 impl InternalSourceMap {
     #[inline]
-    pub fn total_len(self) -> usize {
+    pub(crate) fn total_len(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes (validated by is_valid_blob / producer).
         unsafe { u64::from_ne_bytes(*self.data.cast::<[u8; 8]>()) as usize }
     }
@@ -158,24 +158,24 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub fn input_line_count(self) -> usize {
+    pub(crate) fn input_line_count(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u64::from_ne_bytes(*self.data.add(16).cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
-    pub fn sync_count(self) -> u32 {
+    pub(crate) fn sync_count(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
     }
 
     #[inline]
-    pub fn stream_offset(self) -> u32 {
+    pub(crate) fn stream_offset(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         unsafe { u32::from_ne_bytes(*self.data.add(28).cast::<[u8; 4]>()) }
     }
 
-    pub fn sync_entry(self, index: usize) -> SyncEntry {
+    pub(crate) fn sync_entry(self, index: usize) -> SyncEntry {
         let off = HEADER_SIZE + index * size_of::<SyncEntry>();
         // SAFETY: index < sync_count, sync entries are laid out contiguously
         // starting at HEADER_SIZE; blob layout is byte-addressed (no alignment
@@ -184,7 +184,7 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub fn stream(&self) -> &[u8] {
+    pub(crate) fn stream(&self) -> &[u8] {
         // The slice borrows `self` (a Copy view over the blob); the blob
         // outlives every view by construction, so tying the slice to the view
         // borrow is conservative.
@@ -215,7 +215,7 @@ impl InternalSourceMap {
         }
     }
 
-    pub fn memory_cost(self) -> usize {
+    pub(crate) fn memory_cost(self) -> usize {
         self.total_len()
     }
 
@@ -644,7 +644,7 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub fn init(map: InternalSourceMap) -> Cursor {
+    pub(crate) fn init(map: InternalSourceMap) -> Cursor {
         Cursor {
             map,
             state: State::default(),
@@ -719,7 +719,7 @@ impl Cursor {
 }
 
 impl InternalSourceMap {
-    pub fn cursor(self) -> Cursor {
+    pub(crate) fn cursor(self) -> Cursor {
         Cursor::init(self)
     }
 
@@ -828,19 +828,19 @@ impl Default for Builder {
 }
 
 impl Builder {
-    pub fn init() -> Builder {
+    pub(crate) fn init() -> Builder {
         Builder::default()
     }
 
     // `deinit` deleted: Vec/Option<MutableString> fields drop automatically.
 
     #[inline(always)]
-    pub fn append_line_separator(&mut self) {
+    pub(crate) fn append_line_separator(&mut self) {
         self.pending_generated_line_delta += 1;
     }
 
     #[inline(always)]
-    pub fn append_mapping(&mut self, current: &SourceMapState) {
+    pub(crate) fn append_mapping(&mut self, current: &SourceMapState) {
         let generated_line = self.generated_line + self.pending_generated_line_delta;
         self.generated_line = generated_line;
         self.pending_generated_line_delta = 0;
@@ -1081,7 +1081,7 @@ impl Builder {
     /// bytes are left for `Chunk.Builder.generateChunk` to fill in (length,
     /// count, input line count) so this path flows through the existing
     /// `Chunk.buffer` plumbing unchanged.
-    pub fn finalize(&mut self) -> &mut MutableString {
+    pub(crate) fn finalize(&mut self) -> &mut MutableString {
         if self.finalized.is_none() {
             self.flush_window();
 
@@ -1127,7 +1127,7 @@ impl Builder {
     }
 
     /// Move the finalized buffer out.
-    pub fn finalize_take(&mut self) -> MutableString {
+    pub(crate) fn finalize_take(&mut self) -> MutableString {
         let _ = self.finalize();
         self.finalized.take().unwrap()
     }

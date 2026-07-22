@@ -27,20 +27,20 @@ mod c {
     }
     pub type struct_phr_header = phr_header;
     /// Mirrors `struct phr_chunked_decoder` from picohttpparser.h. The HTTP
-    /// client writes `consume_trailer` directly and inspects `_state` via
-    /// `phr_decode_chunked_is_in_data`, so the layout must match C exactly.
+    /// client writes `consume_trailer` and reads `_state` directly, so the
+    /// layout must match C exactly.
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
     pub struct phr_chunked_decoder {
-        pub bytes_left_in_chunk: usize,
+        pub(crate) bytes_left_in_chunk: usize,
         /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
         pub consume_trailer: core::ffi::c_char,
-        pub _hex_count: core::ffi::c_char,
+        pub(crate) _hex_count: core::ffi::c_char,
         pub _state: core::ffi::c_char,
     }
     pub type struct_phr_chunked_decoder = phr_chunked_decoder;
     unsafe extern "C" {
-        pub fn phr_parse_request(
+        pub(crate) fn phr_parse_request(
             buf: *const u8,
             len: usize,
             method: *mut *const c_char,
@@ -52,7 +52,7 @@ mod c {
             num_headers: *mut usize,
             last_len: usize,
         ) -> c_int;
-        pub fn phr_parse_response(
+        pub(crate) fn phr_parse_response(
             buf: *const u8,
             len: usize,
             minor_version: *mut c_int,
@@ -63,7 +63,7 @@ mod c {
             num_headers: *mut usize,
             last_len: usize,
         ) -> c_int;
-        pub fn phr_parse_headers(
+        pub(crate) fn phr_parse_headers(
             buf: *const u8,
             len: usize,
             headers: *mut phr_header,
@@ -75,7 +75,6 @@ mod c {
             buf: *mut u8,
             len: *mut usize,
         ) -> isize;
-        pub fn phr_decode_chunked_is_in_data(decoder: *mut phr_chunked_decoder) -> c_int;
     }
 }
 
@@ -148,16 +147,16 @@ impl Header {
         unsafe { bun_core::ffi::slice(self.value_ptr, self.value_len) }
     }
 
-    pub fn is_multiline(&self) -> bool {
+    pub(crate) fn is_multiline(&self) -> bool {
         self.name_len == 0
     }
 
-    pub fn count(&self, builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.name());
         builder.count(self.value());
     }
 
-    pub fn clone(&self, builder: &mut StringBuilder) -> Header {
+    pub(crate) fn clone(&self, builder: &mut StringBuilder) -> Header {
         // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
         // the lifetime of the cloned `Header` (see the comment on `StringBuilder`).
@@ -172,7 +171,7 @@ impl Header {
         }
     }
 
-    pub fn curl(&self) -> HeaderCurlFormatter<'_> {
+    pub(crate) fn curl(&self) -> HeaderCurlFormatter<'_> {
         HeaderCurlFormatter { header: self }
     }
 }
@@ -746,10 +745,5 @@ impl fmt::Display for Headers<'_> {
 
 pub use c::phr_chunked_decoder;
 pub use c::phr_decode_chunked;
-pub use c::phr_decode_chunked_is_in_data;
-pub use c::phr_header;
-pub use c::phr_parse_headers;
-pub use c::phr_parse_request;
-pub use c::phr_parse_response;
 pub use c::struct_phr_chunked_decoder;
 pub use c::struct_phr_header;

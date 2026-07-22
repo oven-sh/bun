@@ -338,30 +338,30 @@ pub fn get_decompressed_size(src: &[u8]) -> usize {
 pub use bun_core::compress::State;
 
 pub struct ZstdReaderArrayList<'a> {
-    pub input: &'a [u8],
+    input: &'a [u8],
     // We operate on the caller's Vec directly via the `&mut` borrow.
-    pub list_ptr: &'a mut Vec<u8>,
+    list_ptr: &'a mut Vec<u8>,
     // `list_allocator` / `allocator` params deleted — global mimalloc.
-    pub zstd: *mut c::ZSTD_DStream,
-    pub state: State,
-    pub total_out: usize,
-    pub total_in: usize,
+    zstd: *mut c::ZSTD_DStream,
+    state: State,
+    total_out: usize,
+    total_in: usize,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
-    pub max_output_size: usize,
+    max_output_size: usize,
 }
 
 impl<'a> ZstdReaderArrayList<'a> {
     // `pub const new = bun.TrivialNew(...)` → Box::new; no associated const needed.
 
-    pub fn init(
+    fn init(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
     ) -> core::result::Result<Box<ZstdReaderArrayList<'a>>, ZstdError> {
         Self::init_with_list_allocator(input, list)
     }
 
-    pub fn init_with_list_allocator(
+    fn init_with_list_allocator(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
         // list_allocator / allocator params deleted (global mimalloc).
@@ -384,7 +384,7 @@ impl<'a> ZstdReaderArrayList<'a> {
         }))
     }
 
-    pub fn end(&mut self) {
+    fn end(&mut self) {
         if self.state != State::End {
             // SAFETY: self.zstd was created by ZSTD_createDStream and has not been freed
             // (guarded by state != End).
@@ -393,7 +393,7 @@ impl<'a> ZstdReaderArrayList<'a> {
         }
     }
 
-    pub fn read_all(&mut self, is_done: bool) -> core::result::Result<(), ZstdError> {
+    fn read_all(&mut self, is_done: bool) -> core::result::Result<(), ZstdError> {
         if self.state == State::End || self.state == State::Error {
             return Ok(());
         }
@@ -520,10 +520,10 @@ impl Drop for ZstdReaderArrayList<'_> {
 /// without lifetime erasure.
 pub struct StreamingDecoder {
     stream: core::ptr::NonNull<c::ZSTD_DStream>,
-    pub state: State,
+    state: State,
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
-    pub max_output_size: usize,
+    max_output_size: usize,
 }
 
 impl StreamingDecoder {

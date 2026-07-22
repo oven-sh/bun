@@ -22,15 +22,15 @@ use bun_alloc::Arena;
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
 pub struct BorderImage {
     /// The border image.
-    pub source: Image,
+    pub(crate) source: Image,
     /// The offsets that define where the image is sliced.
-    pub slice: BorderImageSlice,
+    pub(crate) slice: BorderImageSlice,
     /// The width of the border image.
-    pub width: Rect<BorderImageSideWidth>,
+    pub(crate) width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub outset: Rect<LengthOrNumber>,
+    pub(crate) outset: Rect<LengthOrNumber>,
     /// How the border image is scaled and tiled.
-    pub repeat: BorderImageRepeat,
+    pub(crate) repeat: BorderImageRepeat,
 }
 
 impl BorderImage {
@@ -189,7 +189,7 @@ impl BorderImage {
         Ok(())
     }
 
-    pub(crate) fn get_fallbacks(
+    fn get_fallbacks(
         &mut self,
         arena: &Arena,
         targets: &css::targets::Targets,
@@ -239,9 +239,9 @@ impl BorderImage {
 /// A value for the [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) property.
 pub struct BorderImageRepeat {
     /// The horizontal repeat value.
-    pub horizontal: BorderImageRepeatKeyword,
+    pub(crate) horizontal: BorderImageRepeatKeyword,
     /// The vertical repeat value.
-    pub vertical: BorderImageRepeatKeyword,
+    pub(crate) vertical: BorderImageRepeatKeyword,
 }
 
 impl BorderImageRepeat {
@@ -263,11 +263,11 @@ impl BorderImageRepeat {
         Ok(())
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.horizontal.is_compatible(browsers) && self.vertical.is_compatible(browsers)
     }
 
-    pub(crate) fn default() -> BorderImageRepeat {
+    fn default() -> BorderImageRepeat {
         BorderImageRepeat {
             horizontal: BorderImageRepeatKeyword::Stretch,
             vertical: BorderImageRepeatKeyword::Stretch,
@@ -319,7 +319,7 @@ impl BorderImageSideWidth {
         }
     }
 
-    pub(crate) fn default() -> BorderImageSideWidth {
+    fn default() -> BorderImageSideWidth {
         BorderImageSideWidth::Number(1.0)
     }
 
@@ -327,7 +327,7 @@ impl BorderImageSideWidth {
         self.clone()
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             BorderImageSideWidth::LengthPercentage(l) => l.is_compatible(browsers),
             _ => true,
@@ -359,7 +359,7 @@ pub enum BorderImageRepeatKeyword {
 }
 
 impl BorderImageRepeatKeyword {
-    pub(crate) fn is_compatible(self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(self, browsers: &css::targets::Browsers) -> bool {
         match self {
             BorderImageRepeatKeyword::Round => {
                 css::compat::Feature::BorderImageRepeatRound.is_compatible(browsers)
@@ -375,9 +375,9 @@ impl BorderImageRepeatKeyword {
 /// A value for the [border-image-slice](https://www.w3.org/TR/css-backgrounds-3/#border-image-slice) property.
 pub struct BorderImageSlice {
     /// The offsets from the edges of the image.
-    pub offsets: Rect<NumberOrPercentage>,
+    pub(crate) offsets: Rect<NumberOrPercentage>,
     /// Whether the middle of the border image should be preserved.
-    pub fill: bool,
+    pub(crate) fill: bool,
 }
 
 impl BorderImageSlice {
@@ -402,7 +402,7 @@ impl BorderImageSlice {
         Ok(())
     }
 
-    pub(crate) fn is_compatible(&self, _: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, _: &css::targets::Browsers) -> bool {
         true
     }
 
@@ -410,7 +410,7 @@ impl BorderImageSlice {
         self.offsets.eql(&other.offsets) && self.fill == other.fill
     }
 
-    pub(crate) fn default() -> BorderImageSlice {
+    fn default() -> BorderImageSlice {
         BorderImageSlice {
             offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(Percentage {
                 v: 1.0,
@@ -439,15 +439,15 @@ bitflags::bitflags! {
 }
 
 impl BorderImageProperty {
-    pub(crate) const BORDER_IMAGE_SOURCE: BorderImageProperty = BorderImageProperty::SOURCE;
-    pub(crate) const BORDER_IMAGE_SLICE: BorderImageProperty = BorderImageProperty::SLICE;
-    pub(crate) const BORDER_IMAGE_WIDTH: BorderImageProperty = BorderImageProperty::WIDTH;
-    pub(crate) const BORDER_IMAGE_OUTSET: BorderImageProperty = BorderImageProperty::OUTSET;
-    pub(crate) const BORDER_IMAGE_REPEAT: BorderImageProperty = BorderImageProperty::REPEAT;
+    const BORDER_IMAGE_SOURCE: BorderImageProperty = BorderImageProperty::SOURCE;
+    const BORDER_IMAGE_SLICE: BorderImageProperty = BorderImageProperty::SLICE;
+    const BORDER_IMAGE_WIDTH: BorderImageProperty = BorderImageProperty::WIDTH;
+    const BORDER_IMAGE_OUTSET: BorderImageProperty = BorderImageProperty::OUTSET;
+    const BORDER_IMAGE_REPEAT: BorderImageProperty = BorderImageProperty::REPEAT;
 
-    pub(crate) const BORDER_IMAGE: BorderImageProperty = BorderImageProperty::all();
+    const BORDER_IMAGE: BorderImageProperty = BorderImageProperty::all();
 
-    pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<BorderImageProperty> {
+    fn try_from_property_id(property_id: PropertyIdTag) -> Option<BorderImageProperty> {
         match property_id {
             PropertyIdTag::BorderImageSource => Some(BorderImageProperty::SOURCE),
             PropertyIdTag::BorderImageSlice => Some(BorderImageProperty::SLICE),
@@ -699,7 +699,7 @@ impl BorderImageHandler {
     }
 }
 
-pub(crate) fn is_border_image_property(property_id: PropertyIdTag) -> bool {
+fn is_border_image_property(property_id: PropertyIdTag) -> bool {
     matches!(
         property_id,
         PropertyIdTag::BorderImageSource

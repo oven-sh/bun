@@ -43,8 +43,8 @@ use bun_sys::windows::libuv::UvHandle as _;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct BufferedReaderVTable {
-    pub parent: *mut c_void,
-    pub kind: crate::BufferedReaderParentLinkKind,
+    pub(crate) parent: *mut c_void,
+    pub(crate) kind: crate::BufferedReaderParentLinkKind,
 }
 
 /// Trait that parent types implement to receive buffered-reader callbacks.
@@ -85,7 +85,7 @@ pub trait BufferedReaderParent {
 }
 
 impl BufferedReaderVTable {
-    pub(crate) fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
+    fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {
             parent: core::ptr::null_mut(),
             kind: T::KIND,
@@ -99,15 +99,15 @@ impl BufferedReaderVTable {
         unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
     }
 
-    pub(crate) fn event_loop(&self) -> EventLoopHandle {
+    fn event_loop(&self) -> EventLoopHandle {
         self.link().event_loop()
     }
 
-    pub(crate) fn loop_(&self) -> *mut Loop {
+    fn loop_(&self) -> *mut Loop {
         self.link().loop_ptr()
     }
 
-    pub(crate) fn is_streaming_enabled(&self) -> bool {
+    fn is_streaming_enabled(&self) -> bool {
         self.link().has_on_read_chunk()
     }
 
@@ -115,15 +115,15 @@ impl BufferedReaderVTable {
     /// and hasMore is true, it means that there might be more data to read.
     ///
     /// Returning false prevents the reader from reading more data.
-    pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }
 
-    pub(crate) fn on_reader_done(&self) {
+    fn on_reader_done(&self) {
         self.link().on_reader_done()
     }
 
-    pub(crate) fn on_reader_error(&self, err: sys::Error) {
+    fn on_reader_error(&self, err: sys::Error) {
         self.link().on_reader_error(err)
     }
 }
@@ -135,8 +135,8 @@ impl BufferedReaderVTable {
 pub struct PosixBufferedReader {
     pub handle: PollOrFd,
     pub _buffer: Vec<u8>,
-    pub _offset: usize,
-    pub vtable: BufferedReaderVTable,
+    pub(crate) _offset: usize,
+    pub(crate) vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
     // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
@@ -161,7 +161,7 @@ bitflags::bitflags! {
 }
 
 impl PosixFlags {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self::from_bits_truncate(PosixFlags::CLOSE_HANDLE.bits() | PosixFlags::KEEP_ALIVE.bits())
     }
 }
@@ -236,7 +236,7 @@ impl PosixBufferedReader {
         self.handle = PollOrFd::Fd(fd);
     }
 
-    pub fn get_file_type(&self) -> FileType {
+    pub(crate) fn get_file_type(&self) -> FileType {
         let flags = self.flags;
         if flags.contains(PosixFlags::SOCKET) {
             return FileType::Socket;
@@ -368,7 +368,7 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn done(&mut self) {
+    pub(crate) fn done(&mut self) {
         if !matches!(self.handle, PollOrFd::Closed) && self.flags.contains(PosixFlags::CLOSE_HANDLE)
         {
             self.close_handle();
@@ -388,7 +388,7 @@ impl PosixBufferedReader {
     /// dispatched. That callback may drop the last reference to the struct
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
-    pub fn register_poll(&mut self) -> bool {
+    pub(crate) fn register_poll(&mut self) -> bool {
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.

@@ -25,7 +25,7 @@ pub enum ImplementationVisibility {
 pub struct Intrinsic(u8);
 
 impl Intrinsic {
-    pub(crate) const NONE: Intrinsic = Intrinsic(0);
+    const NONE: Intrinsic = Intrinsic(0);
 }
 
 impl Default for Intrinsic {

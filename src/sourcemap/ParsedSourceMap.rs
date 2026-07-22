@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 use core::fmt;
-use core::sync::atomic::AtomicU32;
 
 use crate::Ordinal;
 
@@ -16,8 +15,6 @@ use crate::{
 pub struct ParsedSourceMap {
     // bun.ptr.ThreadSafeRefCount → intrusive atomic count; managed via
     // `bun_ptr::RefPtr<ParsedSourceMap>`. `ref`/`deref` are methods on RefPtr.
-    pub ref_count: AtomicU32,
-
     pub input_line_count: usize,
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
@@ -25,7 +22,7 @@ pub struct ParsedSourceMap {
     /// `Drop`) unless [`Self::is_standalone_module_graph`] — in that case the
     /// bytes live in the embedded `bun build --compile` section and are
     /// borrowed.
-    pub internal: Option<InternalSourceMap>,
+    pub(crate) internal: Option<InternalSourceMap>,
 
     /// If this is empty, this implies that the source code is a single file
     /// transpiled on-demand. If there are items, then it means this is a file
@@ -68,7 +65,6 @@ impl Drop for ParsedSourceMap {
 impl Default for ParsedSourceMap {
     fn default() -> Self {
         Self {
-            ref_count: AtomicU32::new(1),
             input_line_count: 0,
             mappings: mapping::List::default(),
             internal: None,
@@ -155,24 +151,24 @@ pub struct SourceContentPtr {
 }
 
 impl SourceContentPtr {
-    pub const NONE: SourceContentPtr = SourceContentPtr {
+    pub(crate) const NONE: SourceContentPtr = SourceContentPtr {
         data: 0,
         load_hint: SourceMapLoadHint::None,
         get_source_map: None,
     };
 
     #[inline]
-    pub fn load_hint(self) -> SourceMapLoadHint {
+    pub(crate) fn load_hint(self) -> SourceMapLoadHint {
         self.load_hint
     }
 
     #[inline]
-    pub fn set_load_hint(&mut self, hint: SourceMapLoadHint) {
+    pub(crate) fn set_load_hint(&mut self, hint: SourceMapLoadHint) {
         self.load_hint = hint;
     }
 
     #[inline]
-    pub fn data(self) -> u64 {
+    pub(crate) fn data(self) -> u64 {
         self.data
     }
 
@@ -234,7 +230,6 @@ impl ParsedSourceMap {
     /// [`Self::is_standalone_module_graph`].
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
-            ref_count: AtomicU32::new(1),
             input_line_count: internal.input_line_count(),
             mappings: mapping::List::default(),
             internal: Some(internal),
@@ -259,7 +254,7 @@ impl ParsedSourceMap {
         self.internal.as_ref().map(|ism| ism.cursor())
     }
 
-    pub fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
+    pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
         debug_assert!(self.is_standalone_module_graph);
         self.underlying_provider.data() as usize as *mut crate::SerializedSourceMap::Loaded
     }
@@ -275,7 +270,10 @@ impl ParsedSourceMap {
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
     }
 
-    pub fn write_vlqs<W: bun_io::Write + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
         if let Some(ism) = &self.internal {
             let mut buf = bun_core::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);

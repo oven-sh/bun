@@ -146,7 +146,7 @@ pub enum BrotliDecoderResult {
 // NOTE: the duplicate error-code tables the upstream brotli headers define are
 // intentionally collapsed into the single enum below; `BrotliDecoderErrorCode`
 // is kept as an alias so FFI signatures keep their upstream names.
-pub type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
+type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -265,7 +265,6 @@ unsafe extern "C" {
     ) -> c_int;
     // Query fns: opaque handle by reference + scalars only.
     pub safe fn BrotliEncoderIsFinished(state: &BrotliEncoder) -> c_int;
-    pub safe fn BrotliEncoderHasMoreOutput(state: &BrotliEncoder) -> c_int;
     pub safe fn BrotliEncoderTakeOutput(state: &mut BrotliEncoder, size: &mut usize) -> *const u8;
     pub safe fn BrotliEncoderEstimatePeakMemoryUsage(
         quality: c_int,
@@ -296,7 +295,6 @@ pub enum BrotliEncoderOperation {
 // `output` borrows the encoder's internal buffer; valid until the next encoder call.
 pub struct CompressionResult<'a> {
     pub success: bool,
-    pub has_more: bool,
     pub output: &'a [u8],
 }
 
@@ -304,7 +302,6 @@ impl<'a> Default for CompressionResult<'a> {
     fn default() -> Self {
         Self {
             success: false,
-            has_more: false,
             output: b"",
         }
     }
@@ -365,11 +362,7 @@ impl BrotliEncoder {
             }
         }
 
-        CompressionResult {
-            success,
-            output,
-            has_more: BrotliEncoderHasMoreOutput(state) > 0,
-        }
+        CompressionResult { success, output }
     }
 }
 

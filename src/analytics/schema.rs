@@ -14,7 +14,7 @@ use crate::Error;
 // (which is what the generated schema bodies already do).
 
 #[inline]
-pub(crate) fn eof() -> Error {
+fn eof() -> Error {
     crate::Error::EOF
 }
 
@@ -70,7 +70,7 @@ pub trait Reader {
 /// Callers that need owned sub-arrays allocate at the call site.
 pub struct BufReader<'a> {
     pub buf: &'a [u8],
-    pub remain: &'a [u8],
+    pub(crate) remain: &'a [u8],
 }
 
 impl<'a> BufReader<'a> {

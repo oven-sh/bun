@@ -13,20 +13,20 @@ use crate::{PrintErr, Printer, VendorPrefix};
 // to `'static`.
 pub struct StyleRule<R> {
     /// The selectors for the style rule.
-    pub selectors: selector::parser::SelectorList,
+    pub(crate) selectors: selector::parser::SelectorList,
     /// A vendor prefix override, used during selector printing.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The declarations within the style rule.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
     /// Nested rules within the style rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> StyleRule<R> {
     /// Returns whether the rule is empty.
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.selectors.v.is_empty() || (self.declarations.is_empty() && self.rules.v.len() == 0)
     }
 }
@@ -35,7 +35,7 @@ impl<R> StyleRule<R> {
 impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
-    pub fn hash_key(&self) -> u64 {
+    pub(crate) fn hash_key(&self) -> u64 {
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
@@ -52,7 +52,7 @@ impl<R> StyleRule<R> {
         hasher.final_()
     }
 
-    pub fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
+    pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
         self.vendor_prefix = selector::get_prefix(&self.selectors);
         if self.vendor_prefix.contains(VendorPrefix::NONE)
             && context.targets.should_compile_selectors()
@@ -65,7 +65,7 @@ impl<R> StyleRule<R> {
         }
     }
 
-    pub fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
+    pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 }
@@ -92,7 +92,7 @@ impl<R> StyleRule<R> {
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
 impl<R> StyleRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
@@ -310,7 +310,7 @@ impl<R> StyleRule<R> {
 }
 
 impl<R> StyleRule<R> {
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
@@ -462,7 +462,7 @@ impl<R> StyleRule<R> {
     /// Returns whether this rule is a duplicate of another rule.
     /// This means it has the same selectors and properties.
     #[inline]
-    pub fn is_duplicate(&self, other: &Self) -> bool {
+    pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
         self.declarations.len() == other.declarations.len()
             && self.selectors.eql(&other.selectors)
             && 'brk: {
@@ -501,7 +501,7 @@ impl<R> StyleRule<R> {
 
 // ─── deep_clone ───────────────────────────────────────────────────────────
 impl<R> StyleRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

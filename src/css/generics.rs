@@ -68,7 +68,7 @@ pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump A
 // `T::deep_clone`.
 // Kept as a re-export so generated code (`properties_generated.rs`) and
 // hand-written callers can use either name.
-pub use implement_deep_clone as deep_clone;
+pub(crate) use implement_deep_clone as deep_clone;
 
 // Blanket impls covering the structural cases.
 
@@ -200,7 +200,7 @@ pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
 }
 
-pub(crate) fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
+fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
     if lhs.len() != rhs.len() {
         return false;
     }
@@ -901,13 +901,13 @@ pub fn hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
     this.hash(hasher)
 }
 
-pub(crate) fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
+fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
     for item in this.iter() {
         item.hash(hasher);
     }
 }
 
-pub(crate) fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
+fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
@@ -1072,7 +1072,7 @@ impl<T, const N: usize> ListContainer for SmallList<T, N> {
 }
 
 #[inline]
-pub fn slice<L: ListContainer>(val: &L) -> &[L::Item] {
+pub(crate) fn slice<L: ListContainer>(val: &L) -> &[L::Item] {
     val.slice()
 }
 
@@ -1203,7 +1203,7 @@ pub trait ParseWithOptions: Sized {
 }
 
 #[inline]
-pub fn parse_with_options<T: ParseWithOptions>(
+pub(crate) fn parse_with_options<T: ParseWithOptions>(
     input: &mut Parser,
     options: &ParserOptions,
 ) -> CssResult<T> {

@@ -180,7 +180,7 @@ impl Loader {
 
     // `from_js` lives in bundler_jsc as an extension trait.
 
-    pub const NAMES: &'static __ComptimeStringMap_LOADER_NAMES = &LOADER_NAMES;
+    pub(crate) const NAMES: &'static __ComptimeStringMap_LOADER_NAMES = &LOADER_NAMES;
 
     pub fn from_string(slice_: &[u8]) -> Option<Loader> {
         let slice = if !slice_.is_empty() && slice_[0] == b'.' {

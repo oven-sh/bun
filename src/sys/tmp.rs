@@ -8,9 +8,9 @@ const ALLOW_TMPFILE: bool = false;
 // To be used with files
 // not folders!
 pub struct Tmpfile<'a> {
-    pub destination_dir: Fd,
+    destination_dir: Fd,
     // Caller-supplied tmp name, valid for the lifetime of the Tmpfile.
-    pub tmpfilename: &'a ZStr,
+    tmpfilename: &'a ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
 }

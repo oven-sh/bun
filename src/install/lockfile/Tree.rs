@@ -26,15 +26,15 @@ use crate::{
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Tree {
-    pub id: Id,
+    pub(crate) id: Id,
 
     // Should not be used for anything other than name
     // through `folder_name()`. There is no guarantee a dependency
     // id chosen for a tree node is the same behavior or has the
     // same version literal for packages hoisted.
-    pub dependency_id: DependencyID,
+    pub(crate) dependency_id: DependencyID,
 
-    pub parent: Id,
+    pub(crate) parent: Id,
     pub dependencies: DependencyIDSlice,
 }
 
@@ -51,7 +51,7 @@ impl Default for Tree {
 
 pub type Id = u32;
 
-pub(crate) const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
+const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
     + core::mem::size_of::<PackageID>()
     + core::mem::size_of::<Id>()
     + core::mem::size_of::<DependencyIDSlice>();
@@ -63,7 +63,7 @@ pub(crate) const ROOT_DEP_ID: DependencyID = invalid_package_id - 1;
 pub(crate) const INVALID_ID: Id = Id::MAX;
 
 impl Tree {
-    pub const INVALID_ID: Id = INVALID_ID;
+    pub(crate) const INVALID_ID: Id = INVALID_ID;
 }
 
 // max number of node_modules folders
@@ -87,7 +87,7 @@ pub(crate) fn depth_buf_uninit() -> DepthBuf {
 }
 
 impl Tree {
-    pub fn folder_name<'b>(&self, deps: &'b [Dependency], buf: &'b [u8]) -> &'b [u8] {
+    pub(crate) fn folder_name<'b>(&self, deps: &'b [Dependency], buf: &'b [u8]) -> &'b [u8] {
         let dep_id = self.dependency_id;
         if dep_id == invalid_dependency_id {
             return b"";
@@ -95,7 +95,7 @@ impl Tree {
         deps[dep_id as usize].name.slice(buf)
     }
 
-    pub fn to_external(self) -> External {
+    pub(crate) fn to_external(self) -> External {
         let mut out: External = [0u8; EXTERNAL_SIZE];
         out[0..4].copy_from_slice(&self.id.to_ne_bytes());
         out[4..8].copy_from_slice(&self.dependency_id.to_ne_bytes());
@@ -110,7 +110,7 @@ impl Tree {
         out
     }
 
-    pub fn to_tree(out: External) -> Tree {
+    pub(crate) fn to_tree(out: External) -> Tree {
         Tree {
             id: u32::from_ne_bytes(out[0..4].try_into().expect("infallible: size matches")),
             dependency_id: u32::from_ne_bytes(
@@ -129,7 +129,7 @@ impl Tree {
 // HoistDependencyResult
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) enum HoistDependencyResult {
+enum HoistDependencyResult {
     DependencyLoop,
     Hoisted,
     Resolve(PackageID),
@@ -138,7 +138,7 @@ pub(crate) enum HoistDependencyResult {
     Placement(Placement),
 }
 
-pub(crate) struct ResolveReplace {
+struct ResolveReplace {
     pub id: Id,
     pub dep_id: DependencyID,
 }
@@ -178,21 +178,21 @@ pub enum IteratorPathStyle {
 // `crate::lockfile` (stub) and `crate::lockfile_real` can drive the same
 // iterator without a unified `Lockfile` type (reconciler-6).
 pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
-    pub tree_id: Id,
-    pub path_buf: PathBuffer,
+    pub(crate) tree_id: Id,
+    pub(crate) path_buf: PathBuffer,
 
     trees: &'a [Tree],
     hoisted_dependencies: &'a [DependencyID],
     dependencies: &'a [Dependency],
     string_bytes: &'a [u8],
 
-    pub depth_stack: DepthBuf,
+    pub(crate) depth_stack: DepthBuf,
 }
 
 pub struct IteratorNext<'a> {
     pub relative_path: &'a ZStr,
     pub dependencies: &'a [DependencyID],
-    pub tree_id: Id,
+    pub(crate) tree_id: Id,
 
     /// depth of the node_modules folder in the tree
     ///
@@ -218,7 +218,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
     /// borrows only `buffers.{trees,hoisted_dependencies,dependencies,string_bytes}`,
     /// leaving the rest of `Lockfile` available for disjoint mutation while
     /// iterating.
-    pub fn from_slices(
+    pub(crate) fn from_slices(
         trees: &'a [Tree],
         hoisted_dependencies: &'a [DependencyID],
         dependencies: &'a [Dependency],
@@ -239,7 +239,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         iter
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.tree_id = 0;
     }
 
@@ -296,7 +296,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 /// Tree folder names are joined into install destinations as
 /// `node_modules/<name>/...`; this path and the tree builder must agree on the
 /// same validator.
-pub fn folder_name_is_safe(name: &[u8]) -> bool {
+pub(crate) fn folder_name_is_safe(name: &[u8]) -> bool {
     crate::dependency::is_safe_install_folder_name(name)
 }
 
@@ -418,32 +418,33 @@ pub enum BuilderMethod {
 // Const generics cannot vary field
 // types, so `manager`/`workspace_filters`/`install_root_dependencies`/`packages_to_install`
 // are `Option<_>`/empty defaults and only meaningful when `METHOD == .Filter`.
-pub struct Builder<'a, const METHOD: BuilderMethod> {
+pub(crate) struct Builder<'a, const METHOD: BuilderMethod> {
     // No allocator field: the sole construction site is `Lockfile.hoist()`,
     // whose allocations are persistent, not arena-scoped. Global mimalloc is
     // correct here; no `&'bump Bump` threading needed.
-    pub list: MultiArrayList<BuilderEntry>,
-    pub resolutions: &'a mut [PackageID],
+    pub(crate) list: MultiArrayList<BuilderEntry>,
+    pub(crate) resolutions: &'a mut [PackageID],
     pub dependencies: &'a [Dependency],
-    pub resolution_lists: &'a [DependencyIDSlice],
-    pub queue: TreeFiller,
-    pub log: &'a mut bun_ast::Log,
+    pub(crate) resolution_lists: &'a [DependencyIDSlice],
+    pub(crate) queue: TreeFiller,
+    pub(crate) log: &'a mut bun_ast::Log,
     /// Stored as `ParentRef` (raw
     /// non-null backref) so the construction site (`Lockfile::hoist`) can
     /// split-borrow `resolutions` mutably without borrowck rejecting the
     /// overlap; reads go through [`Builder::lockfile()`] which never touches
     /// `buffers.resolutions`.
-    pub lockfile: bun_ptr::ParentRef<Lockfile>,
+    pub(crate) lockfile: bun_ptr::ParentRef<Lockfile>,
     // Unresolved optional peers that might resolve later. if they do we will want to assign
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
     // could be visited multiple times before it's resolved.
-    pub pending_optional_peers: ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    pub manager: Option<&'a PackageManager>,
-    pub sort_buf: Vec<DependencyID>,
-    pub workspace_filters: &'a [WorkspaceFilter],
-    pub install_root_dependencies: bool,
-    pub packages_to_install: Option<&'a [PackageID]>,
+    pub(crate) pending_optional_peers:
+        ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
+    pub(crate) manager: Option<&'a PackageManager>,
+    pub(crate) sort_buf: Vec<DependencyID>,
+    pub(crate) workspace_filters: &'a [WorkspaceFilter],
+    pub(crate) install_root_dependencies: bool,
+    pub(crate) packages_to_install: Option<&'a [PackageID]>,
 }
 
 pub struct BuilderEntry {
@@ -476,15 +477,15 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// `&mut self.<field>` borrows can coexist) should copy the `ParentRef`
     /// out first: `let lf = builder.lockfile; lf.get()`.
     #[inline]
-    pub(crate) fn lockfile(&self) -> &Lockfile {
+    fn lockfile(&self) -> &Lockfile {
         self.lockfile.get()
     }
 
-    pub(crate) fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
+    fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
-    pub(crate) fn buf(&self) -> &[u8] {
+    fn buf(&self) -> &[u8] {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
@@ -679,7 +680,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Tree {
-    pub fn process_subtree<const METHOD: BuilderMethod>(
+    pub(crate) fn process_subtree<const METHOD: BuilderMethod>(
         &self,
         dependency_id: DependencyID,
         hoist_root_id: Id,
@@ -1132,13 +1133,13 @@ impl Tree {
 // FillItem / TreeFiller
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FillItem {
-    pub tree_id: Id,
-    pub dependency_id: DependencyID,
+pub(crate) struct FillItem {
+    pub(crate) tree_id: Id,
+    pub(crate) dependency_id: DependencyID,
 
     /// If valid, dependencies will not hoist
     /// beyond this tree if they're in a subtree
-    pub hoist_root_id: Id,
+    pub(crate) hoist_root_id: Id,
 }
 
 // Dynamic, heap-backed ring buffer.

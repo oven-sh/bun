@@ -3,8 +3,8 @@ use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 pub struct JSArrayIterator<'a> {
     pub i: u32,
     pub len: u32,
-    pub array: JSValue,
-    pub global: &'a JSGlobalObject,
+    pub(crate) array: JSValue,
+    pub(crate) global: &'a JSGlobalObject,
     /// Direct pointer into the JSArray butterfly when the array has Int32 or
     /// Contiguous storage and a sane prototype chain. Holes are encoded as 0.
     pub fast: Option<*const JSValue>,

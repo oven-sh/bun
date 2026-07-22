@@ -338,39 +338,39 @@ type Path = crate::fs::Path<'static>;
 /// threadlocal vars yielded no performance improvement on macOS when bundling
 /// 10 copies of Three.js. Potentially revisit after https://github.com/oven-sh/bun/issues/2716
 pub struct Bufs {
-    pub extension_path: PathBuffer,
-    pub tsconfig_match_full_buf: PathBuffer,
-    pub tsconfig_match_full_buf2: PathBuffer,
-    pub tsconfig_match_full_buf3: PathBuffer,
+    pub(crate) extension_path: PathBuffer,
+    pub(crate) tsconfig_match_full_buf: PathBuffer,
+    pub(crate) tsconfig_match_full_buf2: PathBuffer,
+    pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
-    pub esm_subpath: [u8; 512],
-    pub esm_absolute_package_path: PathBuffer,
-    pub esm_absolute_package_path_joined: PathBuffer,
+    pub(crate) esm_subpath: [u8; 512],
+    pub(crate) esm_absolute_package_path: PathBuffer,
+    pub(crate) esm_absolute_package_path_joined: PathBuffer,
 
     // NOTE: `DirEntryResolveQueueItem` holds
     // `&'static [u8]` fields, so a zeroed bit-pattern is UB. Use
     // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
     // use sites in `dir_info_cached_maybe_log`.
-    pub dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
-    pub open_dirs: [FD; 256],
-    pub resolve_without_remapping: PathBuffer,
-    pub index: PathBuffer,
-    pub dir_info_uncached_filename: PathBuffer,
-    pub node_bin_path: PathBuffer,
-    pub dir_info_uncached_path: PathBuffer,
-    pub tsconfig_base_url: PathBuffer,
-    pub relative_abs_path: PathBuffer,
-    pub load_as_file_or_directory_via_tsconfig_base_path: PathBuffer,
-    pub node_modules_check: PathBuffer,
-    pub field_abs_path: PathBuffer,
-    pub tsconfig_path_abs: PathBuffer,
-    pub check_browser_map: PathBuffer,
-    pub remap_path: PathBuffer,
-    pub load_as_file: PathBuffer,
-    pub remap_path_trailing_slash: PathBuffer,
-    pub path_in_global_disk_cache: PathBuffer,
-    pub abs_to_rel: PathBuffer,
-    pub import_path_for_standalone_module_graph: PathBuffer,
+    pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
+    pub(crate) open_dirs: [FD; 256],
+    pub(crate) resolve_without_remapping: PathBuffer,
+    pub(crate) index: PathBuffer,
+    pub(crate) dir_info_uncached_filename: PathBuffer,
+    pub(crate) node_bin_path: PathBuffer,
+    pub(crate) dir_info_uncached_path: PathBuffer,
+    pub(crate) tsconfig_base_url: PathBuffer,
+    pub(crate) relative_abs_path: PathBuffer,
+    pub(crate) load_as_file_or_directory_via_tsconfig_base_path: PathBuffer,
+    pub(crate) node_modules_check: PathBuffer,
+    pub(crate) field_abs_path: PathBuffer,
+    pub(crate) tsconfig_path_abs: PathBuffer,
+    pub(crate) check_browser_map: PathBuffer,
+    pub(crate) remap_path: PathBuffer,
+    pub(crate) load_as_file: PathBuffer,
+    pub(crate) remap_path_trailing_slash: PathBuffer,
+    pub(crate) path_in_global_disk_cache: PathBuffer,
+    pub(crate) abs_to_rel: PathBuffer,
+    pub(crate) import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
     pub win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
@@ -443,7 +443,7 @@ macro_rules! bufs {
 // This is a global so even if multiple resolvers are created, the mutex will still work
 // `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
 // (the resolver mutex is one of the two documented guards for the entries singleton).
-pub(crate) static RESOLVER_MUTEX: Mutex = Mutex::new();
+static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 // `BoundedArray` has no const constructor; init lazily under
@@ -480,15 +480,15 @@ pub struct Resolver<'a> {
     /// NOTE: saved/restored across nested resolves.
     /// Stored as a `Copy` enum tag (no self-reference) and resolved on demand
     /// via [`Self::extension_order`] / [`options::BundleOptions::ext_order_slice`].
-    pub extension_order: options::ExtOrder,
-    pub timer: Timer,
+    pub(crate) extension_order: options::ExtOrder,
+    pub(crate) timer: Timer,
 
     pub care_about_bin_folder: bool,
     pub care_about_scripts: bool,
 
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
-    pub care_about_browser_field: bool,
+    pub(crate) care_about_browser_field: bool,
 
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
@@ -556,7 +556,7 @@ pub struct Resolver<'a> {
     // reducing parallelism in the resolver helps the rest of the bundler go
     // faster. I'm not sure why this is but please don't change this unless you
     // do a lot of testing with various benchmarks and there aren't any regressions.
-    pub mutex: &'static Mutex,
+    pub(crate) mutex: &'static Mutex,
 
     /// This cache maps a directory path to information about that directory and
     /// all parent directories. When interacting with this structure, make sure
@@ -566,7 +566,7 @@ pub struct Resolver<'a> {
     // for the same reason as `fs`/`log` above — every per-worker `Resolver` shares the
     // singleton, so a `&'static mut` here would manufacture aliased unique refs (UB).
     // Deref through the `dir_cache()` accessor below.
-    pub dir_cache: *mut DirInfo::HashMap,
+    pub(crate) dir_cache: *mut DirInfo::HashMap,
 
     /// This is set to false for the runtime. The runtime should choose "main"
     /// over "module" in package.json
@@ -676,7 +676,7 @@ impl<'a> Resolver<'a> {
     /// that could (under Stacked Borrows) pop a coexisting `rfs_ptr()` /
     /// `&mut *query.entry` tag derived from the same allocation.
     #[inline(always)]
-    pub fn fs_ref(&self) -> &Fs::FileSystem {
+    pub(crate) fn fs_ref(&self) -> &Fs::FileSystem {
         // SAFETY: BACKREF — `self.fs` is the process-global FileSystem singleton
         // (LIFETIMES.tsv: STATIC); resolver mutex serializes all mutation. A
         // shared `&` cannot alias-UB with the raw `*mut RealFS` projections
@@ -692,7 +692,7 @@ impl<'a> Resolver<'a> {
     /// `&mut self` and continue to narrow-retag via the raw [`fs()`](Self::fs)
     /// accessor — same caveat as [`log_mut`](Self::log_mut).
     #[inline(always)]
-    pub fn fs_mut(&mut self) -> &mut Fs::FileSystem {
+    pub(crate) fn fs_mut(&mut self) -> &mut Fs::FileSystem {
         // SAFETY: BACKREF — `self.fs` is the never-null process-global
         // `FileSystem` singleton (set in `init1`); resolver mutex serializes
         // all mutation across worker clones; `&mut self` rules out
@@ -709,7 +709,7 @@ impl<'a> Resolver<'a> {
     /// re-borrow `&mut *self.rfs_ptr()` per use; do not bind a `&mut RealFS`
     /// across another `fs()` deref.
     #[inline(always)]
-    pub fn rfs_ptr(&self) -> *mut Fs::file_system::RealFS {
+    pub(crate) fn rfs_ptr(&self) -> *mut Fs::file_system::RealFS {
         // SAFETY: `self.fs` is the process-global FileSystem singleton; valid
         // for the resolver's lifetime. `addr_of_mut!` creates a raw place
         // projection without an intermediate `&mut FileSystem`.
@@ -722,7 +722,7 @@ impl<'a> Resolver<'a> {
     /// at each use site; do not bind the projected `&mut Log` across another
     /// `log()` deref.
     #[inline(always)]
-    pub fn log(&self) -> *mut bun_ast::Log {
+    pub(crate) fn log(&self) -> *mut bun_ast::Log {
         self.log.as_ptr()
     }
 
@@ -753,7 +753,7 @@ impl<'a> Resolver<'a> {
     /// Shared-borrow of the resolver's `Log` for read-only inspection
     /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
     #[inline(always)]
-    pub fn log_ref(&self) -> &bun_ast::Log {
+    pub(crate) fn log_ref(&self) -> &bun_ast::Log {
         // SAFETY: BACKREF — `self.log` is set in `init1` / `scoped_log`,
         // owner-allocated, outlives the Resolver. Resolver mutex serializes
         // mutation; a Shared `&` here pushes no Unique tag and so cannot
@@ -787,7 +787,7 @@ impl<'a> Resolver<'a> {
     /// `DirInfo::hash_map_instance()` singleton; never freed. Caller
     /// `unsafe { &mut *r.dir_cache() }` at each use site.
     #[inline(always)]
-    pub fn dir_cache(&self) -> *mut DirInfo::HashMap {
+    pub(crate) fn dir_cache(&self) -> *mut DirInfo::HashMap {
         self.dir_cache
     }
 
@@ -807,7 +807,7 @@ impl<'a> Resolver<'a> {
     /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
     /// `ref_at_index` are only durable until the next map access.
     #[inline(always)]
-    pub fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
+    pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
         // `DirInfo::hash_map_instance()` static (set in `init1`, never
         // reassigned, never freed). Resolver mutex serializes all mutation
@@ -863,7 +863,7 @@ impl<'a> Resolver<'a> {
     /// resolver. `&mut self` ensures the returned `&mut dyn AutoInstaller` is
     /// the only live reference for its lifetime.
     #[inline]
-    pub fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
+    pub(crate) fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
         // SAFETY: BACKREF — `package_manager` names the bun_install-owned
         // singleton, live for the resolver's lifetime once installed; `&mut
         // self` ⇒ exclusive access to the only Rust handle.
@@ -879,7 +879,7 @@ impl<'a> Resolver<'a> {
     /// live concurrently — see the field comment for why this is *not* stored
     /// as `Option<&'a Loader>`.
     #[inline]
-    pub fn env_loader(&self) -> Option<&'a DotEnv::Loader<'a>> {
+    pub(crate) fn env_loader(&self) -> Option<&'a DotEnv::Loader<'a>> {
         // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
         // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
         // never mutates the env, so no `&mut Loader` overlaps this shared
@@ -889,7 +889,7 @@ impl<'a> Resolver<'a> {
     }
 
     #[inline]
-    pub fn use_package_manager(&self) -> bool {
+    pub(crate) fn use_package_manager(&self) -> bool {
         // TODO: make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
@@ -947,7 +947,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub fn is_external_pattern(&self, import_path: &[u8]) -> bool {
+    pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
@@ -957,7 +957,7 @@ impl<'a> Resolver<'a> {
     /// True iff `import_path` matches a user-supplied `--external` wildcard
     /// pattern. Does NOT consider `packages = external`; use
     /// `isExternalPattern` for the combined check.
-    pub fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
+    pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
         for pattern in self.opts.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
                 && (import_path.starts_with(pattern.prefix.as_ref())
@@ -974,7 +974,7 @@ impl<'a> Resolver<'a> {
     /// disk. Used to let path-aliased local files win over `packages=external`
     /// without breaking catch-all `"*"` paths entries that only cover ambient
     /// type stubs.
-    pub fn resolve_via_tsconfig_paths(
+    pub(crate) fn resolve_via_tsconfig_paths(
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
@@ -1003,7 +1003,7 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(tsconfig, import_path, kind, out)
     }
 
-    pub fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
+    pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`
         // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
@@ -1551,7 +1551,7 @@ impl<'a> Resolver<'a> {
         self.resolve(source_dir, import_path, kind)
     }
 
-    pub fn finalize_result(
+    pub(crate) fn finalize_result(
         &mut self,
         result: &mut Result,
         kind: ast::ImportKind,
@@ -1775,7 +1775,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    pub fn resolve_without_symlinks(
+    pub(crate) fn resolve_without_symlinks(
         &mut self,
         source_dir: &[u8],
         input_import_path: &'static [u8],
@@ -2067,7 +2067,7 @@ impl<'a> Resolver<'a> {
         ResultUnion::NotFound
     }
 
-    pub fn check_relative_path(
+    pub(crate) fn check_relative_path(
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
@@ -2195,7 +2195,7 @@ impl<'a> Resolver<'a> {
         ret
     }
 
-    pub fn check_package_path(
+    pub(crate) fn check_package_path(
         &mut self,
         source_dir: &[u8],
         unremapped_import_path: &'static [u8],
@@ -2429,7 +2429,7 @@ impl<'a> Resolver<'a> {
     ///
     /// The helper function bun.strings.withoutTrailingSlashWindowsPath can be used
     /// to remove the trailing slash from a path
-    pub fn assert_valid_cache_key(path: &[u8]) {
+    pub(crate) fn assert_valid_cache_key(path: &[u8]) {
         if cfg!(debug_assertions) {
             if path.len() > 1
                 && strings::char_is_any_slash(path[path.len() - 1])
@@ -2496,7 +2496,7 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    pub fn load_node_modules(
+    pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -3839,7 +3839,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub fn resolve_without_remapping(
+    pub(crate) fn resolve_without_remapping(
         &mut self,
         // NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
@@ -3862,7 +3862,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub fn parse_tsconfig(
+    pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
@@ -3956,7 +3956,7 @@ impl<'a> Resolver<'a> {
         unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
     }
 
-    pub fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
+    pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
@@ -4606,7 +4606,7 @@ impl<'a> Resolver<'a> {
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
     // official TypeScript compiler
-    pub fn match_tsconfig_paths(
+    pub(crate) fn match_tsconfig_paths(
         &mut self,
         tsconfig: &TSConfigJSON,
         path: &[u8],
@@ -4794,7 +4794,7 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    pub fn load_package_imports(
+    pub(crate) fn load_package_imports(
         &mut self,
         import_path: &[u8],
         // NOTE: `DirInfoRef` (not `&mut`) — `handle_esm_resolution` re-enters
@@ -4899,7 +4899,7 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    pub fn check_browser_map<const KIND: BrowserMapPathKind>(
+    pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
         &mut self,
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
@@ -4992,7 +4992,7 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    pub fn load_from_main_field(
+    pub(crate) fn load_from_main_field(
         &mut self,
         path: &[u8],
         // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
@@ -5109,7 +5109,7 @@ impl<'a> Resolver<'a> {
 
     // NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
-    pub fn load_as_index(
+    pub(crate) fn load_as_index(
         &mut self,
         dir_info: DirInfoRef,
         extension_order: options::ExtOrder,
@@ -5236,7 +5236,7 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    pub fn load_as_index_with_browser_remapping(
+    pub(crate) fn load_as_index_with_browser_remapping(
         &mut self,
         // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
         // may return `dir_info` itself (self-browser-scope),
@@ -5324,7 +5324,7 @@ impl<'a> Resolver<'a> {
         self.load_as_index(dir_info, extension_order, out)
     }
 
-    pub fn load_as_file_or_directory(
+    pub(crate) fn load_as_file_or_directory(
         &mut self,
         path: &[u8],
         kind: ast::ImportKind,
@@ -5577,7 +5577,7 @@ impl<'a> Resolver<'a> {
         dec_ret!(MatchStatus::NotFound);
     }
 
-    pub fn load_as_file(
+    pub(crate) fn load_as_file(
         &mut self,
         path: &[u8],
         extension_order: options::ExtOrder,
@@ -6468,19 +6468,19 @@ pub enum BrowserMapPathKind {
     AbsolutePath,
 }
 
-pub struct BrowserMapPath<'b> {
-    pub remapped: &'static [u8],
-    pub cleaned: &'b [u8],
-    pub input_path: &'b [u8],
-    pub extension_order: &'b [Box<[u8]>],
-    pub map: &'b BrowserMap,
+pub(crate) struct BrowserMapPath<'b> {
+    pub(crate) remapped: &'static [u8],
+    pub(crate) cleaned: &'b [u8],
+    pub(crate) input_path: &'b [u8],
+    pub(crate) extension_order: &'b [Box<[u8]>],
+    pub(crate) map: &'b BrowserMap,
 }
 
 impl<'b> BrowserMapPath<'b> {
     /// On a match only `self.remapped` is updated; the matched candidate may
     /// borrow threadlocal scratch buffers and must never be stored back into
     /// the checker.
-    pub fn check_path(&mut self, path_to_check: &[u8]) -> bool {
+    pub(crate) fn check_path(&mut self, path_to_check: &[u8]) -> bool {
         let map = self.map;
 
         let cleaned = self.cleaned;

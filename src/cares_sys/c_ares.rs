@@ -16,7 +16,7 @@ use crate::winsock::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, time
 use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
 
 pub type ares_socklen_t = socklen_t;
-pub type ares_ssize_t = isize;
+type ares_ssize_t = isize;
 
 #[cfg(windows)]
 pub type ares_socket_t = usize; // Windows `SOCKET` is `UINT_PTR` (integer, not a pointer).
@@ -60,23 +60,23 @@ pub struct EAI(c_int);
 #[cfg(not(windows))]
 impl EAI {
     #[inline]
-    pub const fn from_raw(rc: i32) -> Self {
+    const fn from_raw(rc: i32) -> Self {
         Self(rc as c_int)
     }
 
     #[cfg(target_os = "linux")]
-    pub const ADDRFAMILY: Self = Self(-9);
+    const ADDRFAMILY: Self = Self(-9);
     #[cfg(not(target_os = "linux"))]
     pub const ADDRFAMILY: Self = Self(1);
 
-    pub const BADFLAGS: Self = Self(libc::EAI_BADFLAGS);
-    pub const FAIL: Self = Self(libc::EAI_FAIL);
-    pub const FAMILY: Self = Self(libc::EAI_FAMILY);
-    pub const MEMORY: Self = Self(libc::EAI_MEMORY);
+    const BADFLAGS: Self = Self(libc::EAI_BADFLAGS);
+    const FAIL: Self = Self(libc::EAI_FAIL);
+    const FAMILY: Self = Self(libc::EAI_FAMILY);
+    const MEMORY: Self = Self(libc::EAI_MEMORY);
     // RFC 3493 dropped EAI_NODATA; FreeBSD's <netdb.h> only exposes it under
     // __BSD_VISIBLE (historical value 7) and the libc crate omits it entirely.
     #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly")))]
-    pub const NODATA: Self = Self(libc::EAI_NODATA);
+    const NODATA: Self = Self(libc::EAI_NODATA);
     #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
     pub const NODATA: Self = Self(7);
     pub const NONAME: Self = Self(libc::EAI_NONAME);
@@ -86,15 +86,15 @@ impl EAI {
 
     // glibc-only `getaddrinfo_a` / IDN extensions (absent on musl, bionic).
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    pub const INPROGRESS: Self = Self(-100);
+    const INPROGRESS: Self = Self(-100);
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    pub const CANCELED: Self = Self(-101);
+    const CANCELED: Self = Self(-101);
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    pub const NOTCANCELED: Self = Self(-102);
+    const NOTCANCELED: Self = Self(-102);
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    pub const ALLDONE: Self = Self(-103);
+    const ALLDONE: Self = Self(-103);
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    pub const IDN_ENCODE: Self = Self(-105);
+    const IDN_ENCODE: Self = Self(-105);
 }
 
 #[repr(i32)]
@@ -244,39 +244,39 @@ pub enum NSType {
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct struct_ares_server_failover_options {
-    pub retry_chance: c_ushort,
-    pub retry_delay: usize,
+    retry_chance: c_ushort,
+    retry_delay: usize,
 }
 
 type ares_evsys_t = c_uint;
 
 #[repr(C)]
 pub struct Options {
-    pub flags: c_int,
-    pub timeout: c_int,
-    pub tries: c_int,
-    pub ndots: c_int,
-    pub udp_port: c_ushort,
-    pub tcp_port: c_ushort,
-    pub socket_send_buffer_size: c_int,
-    pub socket_receive_buffer_size: c_int,
-    pub servers: *mut in_addr,
-    pub nservers: c_int,
-    pub domains: *mut *mut c_char,
-    pub ndomains: c_int,
-    pub lookups: *mut c_char,
-    pub sock_state_cb: ares_sock_state_cb,
-    pub sock_state_cb_data: *mut c_void,
-    pub sortlist: *mut struct_apattern,
-    pub nsort: c_int,
-    pub ednspsz: c_int,
-    pub resolvconf_path: *mut c_char,
-    pub hosts_path: *mut c_char,
-    pub udp_max_queries: c_int,
-    pub maxtimeout: c_int,
-    pub qcache_max_ttl: c_uint,
-    pub evsys: ares_evsys_t,
-    pub server_failover_opts: struct_ares_server_failover_options,
+    flags: c_int,
+    timeout: c_int,
+    tries: c_int,
+    ndots: c_int,
+    udp_port: c_ushort,
+    tcp_port: c_ushort,
+    socket_send_buffer_size: c_int,
+    socket_receive_buffer_size: c_int,
+    servers: *mut in_addr,
+    nservers: c_int,
+    domains: *mut *mut c_char,
+    ndomains: c_int,
+    lookups: *mut c_char,
+    sock_state_cb: ares_sock_state_cb,
+    sock_state_cb_data: *mut c_void,
+    sortlist: *mut struct_apattern,
+    nsort: c_int,
+    ednspsz: c_int,
+    resolvconf_path: *mut c_char,
+    hosts_path: *mut c_char,
+    udp_max_queries: c_int,
+    maxtimeout: c_int,
+    qcache_max_ttl: c_uint,
+    evsys: ares_evsys_t,
+    server_failover_opts: struct_ares_server_failover_options,
 }
 
 // SAFETY: `#[repr(C)]` POD — every field is an integer, raw pointer, or
@@ -319,7 +319,7 @@ pub trait HostentHandler: Sized {
 impl struct_hostent {
     // toJSResponse alias deleted — lives in bun_runtime::dns_jsc (extension trait).
 
-    pub unsafe extern "C" fn host_callback_wrapper<T: HostentHandler>(
+    unsafe extern "C" fn host_callback_wrapper<T: HostentHandler>(
         ctx: *mut c_void,
         status: c_int,
         timeouts: c_int,
@@ -562,7 +562,7 @@ pub trait NameinfoHandler: Sized {
 impl struct_nameinfo {
     // toJSResponse alias deleted — lives in bun_runtime::dns_jsc.
 
-    pub unsafe extern "C" fn callback_wrapper<T: NameinfoHandler>(
+    unsafe extern "C" fn callback_wrapper<T: NameinfoHandler>(
         ctx: *mut c_void,
         status: c_int,
         timeouts: c_int,
@@ -579,7 +579,7 @@ impl struct_nameinfo {
     }
 }
 
-pub type struct_timeval = timeval;
+type struct_timeval = timeval;
 
 bun_opaque::opaque_ffi! { pub struct struct_Channeldata; }
 
@@ -641,7 +641,7 @@ impl AddrInfo {
 
     // Consumers walk `cnames_` / `node` pointer chains directly.
 
-    pub unsafe extern "C" fn callback_wrapper<T: AddrInfoHandler>(
+    unsafe extern "C" fn callback_wrapper<T: AddrInfoHandler>(
         ctx: *mut c_void,
         status: c_int,
         timeouts: c_int,
@@ -978,16 +978,16 @@ fn library_init() {
     }}
 }
 
-pub type ares_callback = Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int)>;
-pub type ares_host_callback =
+type ares_callback = Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int)>;
+type ares_host_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut struct_hostent)>;
-pub type ares_nameinfo_callback =
+type ares_nameinfo_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, *mut u8)>;
-pub type ares_sock_create_callback =
+type ares_sock_create_callback =
     Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
-pub type ares_sock_config_callback =
+type ares_sock_config_callback =
     Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
-pub type ares_addrinfo_callback = unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
+type ares_addrinfo_callback = unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
 
 unsafe extern "C" {
     pub fn ares_library_init(flags: c_int) -> c_int;
@@ -1198,15 +1198,15 @@ pub struct struct_ares_in6_addr {
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct struct_ares_addrttl {
-    pub ipaddr: u32,
-    pub ttl: c_int,
+    ipaddr: u32,
+    ttl: c_int,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct struct_ares_addr6ttl {
     pub ip6addr: struct_ares_in6_addr,
-    pub ttl: c_int,
+    ttl: c_int,
 }
 
 // SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
@@ -1268,10 +1268,10 @@ pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
 pub struct struct_ares_caa_reply {
     pub next: *mut struct_ares_caa_reply,
     pub critical: c_int,
-    pub property: *mut u8,
-    pub plength: usize,
-    pub value: *mut u8,
-    pub length: usize,
+    property: *mut u8,
+    plength: usize,
+    value: *mut u8,
+    length: usize,
 }
 
 impl AresReply for struct_ares_caa_reply {
@@ -1341,8 +1341,8 @@ impl AresReply for struct_ares_mx_reply {
 #[repr(C)]
 pub struct struct_ares_txt_reply {
     pub next: *mut struct_ares_txt_reply,
-    pub txt: *mut u8,
-    pub length: usize,
+    txt: *mut u8,
+    length: usize,
 }
 
 impl AresReply for struct_ares_txt_reply {
@@ -1487,7 +1487,7 @@ impl struct_any_reply {
 
     /// Parse a DNS `ANY` reply buffer into a heap-allocated aggregate. Returns
     /// the last per-record parse error if no record type parsed successfully.
-    pub fn parse(buffer: &[u8]) -> Result<Box<Self>, Error> {
+    fn parse(buffer: &[u8]) -> Result<Box<Self>, Error> {
         let mut any_success = false;
         let mut last_error: Option<c_int> = None;
         let mut reply = Box::new(struct_any_reply::default());
@@ -1781,14 +1781,14 @@ unsafe extern "C" {
 }
 
 pub const ARES_SUCCESS: c_int = 0;
-pub const ARES_ENODATA: c_int = 1;
+const ARES_ENODATA: c_int = 1;
 pub const ARES_EFORMERR: c_int = 2;
 pub const ARES_ESERVFAIL: c_int = 3;
-pub const ARES_ENOTFOUND: c_int = 4;
-pub const ARES_ENOTIMP: c_int = 5;
+const ARES_ENOTFOUND: c_int = 4;
+const ARES_ENOTIMP: c_int = 5;
 pub const ARES_EREFUSED: c_int = 6;
 pub const ARES_EBADQUERY: c_int = 7;
-pub const ARES_EBADNAME: c_int = 8;
+const ARES_EBADNAME: c_int = 8;
 pub const ARES_EBADFAMILY: c_int = 9;
 pub const ARES_EBADRESP: c_int = 10;
 pub const ARES_ECONNREFUSED: c_int = 11;
@@ -1799,14 +1799,14 @@ pub const ARES_ENOMEM: c_int = 15;
 pub const ARES_EDESTRUCTION: c_int = 16;
 pub const ARES_EBADSTR: c_int = 17;
 pub const ARES_EBADFLAGS: c_int = 18;
-pub const ARES_ENONAME: c_int = 19;
+const ARES_ENONAME: c_int = 19;
 pub const ARES_EBADHINTS: c_int = 20;
 pub const ARES_ENOTINITIALIZED: c_int = 21;
 pub const ARES_ELOADIPHLPAPI: c_int = 22;
 pub const ARES_EADDRGETNETWORKPARAMS: c_int = 23;
 pub const ARES_ECANCELLED: c_int = 24;
 pub const ARES_ESERVICE: c_int = 25;
-pub const ARES_ENOSERVER: c_int = 26;
+const ARES_ENOSERVER: c_int = 26;
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
@@ -1999,17 +1999,17 @@ impl Error {
     }
 }
 
-pub const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
-pub const ARES_OPT_FLAGS: c_int = 1 << 0;
-pub const ARES_OPT_TRIES: c_int = 1 << 2;
-pub const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
-pub const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
-pub const ARES_NI_NAMEREQD: c_int = 1 << 2;
-pub const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
-pub const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;
+const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
+const ARES_OPT_FLAGS: c_int = 1 << 0;
+const ARES_OPT_TRIES: c_int = 1 << 2;
+const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
+const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
+const ARES_NI_NAMEREQD: c_int = 1 << 2;
+const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
+const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;
 
-pub const ARES_LIB_INIT_WIN32: c_int = 1 << 0;
-pub const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
+const ARES_LIB_INIT_WIN32: c_int = 1 << 0;
+const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
 
 #[cfg(windows)]
 pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX; // INVALID_SOCKET

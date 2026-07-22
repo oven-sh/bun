@@ -54,7 +54,7 @@ impl DirInfoRef {
     /// the entire lifetime of every copy of the returned handle (always true
     /// for BSSMap slots: they are never individually freed).
     #[inline]
-    pub const unsafe fn from_raw(p: *mut DirInfo) -> Self {
+    pub(crate) const unsafe fn from_raw(p: *mut DirInfo) -> Self {
         // SAFETY: caller contract — `p` is a non-null BSSMap slot that
         // outlives every copy of the handle (the `BackRef` invariant).
         DirInfoRef(unsafe { bun_ptr::BackRef::from_raw(p) })
@@ -66,7 +66,7 @@ impl DirInfoRef {
     /// Centralizes the per-site `from_raw(ptr::from_mut(d))` open-coding at
     /// every `at_index` call.
     #[inline]
-    pub fn from_slot(slot: &mut DirInfo) -> Self {
+    pub(crate) fn from_slot(slot: &mut DirInfo) -> Self {
         DirInfoRef(bun_ptr::BackRef::new_mut(slot))
     }
 
@@ -101,11 +101,11 @@ impl core::fmt::Debug for DirInfoRef {
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
-    pub parent: Index,
+    pub(crate) parent: Index,
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
-    pub enclosing_browser_scope: Index,
+    pub(crate) enclosing_browser_scope: Index,
     // lifetime — `&'static` borrows below are ARENA-backed (the
     // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo).
     // Read-only fields (`package_json_for_browser_field`,
@@ -115,8 +115,8 @@ pub struct DirInfo {
     // write/drop sites (a `*const→*mut` cast there would be UB under Stacked
     // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` /
     // `.package_json_for_dependencies()` accessors.
-    pub package_json_for_browser_field: Option<&'static PackageJSON>,
-    pub enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
+    pub(crate) package_json_for_browser_field: Option<&'static PackageJSON>,
+    pub(crate) enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
     /// package.json used for bundling
     /// it's the deepest one in the hierarchy with a "name" field
@@ -129,22 +129,22 @@ pub struct DirInfo {
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it without a const→mut
     // provenance cast. Read via `.package_json_for_dependencies()`.
-    pub package_json_for_dependencies: Option<NonNull<PackageJSON>>,
+    pub(crate) package_json_for_dependencies: Option<NonNull<PackageJSON>>,
 
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
-    pub entries: Index,
+    pub(crate) entries: Index,
     /// Is there a "package.json" file?
     // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.package_json()`.
     pub package_json: Option<NonNull<PackageJSON>>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
     // `NonNull` (not `&'static`) preserves mut-provenance. Read via `.tsconfig_json()`.
-    pub tsconfig_json: Option<NonNull<TSConfigJSON>>,
+    pub(crate) tsconfig_json: Option<NonNull<TSConfigJSON>>,
     /// If non-empty, this is the real absolute path resolving any symlinks
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_real_path: &'static [u8],
 
-    pub flags: Flags,
+    pub(crate) flags: Flags,
 }
 
 impl Default for DirInfo {
@@ -183,19 +183,19 @@ fn arena_ref<T>(p: NonNull<T>) -> &'static T {
 impl DirInfo {
     /// Is there a "node_modules" subdirectory?
     #[inline]
-    pub fn has_node_modules(&self) -> bool {
+    pub(crate) fn has_node_modules(&self) -> bool {
         self.flags.contains(Flags::HasNodeModules)
     }
 
     /// Is this a "node_modules" directory?
     #[inline]
-    pub fn is_node_modules(&self) -> bool {
+    pub(crate) fn is_node_modules(&self) -> bool {
         self.flags.contains(Flags::IsNodeModules)
     }
 
     /// Is this inside a "node_modules" directory?
     #[inline]
-    pub fn is_inside_node_modules(&self) -> bool {
+    pub(crate) fn is_inside_node_modules(&self) -> bool {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
@@ -211,7 +211,7 @@ impl DirInfo {
     /// `enqueue_dependency_to_resolve`;
     /// callers that only read go through here.
     #[inline]
-    pub fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
+    pub(crate) fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
         self.package_json_for_dependencies.map(arena_ref)
     }
 
@@ -251,7 +251,7 @@ impl DirInfo {
     /// lifetime), so a `&'static` reborrow of the `&'static mut` returned by
     /// `entries_at` is sound and needs no `unsafe` here. Prefer this over
     /// `get_entries` + per-site raw deref whenever the caller only reads.
-    pub fn get_entries_ref(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+    pub(crate) fn get_entries_ref(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance()
             .fs
             .entries_at(self.entries, generation)?;
@@ -264,7 +264,10 @@ impl DirInfo {
     /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
     /// hold `entries_mutex` (the mutex is non-recursive); see
     /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
-    pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+    pub(crate) fn get_entries_ref_locked(
+        &self,
+        generation: Generation,
+    ) -> Option<&'static fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance()
             .fs
             .entries_at_locked(self.entries, generation)?;
@@ -286,7 +289,7 @@ impl DirInfo {
     }
 
     #[inline]
-    pub fn get_parent(&self) -> Option<DirInfoRef> {
+    pub(crate) fn get_parent(&self) -> Option<DirInfoRef> {
         ref_at_index(self.parent)
     }
 
@@ -294,7 +297,7 @@ impl DirInfo {
     /// resolves back to *this* slot, which is why a
     /// `Copy` arena handle (not `&mut`) is returned — overlapping shared
     /// reads through `DirInfoRef::deref` are sound.
-    pub fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
+    pub(crate) fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
         ref_at_index(self.enclosing_browser_scope)
     }
 }
@@ -312,7 +315,7 @@ static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline(always)]
-pub fn hash_map_instance() -> *mut HashMap {
+pub(crate) fn hash_map_instance() -> *mut HashMap {
     if let Some(p) = DIR_INFO_MAP.load() {
         return p.as_ptr();
     }
@@ -395,7 +398,7 @@ bitflags::bitflags! {
 }
 impl Flags {
     #[inline]
-    pub fn set_present(&mut self, flag: Flags, present: bool) {
+    pub(crate) fn set_present(&mut self, flag: Flags, present: bool) {
         self.set(flag, present);
     }
 }

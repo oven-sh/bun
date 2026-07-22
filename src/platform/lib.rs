@@ -7,4 +7,4 @@
 #[cfg(target_os = "macos")]
 pub mod darwin;
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub mod linux;
+mod linux;

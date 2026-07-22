@@ -177,7 +177,7 @@ impl ArrayBuffer {
 impl ArrayBuffer {
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
-    pub fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
         // *const); fn accepts null ptr with explicit size.
         // Wrapped in `from_js_host_call` so the C++ throw scope opened by
@@ -565,7 +565,7 @@ impl ArrayBuffer {
     }
 
     #[inline]
-    pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> ArrayBuffer {
+    pub(crate) fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> ArrayBuffer {
         Self::from_typed_array(ctx, value)
     }
 
@@ -619,7 +619,7 @@ impl ArrayBuffer {
 
     /// See [`as_u16_unaligned`]; 4-byte variant.
     #[inline]
-    pub fn as_u32_unaligned(&mut self) -> &mut [bun_core::Unaligned<u32>] {
+    pub(crate) fn as_u32_unaligned(&mut self) -> &mut [bun_core::Unaligned<u32>] {
         if self.is_detached() {
             return &mut [];
         }
@@ -722,7 +722,7 @@ bun_core::comptime_string_map! {
 }
 
 impl BinaryType {
-    pub fn to_typed_array_type(self) -> TypedArrayType {
+    pub(crate) fn to_typed_array_type(self) -> TypedArrayType {
         match self {
             BinaryType::Buffer => TypedArrayType::TypeNone,
             BinaryType::ArrayBuffer => TypedArrayType::TypeNone,
@@ -979,7 +979,7 @@ pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 /// - `deallocator`, if `Some`, must be sound to call exactly once with
 ///   `(ptr, deallocator_context)` on the JS thread at GC time, and
 ///   `deallocator_context` must remain valid until then.
-pub unsafe fn make_array_buffer_with_bytes_no_copy(
+pub(crate) unsafe fn make_array_buffer_with_bytes_no_copy(
     global: &JSGlobalObject,
     ptr: *mut c_void,
     len: usize,

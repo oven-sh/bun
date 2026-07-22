@@ -42,7 +42,7 @@ pub fn assign_root_resolution(
 }
 
 impl PackageManager {
-    pub fn format_later_version_in_cache(
+    pub(crate) fn format_later_version_in_cache(
         &mut self,
         package_name: &[u8],
         name_hash: PackageNameHash,
@@ -97,7 +97,7 @@ impl PackageManager {
         self.options.scope_for_package_name(name)
     }
 
-    pub fn get_installed_versions_from_disk_cache(
+    pub(crate) fn get_installed_versions_from_disk_cache(
         &mut self,
         tags_buf: &mut Vec<u8>,
         package_name: &[u8],
@@ -162,7 +162,7 @@ impl PackageManager {
         Ok(list)
     }
 
-    pub fn resolve_from_disk_cache(
+    pub(crate) fn resolve_from_disk_cache(
         &mut self,
         package_name: &[u8],
         version: &dependency::Version,
@@ -255,7 +255,7 @@ impl PackageManager {
         None
     }
 
-    pub fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+    pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
         debug_assert!(
             (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
@@ -274,7 +274,11 @@ impl PackageManager {
         }
     }
 
-    pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+    pub(crate) fn assign_root_resolution(
+        &mut self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    ) {
         // reshaped for borrowck — capture lengths before mutable borrows.
         debug_assert!(
             (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
@@ -296,7 +300,7 @@ impl PackageManager {
         }
     }
 
-    pub fn verify_resolutions(&mut self, log_level: LogLevel) {
+    pub(crate) fn verify_resolutions(&mut self, log_level: LogLevel) {
         let lockfile = &self.lockfile;
         let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
         let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();

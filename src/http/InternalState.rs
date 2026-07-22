@@ -12,50 +12,50 @@ bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 // Many of these fields can be moved to a packed struct and use less space
 
 pub struct InternalState<'a> {
-    pub response_message_buffer: MutableString,
+    pub(crate) response_message_buffer: MutableString,
     /// pending response is the temporary storage for the response headers, url and status code
     /// this uses shared_response_headers_buf to store the headers
     /// this will be turned None once the metadata is cloned
-    pub pending_response: Option<bun_picohttp::Response<'static>>,
+    pub(crate) pending_response: Option<bun_picohttp::Response<'static>>,
 
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
     /// this can happen after await fetch(...) and the body can continue streaming when this is already None
     /// the user will receive only chunks of the body stored in body_out_str
-    pub cloned_metadata: Option<HTTPResponseMetadata>,
-    pub flags: InternalStateFlags,
+    pub(crate) cloned_metadata: Option<HTTPResponseMetadata>,
+    pub(crate) flags: InternalStateFlags,
 
-    pub transfer_encoding: Encoding,
-    pub encoding: Encoding,
-    pub content_encoding_i: u8,
-    pub chunked_decoder: bun_picohttp::phr_chunked_decoder,
-    pub decompressor: Decompressor,
-    pub stage: Stage,
+    pub(crate) transfer_encoding: Encoding,
+    pub(crate) encoding: Encoding,
+    pub(crate) content_encoding_i: u8,
+    pub(crate) chunked_decoder: bun_picohttp::phr_chunked_decoder,
+    pub(crate) decompressor: Decompressor,
+    pub(crate) stage: Stage,
     /// This is owned by the user and should not be freed here.
     /// Non-owning back-reference, kept as a raw `NonNull` (BACKREF per PORTING.md).
-    pub body_out_str: Option<NonNull<MutableString>>,
-    pub compressed_body: MutableString,
-    pub content_length: Option<usize>,
-    pub total_body_received: usize,
+    pub(crate) body_out_str: Option<NonNull<MutableString>>,
+    pub(crate) compressed_body: MutableString,
+    pub(crate) content_length: Option<usize>,
+    pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
-    pub request_body: bun_ptr::RawSlice<u8>,
-    pub original_request_body: HTTPRequestBody<'a>,
-    pub request_sent_len: usize,
-    pub fail: Option<Error>,
+    pub(crate) request_body: bun_ptr::RawSlice<u8>,
+    pub(crate) original_request_body: HTTPRequestBody<'a>,
+    pub(crate) request_sent_len: usize,
+    pub(crate) fail: Option<Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
-    pub dns_error: i32,
+    pub(crate) dns_error: i32,
     /// Owned copy of the hostname the failed lookup was for
     /// (`connected_url.hostname`: the proxy's when one is configured, else
     /// the post-redirect target). Captured on the HTTP thread at the failure
     /// so the JS side never dereferences the client's borrowed URL buffers.
-    pub dns_hostname: Option<Box<[u8]>>,
-    pub request_stage: HTTPStage,
-    pub response_stage: HTTPStage,
-    pub certificate_info: Option<CertificateInfo>,
+    pub(crate) dns_hostname: Option<Box<[u8]>>,
+    pub(crate) request_stage: HTTPStage,
+    pub(crate) response_stage: HTTPStage,
+    pub(crate) certificate_info: Option<CertificateInfo>,
 }
 
 // Struct-of-bools so the
@@ -63,18 +63,18 @@ pub struct InternalState<'a> {
 // = true`) directly; pack into a bitfield if size ever matters.
 #[derive(Clone, Copy)]
 pub struct InternalStateFlags {
-    pub allow_keepalive: bool,
-    pub received_last_chunk: bool,
-    pub did_set_content_encoding: bool,
-    pub is_redirect_pending: bool,
-    pub is_libdeflate_fast_path_disabled: bool,
-    pub resend_request_body_on_redirect: bool,
+    pub(crate) allow_keepalive: bool,
+    pub(crate) received_last_chunk: bool,
+    pub(crate) did_set_content_encoding: bool,
+    pub(crate) is_redirect_pending: bool,
+    pub(crate) is_libdeflate_fast_path_disabled: bool,
+    pub(crate) resend_request_body_on_redirect: bool,
     /// Cross-origin redirect: the per-request Host override must be dropped so
     /// the follow-up connection re-derives SNI/Host from the redirect target.
     /// The actual clear is deferred to `do_redirect`, after the old socket's
     /// pool/close decision — that decision needs `hostname` still set to know
     /// the handshake was verified against an override.
-    pub clear_hostname_on_redirect: bool,
+    pub(crate) clear_hostname_on_redirect: bool,
     /// Set when the TLS handshake completed but the user-supplied JS
     /// `checkServerIdentity` callback has not yet approved the peer
     /// certificate. While set, `on_writable` must not write any HTTP
@@ -83,18 +83,18 @@ pub struct InternalStateFlags {
     /// `HTTPClient::resume_after_cert_check` once the JS thread reports the
     /// check passed (and implicitly by `InternalState::reset()` on every
     /// redirect hop / failure, so each hop re-parks independently).
-    pub is_waiting_for_cert_check: bool,
-    pub receive_paused: bool,
+    pub(crate) is_waiting_for_cert_check: bool,
+    pub(crate) receive_paused: bool,
     /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
     /// Guards header-retry re-entries from compressing again. Cleared by
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
-    pub body_compressed: bool,
+    pub(crate) body_compressed: bool,
 }
 
 impl InternalStateFlags {
     /// Field defaults: `allow_keepalive = true`, rest false.
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
@@ -148,7 +148,10 @@ impl Default for InternalState<'_> {
 }
 
 impl<'a> InternalState<'a> {
-    pub fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
+    pub(crate) fn init(
+        body: HTTPRequestBody<'a>,
+        body_out_str: &mut MutableString,
+    ) -> InternalState<'a> {
         let request_body = bun_ptr::RawSlice::new(body.slice());
         InternalState {
             original_request_body: body,
@@ -162,11 +165,11 @@ impl<'a> InternalState<'a> {
         }
     }
 
-    pub fn is_chunked_encoding(&self) -> bool {
+    pub(crate) fn is_chunked_encoding(&self) -> bool {
         self.transfer_encoding == Encoding::Chunked
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         let body_msg = self.body_out_str;
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
@@ -195,7 +198,7 @@ impl<'a> InternalState<'a> {
     /// attached) fall back to `compressed_body` so the chunked decoder can
     /// still run without panicking; those bytes are discarded on the next
     /// `reset()`.
-    pub fn get_body_buffer(&mut self) -> &mut MutableString {
+    pub(crate) fn get_body_buffer(&mut self) -> &mut MutableString {
         if self.encoding.is_compressed() {
             return &mut self.compressed_body;
         }
@@ -212,7 +215,7 @@ impl<'a> InternalState<'a> {
     /// in `lib.rs` operate on safe references instead of repeated raw-ptr
     /// place expressions.
     #[inline]
-    pub fn chunked_decoder_and_body_buffer(
+    pub(crate) fn chunked_decoder_and_body_buffer(
         &mut self,
     ) -> (&mut bun_picohttp::phr_chunked_decoder, &mut MutableString) {
         match self.body_out_str {
@@ -228,7 +231,7 @@ impl<'a> InternalState<'a> {
         }
     }
 
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         if self.is_chunked_encoding() {
             return self.flags.received_last_chunk;
         }
@@ -241,7 +244,7 @@ impl<'a> InternalState<'a> {
         self.flags.received_last_chunk
     }
 
-    pub fn decompress_bytes(
+    pub(crate) fn decompress_bytes(
         &mut self,
         buffer: &[u8],
         body_out_str: &mut MutableString,
@@ -387,7 +390,7 @@ impl<'a> InternalState<'a> {
     // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
     // path materialises `&mut *body_out_str`), callers `mem::take` the body buffer's `list`
     // and pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
-    pub fn process_body_buffer(
+    pub(crate) fn process_body_buffer(
         &mut self,
         mut buffer: Vec<u8>,
         is_final_chunk: bool,

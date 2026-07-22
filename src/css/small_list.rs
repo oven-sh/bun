@@ -64,7 +64,7 @@ pub(crate) fn get_fallbacks<T: ImageFallback>(
     fallbacks_gated::get_fallbacks_image(this, arena, targets)
 }
 
-pub use fallbacks_gated::{get_fallbacks_image, get_fallbacks_text_shadow};
+pub(crate) use fallbacks_gated::get_fallbacks_text_shadow;
 
 pub mod fallbacks_gated {
     use super::*;

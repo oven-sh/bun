@@ -269,7 +269,7 @@ pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
 /// earlier `LazyLock<EnumMap<T, _>>` so lookup is a plain array index with
 /// zero init code.
 #[repr(transparent)]
-pub struct TokenEnumType(pub [&'static [u8]; <T as Enum>::LENGTH]);
+pub struct TokenEnumType(pub(crate) [&'static [u8]; <T as Enum>::LENGTH]);
 
 impl core::ops::Index<T> for TokenEnumType {
     type Output = &'static [u8];

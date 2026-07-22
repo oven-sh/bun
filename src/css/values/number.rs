@@ -8,7 +8,7 @@ pub type CSSNumber = f32;
 pub struct CSSNumberFns;
 
 impl CSSNumberFns {
-    pub fn parse(input: &mut Parser) -> CssResult<CSSNumber> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<CSSNumber> {
         if let Ok(calc_value) = input.try_parse(Calc::<f32>::parse) {
             match calc_value {
                 Calc::Value(v) => return Ok(*v),
@@ -21,7 +21,7 @@ impl CSSNumberFns {
         input.expect_number()
     }
 
-    pub fn to_css(this: CSSNumber, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(this: CSSNumber, dest: &mut Printer) -> Result<(), PrintErr> {
         let number: f32 = this;
         if number != 0.0 && number.abs() < 1.0 {
             let mut dtoa_buf: [u8; 129] = [0; 129];
@@ -37,11 +37,11 @@ impl CSSNumberFns {
         }
     }
 
-    pub fn try_from_angle(_: Angle) -> Option<CSSNumber> {
+    pub(crate) fn try_from_angle(_: Angle) -> Option<CSSNumber> {
         None
     }
 
-    pub fn sign(this: CSSNumber) -> f32 {
+    pub(crate) fn sign(this: CSSNumber) -> f32 {
         if this == 0.0 {
             // Spec-faithful: ±0.0 both map to +0.0 — do NOT
             // collapse with `signfns::sign_f32` / `calc::std_math_sign`.
@@ -57,13 +57,13 @@ pub type CSSInteger = i32;
 pub struct CSSIntegerFns;
 
 impl CSSIntegerFns {
-    pub fn parse(input: &mut Parser) -> CssResult<CSSInteger> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<CSSInteger> {
         // TODO: calc??
         input.expect_integer()
     }
 
     #[inline]
-    pub fn to_css(this: CSSInteger, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(this: CSSInteger, dest: &mut Printer) -> Result<(), PrintErr> {
         css::to_css::integer(this, dest)
     }
 }

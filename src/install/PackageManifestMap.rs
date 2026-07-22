@@ -8,7 +8,7 @@ use crate::npm;
 
 #[derive(Default)]
 pub struct PackageManifestMap {
-    pub hash_map: ManifestHashMap,
+    pub(crate) hash_map: ManifestHashMap,
 }
 
 pub enum Value {
@@ -46,17 +46,17 @@ pub enum CacheBehavior {
 /// Construct via `PackageManager::manifest_disk_cache_ctx`.
 #[derive(Clone, Copy)]
 pub struct DiskCacheCtx {
-    pub enable_manifest_cache: bool,
-    pub enable_manifest_cache_control: bool,
+    pub(crate) enable_manifest_cache: bool,
+    pub(crate) enable_manifest_cache_control: bool,
     /// `pm.getCacheDirectory()` — pre-opened so the lookup never needs `&mut
     /// PackageManager`. `None` iff `enable_manifest_cache` is false (the only
     /// branch that reads it is gated on that flag).
-    pub cache_directory: Option<Fd>,
-    pub timestamp_for_manifest_cache_control: u32,
+    pub(crate) cache_directory: Option<Fd>,
+    pub(crate) timestamp_for_manifest_cache_control: u32,
 }
 
 impl PackageManifestMap {
-    pub fn by_name(
+    pub(crate) fn by_name(
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
@@ -73,7 +73,7 @@ impl PackageManifestMap {
         )
     }
 
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         name_hash: PackageNameHash,
         manifest: npm::PackageManifest,
@@ -82,7 +82,7 @@ impl PackageManifestMap {
         Ok(())
     }
 
-    pub fn by_name_hash(
+    pub(crate) fn by_name_hash(
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
@@ -105,7 +105,7 @@ impl PackageManifestMap {
     /// parameters: the memory-only arm never reads them. Exposed separately so callers
     /// holding `&mut PackageManager` can borrow only the disjoint
     /// `pm.manifests` field.
-    pub fn by_name_hash_in_memory(
+    pub(crate) fn by_name_hash_in_memory(
         &mut self,
         name_hash: PackageNameHash,
     ) -> Option<&mut npm::PackageManifest> {
@@ -139,7 +139,7 @@ impl PackageManifestMap {
     /// `timestamp_for_manifest_cache_control`) are hoisted into
     /// [`DiskCacheCtx`] so callers never hold `&mut pm.manifests` and a
     /// `PackageManager` borrow simultaneously.
-    pub fn by_name_hash_allow_expired(
+    pub(crate) fn by_name_hash_allow_expired(
         &mut self,
         ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,

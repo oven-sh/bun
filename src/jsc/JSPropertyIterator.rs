@@ -100,13 +100,13 @@ impl IntoIterObject for &mut JSObject {
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,
-    pub i: u32,
-    pub iter_i: u32,
+    pub(crate) i: u32,
+    pub(crate) iter_i: u32,
     /// null if and only if `object` has no properties (i.e. `len == 0`)
-    pub impl_: Option<NonNull<JSPropertyIteratorImpl>>,
+    pub(crate) impl_: Option<NonNull<JSPropertyIteratorImpl>>,
 
-    pub global_object: &'a JSGlobalObject,
-    pub object: *mut JSObject,
+    pub(crate) global_object: &'a JSGlobalObject,
+    pub(crate) object: *mut JSObject,
     /// Current property value being yielded (only meaningful when
     /// `options.include_value` is set).
     // The bare JSValue field is sound because this struct is stack-only (`'a` borrow);
@@ -117,7 +117,7 @@ pub struct JSPropertyIterator<'a> {
 }
 
 impl<'a> JSPropertyIterator<'a> {
-    pub fn get_longest_property_name(&self) -> usize {
+    pub(crate) fn get_longest_property_name(&self) -> usize {
         if let Some(iter) = self.impl_ {
             // `JSPropertyIteratorImpl`/`JSObject` are opaque ZST handles;
             // `opaque_mut`/`opaque_ref` are the centralised zero-byte deref proofs.
@@ -253,7 +253,7 @@ impl<'a> Drop for JSPropertyIterator<'a> {
 bun_opaque::opaque_ffi! { pub struct JSPropertyIteratorImpl; }
 
 impl JSPropertyIteratorImpl {
-    pub fn init(
+    pub(crate) fn init(
         global_object: &JSGlobalObject,
         object: *mut JSObject,
         count: &mut usize,
@@ -273,7 +273,7 @@ impl JSPropertyIteratorImpl {
         Ok(NonNull::new(raw))
     }
 
-    pub fn get_name_and_value(
+    pub(crate) fn get_name_and_value(
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
@@ -288,7 +288,7 @@ impl JSPropertyIteratorImpl {
         })
     }
 
-    pub fn get_name_and_value_non_observable(
+    pub(crate) fn get_name_and_value_non_observable(
         iter: &mut JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,

@@ -100,7 +100,7 @@ impl File {
     /// `openat`; on failure, recursively create `dirname(path)` (errors from
     /// the mkdir are swallowed) then retry the open once. If `path` has no
     /// dirname, the original error is returned.
-    pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         let dir = dir.as_fd();
         match openat_a(dir, path, flags, mode) {
             Ok(fd) => Ok(Self::from_fd(fd)),

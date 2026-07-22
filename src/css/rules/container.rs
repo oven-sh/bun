@@ -7,18 +7,18 @@ use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
 pub struct ContainerName {
-    pub v: CustomIdent,
+    pub(crate) v: CustomIdent,
 }
 
 impl ContainerName {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         super::custom_ident_to_css(&self.v, dest)
     }
 }
 
 impl ContainerName {
     #[inline]
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             v: self.v.deep_clone(bump),
         }
@@ -27,7 +27,7 @@ impl ContainerName {
 
 // ─── ContainerName parse ──────────────────────────────────────────────────
 impl ContainerName {
-    pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
         use crate::css_values::ident::CustomIdentFns;
         use bun_core::strings;
         let ident = CustomIdentFns::parse(input)?;
@@ -177,7 +177,7 @@ impl QueryCondition for StyleQuery {
 }
 
 impl StyleQuery {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `Operator` is `Copy`; `Property` routes through `dc::property` until
         // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
@@ -295,7 +295,7 @@ impl QueryCondition for ContainerCondition {
 }
 
 impl ContainerCondition {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
         // faithful — see note there); `Operator` is `Copy`.
         match self {
@@ -315,7 +315,7 @@ impl ContainerCondition {
 
 // ─── ContainerCondition parse ─────────────────────────────────────────────
 impl ContainerCondition {
-    pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
         use crate::media_query::QueryConditionFlags;
         media_query::parse_query_condition::<ContainerCondition>(
             input,
@@ -327,13 +327,13 @@ impl ContainerCondition {
 /// A [@container](https://drafts.csswg.org/css-contain-3/#container-rule) rule.
 pub struct ContainerRule<R> {
     /// The name of the container.
-    pub name: Option<ContainerName>,
+    pub(crate) name: Option<ContainerName>,
     /// The container condition.
-    pub condition: ContainerCondition,
+    pub(crate) condition: ContainerCondition,
     /// The rules within the `@container` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> ContainerRule<R> {

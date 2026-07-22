@@ -30,11 +30,11 @@ pub struct Disabled;
 
 impl Disabled {
     #[inline]
-    pub(crate) fn end(&self) {}
+    fn end(&self) {}
 }
 
 impl Ctx {
-    pub fn end(&self) {
+    fn end(&self) {
         match self {
             Ctx::Disabled(ctx) => ctx.end(),
             Ctx::Enabled(ctx) => ctx.end(),
@@ -92,7 +92,7 @@ fn is_enabled_once() {
     }
 }
 
-pub(crate) fn is_enabled() -> bool {
+fn is_enabled() -> bool {
     IS_ENABLED_ONCE.call_once(is_enabled_once);
     IS_ENABLED.load(Ordering::SeqCst)
 }
@@ -187,7 +187,7 @@ pub struct Linux {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
-    pub(crate) fn is_supported() -> bool {
+    fn is_supported() -> bool {
         INIT_ONCE.call_once(Self::init_once);
         IS_INITIALIZED.load(Ordering::Relaxed)
     }
@@ -197,14 +197,14 @@ impl Linux {
         IS_INITIALIZED.store(result != 0, Ordering::Relaxed);
     }
 
-    pub(crate) fn init(event: PerfEvent) -> Self {
+    fn init(event: PerfEvent) -> Self {
         Self {
             start_time: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
             event,
         }
     }
 
-    pub(crate) fn end(&self) {
+    fn end(&self) {
         if !Self::is_supported() {
             return;
         }

@@ -50,7 +50,7 @@ unsafe impl<T: Sync> Sync for StoreRef<T> {}
 
 impl<T> StoreRef<T> {
     #[inline]
-    pub const fn from_non_null(p: NonNull<T>) -> Self {
+    pub(crate) const fn from_non_null(p: NonNull<T>) -> Self {
         StoreRef(p)
     }
     /// Wrap a raw pointer. Panics if `p` is null. Alignment and arena-lifetime
@@ -138,7 +138,7 @@ pub type BindingNodeIndex = Binding;
 // declarations / call sites that spell `ArenaStr` continue to compile.
 pub(crate) type ArenaStr = StoreStr;
 #[inline]
-pub(crate) const fn empty_arena_str() -> ArenaStr {
+const fn empty_arena_str() -> ArenaStr {
     StoreStr::EMPTY
 }
 // (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
@@ -196,7 +196,7 @@ impl StoreStr {
     }
 
     #[inline]
-    pub const fn as_ptr(self) -> *const u8 {
+    pub(crate) const fn as_ptr(self) -> *const u8 {
         self.ptr.as_ptr()
     }
 
@@ -628,17 +628,17 @@ impl SlotCounts {
 }
 
 pub struct NameMinifier {
-    pub head: Vec<u8>,
-    pub tail: Vec<u8>,
+    pub(crate) head: Vec<u8>,
+    pub(crate) tail: Vec<u8>,
 }
 
 impl NameMinifier {
-    pub const DEFAULT_HEAD: &'static [u8] =
+    pub(crate) const DEFAULT_HEAD: &'static [u8] =
         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
-    pub const DEFAULT_TAIL: &'static [u8] =
+    pub(crate) const DEFAULT_TAIL: &'static [u8] =
         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
 
-    pub fn init() -> NameMinifier {
+    pub(crate) fn init() -> NameMinifier {
         NameMinifier {
             head: Vec::new(),
             tail: Vec::new(),
@@ -771,7 +771,7 @@ impl Default for Span {
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
 #[derive(Copy, Clone)]
 pub struct InlinedEnumValue {
-    pub raw_data: u64,
+    pub(crate) raw_data: u64,
 }
 
 #[derive(Copy, Clone)]
@@ -892,7 +892,7 @@ pub struct DeclaredSymbol {
 }
 
 pub struct DeclaredSymbolList {
-    pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
+    pub(crate) entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
 }
 
 impl Default for DeclaredSymbolList {
@@ -941,7 +941,7 @@ impl DeclaredSymbolList {
         Ok(())
     }
 
-    pub fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
+    pub(crate) fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
         self.entries.append_list_assume_capacity(&other.entries);
     }
 
@@ -1245,9 +1245,9 @@ bun_core::impl_tag_error!(ToJSError);
 // ─── from bun_jsc::math ─────────────────────────────────────────────────────
 pub mod math {
     /// `Number.MAX_SAFE_INTEGER` (2^53 - 1)
-    pub const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+    pub(crate) const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
     /// `Number.MIN_SAFE_INTEGER` (-(2^53 - 1))
-    pub const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
+    pub(crate) const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
 
     unsafe extern "C" {
         // Pure FFI (value-type args, no pointers, no errno) → no caller preconditions.

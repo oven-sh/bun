@@ -154,7 +154,7 @@ impl Size {
 // Split out of `impl Size` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl Size {
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             Size::LengthPercentage(l) => l.is_compatible(browsers),
@@ -290,7 +290,7 @@ impl MaxSize {
 // Split out of `impl MaxSize` above — these don't depend on
 // `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl MaxSize {
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             MaxSize::LengthPercentage(l) => l.is_compatible(browsers),
@@ -331,9 +331,9 @@ impl MaxSize {
 #[derive(Copy, Clone, PartialEq)]
 pub struct AspectRatio {
     /// The `auto` keyword.
-    pub auto: bool,
+    pub(crate) auto: bool,
     /// A preferred aspect ratio for the box, specified as width / height.
-    pub ratio: Option<Ratio>,
+    pub(crate) ratio: Option<Ratio>,
 }
 
 impl AspectRatio {
@@ -404,7 +404,7 @@ bitflags::bitflags! {
 }
 
 impl SizeProperty {
-    pub(crate) fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
+    fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
         match property_id {
             PropertyIdTag::Width => Some(SizeProperty::WIDTH),
             PropertyIdTag::Height => Some(SizeProperty::HEIGHT),
@@ -425,21 +425,21 @@ impl SizeProperty {
 
 #[derive(Default)]
 pub struct SizeHandler {
-    pub width: Option<Size>,
-    pub height: Option<Size>,
-    pub min_width: Option<Size>,
-    pub min_height: Option<Size>,
-    pub max_width: Option<MaxSize>,
-    pub max_height: Option<MaxSize>,
-    pub block_size: Option<Size>,
-    pub inline_size: Option<Size>,
-    pub min_block_size: Option<Size>,
-    pub min_inline_size: Option<Size>,
-    pub max_block_size: Option<MaxSize>,
-    pub max_inline_size: Option<MaxSize>,
-    pub has_any: bool,
-    pub flushed_properties: SizeProperty,
-    pub category: PropertyCategory,
+    pub(crate) width: Option<Size>,
+    pub(crate) height: Option<Size>,
+    pub(crate) min_width: Option<Size>,
+    pub(crate) min_height: Option<Size>,
+    pub(crate) max_width: Option<MaxSize>,
+    pub(crate) max_height: Option<MaxSize>,
+    pub(crate) block_size: Option<Size>,
+    pub(crate) inline_size: Option<Size>,
+    pub(crate) min_block_size: Option<Size>,
+    pub(crate) min_inline_size: Option<Size>,
+    pub(crate) max_block_size: Option<MaxSize>,
+    pub(crate) max_inline_size: Option<MaxSize>,
+    pub(crate) has_any: bool,
+    pub(crate) flushed_properties: SizeProperty,
+    pub(crate) category: PropertyCategory,
 }
 
 // `context.arena` was dropped from PropertyHandlerContext; the
@@ -811,11 +811,7 @@ impl SizeHandler {
         true
     }
 
-    pub(crate) fn flush(
-        &mut self,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
-    ) {
+    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }

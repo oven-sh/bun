@@ -160,9 +160,9 @@ pub struct ZlibReader<'a, W, const BUFFER_SIZE: usize> {
     pub context: W,
     pub input: &'a [u8],
     pub buf: [u8; BUFFER_SIZE],
-    pub zlib: zStream_struct,
+    pub(crate) zlib: zStream_struct,
     // allocator field dropped (global mimalloc)
-    pub state: ZlibReaderState,
+    pub(crate) state: ZlibReaderState,
 }
 
 pub use bun_core::compress::State;
@@ -171,7 +171,7 @@ pub type ZlibReaderArrayListState = State;
 pub type ZlibCompressorArrayListState = State;
 
 impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         if self.state == ZlibReaderState::Inflating {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
             unsafe { inflateEnd(&raw mut self.zlib) };
@@ -267,12 +267,11 @@ mod ZlibAllocator {
 }
 
 pub struct ZlibReaderArrayList<'a> {
-    pub input: &'a [u8],
     // We operate directly through `list_ptr` (a `&'a mut Vec<u8>`).
-    pub list_ptr: &'a mut Vec<u8>,
-    pub zlib: zStream_struct,
+    pub(crate) list_ptr: &'a mut Vec<u8>,
+    pub(crate) zlib: zStream_struct,
     // allocator field dropped (global mimalloc)
-    pub state: ZlibReaderArrayListState,
+    pub(crate) state: ZlibReaderArrayListState,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
     pub max_output_size: usize,
@@ -285,7 +284,7 @@ impl<'a> Drop for ZlibReaderArrayList<'a> {
 }
 
 impl<'a> ZlibReaderArrayList<'a> {
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         // always free with `inflateEnd`
         if self.state != ZlibReaderArrayListState::End {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
@@ -312,13 +311,12 @@ impl<'a> ZlibReaderArrayList<'a> {
     }
 
     // list_allocator/allocator params dropped (global mimalloc).
-    pub fn init_with_options_and_list_allocator(
+    pub(crate) fn init_with_options_and_list_allocator(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
         options: Options,
     ) -> Result<Box<Self>, ZlibError> {
         let mut zlib_reader = Box::new(Self {
-            input,
             list_ptr: list,
             zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
@@ -786,16 +784,15 @@ impl NodeMode {
 
 /// Not for streaming!
 pub struct ZlibCompressorArrayList<'a> {
-    pub input: &'a [u8],
     // We operate directly through `list_ptr` (a `&'a mut Vec<u8>`).
-    pub list_ptr: &'a mut Vec<u8>,
-    pub zlib: zStream_struct,
+    pub(crate) list_ptr: &'a mut Vec<u8>,
+    pub(crate) zlib: zStream_struct,
     // allocator field dropped (global mimalloc)
-    pub state: ZlibCompressorArrayListState,
+    pub(crate) state: ZlibCompressorArrayListState,
 }
 
 impl<'a> ZlibCompressorArrayList<'a> {
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         if self.state != ZlibCompressorArrayListState::End {
             // SAFETY: zlib was initialized via deflateInit2_; safe to end.
             unsafe { deflateEnd(&raw mut self.zlib) };
@@ -812,13 +809,12 @@ impl<'a> ZlibCompressorArrayList<'a> {
     }
 
     // allocator/list_allocator params dropped (global mimalloc).
-    pub fn init_with_list_allocator(
+    pub(crate) fn init_with_list_allocator(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
         options: Options,
     ) -> Result<Box<Self>, ZlibError> {
         let mut zlib_reader = Box::new(Self {
-            input,
             list_ptr: list,
             zlib: bun_core::ffi::zeroed(),
             state: ZlibCompressorArrayListState::Uninitialized,
@@ -1086,9 +1082,9 @@ impl Drop for DeflateEncoder {
 /// RAII inflate (decompression) stream. `inflateEnd` on drop.
 pub struct InflateDecoder {
     strm: Box<zStream_struct>,
-    pub state: State,
+    pub(crate) state: State,
     /// Decompression-bomb guard for [`decompress`](Self::decompress).
-    pub max_output_size: usize,
+    pub(crate) max_output_size: usize,
     /// RFC 1952 §2.2: a gzip file is a sequence of members. When true (set
     /// for gzip-only `window_bits`), [`decompress`](Self::decompress) resets
     /// on `Z_STREAM_END` and continues if input remains, so concatenated

@@ -37,12 +37,12 @@ pub mod standalone_path {
     /// `/$bunfs/` (POSIX) — 8 bytes for one u64 compare; `$` avoids colliding
     /// with a real path. Windows uses a drive-letter form so file URLs validate.
     #[cfg(not(windows))]
-    pub const BASE_PATH: &str = "/$bunfs/";
+    pub(crate) const BASE_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
     pub const BASE_PATH: &str = "B:\\~BUN\\";
 
     #[cfg(not(windows))]
-    pub const BASE_PUBLIC_PATH: &str = "/$bunfs/";
+    pub(crate) const BASE_PUBLIC_PATH: &str = "/$bunfs/";
     #[cfg(windows)]
     pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 
@@ -51,7 +51,7 @@ pub mod standalone_path {
         const_format::concatcp!(BASE_PUBLIC_PATH, "root/");
 
     #[inline]
-    pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
+    fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
         str_.starts_with(BASE_PATH.as_bytes())
             || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))
     }

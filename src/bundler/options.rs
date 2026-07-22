@@ -38,7 +38,7 @@ mod bun_http {
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
-pub fn validate_path(
+pub(crate) fn validate_path(
     log: &mut bun_ast::Log,
     _fs: &mut Fs::Implementation,
     cwd: &[u8],
@@ -87,7 +87,7 @@ pub use bun_resolver::options::{ExternalModules, WildcardPattern};
 /// Free fn (not an inherent
 /// method) because `ExternalModules` is now a foreign type and Rust forbids
 /// inherent impls across crates (E0116).
-pub fn is_node_builtin(str: &[u8]) -> bool {
+pub(crate) fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
@@ -110,7 +110,7 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
 /// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
-pub fn init_external_modules(
+pub(crate) fn init_external_modules(
     fs: &mut Fs::Implementation,
     cwd: &[u8],
     externals: &[&[u8]],
@@ -205,7 +205,7 @@ pub(crate) use bun_ast::Target;
 // module-level name for callers that pre-date it.
 pub use bun_ast::target::TARGET_MAP;
 
-pub const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
+pub(crate) const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
     b"browser",
     b"module",
     b"main",
@@ -419,7 +419,7 @@ pub type OpaqueBlob = *mut ();
 
 pub use crate::{VmLoaderCtx, VmLoaderCtxKind};
 
-pub fn normalize_specifier<'a>(
+pub(crate) fn normalize_specifier<'a>(
     jsc_vm: &VmLoaderCtx,
     slice_: &'a [u8],
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
@@ -709,10 +709,10 @@ fn default_loaders_match_table() {
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub struct ESMConditions {
-    pub default: ConditionsMap,
-    pub import: ConditionsMap,
-    pub require: ConditionsMap,
-    pub style: ConditionsMap,
+    pub(crate) default: ConditionsMap,
+    pub(crate) import: ConditionsMap,
+    pub(crate) require: ConditionsMap,
+    pub(crate) style: ConditionsMap,
 }
 
 impl ESMConditions {
@@ -810,17 +810,17 @@ impl ESMConditions {
 pub use bun_options_types::jsx;
 pub use jsx as JSX;
 
-pub mod default_user_defines {
+pub(crate) mod default_user_defines {
     // This must be globally scoped so it doesn't disappear
-    pub mod node_env {
-        pub const KEY: &[u8] = b"process.env.NODE_ENV";
+    pub(crate) mod node_env {
+        pub(crate) const KEY: &[u8] = b"process.env.NODE_ENV";
     }
-    pub mod process_browser_define {
-        pub const KEY: &[u8] = b"process.browser";
+    pub(crate) mod process_browser_define {
+        pub(crate) const KEY: &[u8] = b"process.browser";
     }
 }
 
-pub fn defines_from_transform_options(
+pub(crate) fn defines_from_transform_options(
     log: &mut bun_ast::Log,
     // PERF: borrowed, not owned — the caller (`load_defines`) holds
     // `transform_options` behind an `Arc`, so taking the `StringMap` by value
@@ -970,8 +970,8 @@ const DEFAULT_LOADER_EXT_BROWSER: &[&[u8]] = &[b".html"];
 
 #[derive(Debug, Clone)]
 pub struct ResolveFileExtensions {
-    pub node_modules: ResolveFileExtensionsGroup,
-    pub default: ResolveFileExtensionsGroup,
+    pub(crate) node_modules: ResolveFileExtensionsGroup,
+    pub(crate) default: ResolveFileExtensionsGroup,
 }
 
 impl Default for ResolveFileExtensions {
@@ -993,14 +993,14 @@ impl Default for ResolveFileExtensions {
 /// user-provided lists (e.g. `transform.extension_order`) can be stored without
 /// `Box::leak` (PORTING.md §Forbidden patterns).
 #[inline]
-pub(crate) fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
+fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
     s.iter().map(|b| Box::<[u8]>::from(*b)).collect()
 }
 
 #[derive(Debug, Clone)]
 pub struct ResolveFileExtensionsGroup {
-    pub esm: Box<[Box<[u8]>]>,
-    pub default: Box<[Box<[u8]>]>,
+    pub(crate) esm: Box<[Box<[u8]>]>,
+    pub(crate) default: Box<[Box<[u8]>]>,
 }
 
 impl Default for ResolveFileExtensionsGroup {
@@ -1101,7 +1101,7 @@ impl SourceMapOption {
         }
     }
 
-    pub fn has_external_files(self) -> bool {
+    pub(crate) fn has_external_files(self) -> bool {
         matches!(self, SourceMapOption::Linked | SourceMapOption::External)
     }
 }
@@ -1123,7 +1123,7 @@ pub enum PackagesOption {
 }
 
 impl PackagesOption {
-    pub fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
+    pub(crate) fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
         match packages.unwrap_or(api::PackagesMode::Bundle) {
             api::PackagesMode::External => PackagesOption::External,
             api::PackagesMode::Bundle => PackagesOption::Bundle,
@@ -1167,53 +1167,53 @@ pub struct BundleOptions<'a> {
     pub allow_runtime: bool,
 
     pub trim_unused_imports: Option<bool>,
-    pub mark_builtins_as_external: bool,
+    pub(crate) mark_builtins_as_external: bool,
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
-    pub inject: Option<Box<[Box<[u8]>]>>,
+    pub(crate) inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
-    pub origin: bun_url::OwnedURL,
-    pub output_dir_handle: Option<Dir>,
+    pub(crate) origin: bun_url::OwnedURL,
+    pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
-    pub write: bool,
-    pub preserve_symlinks: bool,
-    pub preserve_extensions: bool,
+    pub(crate) write: bool,
+    pub(crate) preserve_symlinks: bool,
+    pub(crate) preserve_extensions: bool,
     pub production: bool,
 
     // only used by bundle_v2
     pub output_format: Format,
 
-    pub tsconfig_override: Option<Box<[u8]>>,
+    pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
-    pub main_fields: Box<[Box<[u8]>]>,
+    pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
     /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
     /// `&'a mut` here would assert uniqueness for `'a` and make every access
     /// through those sibling raw pointers UB under stacked borrows.
     pub log: *mut bun_ast::Log,
-    pub external: ExternalModules,
+    pub(crate) external: ExternalModules,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
     pub entry_naming: Box<[u8]>,
     pub asset_naming: Box<[u8]>,
     pub chunk_naming: Box<[u8]>,
     pub public_path: Box<[u8]>,
-    pub extension_order: ResolveFileExtensions,
-    pub main_field_extension_order: &'static [&'static [u8]],
+    pub(crate) extension_order: ResolveFileExtensions,
+    pub(crate) main_field_extension_order: &'static [&'static [u8]],
     /// This list applies to all extension resolution cases. The runtime uses
     /// this for implementing `require.extensions`
-    pub extra_cjs_extensions: Box<[Box<[u8]>]>,
+    pub(crate) extra_cjs_extensions: Box<[Box<[u8]>]>,
     pub out_extensions: StringHashMap<&'static [u8]>,
     pub import_path_format: ImportPathFormat,
-    pub defines_loaded: bool,
+    pub(crate) defines_loaded: bool,
     pub env: Env,
     /// The raw API struct as passed to `from_api`. Kept around because a
     /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
@@ -1222,10 +1222,10 @@ pub struct BundleOptions<'a> {
     /// pointer-clone instead of a deep clone of the (large) peechy struct —
     /// workers never mutate it.
     pub transform_options: std::sync::Arc<api::TransformOptions>,
-    pub polyfill_node_globals: bool,
+    pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
     pub load_tsconfig_json: bool,
-    pub load_package_json: bool,
+    pub(crate) load_package_json: bool,
 
     pub rewrite_jest_for_tests: bool,
 
@@ -1297,7 +1297,7 @@ pub struct BundleOptions<'a> {
     /// This is not normally a safe transformation.
     ///
     /// So we have a list of packages which we know are safe to do this with.
-    pub unwrap_commonjs_packages: &'static [&'static [u8]],
+    pub(crate) unwrap_commonjs_packages: &'static [&'static [u8]],
 
     pub supports_multiple_outputs: bool,
 
@@ -1335,11 +1335,11 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 }
 
 impl<'a> BundleOptions<'a> {
-    pub fn is_test(&self) -> bool {
+    pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }
 
-    pub fn set_production(&mut self, value: bool) {
+    pub(crate) fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
             self.jsx.development = !value;
@@ -1355,7 +1355,7 @@ impl<'a> BundleOptions<'a> {
     /// These fields are owned as `Box`,
     /// so a per-worker clone allocates. Profile if it shows up on a hot path;
     /// the hot fields (`define`, `loaders`, `conditions`) are O(dozens) entries.
-    pub fn for_worker(&self) -> BundleOptions<'a> {
+    pub(crate) fn for_worker(&self) -> BundleOptions<'a> {
         debug_assert!(
             self.defines_loaded,
             "BundleOptions::for_worker requires configure_defines() to have run on the parent (env.defaults is not cloned)",
@@ -1490,7 +1490,7 @@ impl<'a> BundleOptions<'a> {
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
-    pub fn log(&self) -> &bun_ast::Log {
+    pub(crate) fn log(&self) -> &bun_ast::Log {
         // SAFETY: `self.log` is non-null after `from_api` and the caller-owned
         // arena `Log` it points to outlives `self`; see method doc.
         unsafe { &*self.log }
@@ -1505,7 +1505,7 @@ impl<'a> BundleOptions<'a> {
     /// that itself writes through the aliased `*mut Log`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn log_mut(&self) -> &mut bun_ast::Log {
+    pub(crate) fn log_mut(&self) -> &mut bun_ast::Log {
         // SAFETY: `self.log` is non-null and outlives `self`; caller upholds
         // the no-alias contract documented on this method.
         unsafe { &mut *self.log }
@@ -1515,11 +1515,11 @@ impl<'a> BundleOptions<'a> {
     /// erased (`*const ()` — runtime type lives behind `dispatch::DevServerVTable`),
     /// so no `&T` accessor is possible; bundler code only ever tests presence.
     #[inline]
-    pub fn has_dev_server(&self) -> bool {
+    pub(crate) fn has_dev_server(&self) -> bool {
         !self.dev_server.is_null()
     }
 
-    pub const DEFAULT_UNWRAP_COMMONJS_PACKAGES: &'static [&'static [u8]] = &[
+    pub(crate) const DEFAULT_UNWRAP_COMMONJS_PACKAGES: &'static [&'static [u8]] = &[
         b"react",
         b"react-is",
         b"react-dom",
@@ -1530,14 +1530,14 @@ impl<'a> BundleOptions<'a> {
     ];
 
     #[inline]
-    pub fn css_import_behavior(&self) -> api::CssInJsBehavior {
+    pub(crate) fn css_import_behavior(&self) -> api::CssInJsBehavior {
         match self.target {
             Target::Browser => api::CssInJsBehavior::AutoOnimportcss,
             _ => api::CssInJsBehavior::Facade,
         }
     }
 
-    pub fn load_defines(
+    pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
@@ -1601,7 +1601,7 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
-    pub fn from_api(
+    pub(crate) fn from_api(
         fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
@@ -1907,30 +1907,30 @@ pub enum ImportPathFormat {
     PackagePath,
 }
 
-pub mod bundle_options_defaults {
-    pub const EXTENSION_ORDER: &[&[u8]] = &[
+pub(crate) mod bundle_options_defaults {
+    pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
 
-    pub const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
+    pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
-    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+    pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
     ];
 
-    pub mod node_modules {
-        pub const EXTENSION_ORDER: &[&[u8]] = &[
+    pub(crate) mod node_modules {
+        pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
             b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
         ];
 
-        pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+        pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
             b".mjs", b".jsx", b".mts", b".js", b".cjs", b".tsx", b".ts", b".cts", b".json",
         ];
     }
 }
 
-pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
+pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
     // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(Dir::from_fd(d)),
@@ -1975,11 +1975,11 @@ pub use crate::output_file::OutputFile;
 pub struct TransformResult {
     pub errors: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
-    pub outbase: Box<[u8]>,
+    pub(crate) outbase: Box<[u8]>,
 }
 
 impl TransformResult {
-    pub fn init(
+    pub(crate) fn init(
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
         log: &mut bun_ast::Log,
@@ -2011,10 +2011,10 @@ type EnvList = MultiArrayList<EnvEntry>;
 pub struct Env {
     pub behavior: api::DotEnvBehavior,
     pub prefix: Box<[u8]>,
-    pub defaults: EnvList,
+    pub(crate) defaults: EnvList,
     // arena: dropped (global mimalloc)
     /// List of explicit env files to load (e..g specified by --env-file args)
-    pub files: Box<[Box<[u8]>]>,
+    pub(crate) files: Box<[Box<[u8]>]>,
 
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
@@ -2033,7 +2033,7 @@ impl Default for Env {
 }
 
 impl Env {
-    pub fn init() -> Env {
+    pub(crate) fn init() -> Env {
         Env {
             defaults: EnvList::default(),
             prefix: Box::default(),
@@ -2045,7 +2045,7 @@ impl Env {
 
     // For reading from API
 
-    pub fn to_api(&self) -> api::LoadedEnvConfig {
+    pub(crate) fn to_api(&self) -> api::LoadedEnvConfig {
         let slice = self.defaults.slice();
 
         api::LoadedEnvConfig {
@@ -2062,7 +2062,7 @@ impl Env {
 #[derive(Debug, Clone, Default)]
 pub struct PathTemplate {
     pub data: Box<[u8]>,
-    pub placeholder: Placeholder,
+    pub(crate) placeholder: Placeholder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -2076,7 +2076,7 @@ pub enum PlaceholderField {
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
-pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
+fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
     let needle: &[u8] = match field {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
@@ -2089,7 +2089,7 @@ pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool 
 
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
-pub(crate) fn path_template_print<W: bun_io::Write>(
+fn path_template_print<W: bun_io::Write>(
     writer: &mut W,
     data: &[u8],
     dir: &[u8],
@@ -2213,12 +2213,12 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
 }
 
 impl PathTemplate {
-    pub fn needs(&self, field: PlaceholderField) -> bool {
+    pub(crate) fn needs(&self, field: PlaceholderField) -> bool {
         path_template_needs(&self.data, field)
     }
 
     #[inline]
-    pub(crate) fn write_replacing_slashes_on_windows<W: bun_io::Write>(
+    fn write_replacing_slashes_on_windows<W: bun_io::Write>(
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {
@@ -2250,7 +2250,7 @@ impl PathTemplate {
         },
     };
 
-    pub const CHUNK_WITH_TARGET: PathTemplateConst = PathTemplateConst {
+    pub(crate) const CHUNK_WITH_TARGET: PathTemplateConst = PathTemplateConst {
         data: b"[dir]/[target]/chunk-[hash].[ext]",
         placeholder: PlaceholderConst {
             name: b"chunk",
@@ -2266,7 +2266,7 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub const FILE_WITH_TARGET: PathTemplateConst = PathTemplateConst {
+    pub(crate) const FILE_WITH_TARGET: PathTemplateConst = PathTemplateConst {
         data: b"[dir]/[target]/[name].[ext]",
         placeholder: PlaceholderConst::DEFAULT,
     };
@@ -2276,12 +2276,12 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub const ASSET_WITH_TARGET: PathTemplateConst = PathTemplateConst {
+    pub(crate) const ASSET_WITH_TARGET: PathTemplateConst = PathTemplateConst {
         data: b"[dir]/[target]/[name]-[hash].[ext]",
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub fn print<W: bun_io::Write>(
+    pub(crate) fn print<W: bun_io::Write>(
         &self,
         writer: &mut W,
         sanitize_parent_dirs: bool,
@@ -2301,11 +2301,11 @@ impl PathTemplate {
 
 #[derive(Debug, Clone, Default)]
 pub struct Placeholder {
-    pub dir: Box<[u8]>,
-    pub name: Box<[u8]>,
-    pub ext: Box<[u8]>,
-    pub hash: Option<u64>,
-    pub target: Box<[u8]>,
+    pub(crate) dir: Box<[u8]>,
+    pub(crate) name: Box<[u8]>,
+    pub(crate) ext: Box<[u8]>,
+    pub(crate) hash: Option<u64>,
+    pub(crate) target: Box<[u8]>,
 }
 
 // hoisted from `impl Placeholder` — Rust forbids `static` in inherent impls.
@@ -2322,21 +2322,21 @@ bun_core::comptime_string_map! {
 // PathTemplateConst is a const-friendly mirror of PathTemplate; convert to PathTemplate at use sites.
 #[derive(Debug, Clone, Copy)]
 pub struct PathTemplateConst {
-    pub data: &'static [u8],
-    pub placeholder: PlaceholderConst,
+    pub(crate) data: &'static [u8],
+    pub(crate) placeholder: PlaceholderConst,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlaceholderConst {
-    pub dir: &'static [u8],
-    pub name: &'static [u8],
-    pub ext: &'static [u8],
-    pub hash: Option<u64>,
-    pub target: &'static [u8],
+    pub(crate) dir: &'static [u8],
+    pub(crate) name: &'static [u8],
+    pub(crate) ext: &'static [u8],
+    pub(crate) hash: Option<u64>,
+    pub(crate) target: &'static [u8],
 }
 
 impl PlaceholderConst {
-    pub const DEFAULT: PlaceholderConst = PlaceholderConst {
+    pub(crate) const DEFAULT: PlaceholderConst = PlaceholderConst {
         dir: b"",
         name: b"",
         ext: b"",
@@ -2350,7 +2350,7 @@ impl PathTemplateConst {
     /// Kept as an inherent method so callers writing
     /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
     /// blanket [`core::fmt::Display`] impl below.
-    pub fn print<W: bun_io::Write>(
+    pub(crate) fn print<W: bun_io::Write>(
         &self,
         writer: &mut W,
         sanitize_parent_dirs: bool,

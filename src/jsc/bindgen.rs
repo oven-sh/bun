@@ -188,8 +188,8 @@ impl BindgenOptionalRepr for BindgenString {
 /// emitted by codegen alongside their consumers.
 #[repr(C)]
 pub struct ExternTaggedUnion2<T0, T1> {
-    pub data: ExternUnion2<T0, T1>,
-    pub tag: u8,
+    pub(crate) data: ExternUnion2<T0, T1>,
+    pub(crate) tag: u8,
 }
 
 /// Union fields are wrapped in `ManuallyDrop` so non-`Copy` payloads
@@ -199,7 +199,7 @@ pub struct ExternTaggedUnion2<T0, T1> {
 #[repr(C)]
 pub union ExternUnion2<T0, T1> {
     pub _0: ManuallyDrop<T0>,
-    pub _1: ManuallyDrop<T1>,
+    pub(crate) _1: ManuallyDrop<T1>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -346,9 +346,9 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
 pub struct ExternArrayList<Child> {
     // Single-word nullable pointer. `Option<*mut T>` has no niche
     // (two words) and would break the C ABI; use raw `*mut T` and check `.is_null()`.
-    pub data: *mut Child,
-    pub length: c_uint,
-    pub capacity: c_uint,
+    pub(crate) data: *mut Child,
+    pub(crate) length: c_uint,
+    pub(crate) capacity: c_uint,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

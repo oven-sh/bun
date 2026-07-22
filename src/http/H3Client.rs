@@ -20,13 +20,13 @@ use core::sync::atomic::AtomicU32;
 #[path = "h3_client/AltSvc.rs"]
 pub mod alt_svc;
 #[path = "h3_client/callbacks.rs"]
-pub mod callbacks;
+pub(crate) mod callbacks;
 #[path = "h3_client/ClientContext.rs"]
 pub mod client_context;
 #[path = "h3_client/ClientSession.rs"]
 pub mod client_session;
 #[path = "h3_client/encode.rs"]
-pub mod encode;
+pub(crate) mod encode;
 #[path = "h3_client/PendingConnect.rs"]
 pub mod pending_connect;
 #[path = "h3_client/Stream.rs"]
@@ -37,7 +37,7 @@ pub mod stream;
 // declaring it once here and importing it in each child.
 bun_core::declare_scope!(h3_client, hidden);
 
-pub use client_context::ClientContext;
+pub(crate) use client_context::ClientContext;
 pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
 pub use stream::Stream;

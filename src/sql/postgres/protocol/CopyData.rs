@@ -1,10 +1,9 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
-use crate::shared::Data;
 
 #[derive(Default)]
 pub struct CopyData {
-    pub data: Data, // default = Data::Empty
+    // default = Data::Empty
 }
 
 impl CopyData {
@@ -13,7 +12,7 @@ impl CopyData {
     ) -> Result<Self, AnyPostgresError> {
         let length = reader.length()?;
 
-        let data = reader.read(usize::try_from(length - 4).expect("int cast"))?;
-        Ok(Self { data })
+        reader.read(usize::try_from(length - 4).expect("int cast"))?;
+        Ok(Self {})
     }
 }

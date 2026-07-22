@@ -123,7 +123,7 @@ pub struct SyscallAccessor;
 
 #[derive(Clone, Copy)]
 pub struct SyscallHandle {
-    pub value: Fd,
+    pub(crate) value: Fd,
 }
 
 impl AccessorHandle for SyscallHandle {
@@ -245,25 +245,25 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     // PERF: per-walk allocations (paths, workbuf, matchedPaths) use the
     // global allocator; an arena could bulk-free them — profile if hot.
     /// not owned by this struct
-    pub pattern: Box<[u8]>,
+    pub(crate) pattern: Box<[u8]>,
 
-    pub end_byte_of_basename_excluding_special_syntax: u32,
-    pub basename_excluding_special_syntax_component_idx: u32,
+    pub(crate) end_byte_of_basename_excluding_special_syntax: u32,
+    pub(crate) basename_excluding_special_syntax_component_idx: u32,
 
-    pub pattern_components: Vec<Component>,
+    pub(crate) pattern_components: Vec<Component>,
     pub matched_paths: MatchedMap,
 
-    pub dot: bool,
-    pub absolute: bool,
+    pub(crate) dot: bool,
+    pub(crate) absolute: bool,
 
-    pub cwd: Box<[u8]>,
-    pub follow_symlinks: bool,
-    pub error_on_broken_symlinks: bool,
-    pub only_files: bool,
+    pub(crate) cwd: Box<[u8]>,
+    pub(crate) follow_symlinks: bool,
+    pub(crate) error_on_broken_symlinks: bool,
+    pub(crate) only_files: bool,
 
-    pub path_buf: Box<PathBuffer>,
+    pub(crate) path_buf: Box<PathBuffer>,
     // iteration state
-    pub workbuf: Vec<WorkItem<A>>,
+    pub(crate) workbuf: Vec<WorkItem<A>>,
 
     followed_links: Vec<FollowedLink>,
 
@@ -322,19 +322,19 @@ pub enum IterState<A: Accessor> {
 }
 
 pub struct Directory<A: Accessor> {
-    pub fd: A::Handle,
-    pub iter: A::DirIter,
-    pub path: Box<PathBuffer>,
+    pub(crate) fd: A::Handle,
+    pub(crate) iter: A::DirIter,
+    pub(crate) path: Box<PathBuffer>,
     // The dir path is a prefix of `path` (self-referential).
     // Store the length and reconstruct on demand.
-    pub dir_path_len: usize,
+    pub(crate) dir_path_len: usize,
 
     /// Active component indices. Multiple indices mean one readdir
     /// evaluates all of them instead of revisiting the directory.
-    pub active: ComponentSet,
+    pub(crate) active: ComponentSet,
 
-    pub iter_closed: bool,
-    pub at_cwd: bool,
+    pub(crate) iter_closed: bool,
+    pub(crate) at_cwd: bool,
 }
 
 impl<A: Accessor> Directory<A> {
@@ -350,14 +350,14 @@ impl<A: Accessor> Directory<A> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
-    pub walker: &'a mut GlobWalker<A, SENTINEL>,
-    pub iter_state: IterState<A>,
-    pub cwd_fd: A::Handle,
+    pub(crate) walker: &'a mut GlobWalker<A, SENTINEL>,
+    pub(crate) iter_state: IterState<A>,
+    pub(crate) cwd_fd: A::Handle,
     /// This is to make sure in debug/tests that we are closing file descriptors
     /// We should only have max 2 open at a time. One for the cwd, and one for the
     /// directory being iterated on.
     #[cfg(debug_assertions)]
-    pub fds_open: usize,
+    pub(crate) fds_open: usize,
 
     #[cfg(windows)]
     pub nt_filter_buf: [u16; 256],
@@ -521,7 +521,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    pub fn close_cwd_fd(&mut self) {
+    pub(crate) fn close_cwd_fd(&mut self) {
         if self.cwd_fd.is_empty() {
             return;
         }
@@ -534,7 +534,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
     }
 
-    pub fn close_disallowing_cwd(&mut self, fd: A::Handle) {
+    pub(crate) fn close_disallowing_cwd(&mut self, fd: A::Handle) {
         if fd.is_empty() || fd.eql(self.cwd_fd) {
             return;
         }
@@ -547,7 +547,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
     }
 
-    pub fn bump_open_fds(&mut self) {
+    pub(crate) fn bump_open_fds(&mut self) {
         if count_fds::<A>() {
             #[cfg(debug_assertions)]
             {
@@ -1277,12 +1277,12 @@ impl FollowedLink {
 }
 
 pub struct WorkItem<A: Accessor> {
-    pub path: Box<[u8]>,
+    pub(crate) path: Box<[u8]>,
     /// Bitmask of active component indices.
-    pub active: ComponentSet,
-    pub kind: WorkItemKind,
-    pub entry_start: u32,
-    pub fd: Option<A::Handle>,
+    pub(crate) active: ComponentSet,
+    pub(crate) kind: WorkItemKind,
+    pub(crate) entry_start: u32,
+    pub(crate) fd: Option<A::Handle>,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
     followed_links_len: usize,
@@ -1339,11 +1339,11 @@ impl<A: Accessor> WorkItem<A> {
 /// `src/**/*.ts` -> `src`, `**`, `*.ts`
 #[derive(Clone, Copy)]
 pub struct Component {
-    pub start: u32,
-    pub len: u32,
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 
-    pub syntax_hint: SyntaxHint,
-    pub trailing_sep: bool,
+    pub(crate) syntax_hint: SyntaxHint,
+    pub(crate) trailing_sep: bool,
 }
 
 impl Default for Component {
@@ -1358,7 +1358,7 @@ impl Default for Component {
 }
 
 impl Component {
-    pub fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
         let end = (self.start + self.len - u32::from(self.trailing_sep)) as usize;
         &pattern[self.start as usize..end]
     }
@@ -1417,7 +1417,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         )
     }
 
-    pub fn debug_pattern_components(&self) {
+    pub(crate) fn debug_pattern_components(&self) {
         let pattern = &self.pattern;
         let components = &self.pattern_components;
         let ptr = std::ptr::from_ref(self) as usize;
@@ -1486,7 +1486,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(this))
     }
 
-    pub fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
+    pub(crate) fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
         let src = path_buf.as_bytes();
         let copy_len = src.len().min(self.path_buf.len());
         // Several callers pass a `path_buf` that is itself a slice of
@@ -1604,7 +1604,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         component_idx
     }
 
-    pub fn skip_special_components(
+    pub(crate) fn skip_special_components(
         &self,
         work_item_idx: u32,
         dir_path_len: &mut usize,
@@ -1624,7 +1624,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// directly so callers can split-borrow it from `&mut self.path_buf`
     /// (the symlink branch in `Iterator::next` passes `self.path_buf` as
     /// `scratch_path_buf` while reading `pattern_components`).
-    pub fn skip_special_components_disjoint(
+    pub(crate) fn skip_special_components_disjoint(
         pattern_components: &[Component],
         work_item_idx: u32,
         dir_path_len: &mut usize,
@@ -2242,7 +2242,7 @@ impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
 // Free functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
+pub(crate) fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     let needle = &glob[1..];
     let needle_len: u32 = u32::try_from(needle.len()).expect("int cast");
     if path.len() < needle_len as usize {
@@ -2251,7 +2251,7 @@ pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     needle == &path[path.len() - needle_len as usize..]
 }
 
-pub fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
+pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
     literal == path
 }
 

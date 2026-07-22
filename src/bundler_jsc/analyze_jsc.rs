@@ -13,7 +13,7 @@ use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID
 use bun_bundler::analyze_transpiled_module as analyze;
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
     module_key: &IdentifierArray,
@@ -229,7 +229,7 @@ impl VariableEnvironment {
     // Forwards `identifier_array` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub fn add(
+    pub(crate) fn add(
         &mut self,
         vm: &VM,
         identifier_array: *mut IdentifierArray,
@@ -254,21 +254,21 @@ unsafe extern "C" {
 }
 impl IdentifierArray {
     #[inline]
-    pub fn create(len: usize) -> *mut IdentifierArray {
+    pub(crate) fn create(len: usize) -> *mut IdentifierArray {
         // SAFETY: FFI call; C++ side allocates.
         unsafe { JSC__IdentifierArray__create(len) }
     }
     /// # Safety
     /// `identifier_array` must be a pointer previously returned by `create` and not yet destroyed.
     #[inline]
-    pub unsafe fn destroy(identifier_array: *mut IdentifierArray) {
+    pub(crate) unsafe fn destroy(identifier_array: *mut IdentifierArray) {
         // SAFETY: caller contract — `identifier_array` came from `create` and has not been destroyed.
         unsafe { JSC__IdentifierArray__destroy(identifier_array) }
     }
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]
-    pub unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
+    pub(crate) unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
         // SAFETY: caller contract — `this` is live, `n` is in bounds; `str_` is a valid slice for the call.
         unsafe { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
     }
@@ -379,7 +379,7 @@ unsafe extern "C" {
 }
 impl JSModuleRecord {
     #[inline]
-    pub(crate) fn create(
+    fn create(
         global_object: &JSGlobalObject,
         vm: &VM,
         module_key: &IdentifierArray,

@@ -7,15 +7,15 @@ use bun_alloc::Arena;
 /// A [@custom-media](https://drafts.csswg.org/mediaqueries-5/#custom-mq) rule.
 pub struct CustomMediaRule {
     /// The name of the declared media query.
-    pub name: DashedIdent,
+    pub(crate) name: DashedIdent,
     /// The media query to declare.
-    pub query: MediaList,
+    pub(crate) query: MediaList,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl CustomMediaRule {
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             name: self.name,
             query: self.query.deep_clone(bump),
@@ -23,7 +23,7 @@ impl CustomMediaRule {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_str("@custom-media ")?;

@@ -79,7 +79,7 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
     /// Manual return path. Prefer dropping
     /// the `PoolGuard` instead.
-    pub(crate) fn put(buf: Box<T>) {
+    pub fn put(buf: Box<T>) {
         T::with_pool(|p| {
             let mut p = p.borrow_mut();
             if p.len() < POOL_CAP {
@@ -142,7 +142,7 @@ impl<T: PoolStorage> PoolGuard<T> {
     /// owners that will `put` explicitly later). `Drop` is a no-op once `buf`
     /// is `None`, so no leak.
     #[inline]
-    pub fn into_box(mut self) -> Box<T> {
+    pub(crate) fn into_box(mut self) -> Box<T> {
         self.buf.take().unwrap()
     }
 }

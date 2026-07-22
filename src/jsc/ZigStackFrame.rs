@@ -37,12 +37,12 @@ impl ZigStackFrame {
     /// the array elements are then later dropped by Rust when `Holder` itself
     /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
     /// time (UAF). Explicit `deinit` only.
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.function_name.deref();
         self.source_url.deref();
     }
 
-    pub fn to_api(
+    pub(crate) fn to_api(
         &self,
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
@@ -76,7 +76,7 @@ impl ZigStackFrame {
         Ok(frame)
     }
 
-    pub const ZERO: ZigStackFrame = ZigStackFrame {
+    pub(crate) const ZERO: ZigStackFrame = ZigStackFrame {
         function_name: BunString::EMPTY,
         code_type: ZigStackFrameCode::NONE,
         source_url: BunString::EMPTY,
@@ -86,7 +86,7 @@ impl ZigStackFrame {
         jsc_stack_frame_index: -1,
     };
 
-    pub fn name_formatter(&self, enable_color: bool) -> NameFormatter {
+    pub(crate) fn name_formatter(&self, enable_color: bool) -> NameFormatter {
         NameFormatter {
             function_name: self.function_name,
             code_type: self.code_type,
@@ -95,7 +95,7 @@ impl ZigStackFrame {
         }
     }
 
-    pub fn source_url_formatter<'a>(
+    pub(crate) fn source_url_formatter<'a>(
         &self,
         root_path: &'a [u8],
         origin: Option<&'a ZigURL<'a>>,
@@ -115,13 +115,13 @@ impl ZigStackFrame {
 }
 
 pub struct SourceURLFormatter<'a> {
-    pub source_url: BunString,
-    pub position: ZigStackFramePosition,
-    pub enable_color: bool,
-    pub origin: Option<&'a ZigURL<'a>>,
-    pub exclude_line_column: bool,
-    pub remapped: bool,
-    pub root_path: &'a [u8],
+    pub(crate) source_url: BunString,
+    pub(crate) position: ZigStackFramePosition,
+    pub(crate) enable_color: bool,
+    pub(crate) origin: Option<&'a ZigURL<'a>>,
+    pub(crate) exclude_line_column: bool,
+    pub(crate) remapped: bool,
+    pub(crate) root_path: &'a [u8],
 }
 
 impl<'a> fmt::Display for SourceURLFormatter<'a> {
@@ -224,10 +224,10 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 }
 
 pub struct NameFormatter {
-    pub function_name: BunString,
-    pub code_type: ZigStackFrameCode,
-    pub enable_color: bool,
-    pub is_async: bool,
+    pub(crate) function_name: BunString,
+    pub(crate) code_type: ZigStackFrameCode,
+    pub(crate) enable_color: bool,
+    pub(crate) is_async: bool,
 }
 
 impl fmt::Display for NameFormatter {

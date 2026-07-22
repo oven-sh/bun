@@ -31,7 +31,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
     // and only writes back when the visitor produces a *different* node.
     #[inline]
-    pub fn visit_expr(&mut self, e: &mut Expr) {
+    pub(crate) fn visit_expr(&mut self, e: &mut Expr) {
         // SCAN_ONLY monomorphizations must never reach the visit pass.
         debug_assert!(
             !SCAN_ONLY,
@@ -40,7 +40,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
-    pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+    pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(e.loc);
             return;

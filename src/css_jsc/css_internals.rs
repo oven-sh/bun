@@ -84,7 +84,7 @@ fn eat_string_arg(
     Ok(OwnedString::new(arg.to_bun_string(global)?))
 }
 
-pub(crate) fn testing_impl(
+fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,
     test_kind: TestKind,

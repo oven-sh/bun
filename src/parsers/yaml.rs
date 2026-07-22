@@ -35,10 +35,7 @@ impl YAML {
         let stream = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
-                let err = ParseResult::<Utf8>::fail(e, &parser);
-                if let ParseResult::Err(err) = err {
-                    err.add_to_log(source, log)?;
-                }
+                ParseResultError::from_parse_error(e, &parser).add_to_log(source, log)?;
                 return Err(YamlParseError::SyntaxError);
             }
         };
@@ -90,27 +87,6 @@ impl From<YamlParseError> for crate::Error {
 // ───────────────────────────────────────────────────────────────────────────
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
-
-pub fn parse<'i, Enc: Encoding>(
-    bump: &'i bun_alloc::Arena,
-    input: &'i [Enc::Unit],
-) -> ParseResult<'i, Enc> {
-    let mut parser: Parser<Enc> = Parser::init(bump, input);
-
-    match parser.parse() {
-        Ok(stream) => ParseResult::success(stream, &parser),
-        Err(err) => ParseResult::fail(err, &parser),
-    }
-}
-
-pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut W) -> fmt::Result {
-    // The printer was never implemented; this is a hard panic on the
-    // (currently unreachable — `rg yaml::print src/` has no callers) path.
-    let _ = (stream, writer);
-    panic!(
-        "yaml::print: Printer is commented out in the Zig original (dead-by-spec; uses removed Node type)"
-    );
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Context
@@ -1795,10 +1771,8 @@ fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
     }
 }
 
-pub struct Stream<'i, Enc: Encoding> {
+pub struct Stream {
     pub docs: Vec<Document>,
-    /// Borrows the parser input.
-    pub input: &'i [Enc::Unit],
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2032,18 +2006,8 @@ impl<Enc: Encoding> Token<Enc> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ParseResult
+// ParseResultError
 // ───────────────────────────────────────────────────────────────────────────
-
-pub enum ParseResult<'i, Enc: Encoding> {
-    Result(ParseResultOk<'i, Enc>),
-    Err(ParseResultError),
-}
-
-pub struct ParseResultOk<'i, Enc: Encoding> {
-    pub stream: Stream<'i, Enc>,
-    // allocator dropped — global mimalloc
-}
 
 pub enum ParseResultError {
     Oom,
@@ -2128,13 +2092,9 @@ impl ParseResultError {
     }
 }
 
-impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
-    pub fn success(stream: Stream<'i, Enc>, _parser: &Parser<'_, Enc>) -> Self {
-        ParseResult::Result(ParseResultOk { stream })
-    }
-
-    pub fn fail(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
-        let e = match err {
+impl ParseResultError {
+    pub fn from_parse_error<Enc: Encoding>(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
+        match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
             ParseError::UnexpectedToken => ParseResultError::UnexpectedToken {
@@ -2186,8 +2146,7 @@ impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
-        };
-        ParseResult::Err(e)
+        }
     }
 }
 
@@ -2287,7 +2246,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
-    pub fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
+    pub fn parse(&mut self) -> Result<Stream, ParseError> {
         self.scan(ScanOptions {
             first_scan: true,
             ..Default::default()
@@ -2295,7 +2254,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.parse_stream()
     }
 
-    pub fn parse_stream(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
+    pub fn parse_stream(&mut self) -> Result<Stream, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
         // we want one null document if eof, not zero documents.
@@ -2306,10 +2265,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             docs.push(doc);
         }
 
-        Ok(Stream {
-            docs,
-            input: self.input,
-        })
+        Ok(Stream { docs })
     }
 
     fn peek(&self, n: usize) -> Enc::Unit {

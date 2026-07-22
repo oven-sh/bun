@@ -401,13 +401,13 @@ impl EventLoopHandle {
         }
     }
 
-    pub fn enter(self) {
+    pub(crate) fn enter(self) {
         if let EventLoopHandle::Js { owner } = self {
             owner.enter();
         }
     }
 
-    pub fn exit(self) {
+    pub(crate) fn exit(self) {
         if let EventLoopHandle::Js { owner } = self {
             owner.exit();
         }

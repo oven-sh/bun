@@ -53,7 +53,7 @@ impl MaxHeapAllocator {
     /// No-op (single owned buffer freed on Drop).
     pub fn free(&mut self, _buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {}
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.len = 0;
     }
 

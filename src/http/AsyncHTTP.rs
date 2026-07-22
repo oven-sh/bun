@@ -33,7 +33,7 @@ pub struct AsyncHTTP<'a> {
     // Caller-owned response buffer (raw pointer, lifetime-erased); never freed here.
     pub response_buffer: *mut MutableString,
     pub request_body: HTTPRequestBody<'a>,
-    pub method: Method,
+    pub(crate) method: Method,
     pub url: URL<'a>,
     // Backref to the JS-thread `real` AsyncHTTP this HTTP-thread copy mirrors.
     // Cleared in finalize. Same `'a` — the copy never outlives the original.
@@ -41,10 +41,10 @@ pub struct AsyncHTTP<'a> {
     /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
     /// Lifetime-erased (`'static`) — the queue mixes requests with unrelated
     /// borrow scopes; consumers never read borrowed fields through `next`.
-    pub next: bun_threading::Link<AsyncHTTP<'static>>,
+    pub(crate) next: bun_threading::Link<AsyncHTTP<'static>>,
 
-    pub task: thread_pool::Task,
-    pub result_callback: HTTPClientResultCallback,
+    pub(crate) task: thread_pool::Task,
+    pub(crate) result_callback: HTTPClientResultCallback,
 
     pub client: HTTPClient<'a>,
     pub err: Option<crate::Error>,
@@ -52,7 +52,7 @@ pub struct AsyncHTTP<'a> {
 
     pub elapsed: u64,
 
-    pub signals: Signals,
+    pub(crate) signals: Signals,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
@@ -68,7 +68,7 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
     }
 }
 
-pub static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -276,7 +276,7 @@ impl<'a> AsyncHTTP<'a> {
     /// Erase the borrow lifetime for storage in intrusive queues / raw-pointer
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]
-    pub fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
+    pub(crate) fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
         std::ptr::from_ref::<Self>(self)
             .cast_mut()
             .cast::<AsyncHTTP<'static>>()
@@ -560,13 +560,13 @@ impl<'a> AsyncHTTP<'a> {
 // Note: `bun_threading::Channel` requires `T: Copy`, which
 // `HTTPClientResult` is not. `send_sync` is a one-shot blocking handoff, so a
 // Guarded<Option<T>>+Condvar is the exact semantics needed.
-pub struct SingleHTTPChannel {
+pub(crate) struct SingleHTTPChannel {
     slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
     cv: bun_threading::Condvar,
 }
 
 impl SingleHTTPChannel {
-    pub fn init() -> SingleHTTPChannel {
+    pub(crate) fn init() -> SingleHTTPChannel {
         SingleHTTPChannel {
             slot: bun_threading::Guarded::new(None),
             cv: bun_threading::Condvar::new(),
@@ -832,7 +832,7 @@ impl<'a> AsyncHTTP<'a> {
 /// # Safety
 /// `task` must point to the `task` field of a live `AsyncHTTP` scheduled via
 /// `schedule()`.
-pub unsafe fn start_async_http(task: *mut Task) {
+pub(crate) unsafe fn start_async_http(task: *mut Task) {
     // SAFETY: caller upholds the invariant above — `from_task_ptr` recovers the
     // live heap `AsyncHTTP` parent via container_of; the trampoline is its sole
     // borrower (HTTP-thread-only). Same single-step shape as every other
@@ -842,7 +842,7 @@ pub unsafe fn start_async_http(task: *mut Task) {
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn on_start(&mut self) {
+    pub(crate) fn on_start(&mut self) {
         let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
         self.err = None;
         self.client.result_callback = HTTPClientResultCallback::new::<AsyncHTTP<'static>>(

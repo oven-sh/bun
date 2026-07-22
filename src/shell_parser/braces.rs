@@ -39,8 +39,8 @@ struct SrcAscii {
 // encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
 pub struct InputChar {
-    pub char: u32,
-    pub escaped: bool,
+    char: u32,
+    escaped: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -263,8 +263,8 @@ impl ExpansionVariant {
 
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub struct ExpansionVariants {
-    pub idx: u16,
-    pub end: u16,
+    idx: u16,
+    end: u16,
 }
 
 #[derive(bun_core::EnumTag)]
@@ -334,7 +334,7 @@ pub enum TokenTag {
 }
 
 impl Token {
-    pub fn to_text(&self) -> SmolStr {
+    fn to_text(&self) -> SmolStr {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
@@ -471,9 +471,9 @@ pub mod ast {
 
     pub struct Group {
         /// BACKREF: child points back to owning parent Group (LIFETIMES.tsv).
-        pub bubble_up: *mut Group,
-        pub bubble_up_next: Option<u16>,
-        pub atoms: GroupAtoms,
+        pub(crate) bubble_up: *mut Group,
+        pub(crate) bubble_up_next: Option<u16>,
+        pub(crate) atoms: GroupAtoms,
     }
 
     impl Default for Group {
@@ -489,7 +489,7 @@ pub mod ast {
     pub struct Expansion {
         // bump-owned mutable slice; raw because expand_nested writes
         // bubble_up backrefs into elements while recursing through the parent.
-        pub variants: *mut [Group],
+        pub(crate) variants: *mut [Group],
     }
 }
 

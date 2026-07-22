@@ -69,7 +69,7 @@ impl<T, const BUFFER_CAPACITY: usize> Drop for BoundedArrayAligned<T, BUFFER_CAP
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     /// Set the actual length of the slice.
     /// Returns error.Overflow if it exceeds the length of the backing array.
-    pub fn init(len: usize) -> Result<Self, OverflowError> {
+    fn init(len: usize) -> Result<Self, OverflowError> {
         if len > BUFFER_CAPACITY {
             return Err(OverflowError::Overflow);
         }
@@ -139,7 +139,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     }
 
     /// Check that the slice can hold at least `additional_count` items.
-    pub fn ensure_unused_capacity(&self, additional_count: usize) -> Result<(), OverflowError> {
+    fn ensure_unused_capacity(&self, additional_count: usize) -> Result<(), OverflowError> {
         if self.len + additional_count > BUFFER_CAPACITY {
             return Err(OverflowError::Overflow);
         }
@@ -225,7 +225,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.const_slice()
     }
     #[inline]
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [T] {
         self.slice()
     }
     #[inline]
@@ -233,7 +233,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.append(item)
     }
     #[inline]
-    pub fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
+    pub(crate) fn extend_from_slice(&mut self, items: &[T]) -> Result<(), OverflowError>
     where
         T: Copy,
     {

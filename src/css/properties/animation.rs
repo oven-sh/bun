@@ -12,23 +12,23 @@ use bun_core::strings;
 #[derive(CssEql)]
 pub struct Animation {
     /// The animation name.
-    pub name: AnimationName,
+    pub(crate) name: AnimationName,
     /// The animation duration.
-    pub duration: Time,
+    pub(crate) duration: Time,
     /// The easing function for the animation.
-    pub timing_function: EasingFunction,
+    pub(crate) timing_function: EasingFunction,
     /// The number of times the animation will run.
-    pub iteration_count: AnimationIterationCount,
+    pub(crate) iteration_count: AnimationIterationCount,
     /// The direction of the animation.
-    pub direction: AnimationDirection,
+    pub(crate) direction: AnimationDirection,
     /// The current play state of the animation.
-    pub play_state: AnimationPlayState,
+    pub(crate) play_state: AnimationPlayState,
     /// The animation delay.
-    pub delay: Time,
+    pub(crate) delay: Time,
     /// The animation fill mode.
-    pub fill_mode: AnimationFillMode,
+    pub(crate) fill_mode: AnimationFillMode,
     /// The animation timeline.
-    pub timeline: AnimationTimeline,
+    pub(crate) timeline: AnimationTimeline,
 }
 
 impl Animation {
@@ -51,7 +51,7 @@ impl Animation {
     // expansion has nothing to map to yet. Re-add the field→PropertyIdTag table
     // once those longhand variants land.
 
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut name: Option<AnimationName> = None;
         let mut duration: Option<Time> = None;
         let mut timing_function: Option<EasingFunction> = None;
@@ -133,7 +133,7 @@ impl Animation {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Extract the inner string slice up front so both the ident and
         // string variants share one code path.
         let name_str: Option<&[u8]> = match &self.name {
@@ -267,7 +267,7 @@ impl AnimationName {
     // hand-written (not `#[derive]`) because `CSSString` is a raw
     // `*const [u8]` arena pointer — generics blanket impls cover `&[u8]` but
     // not raw slices.
-    pub fn eql(&self, other: &Self) -> bool {
+    pub(crate) fn eql(&self, other: &Self) -> bool {
         match (self, other) {
             (AnimationName::None, AnimationName::None) => true,
             (AnimationName::Ident(a), AnimationName::Ident(b)) => {
@@ -282,7 +282,7 @@ impl AnimationName {
         }
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         match self {
             AnimationName::None => hasher.update(&0u32.to_ne_bytes()),
             AnimationName::Ident(i) => {
@@ -298,7 +298,7 @@ impl AnimationName {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // All payloads are `Copy` (arena slice pointers); identity copy.
         match self {
             AnimationName::None => AnimationName::None,
@@ -307,7 +307,7 @@ impl AnimationName {
         }
     }
 
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         // `none` keyword, then `<string>`, else `<custom-ident>`.
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
@@ -326,7 +326,7 @@ impl AnimationName {
         Ok(AnimationName::Ident(ident))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
             css_module.config.animation
         } else {
@@ -336,30 +336,11 @@ impl AnimationName {
         match self {
             AnimationName::None => return dest.write_str("none"),
             AnimationName::Ident(s) => {
-                // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { crate::arena_str(s.v) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck — capture arena/source_index
-                    // before borrowing dest.css_module mutably.
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
-                }
                 return s.to_css_with_options(dest, css_module_animation_enabled);
             }
             AnimationName::String(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(*s) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
-                }
 
                 // CSS-wide keywords and `none` cannot remove quotes
                 if strings::eql_case_insensitive_ascii_check_length(name, b"none")
@@ -386,7 +367,7 @@ pub enum AnimationIterationCount {
 impl AnimationIterationCount {
     // Port of `css.DeriveParse(@This()).parse` — payload (`number: f32`) declared
     // first, single void variant (`infinite`) last → try number, then ident.
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(v) = input.try_parse(CSSNumberFns::parse) {
             return Ok(AnimationIterationCount::Number(v));
         }
@@ -395,14 +376,14 @@ impl AnimationIterationCount {
     }
 
     // Port of `css.DeriveToCss(@This()).toCss`.
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }
 
-    pub fn default() -> AnimationIterationCount {
+    pub(crate) fn default() -> AnimationIterationCount {
         AnimationIterationCount::Number(1.0)
     }
 }
@@ -421,7 +402,7 @@ pub enum AnimationDirection {
 }
 
 impl AnimationDirection {
-    pub fn default() -> AnimationDirection {
+    pub(crate) fn default() -> AnimationDirection {
         AnimationDirection::Normal
     }
 }
@@ -436,7 +417,7 @@ pub enum AnimationPlayState {
 }
 
 impl AnimationPlayState {
-    pub fn default() -> AnimationPlayState {
+    pub(crate) fn default() -> AnimationPlayState {
         AnimationPlayState::Running
     }
 }
@@ -455,7 +436,7 @@ pub enum AnimationFillMode {
 }
 
 impl AnimationFillMode {
-    pub fn default() -> AnimationFillMode {
+    pub(crate) fn default() -> AnimationFillMode {
         AnimationFillMode::None
     }
 }
@@ -471,7 +452,7 @@ pub enum AnimationTimeline {
 }
 
 impl AnimationTimeline {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
             if strings::eql_case_insensitive_ascii_check_length(ident, b"auto") {
@@ -487,7 +468,7 @@ impl AnimationTimeline {
         DashedIdent::parse(input).map(AnimationTimeline::DashedIdent)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             AnimationTimeline::Auto => dest.write_str(b"auto"),
             AnimationTimeline::None => dest.write_str(b"none"),
@@ -495,11 +476,11 @@ impl AnimationTimeline {
         }
     }
 
-    pub fn default() -> AnimationTimeline {
+    pub(crate) fn default() -> AnimationTimeline {
         AnimationTimeline::Auto
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         match self {
             AnimationTimeline::Auto => AnimationTimeline::Auto,
             AnimationTimeline::None => AnimationTimeline::None,

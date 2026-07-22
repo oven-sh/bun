@@ -14,23 +14,23 @@ impl WeakPtrData {
     const FINALIZED_BIT: u32 = 0x8000_0000; // bit 31
 
     #[inline]
-    pub fn reference_count(self) -> u32 {
+    fn reference_count(self) -> u32 {
         self.0 & Self::REF_MASK
     }
 
     #[inline]
-    pub fn set_reference_count(&mut self, n: u32) {
+    fn set_reference_count(&mut self, n: u32) {
         debug_assert!(n <= Self::REF_MASK);
         self.0 = (self.0 & Self::FINALIZED_BIT) | (n & Self::REF_MASK);
     }
 
     #[inline]
-    pub fn finalized(self) -> bool {
+    fn finalized(self) -> bool {
         (self.0 & Self::FINALIZED_BIT) != 0
     }
 
     #[inline]
-    pub fn set_finalized(&mut self, v: bool) {
+    fn set_finalized(&mut self, v: bool) {
         if v {
             self.0 |= Self::FINALIZED_BIT;
         } else {

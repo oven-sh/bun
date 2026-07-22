@@ -77,36 +77,36 @@ pub enum ModuleType {
 pub struct Encoding(u8);
 
 impl Encoding {
-    pub const NONE: Encoding = Encoding(0);
-    pub const UTF8: Encoding = Encoding(1);
-    pub const UTF16: Encoding = Encoding(2);
-    pub const LATIN1: Encoding = Encoding(3);
+    pub(crate) const NONE: Encoding = Encoding(0);
+    pub(crate) const UTF8: Encoding = Encoding(1);
+    pub(crate) const UTF16: Encoding = Encoding(2);
+    pub(crate) const LATIN1: Encoding = Encoding(3);
 }
 
 // Copy is intentional despite the ~120-byte size: Metadata is the
 // fixed-layout cache-entry header passed by value through encode/decode/verify.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Metadata {
-    pub cache_version: u32,
-    pub output_encoding: Encoding,
+    pub(crate) cache_version: u32,
+    pub(crate) output_encoding: Encoding,
     pub module_type: ModuleType,
 
-    pub features_hash: u64,
+    pub(crate) features_hash: u64,
 
-    pub input_byte_length: u64,
-    pub input_hash: u64,
+    pub(crate) input_byte_length: u64,
+    pub(crate) input_hash: u64,
 
-    pub output_byte_offset: u64,
-    pub output_byte_length: u64,
-    pub output_hash: u64,
+    pub(crate) output_byte_offset: u64,
+    pub(crate) output_byte_length: u64,
+    pub(crate) output_hash: u64,
 
-    pub sourcemap_byte_offset: u64,
-    pub sourcemap_byte_length: u64,
-    pub sourcemap_hash: u64,
+    pub(crate) sourcemap_byte_offset: u64,
+    pub(crate) sourcemap_byte_length: u64,
+    pub(crate) sourcemap_hash: u64,
 
-    pub esm_record_byte_offset: u64,
-    pub esm_record_byte_length: u64,
-    pub esm_record_hash: u64,
+    pub(crate) esm_record_byte_offset: u64,
+    pub(crate) esm_record_byte_length: u64,
+    pub(crate) esm_record_hash: u64,
 }
 
 impl Default for Metadata {
@@ -133,9 +133,9 @@ impl Default for Metadata {
 
 impl Metadata {
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
-    pub fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
+    pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
@@ -162,7 +162,7 @@ impl Metadata {
     /// Both call sites (`from_file_with_cache_file_path`, the debug round-trip
     /// in `Entry::save`) drive this from a fixed buffer, so accept the concrete
     /// `bun_io::FixedBufferStream` over a borrowed slice.
-    pub fn decode(
+    pub(crate) fn decode(
         &mut self,
         reader: &mut bun_io::FixedBufferStream<&[u8]>,
     ) -> crate::CrateResult<()> {
@@ -227,7 +227,7 @@ impl Default for OutputCode {
 }
 
 impl OutputCode {
-    pub fn byte_slice(&self) -> &[u8] {
+    pub(crate) fn byte_slice(&self) -> &[u8] {
         match self {
             OutputCode::Utf8(b) => b,
             OutputCode::String(s) => s.byte_slice(),
@@ -251,13 +251,15 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn deinit(&mut self) {
+    #[cfg(bun_debug)]
+    #[cfg(bun_debug)]
+    pub(crate) fn deinit(&mut self) {
         self.output_code.deinit();
         self.sourcemap = Box::default();
         self.esm_record = Box::default();
     }
 
-    pub fn save(
+    pub(crate) fn save(
         destination_dir: Fd,
         destination_path: &ZStr,
         input_byte_length: u64,
@@ -424,7 +426,7 @@ impl Entry {
         Ok(())
     }
 
-    pub fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
+    pub(crate) fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
         let stat_size = file.get_end_pos()? as u64;
         if stat_size
             < (Metadata::SIZE as u64)
@@ -588,12 +590,12 @@ impl Entry {
 }
 
 pub struct RuntimeTranspilerCache {
-    pub input_hash: Option<u64>,
-    pub input_byte_length: Option<u64>,
-    pub features_hash: Option<u64>,
-    pub exports_kind: ExportsKind,
-    pub output_code: Option<BunString>,
-    pub entry: Option<Entry>,
+    pub(crate) input_hash: Option<u64>,
+    pub(crate) input_byte_length: Option<u64>,
+    pub(crate) features_hash: Option<u64>,
+    pub(crate) exports_kind: ExportsKind,
+    pub(crate) output_code: Option<BunString>,
+    pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
     // load arm preads straight into WTF storage (see `Entry::load`), so no
@@ -613,7 +615,7 @@ impl Default for RuntimeTranspilerCache {
     }
 }
 
-pub fn hash(bytes: &[u8]) -> u64 {
+pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
 
@@ -641,7 +643,10 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Bo
 }
 
 impl RuntimeTranspilerCache {
-    pub fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> crate::CrateResult<usize> {
+    pub(crate) fn write_cache_filename(
+        buf: &mut [u8],
+        input_hash: u64,
+    ) -> crate::CrateResult<usize> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
         let suffix: &[u8] = if bun_core::env::IS_DEBUG {
@@ -658,7 +663,10 @@ impl RuntimeTranspilerCache {
         Ok(needed)
     }
 
-    pub fn get_cache_file_path(buf: &mut PathBuffer, input_hash: u64) -> crate::CrateResult<&ZStr> {
+    pub(crate) fn get_cache_file_path(
+        buf: &mut PathBuffer,
+        input_hash: u64,
+    ) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
         buf[cache_dir_len] = SEP;
         let cache_filename_len =
@@ -775,7 +783,7 @@ impl RuntimeTranspilerCache {
         Ok(path_len)
     }
 
-    pub fn from_file(
+    pub(crate) fn from_file(
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
@@ -793,7 +801,7 @@ impl RuntimeTranspilerCache {
         )
     }
 
-    pub fn from_file_with_cache_file_path(
+    pub(crate) fn from_file_with_cache_file_path(
         cache_file_path: &ZStr,
         input_hash: u64,
         feature_hash: u64,
@@ -838,7 +846,7 @@ impl RuntimeTranspilerCache {
         Ok(entry)
     }
 
-    pub fn to_file(
+    pub(crate) fn to_file(
         input_byte_length: u64,
         input_hash: u64,
         features_hash: u64,
@@ -910,11 +918,11 @@ impl RuntimeTranspilerCache {
         )
     }
 
-    pub fn is_disabled() -> bool {
+    pub(crate) fn is_disabled() -> bool {
         IS_DISABLED.load(Ordering::Relaxed)
     }
 
-    pub fn get(
+    pub(crate) fn get(
         &mut self,
         source: &Source,
         parser_options: &ParserOptions<'_>,

@@ -253,7 +253,7 @@ pub struct Op {
 }
 
 impl Op {
-    pub const fn init(text: &'static [u8], level: Level, is_keyword: bool) -> Op {
+    pub(crate) const fn init(text: &'static [u8], level: Level, is_keyword: bool) -> Op {
         Op {
             text,
             level,
@@ -265,7 +265,7 @@ impl Op {
 /// `.rodata` `[Op; Code::COUNT]` indexed by [`Code`] discriminant. Exposes
 /// a `get_ptr_const` accessor so downstream callers don't see the raw array.
 #[repr(transparent)]
-pub struct Table(pub [Op; <Code as Enum>::LENGTH]);
+pub struct Table(pub(crate) [Op; <Code as Enum>::LENGTH]);
 
 impl Table {
     #[inline]

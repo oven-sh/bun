@@ -29,10 +29,10 @@
 pub struct VersionFlag(u16);
 
 impl VersionFlag {
-    pub(crate) const CURRENT: VersionFlag = VersionFlag::V5;
+    const CURRENT: VersionFlag = VersionFlag::V5;
 
     /// Fixed bugs where passing arguments did not always work.
-    pub(crate) const V5: VersionFlag = VersionFlag(5478);
+    const V5: VersionFlag = VersionFlag(5478);
 
     /// Maximum 13-bit value.
     const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);

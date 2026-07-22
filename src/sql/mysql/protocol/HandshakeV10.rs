@@ -8,13 +8,13 @@ use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
 pub struct HandshakeV10 {
-    pub protocol_version: u8,
+    pub(crate) protocol_version: u8,
     pub server_version: Data,
     pub connection_id: u32,
     pub auth_plugin_data_part_1: [u8; 8],
     pub auth_plugin_data_part_2: Box<[u8]>,
     pub capability_flags: Capabilities,
-    pub character_set: CharacterSet,
+    pub(crate) character_set: CharacterSet,
     pub status_flags: StatusFlags,
     pub auth_plugin_name: Data,
 }

@@ -56,7 +56,7 @@ pub mod options {
         pub const REL: u8 = 1;
         pub const ANY: u8 = 2;
         #[inline(always)]
-        pub const fn from_u8(v: u8) -> Self {
+        pub(crate) const fn from_u8(v: u8) -> Self {
             match v {
                 0 => Self::Abs,
                 1 => Self::Rel,
@@ -69,7 +69,7 @@ pub mod options {
         pub const AUTO: u8 = 1;
         pub const POSIX: u8 = 2;
         #[inline(always)]
-        pub const fn from_u8(v: u8) -> Self {
+        pub(crate) const fn from_u8(v: u8) -> Self {
             match v {
                 1 => Self::Auto,
                 2 => Self::Posix,
@@ -91,7 +91,7 @@ pub mod options {
     }
 
     impl PathSeparators {
-        pub const fn char(self) -> u8 {
+        pub(crate) const fn char(self) -> u8 {
             match self {
                 PathSeparators::Any => panic!("use the existing slash"),
                 PathSeparators::Auto => SEP,
@@ -365,12 +365,12 @@ pub(crate) struct Buf<U: PathUnit, const SEP_OPT: u8> {
 
 impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     #[inline]
-    pub(crate) fn set_length(&mut self, new_len: usize) {
+    fn set_length(&mut self, new_len: usize) {
         self.len = new_len;
     }
 
     /// Append `characters` (same code-unit width as `U`), optionally prefixing a separator.
-    pub(crate) fn append(&mut self, characters: &[U], add_separator: bool) {
+    fn append(&mut self, characters: &[U], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -401,7 +401,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 
     /// Append `characters` of the *other* code-unit width, transcoding into the buffer.
-    pub(crate) fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
+    fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
@@ -815,7 +815,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         Ok(this)
     }
 
-    pub fn is_absolute(&self) -> bool {
+    fn is_absolute(&self) -> bool {
         match Kind::from_u8(KIND) {
             // Rust can't compile-error on a const-generic value
             // without specialization; panic instead.
@@ -904,7 +904,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         self._buf.len
     }
 
-    pub(crate) fn clone(&self) -> Self {
+    fn clone(&self) -> Self {
         // match BufType::Pool
         let mut cloned = Self::init();
         let len = self._buf.len;
@@ -915,7 +915,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     #[inline]
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self._buf.set_length(0);
     }
 
@@ -1321,7 +1321,7 @@ impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
 // the input element type, so they're hoisted to generics over `C: PathUnit`)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
+fn root_len<C: PathUnit>(input: &[C]) -> Option<usize> {
     #[cfg(windows)]
     {
         if input.len() > 2

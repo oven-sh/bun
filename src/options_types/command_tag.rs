@@ -124,7 +124,7 @@ impl Tag {
 
     /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
     /// tables below can size themselves without naming the trait at every use.
-    pub const COUNT: usize = <Self as Enum>::LENGTH;
+    pub(crate) const COUNT: usize = <Self as Enum>::LENGTH;
 
     // Heavy methods that pull in `Arguments` / help text live in the CLI crate.
     // Re-exporting
@@ -135,7 +135,7 @@ impl Tag {
 /// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero
 /// init code on the startup path.
 #[repr(transparent)]
-pub struct TagTable<V: 'static>(pub [V; Tag::COUNT]);
+pub struct TagTable<V: 'static>(pub(crate) [V; Tag::COUNT]);
 
 impl<V> core::ops::Index<Tag> for TagTable<V> {
     type Output = V;

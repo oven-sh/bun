@@ -23,7 +23,7 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
 
-pub(crate) mod preallocate {
+mod preallocate {
     pub(crate) mod counts {
         pub(crate) const FILES: usize = 4096;
     }
@@ -39,7 +39,7 @@ bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::
 bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
 
 /// ZST handle resolving to the `filename_store_backing()` singleton.
-pub(crate) struct FilenameStore(());
+struct FilenameStore(());
 
 static FILENAME_STORE_ZST: FilenameStore = FilenameStore(());
 
@@ -101,7 +101,7 @@ pub struct FilenameStoreAppender {
 }
 impl FilenameStoreAppender {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         // One `Once` check, hoisted out of the per-entry loop.
         Self {
             backing: filename_store_backing(),
@@ -165,11 +165,11 @@ pub enum EntryKind {
 
 #[derive(Clone, Copy)]
 pub struct EntryCache {
-    pub symlink: Interned,
+    pub(crate) symlink: Interned,
     /// Too much code expects this to be 0
     /// don't make it bun.invalid_fd
     pub fd: Fd,
-    pub kind: EntryKind,
+    pub(crate) kind: EntryKind,
 }
 
 impl Default for EntryCache {
@@ -222,14 +222,14 @@ impl Entry {
     }
 
     #[inline(always)]
-    pub fn set_cache_kind(&self, kind: EntryKind) {
+    pub(crate) fn set_cache_kind(&self, kind: EntryKind) {
         let mut c = self.cache.get();
         c.kind = kind;
         self.cache.set(c);
     }
 
     #[inline(always)]
-    pub fn set_cache_symlink(&self, symlink: Interned) {
+    pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();
         c.symlink = symlink;
         self.cache.set(c);
@@ -301,7 +301,7 @@ impl Entry {
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
     /// `RealFS` singleton in practice). See [`Entry::kind`].
-    pub unsafe fn symlink<R: EntryKindResolver>(
+    pub(crate) unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
         store_fd: bool,
@@ -375,8 +375,8 @@ pub struct DifferentCase<'a> {
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
 // at each write site under the per-entry `Entry.mutex`.
 pub struct EntryLookup<'a> {
-    pub entry: *mut Entry,
-    pub diff_case: Option<DifferentCase<'static>>,
+    pub(crate) entry: *mut Entry,
+    pub(crate) diff_case: Option<DifferentCase<'static>>,
     // tie the lookup's nominal lifetime to the DirEntry it came from
     _marker: core::marker::PhantomData<&'a Entry>,
 }
@@ -477,12 +477,12 @@ pub struct DirEntry {
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
-    pub generation: Generation,
+    pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
-    pub fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
+    pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         if FeatureFlags::VERBOSE_FS {
             bun_core::prettyln!("\n  {}", BStr::new(dir));
         }
@@ -499,7 +499,7 @@ impl DirEntry {
     // should hoist `FilenameStoreAppender::new()` once and call
     // `add_entry_with_store` directly.
 
-    pub fn add_entry_with_store<I: DirEntryIterator>(
+    pub(crate) fn add_entry_with_store<I: DirEntryIterator>(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
@@ -724,7 +724,10 @@ impl DirEntry {
 
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
-    pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
+    pub(crate) fn get_comptime_query<'a>(
+        &'a self,
+        query_lower: &'static [u8],
+    ) -> Option<EntryLookup<'a>> {
         let &result_ptr = self.data.get(query_lower)?;
         // SAFETY: EntryStore-owned pointer; read-only basename compare.
         let basename = unsafe { &*result_ptr }.base();
@@ -777,8 +780,8 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {
     pub inode: u64, // u64 covers libc stat `ino_t`
-    pub size: u64,
-    pub mtime: i128,
+    pub(crate) size: u64,
+    pub(crate) mtime: i128,
     pub mode: u32, // u32 covers libc stat `mode_t`
 }
 
@@ -809,7 +812,7 @@ impl ModKey {
         Ok(&out[..written])
     }
 
-    pub fn hash(&self) -> u64 {
+    pub(crate) fn hash(&self) -> u64 {
         let mut hash_bytes = [0u8; 32];
         // We shouldn't just read the contents of the ModKey into memory
         // The hash should be deterministic across computers and operating systems.
@@ -1204,7 +1207,7 @@ pub struct PathContentsPair<'a, 'buf> {
     /// `Owned` for the heap-allocated branch (caller frees on drop); `Borrowed`
     /// for the shared-buffer branch (points into the caller's `MutableString`,
     /// tied to `'buf` — see the note in `read_file_with_handle_impl`).
-    pub contents: Cow<'buf, [u8]>,
+    pub(crate) contents: Cow<'buf, [u8]>,
 }
 
 // `Path` / `PathName` — re-exported from the canonical `bun_paths::fs` via

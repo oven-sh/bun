@@ -25,7 +25,7 @@ impl Drop for Dir {
 pub struct CopyFileOptions {
     /// When set, the destination is created with this mode instead of the
     /// source file's mode.
-    pub override_mode: Option<Mode>,
+    override_mode: Option<Mode>,
 }
 
 /// Options for `Dir::make_open_path`.

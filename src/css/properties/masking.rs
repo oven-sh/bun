@@ -48,7 +48,7 @@ pub enum GeometryBox {
 }
 
 impl GeometryBox {
-    pub fn into_mask_clip(self) -> MaskClip {
+    pub(crate) fn into_mask_clip(self) -> MaskClip {
         MaskClip::GeometryBox(self)
     }
 }
@@ -114,25 +114,25 @@ pub enum MaskType {
 #[derive(DeepClone, CssEql)]
 pub struct Mask {
     /// The mask image.
-    pub image: Image,
+    pub(crate) image: Image,
     /// The position of the mask.
-    pub position: Position,
+    pub(crate) position: Position,
     /// The size of the mask image.
-    pub size: BackgroundSize,
+    pub(crate) size: BackgroundSize,
     /// How the mask repeats.
-    pub repeat: BackgroundRepeat,
+    pub(crate) repeat: BackgroundRepeat,
     /// The box in which the mask is clipped.
-    pub clip: MaskClip,
+    pub(crate) clip: MaskClip,
     /// The origin of the mask.
-    pub origin: GeometryBox,
+    pub(crate) origin: GeometryBox,
     /// How the mask is composited with the element.
-    pub composite: MaskComposite,
+    pub(crate) composite: MaskComposite,
     /// How the mask image is interpreted.
-    pub mode: MaskMode,
+    pub(crate) mode: MaskMode,
 }
 
 impl Mask {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut image: Option<Image> = None;
         let mut position: Option<Position> = None;
         let mut size: Option<BackgroundSize> = None;
@@ -219,7 +219,7 @@ impl Mask {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.image.to_css(dest)?;
 
         if self.position != Position::default() || self.size != BackgroundSize::default() {
@@ -285,23 +285,23 @@ pub enum MaskBorderMode {
 #[derive(DeepClone, CssEql)]
 pub struct MaskBorder {
     /// The mask image.
-    pub source: Image,
+    pub(crate) source: Image,
     /// The offsets that define where the image is sliced.
-    pub slice: BorderImageSlice,
+    pub(crate) slice: BorderImageSlice,
     /// The width of the mask image.
-    pub width: Rect<BorderImageSideWidth>,
+    pub(crate) width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub outset: Rect<LengthOrNumber>,
+    pub(crate) outset: Rect<LengthOrNumber>,
     /// How the mask image is scaled and tiled.
-    pub repeat: BorderImageRepeat,
+    pub(crate) repeat: BorderImageRepeat,
     /// How the mask image is interpreted.
-    pub mode: MaskBorderMode,
+    pub(crate) mode: MaskBorderMode,
 }
 
 impl MaskBorder {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut mode: Option<MaskBorderMode> = None;
         let border_image = BorderImage::parse_with_callback(input, |p: &mut css::Parser| -> bool {
             if mode.is_none() {
@@ -329,7 +329,7 @@ impl MaskBorder {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         BorderImage::to_css_internal(
             &self.source,
             &self.slice,
@@ -408,7 +408,7 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
-pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
+pub(crate) fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),

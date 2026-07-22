@@ -88,7 +88,7 @@ impl From<Box<[Box<[u8]>]>> for MemberList {
 
 impl MemberList {
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             MemberList::Static(s) => s.len(),
             MemberList::Owned(o) => o.len(),
@@ -101,7 +101,7 @@ impl MemberList {
     }
 
     #[inline]
-    pub fn get(&self, i: usize) -> Option<&[u8]> {
+    pub(crate) fn get(&self, i: usize) -> Option<&[u8]> {
         match self {
             MemberList::Static(s) => s.get(i).copied(),
             MemberList::Owned(o) => o.get(i).map(|b| &**b),

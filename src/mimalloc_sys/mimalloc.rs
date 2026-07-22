@@ -32,7 +32,7 @@ unsafe extern "C" {
     pub safe fn mi_good_size(size: usize) -> usize;
 }
 
-pub type mi_deferred_free_fun = extern "C" fn(bool, c_ulonglong, *mut c_void);
+type mi_deferred_free_fun = extern "C" fn(bool, c_ulonglong, *mut c_void);
 
 unsafe extern "C" {
     pub fn mi_register_deferred_free(
@@ -47,7 +47,7 @@ unsafe extern "C" {
     pub fn mi_register_output(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
 }
 
-pub type mi_error_fun = extern "C" fn(c_int, *mut c_void);
+type mi_error_fun = extern "C" fn(c_int, *mut c_void);
 
 unsafe extern "C" {
     pub fn mi_register_error(fun: core::option::Option<mi_error_fun>, arg: *mut c_void);
@@ -340,7 +340,7 @@ unsafe extern "C" {
     pub fn mi_debug_show_arenas();
 }
 
-pub type ArenaID = *mut c_void;
+type ArenaID = *mut c_void;
 
 unsafe extern "C" {
     pub fn mi_arena_area(arena_id: ArenaID, size: *mut usize) -> *mut c_void;
@@ -543,7 +543,7 @@ pub unsafe fn mi_heap_zalloc_auto_align(heap: *mut Heap, size: usize, align: usi
     }
 }
 
-pub type mi_arena_id_t = *mut c_void;
+type mi_arena_id_t = *mut c_void;
 
 unsafe extern "C" {
     pub fn mi_heap_new_ex(

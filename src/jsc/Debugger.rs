@@ -159,7 +159,7 @@ unsafe extern "C" {
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
-pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
+static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
@@ -413,7 +413,7 @@ impl Debugger {
     /// Taking `&mut VirtualMachine` here would assert exclusive access we do
     /// not have — UB. We hold a raw `*VirtualMachine` and
     /// never materialize a `&`/`&mut VirtualMachine` to the foreign-thread VM.
-    pub fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
+    pub(crate) fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
         // The global allocator is mimalloc and `InitOptions` does not carry
         // `allocator`/`env_loader` (those are wired by
         // `RuntimeHooks::init_runtime_state`).
@@ -691,7 +691,7 @@ pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallT
 
 #[derive(Default)]
 pub struct TestReporterAgent {
-    pub handle: *mut TestReporterHandle,
+    pub(crate) handle: *mut TestReporterHandle,
 }
 
 /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
@@ -747,7 +747,7 @@ unsafe extern "C" {
 }
 
 impl TestReporterHandle {
-    pub fn report_test_found(
+    pub(crate) fn report_test_found(
         &mut self,
         call_frame: &CallFrame,
         test_id: i32,
@@ -774,11 +774,16 @@ impl TestReporterHandle {
         );
     }
 
-    pub fn report_test_start(&mut self, test_id: c_int) {
+    pub(crate) fn report_test_start(&mut self, test_id: c_int) {
         Bun__TestReporterAgentReportTestStart(self, test_id);
     }
 
-    pub fn report_test_end(&mut self, test_id: c_int, bun_test_status: TestStatus, elapsed: f64) {
+    pub(crate) fn report_test_end(
+        &mut self,
+        test_id: c_int,
+        bun_test_status: TestStatus,
+        elapsed: f64,
+    ) {
         Bun__TestReporterAgentReportTestEnd(self, test_id, bun_test_status, elapsed);
     }
 }
@@ -868,7 +873,7 @@ impl TestReporterAgent {
 
 #[derive(Default)]
 pub struct LifecycleAgent {
-    pub handle: *mut LifecycleHandle,
+    pub(crate) handle: *mut LifecycleHandle,
 }
 
 bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
@@ -884,7 +889,7 @@ unsafe extern "C" {
 }
 
 impl LifecycleHandle {
-    pub fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }

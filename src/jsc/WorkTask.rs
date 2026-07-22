@@ -32,18 +32,18 @@ pub trait WorkTaskContext: Sized {
 }
 
 pub struct WorkTask<Context: WorkTaskContext> {
-    pub ctx: *mut Context,
-    pub task: WorkPoolTask,
+    pub(crate) ctx: *mut Context,
+    pub(crate) task: WorkPoolTask,
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
     /// `EventLoop`) outlives every task scheduled on it.
-    pub event_loop: BackRef<EventLoop>,
+    pub(crate) event_loop: BackRef<EventLoop>,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
-    pub global_this: BackRef<JSGlobalObject>,
-    pub concurrent_task: ConcurrentTask,
-    pub async_task_tracker: AsyncTaskTracker,
+    pub(crate) global_this: BackRef<JSGlobalObject>,
+    pub(crate) concurrent_task: ConcurrentTask,
+    pub(crate) async_task_tracker: AsyncTaskTracker,
 
     // This is a poll because we want it to enter the uSockets loop
-    pub ref_: KeepAlive,
+    pub(crate) ref_: KeepAlive,
 }
 
 bun_threading::intrusive_work_task!([Context: WorkTaskContext] WorkTask<Context>, task);
@@ -93,7 +93,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // drop(this) — Box freed at scope exit
     }
 
-    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         crate::mark_binding();
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in

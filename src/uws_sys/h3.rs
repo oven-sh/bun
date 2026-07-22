@@ -91,20 +91,20 @@ impl Response {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
         unsafe { c::uws_h3_res_end(self, data.as_ptr(), data.len(), close_connection) }
     }
-    pub fn try_end(&mut self, data: &[u8], total: usize, close_connection: bool) -> bool {
+    pub(crate) fn try_end(&mut self, data: &[u8], total: usize, close_connection: bool) -> bool {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
         unsafe { c::uws_h3_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
     }
     pub fn end_without_body(&mut self, close_connection: bool) {
         c::uws_h3_res_end_without_body(self, close_connection)
     }
-    pub fn end_stream(&mut self, close_connection: bool) {
+    pub(crate) fn end_stream(&mut self, close_connection: bool) {
         c::uws_h3_res_end_stream(self, close_connection)
     }
-    pub fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
+    pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_h3_res_end_sendfile(self, write_offset, close_connection)
     }
-    pub fn write(&mut self, data: &[u8]) -> WriteResult {
+    pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live FFI handle; data ptr valid for read; len out-ptr is a valid local
         if unsafe { c::uws_h3_res_write(self, data.as_ptr(), &raw mut len) } {
@@ -113,13 +113,13 @@ impl Response {
             WriteResult::Backpressure(len)
         }
     }
-    pub fn try_write_body(&mut self, data: &[u8], _is_first: bool) -> usize {
+    pub(crate) fn try_write_body(&mut self, data: &[u8], _is_first: bool) -> usize {
         // node:http (the only caller) never reaches HTTP/3; fall through to
         // the copying write for AnyResponse dispatch parity.
         let _ = self.write(data);
         data.len()
     }
-    pub fn spill_body(&mut self, data: &[u8]) {
+    pub(crate) fn spill_body(&mut self, data: &[u8]) {
         let _ = self.write(data);
     }
     pub fn write_status(&mut self, status: &[u8]) {
@@ -132,65 +132,65 @@ impl Response {
             c::uws_h3_res_write_header(self, key.as_ptr(), key.len(), value.as_ptr(), value.len())
         }
     }
-    pub fn write_header_int(&mut self, key: &[u8], value: u64) {
+    pub(crate) fn write_header_int(&mut self, key: &[u8], value: u64) {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
         unsafe { c::uws_h3_res_write_header_int(self, key.as_ptr(), key.len(), value) }
     }
-    pub fn write_mark(&mut self) {
+    pub(crate) fn write_mark(&mut self) {
         c::uws_h3_res_write_mark(self)
     }
-    pub fn mark_wrote_content_length_header(&mut self) {
+    pub(crate) fn mark_wrote_content_length_header(&mut self) {
         c::uws_h3_res_mark_wrote_content_length_header(self)
     }
-    pub fn mark_wrote_date_header(&mut self) {
+    pub(crate) fn mark_wrote_date_header(&mut self) {
         c::uws_h3_res_mark_wrote_date_header(self)
     }
-    pub fn write_continue(&mut self) {
+    pub(crate) fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
     }
-    pub fn write_informational(&mut self, _data: &[u8]) {
+    pub(crate) fn write_informational(&mut self, _data: &[u8]) {
         // node:http (the only caller) never reaches HTTP/3; kept for AnyResponse dispatch parity.
     }
-    pub fn flush_headers(&mut self, immediate: bool) {
+    pub(crate) fn flush_headers(&mut self, immediate: bool) {
         c::uws_h3_res_flush_headers(self, immediate)
     }
-    pub fn pause(&mut self) {
+    pub(crate) fn pause(&mut self) {
         c::uws_h3_res_pause(self)
     }
-    pub fn resume_(&mut self) {
+    pub(crate) fn resume_(&mut self) {
         c::uws_h3_res_resume(self)
     }
     pub fn timeout(&mut self, seconds: u8) {
         c::uws_h3_res_timeout(self, seconds)
     }
-    pub fn reset_timeout(&mut self) {
+    pub(crate) fn reset_timeout(&mut self) {
         c::uws_h3_res_reset_timeout(self)
     }
     pub fn override_write_offset(&mut self, off: u64) {
         c::uws_h3_res_override_write_offset(self, off)
     }
-    pub fn get_buffered_amount(&mut self) -> u64 {
+    pub(crate) fn get_buffered_amount(&mut self) -> u64 {
         c::uws_h3_res_get_buffered_amount(self)
     }
-    pub fn has_responded(&mut self) -> bool {
+    pub(crate) fn has_responded(&mut self) -> bool {
         c::uws_h3_res_has_responded(self)
     }
-    pub fn state(&mut self) -> State {
+    pub(crate) fn state(&mut self) -> State {
         c::uws_h3_res_state(self)
     }
-    pub fn should_close_connection(&mut self) -> bool {
+    pub(crate) fn should_close_connection(&mut self) -> bool {
         self.state().is_http_connection_close()
     }
-    pub fn is_corked(&self) -> bool {
+    pub(crate) fn is_corked(&self) -> bool {
         false
     }
-    pub fn uncork(&mut self) {}
-    pub fn is_connect_request(&self) -> bool {
+    pub(crate) fn uncork(&mut self) {}
+    pub(crate) fn is_connect_request(&self) -> bool {
         false
     }
-    pub fn prepare_for_sendfile(&mut self) {}
-    pub fn mark_needs_more(&mut self) {}
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
+    pub(crate) fn prepare_for_sendfile(&mut self) {}
+    pub(crate) fn mark_needs_more(&mut self) {}
+    pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
         let mut ip_ptr: *const u8 = ptr::null();
@@ -203,11 +203,11 @@ impl Response {
         let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
         Some(SocketAddress::new(ip, port, is_ipv6))
     }
-    pub fn force_close(&mut self) {
+    pub(crate) fn force_close(&mut self) {
         c::uws_h3_res_force_close(self)
     }
 
-    pub fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
+    pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
     {
@@ -227,10 +227,10 @@ impl Response {
         }
         c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub fn clear_on_writable(&mut self) {
+    pub(crate) fn clear_on_writable(&mut self) {
         c::uws_h3_res_clear_on_writable(self)
     }
-    pub fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
+    pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(&mut UD, &mut Response) + Copy + 'static,
     {
@@ -250,7 +250,7 @@ impl Response {
         }
         c::uws_h3_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub fn clear_aborted(&mut self) {
+    pub(crate) fn clear_aborted(&mut self) {
         c::uws_h3_res_on_aborted(self, None, ptr::null_mut())
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -273,10 +273,10 @@ impl Response {
         }
         c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub fn clear_timeout(&mut self) {
+    pub(crate) fn clear_timeout(&mut self) {
         c::uws_h3_res_on_timeout(self, None, ptr::null_mut())
     }
-    pub fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
+    pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
     {
@@ -307,15 +307,15 @@ impl Response {
         }
         c::uws_h3_res_on_data(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub fn clear_on_data(&mut self) {
+    pub(crate) fn clear_on_data(&mut self) {
         c::uws_h3_res_on_data(self, None, ptr::null_mut())
     }
-    pub fn corked(&mut self, handler: impl FnOnce()) {
+    pub(crate) fn corked(&mut self, handler: impl FnOnce()) {
         // H3 has no corking; call the handler immediately.
         let _ = self;
         handler();
     }
-    pub fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
+    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
         // recover it inside the trampoline — same shape as H1's
         // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.

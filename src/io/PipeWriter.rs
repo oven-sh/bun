@@ -281,9 +281,9 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     /// `None` only between `Default` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
     pub parent: Option<bun_ptr::ParentRef<Parent>>,
-    pub is_done: bool,
-    pub pollable: bool,
-    pub closed_without_reporting: bool,
+    pub(crate) is_done: bool,
+    pub(crate) pollable: bool,
+    pub(crate) closed_without_reporting: bool,
     pub close_fd: bool,
 }
 
@@ -372,7 +372,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         mem::size_of::<Self>()
     }
 
-    pub fn create_poll(&mut self, fd: Fd) -> FilePollRef {
+    pub(crate) fn create_poll(&mut self, fd: Fd) -> FilePollRef {
         FilePollRef::init(
             self.parent_event_loop(),
             fd,
@@ -384,14 +384,14 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.handle.get_poll()
     }
 
-    pub fn get_file_type(&self) -> FileType {
+    pub(crate) fn get_file_type(&self) -> FileType {
         let Some(poll) = self.get_poll() else {
             return FileType::File;
         };
         poll.file_type()
     }
 
-    pub fn get_fd(&self) -> Fd {
+    pub(crate) fn get_fd(&self) -> Fd {
         self.handle.get_fd()
     }
 
@@ -444,7 +444,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
+    pub(crate) fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, true);
     }
 
@@ -602,7 +602,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub handle: PollOrFd,
     pub parent: *mut Parent,
     pub is_done: bool,
-    pub closed_without_reporting: bool,
+    pub(crate) closed_without_reporting: bool,
     pub force_sync: bool,
 }
 
@@ -696,11 +696,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.handle.get_poll()
     }
 
-    pub fn get_fd(&self) -> Fd {
+    pub(crate) fn get_fd(&self) -> Fd {
         self.handle.get_fd()
     }
 
-    pub fn get_file_type(&self) -> FileType {
+    pub(crate) fn get_file_type(&self) -> FileType {
         let Some(poll) = self.get_poll() else {
             return FileType::File;
         };
@@ -716,11 +716,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.size()
     }
 
-    pub fn should_buffer(&self, addition: usize) -> bool {
+    pub(crate) fn should_buffer(&self, addition: usize) -> bool {
         !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }
 
-    pub fn get_buffer(&self) -> &[u8] {
+    pub(crate) fn get_buffer(&self) -> &[u8] {
         self.outgoing.slice()
     }
 
@@ -1727,7 +1727,7 @@ impl StreamBuffer {
         self.list.clear();
     }
 
-    pub fn maybe_shrink(&mut self) {
+    pub(crate) fn maybe_shrink(&mut self) {
         // Runtime page size of the host.
         let page = bun_core::page_size();
         if self.list.capacity() > page {

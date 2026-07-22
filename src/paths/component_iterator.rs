@@ -24,7 +24,7 @@ pub enum PathFormat {
 
 impl PathFormat {
     #[inline(always)]
-    pub fn is_sep<T: PathChar>(self, c: T) -> bool {
+    pub(crate) fn is_sep<T: PathChar>(self, c: T) -> bool {
         match self {
             Self::Posix => c == T::from_u8(b'/'),
             Self::Windows => c == T::from_u8(b'/') || c == T::from_u8(b'\\'),
@@ -38,10 +38,10 @@ impl PathFormat {
 #[derive(Clone, Copy, Debug)]
 pub struct Component<'a, T> {
     /// The current component's name, e.g. `b`. Never contains separators.
-    pub name: &'a [T],
+    name: &'a [T],
     /// The full path up to and including the current component, e.g. `/a/b`.
     /// Never has a trailing separator.
-    pub path: &'a [T],
+    path: &'a [T],
 }
 
 /// A bidirectional
@@ -98,7 +98,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Returns the last component and seeks to it.
-    pub fn last(&mut self) -> Option<Component<'a, T>> {
+    fn last(&mut self) -> Option<Component<'a, T>> {
         self.end = self.path.len();
         loop {
             if self.end == self.root_end {
@@ -124,7 +124,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Advances forward; returns the component to the right of the current one.
-    pub fn next(&mut self) -> Option<Component<'a, T>> {
+    fn next(&mut self) -> Option<Component<'a, T>> {
         let p = self.peek_next()?;
         self.start = p.path.len() - p.name.len();
         self.end = p.path.len();
@@ -132,7 +132,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Like `next` but does not advance.
-    pub fn peek_next(&self) -> Option<Component<'a, T>> {
+    fn peek_next(&self) -> Option<Component<'a, T>> {
         let mut start = self.end;
         while start < self.path.len() && self.is_sep(self.path[start]) {
             start += 1;
@@ -151,7 +151,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Advances backward; returns the component to the left of the current one.
-    pub fn previous(&mut self) -> Option<Component<'a, T>> {
+    fn previous(&mut self) -> Option<Component<'a, T>> {
         let p = self.peek_previous()?;
         self.start = p.path.len() - p.name.len();
         self.end = p.path.len();
@@ -159,7 +159,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 
     /// Like `previous` but does not advance.
-    pub fn peek_previous(&self) -> Option<Component<'a, T>> {
+    fn peek_previous(&self) -> Option<Component<'a, T>> {
         let mut end = self.start;
         loop {
             if end == self.root_end {

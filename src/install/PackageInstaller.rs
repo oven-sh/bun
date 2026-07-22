@@ -43,9 +43,9 @@ bun_output::declare_scope!(PackageInstaller, hidden);
 type Bitset = DynamicBitSet;
 
 pub struct PendingLifecycleScript {
-    pub list: lockfile::package::scripts::List,
-    pub tree_id: lockfile::tree::Id,
-    pub optional: bool,
+    pub(crate) list: lockfile::package::scripts::List,
+    pub(crate) tree_id: lockfile::tree::Id,
+    pub(crate) optional: bool,
 }
 
 pub struct PackageInstaller<'a> {
@@ -55,22 +55,22 @@ pub struct PackageInstaller<'a> {
     /// in `hoisted_install`); a `&'a mut` here would assert exclusivity that
     /// the call shape contradicts. Never null. Access via `manager()` /
     /// `manager_mut()`.
-    pub manager: *mut PackageManager,
+    pub(crate) manager: *mut PackageManager,
     /// BACKREF into `(*manager).lockfile`. Same aliasing
     /// rationale as `manager`; the column-slice fields below also point into
     /// it. Never null. Access via `lockfile()` / `lockfile_mut()`.
-    pub lockfile: *mut Lockfile,
+    pub(crate) lockfile: *mut Lockfile,
     /// BACKREF into `(*manager).progress`. Never null.
-    pub progress: *mut Progress,
+    pub(crate) progress: *mut Progress,
 
     /// relative paths from `next` will be copied into this list.
-    pub node_modules: NodeModulesFolder,
+    pub(crate) node_modules: NodeModulesFolder,
 
-    pub skip_verify_installed_version_number: bool,
-    pub skip_delete: bool,
-    pub force_install: bool,
-    pub root_node_modules_folder: Dir,
-    pub summary: &'a mut package_install::Summary,
+    pub(crate) skip_verify_installed_version_number: bool,
+    pub(crate) skip_delete: bool,
+    pub(crate) force_install: bool,
+    pub(crate) root_node_modules_folder: Dir,
+    pub(crate) summary: &'a mut package_install::Summary,
     // No `options` backref field — every caller reads via
     // `self.manager().options` so the shared borrow stays a child of the live
     // `&mut PackageManager` Unique tag rather than a sibling raw.
@@ -82,44 +82,44 @@ pub struct PackageInstaller<'a> {
     // assignment sites do not need a `&'a → &'a` lifetime-detach round-trip.
     // Every `resolutions` call site is a read (`&raw const self.resolutions[i]`),
     // so it is also `RawSlice` here.
-    pub metas: bun_ptr::RawSlice<Package::Meta>,
-    pub names: bun_ptr::RawSlice<String>,
-    pub pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
-    pub pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
-    pub bins: bun_ptr::RawSlice<Bin>,
-    pub resolutions: bun_ptr::RawSlice<Resolution>,
-    pub node: &'a mut ProgressNode,
-    pub destination_dir_subpath_buf: PathBuffer,
-    pub folder_path_buf: PathBuffer,
-    pub successfully_installed: Bitset,
-    pub command_ctx: Command::Context<'a>,
-    pub current_tree_id: lockfile::tree::Id,
+    pub(crate) metas: bun_ptr::RawSlice<Package::Meta>,
+    pub(crate) names: bun_ptr::RawSlice<String>,
+    pub(crate) pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
+    pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
+    pub(crate) bins: bun_ptr::RawSlice<Bin>,
+    pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
+    pub(crate) node: &'a mut ProgressNode,
+    pub(crate) destination_dir_subpath_buf: PathBuffer,
+    pub(crate) folder_path_buf: PathBuffer,
+    pub(crate) successfully_installed: Bitset,
+    pub(crate) command_ctx: Command::Context<'a>,
+    pub(crate) current_tree_id: lockfile::tree::Id,
 
     // fields used for running lifecycle scripts when it's safe
     //
     /// set of completed tree ids
-    pub completed_trees: Bitset,
+    pub(crate) completed_trees: Bitset,
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
-    pub tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
-    pub pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
+    pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
+    pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
     /// Value is the alias bytes the key hash was computed from; lookups must
     /// compare it since truncated hashes can collide.
-    pub trusted_dependencies_from_update_requests:
+    pub(crate) trusted_dependencies_from_update_requests:
         ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 
     /// uses same ids as lockfile.trees
-    pub trees: Box<[TreeContext]>,
+    pub(crate) trees: Box<[TreeContext]>,
 
-    pub seen_bin_links: StringHashMap<()>,
+    pub(crate) seen_bin_links: StringHashMap<()>,
 }
 
 use bun_core::UnwrapOrOom;
 
 #[derive(Default)]
 pub struct NodeModulesFolder {
-    pub tree_id: lockfile::tree::Id,
-    pub path: Vec<u8>,
+    pub(crate) tree_id: lockfile::tree::Id,
+    pub(crate) path: Vec<u8>,
 }
 
 impl NodeModulesFolder {
@@ -243,7 +243,7 @@ impl NodeModulesFolder {
         }
     }
 
-    pub(crate) fn make_and_open_dir(&mut self, root: &Dir) -> crate::Result<Dir> {
+    fn make_and_open_dir(&mut self, root: &Dir) -> crate::Result<Dir> {
         let out = 'brk: {
             #[cfg(unix)]
             {
@@ -285,19 +285,19 @@ pub struct TreeContext {
     /// Trees are drained breadth first because if the current tree is completed from
     /// the remaining pending installs, then any child tree has a higher chance of
     /// being able to install it's dependencies
-    pub pending_installs: Vec<DependencyInstallContext>,
+    pub(crate) pending_installs: Vec<DependencyInstallContext>,
 
-    pub binaries: bin::PriorityQueue,
+    pub(crate) binaries: bin::PriorityQueue,
 
     /// Number of installed dependencies. Could be successful or failure.
-    pub install_count: usize,
+    pub(crate) install_count: usize,
 }
 
-pub(crate) type TreeContextId = lockfile::tree::Id;
+type TreeContextId = lockfile::tree::Id;
 
 // TreeContext::deinit dropped — Vec and Bin::PriorityQueue impl Drop.
 
-pub(crate) enum LazyPackageDestinationDir<'a> {
+enum LazyPackageDestinationDir<'a> {
     /// Non-owning view of a directory handle the caller owns.
     #[allow(dead_code)]
     Dir(Fd),
@@ -334,7 +334,7 @@ impl<'a> LazyPackageDestinationDir<'a> {
         }
     }
 
-    pub(crate) fn close(&mut self) {
+    fn close(&mut self) {
         *self = LazyPackageDestinationDir::Closed;
     }
 }
@@ -386,35 +386,35 @@ impl<'a> PackageInstaller<'a> {
     // ──────────────────────────────────────────────────────────────────────
 
     #[inline]
-    pub(crate) fn manager(&self) -> &'a PackageManager {
+    fn manager(&self) -> &'a PackageManager {
         // SAFETY: BACKREF — never null; pointee outlives `'a`.
         unsafe { &*self.manager }
     }
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn manager_mut(&self) -> &'a mut PackageManager {
+    fn manager_mut(&self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`; install pass
         // is single-threaded so no concurrent `&mut PackageManager` exists.
         unsafe { &mut *self.manager }
     }
 
     #[inline]
-    pub(crate) fn lockfile(&self) -> &'a Lockfile {
+    fn lockfile(&self) -> &'a Lockfile {
         // SAFETY: BACKREF — never null; pointee outlives `'a`.
         unsafe { &*self.lockfile }
     }
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn lockfile_mut(&self) -> &'a mut Lockfile {
+    fn lockfile_mut(&self) -> &'a mut Lockfile {
         // SAFETY: BACKREF — never null; disjoint from `*self`; see `manager_mut`.
         unsafe { &mut *self.lockfile }
     }
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn progress_mut(&self) -> &'a mut Progress {
+    fn progress_mut(&self) -> &'a mut Progress {
         // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
         // `*self`; the install pass is single-threaded so no concurrent `&mut
         // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
@@ -425,7 +425,7 @@ impl<'a> PackageInstaller<'a> {
     /// if the tree is finished.
     // `should_install_packages` only gates a single call below, so it's a
     // runtime arg rather than a const generic.
-    pub(crate) fn increment_tree_install_count(
+    fn increment_tree_install_count(
         &mut self,
         should_install_packages: bool,
         tree_id: lockfile::tree::Id,
@@ -487,7 +487,7 @@ impl<'a> PackageInstaller<'a> {
         self.run_available_scripts(log_level);
     }
 
-    pub(crate) fn link_tree_bins(
+    fn link_tree_bins(
         &mut self,
         // Takes only `tree_id` and re-borrows `&mut self.trees[tree_id]` to
         // satisfy borrowck.
@@ -708,7 +708,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    pub(crate) fn run_available_scripts(&mut self, log_level: Options::LogLevel) {
+    fn run_available_scripts(&mut self, log_level: Options::LogLevel) {
         let mut i: usize = self.pending_lifecycle_scripts.len();
         while i > 0 {
             i -= 1;
@@ -916,7 +916,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// Check if a tree is ready to start running lifecycle scripts
-    pub(crate) fn can_run_scripts(&self, scripts_tree_id: lockfile::tree::Id) -> bool {
+    fn can_run_scripts(&self, scripts_tree_id: lockfile::tree::Id) -> bool {
         let deps = self
             .tree_ids_to_trees_the_id_depends_on
             .at(scripts_tree_id as usize);
@@ -932,7 +932,7 @@ impl<'a> PackageInstaller<'a> {
     // free fn (not `&self`) so callers can pass disjoint borrows
     // (`&self.completed_trees` + `&self.lockfile().buffers.trees`) without
     // tripping borrowck on the whole-`self` reborrow.
-    pub(crate) fn can_install_package_for_tree(
+    fn can_install_package_for_tree(
         completed_trees: &Bitset,
         trees: &[Tree],
         package_tree_id: lockfile::tree::Id,

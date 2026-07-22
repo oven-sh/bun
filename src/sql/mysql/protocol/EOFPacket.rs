@@ -3,8 +3,8 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 
 pub struct EOFPacket {
-    pub header: u8,
-    pub warnings: u16,
+    pub(crate) header: u8,
+    pub(crate) warnings: u16,
     pub status_flags: StatusFlags,
 }
 

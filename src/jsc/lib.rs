@@ -101,10 +101,10 @@ pub mod schema_api {
     /// Non-exhaustive stack-frame scope tag. Newtype keeps any-u8 FFI-safe.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub struct StackFrameScope(pub u8);
+    pub struct StackFrameScope(pub(crate) u8);
 
     impl StackFrameScope {
-        pub const NONE: Self = Self(0);
+        pub(crate) const NONE: Self = Self(0);
     }
 
     /// Line/column position of a stack frame (FFI layout shared with C++).
@@ -114,13 +114,13 @@ pub mod schema_api {
     #[derive(Clone)]
     pub struct StackFrame {
         /// function_name
-        pub function_name: Box<[u8]>,
+        pub(crate) function_name: Box<[u8]>,
         /// file
-        pub file: Box<[u8]>,
+        pub(crate) file: Box<[u8]>,
         /// position
-        pub position: StackFramePosition,
+        pub(crate) position: StackFramePosition,
         /// scope
-        pub scope: StackFrameScope,
+        pub(crate) scope: StackFrameScope,
     }
 
     impl Default for StackFrame {
@@ -147,9 +147,9 @@ pub mod schema_api {
     #[derive(Clone, Default)]
     pub struct StackTrace {
         /// source_lines
-        pub source_lines: Vec<SourceLine>,
+        pub(crate) source_lines: Vec<SourceLine>,
         /// frames
-        pub frames: Vec<StackFrame>,
+        pub(crate) frames: Vec<StackFrame>,
     }
 
     /// Lives here (not `bun_options_types::schema::api`) because `stack`'s
@@ -161,7 +161,7 @@ pub mod schema_api {
         pub message: Box<[u8]>,
         pub runtime_type: u16,
         pub code: u16,
-        pub stack: StackTrace,
+        pub(crate) stack: StackTrace,
     }
 }
 #[path = "array_buffer.rs"]
@@ -414,13 +414,12 @@ pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
 pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
-pub use self::custom_getter_setter::CustomGetterSetter;
+pub(crate) use self::custom_getter_setter::CustomGetterSetter;
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
 pub use self::error_code::ErrorCode as ErrCode;
 pub use self::error_code::{ErrorBuilder, ErrorCode};
 pub use self::errorable::Errorable;
 pub use self::event_type::EventType;
-pub use self::getter_setter::GetterSetter;
 pub use self::js_cell::{JSCell, JsCell};
 pub use self::js_error_code::{DOMExceptionCode, JSErrorCode};
 pub use self::js_map::JSMap;
@@ -446,7 +445,7 @@ pub mod garbage_collection_controller;
 #[path = "AbortSignal.rs"]
 pub mod abort_signal;
 #[path = "btjs.rs"]
-pub mod btjs;
+pub(crate) mod btjs;
 #[path = "CppTask.rs"]
 pub mod cpp_task;
 #[path = "fmt_jsc.rs"]
@@ -462,9 +461,9 @@ pub mod plugin_runner;
 #[path = "PosixSignalHandle.rs"]
 pub mod posix_signal_handle;
 #[path = "resolve_path_jsc.rs"]
-pub mod resolve_path_jsc;
+pub(crate) mod resolve_path_jsc;
 #[path = "resolver_jsc.rs"]
-pub mod resolver_jsc;
+pub(crate) mod resolver_jsc;
 #[path = "virtual_machine_exports.rs"]
 pub mod virtual_machine_exports;
 
@@ -512,7 +511,7 @@ pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
 #[path = "comptime_string_map_jsc.rs"]
-pub mod comptime_string_map_jsc;
+pub(crate) mod comptime_string_map_jsc;
 #[path = "ConcurrentPromiseTask.rs"]
 pub mod concurrent_promise_task;
 #[path = "EventLoopHandle.rs"]
@@ -878,7 +877,6 @@ mod __macro_smoke {
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
-pub use self::cached_bytecode::CachedBytecode;
 pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
 pub use self::zig_stack_frame::ZigStackFrame;
@@ -1048,7 +1046,7 @@ impl BuiltinName {
     pub const Url: Self = Self::url;
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
-    pub const InspectCustom: Self = Self::inspectCustom;
+    pub(crate) const InspectCustom: Self = Self::inspectCustom;
     pub const HighWaterMark: Self = Self::highWaterMark;
     pub const Path: Self = Self::path;
     pub const Stream: Self = Self::stream;
@@ -1236,9 +1234,9 @@ pub struct GregorianDateTime {
 /// Options for `JSGlobalObject::validate_object`.
 #[derive(Default, Copy, Clone)]
 pub struct ValidateObjectOpts {
-    pub allow_array: bool,
-    pub allow_function: bool,
-    pub nullable: bool,
+    pub(crate) allow_array: bool,
+    pub(crate) allow_function: bool,
+    pub(crate) nullable: bool,
 }
 
 /// `BunPluginTarget` is defined once
@@ -1400,7 +1398,6 @@ pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchRe
 
 #[path = "RuntimeTranspilerCache.rs"]
 pub mod runtime_transpiler_cache;
-pub use self::runtime_transpiler_cache::RuntimeTranspilerCache;
 
 #[path = "RuntimeTranspilerStore.rs"]
 pub mod runtime_transpiler_store;
@@ -1440,7 +1437,7 @@ pub type PlatformEventLoop = bun_io::Loop;
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 /// Deprecated: Use `bun_core::ZigString`
 #[deprecated]
-pub type ZigString = bun_core::ZigString;
+pub(crate) type ZigString = bun_core::ZigString;
 /// `ZigString.Slice` — re-exported under the path dependents expect.
 pub type ZigStringSlice = bun_core::ZigStringSlice;
 
@@ -1507,7 +1504,7 @@ pub fn mark_binding() {
 
 /// Like [`mark_binding`], with a class-name prefix.
 #[inline]
-pub fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
+pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
     if bun_core::env::IS_DEBUG && bun_core::Global::JSC_SCOPE.is_visible() {
         bun_core::Global::JSC_SCOPE.log(format_args!(
             "[jsc] {} ({}:{})\n",
@@ -1981,4 +1978,4 @@ pub mod generated;
 /// Hand-written per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
 /// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
 #[path = "bindings/GeneratedBindings.rs"]
-pub mod r#gen;
+pub(crate) mod r#gen;

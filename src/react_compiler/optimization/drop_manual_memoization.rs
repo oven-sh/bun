@@ -389,7 +389,7 @@ fn collect_temporaries(
 
 /// Collect loads from named variables and property reads into `maybe_deps`.
 /// Returns the variable + property reads represented by the instruction value.
-pub fn collect_maybe_memo_dependencies(
+pub(crate) fn collect_maybe_memo_dependencies(
     value: &InstructionValue,
     maybe_deps: &HashMap<IdentifierId, ManualMemoDependency>,
     optional: bool,

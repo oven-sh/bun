@@ -84,10 +84,10 @@ macro_rules! arena_slice_newtype {
 #[derive(Debug, Clone, Copy)]
 pub struct DashedIdentReference {
     /// The referenced identifier.
-    pub ident: DashedIdent,
+    pub(crate) ident: DashedIdent,
     /// CSS modules extension: the filename where the variable is defined.
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
-    pub from: Option<crate::properties::css_modules::Specifier>,
+    pub(crate) from: Option<crate::properties::css_modules::Specifier>,
 }
 
 impl DashedIdentReference {
@@ -169,7 +169,7 @@ impl DashedIdentReference {
                 return dest.serialize_name(name);
             }
         }
-        dest.write_dashed_ident(&self.ident, false)
+        dest.write_dashed_ident(&self.ident)
     }
 }
 
@@ -184,7 +184,7 @@ arena_slice_newtype! {
 }
 
 impl DashedIdent {
-    pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         if !strings::starts_with(ident, b"--") {
@@ -195,8 +195,8 @@ impl DashedIdent {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_dashed_ident(self, true)
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        dest.write_dashed_ident(self)
     }
 }
 
@@ -208,14 +208,14 @@ arena_slice_newtype! {
 }
 
 impl Ident {
-    pub fn parse(input: &mut Parser) -> CssResult<Ident> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Ident> {
         let ident = input.expect_ident()?;
         Ok(Ident {
             v: std::ptr::from_ref::<[u8]>(ident),
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.serialize_identifier(self.v())
     }
 }
@@ -289,7 +289,7 @@ impl IdentOrRef {
         IdentOrRef(v)
     }
 
-    pub fn from_ident(ident: Ident) -> Self {
+    pub(crate) fn from_ident(ident: Ident) -> Self {
         let s = ident.v();
         let (ptr, len) = (s.as_ptr() as usize as u64, s.len() as u64);
         // narrowing usize→u63 is checked in debug
@@ -297,7 +297,7 @@ impl IdentOrRef {
         Self::pack(ptr, false, len)
     }
 
-    pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
+    pub(crate) fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
         #[cfg(not(debug_assertions))]
         let this = Self::pack(0, true, len);
@@ -320,17 +320,17 @@ impl IdentOrRef {
     }
 
     #[inline]
-    pub fn is_ident(self) -> bool {
+    pub(crate) fn is_ident(self) -> bool {
         !self.ref_bit()
     }
 
     #[inline]
-    pub fn is_ref(self) -> bool {
+    pub(crate) fn is_ref(self) -> bool {
         self.ref_bit()
     }
 
     #[inline]
-    pub fn as_ident(self) -> Option<Ident> {
+    pub(crate) fn as_ident(self) -> Option<Ident> {
         if !self.ref_bit() {
             let ptr = self.ptrbits() as usize as *const u8;
             let len = self.len_bits() as usize;
@@ -343,7 +343,7 @@ impl IdentOrRef {
     }
 
     #[inline]
-    pub fn as_ref(self) -> Option<Ref> {
+    pub(crate) fn as_ref(self) -> Option<Ref> {
         if self.ref_bit() {
             // len_bits stores the exact u64 bit pattern written by from_ref
             return Some(Ref::from_raw_bits(self.len_bits()));
@@ -373,7 +373,7 @@ impl IdentOrRef {
             .map(|p| unsafe { crate::arena_str(&raw const **p) })
     }
 
-    pub fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
+    pub(crate) fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
@@ -382,7 +382,7 @@ impl IdentOrRef {
         symbols[r.inner_index() as usize].original_name.slice()
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
@@ -396,7 +396,7 @@ impl IdentOrRef {
         }
     }
 
-    pub fn eql(&self, other: &Self) -> bool {
+    pub(crate) fn eql(&self, other: &Self) -> bool {
         if let (Some(a), Some(b)) = (self.as_ident(), other.as_ident()) {
             return a.v() == b.v();
         } else if self.is_ref() && other.is_ref() {
@@ -453,7 +453,7 @@ arena_slice_newtype! {
 }
 
 impl CustomIdent {
-    pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         let valid = !is_reserved_custom_ident(ident);
@@ -466,12 +466,12 @@ impl CustomIdent {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         Self::to_css_with_options(self, dest, true)
     }
 
     /// Write the custom ident to CSS.
-    pub fn to_css_with_options(
+    pub(crate) fn to_css_with_options(
         &self,
         dest: &mut Printer,
         enabled_css_modules: bool,

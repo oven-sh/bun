@@ -45,27 +45,27 @@ pub mod LC {
     pub(crate) const DYLD_CHAINED_FIXUPS: u32 = 0x34 | LC_REQ_DYLD;
 }
 
-pub mod PROT {
+pub(crate) mod PROT {
     use super::vm_prot_t;
-    pub const READ: vm_prot_t = 0x01;
-    pub const WRITE: vm_prot_t = 0x02;
+    pub(crate) const READ: vm_prot_t = 0x01;
+    pub(crate) const WRITE: vm_prot_t = 0x02;
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct section_64 {
-    pub sectname: [u8; 16],
-    pub segname: [u8; 16],
-    pub addr: u64,
-    pub size: u64,
-    pub offset: u32,
-    pub align: u32,
-    pub reloff: u32,
-    pub nreloc: u32,
-    pub flags: u32,
-    pub reserved1: u32,
-    pub reserved2: u32,
-    pub reserved3: u32,
+    pub(crate) sectname: [u8; 16],
+    pub(crate) segname: [u8; 16],
+    pub(crate) addr: u64,
+    pub(crate) size: u64,
+    pub(crate) offset: u32,
+    pub(crate) align: u32,
+    pub(crate) reloff: u32,
+    pub(crate) nreloc: u32,
+    pub(crate) flags: u32,
+    pub(crate) reserved1: u32,
+    pub(crate) reserved2: u32,
+    pub(crate) reserved3: u32,
 }
 impl section_64 {
     #[inline]
@@ -175,9 +175,9 @@ pub(crate) struct BlobIndex {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SuperBlob {
-    pub magic: u32,
-    pub length: u32,
-    pub count: u32,
+    pub(crate) magic: u32,
+    pub(crate) length: u32,
+    pub(crate) count: u32,
 }
 
 // SAFETY: `CodeDirectory` is `#[repr(C)]` with 9×u32, 4×u8, 4×u32, 4×u64 in

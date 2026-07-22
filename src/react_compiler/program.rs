@@ -301,11 +301,7 @@ fn is_valid_gating_identifier(s: &[u8]) -> bool {
 /// Outcome of [`parse_fixture_pragmas`].
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 #[derive(Debug, Default)]
-pub struct PragmaParseResult {
-    /// `Some(key)` when the source uses a pragma the port can't honor; the
-    /// fixture runner should skip output comparison for that file.
-    pub skip: Option<&'static str>,
-}
+pub struct PragmaParseResult {}
 
 /// Iterator over `(key, value)` pairs in a pragma string. Mirrors upstream's
 /// `splitPragma`: split on `@`, then split each entry on the first `:` (or
@@ -399,7 +395,10 @@ fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
 /// Parse `// @key[:value]` pragmas from the leading comment block of `source`
 /// and apply them to `opts` (and `opts.environment`) in place.
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> PragmaParseResult {
+pub(crate) fn parse_fixture_pragmas(
+    source: &[u8],
+    opts: &mut ReactCompilerOptions,
+) -> PragmaParseResult {
     let pragma = leading_comment_pragma(source);
     let mut skip: Option<&'static str> = None;
     // Match upstream snap harness defaults (compiler/packages/snap/src/compiler.ts
@@ -618,7 +617,7 @@ pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> 
         }
     }
 
-    PragmaParseResult { skip }
+    PragmaParseResult {}
 }
 
 // -----------------------------------------------------------------------
@@ -1016,21 +1015,11 @@ fn get_component_or_hook_like(
 
 fn handle_error(
     err: CompilerError,
-    fn_name: Option<&str>,
-    fn_loc: Loc,
     diagnostics: &mut Vec<CompileDiagnostic>,
     opts: &ReactCompilerOptions,
 ) -> Option<CompileOutput> {
-    for detail in &err.details {
-        let msg = match detail {
-            CompilerErrorOrDiagnostic::Diagnostic(d) => d.reason.clone(),
-            CompilerErrorOrDiagnostic::ErrorDetail(d) => d.reason.clone(),
-        };
-        diagnostics.push(CompileDiagnostic {
-            fn_name: fn_name.map(str::to_owned),
-            loc: fn_loc,
-            message: msg,
-        });
+    for _ in &err.details {
+        diagnostics.push(CompileDiagnostic {});
     }
 
     let should_panic = match opts.panic_threshold.as_deref().unwrap_or("none") {
@@ -1203,9 +1192,7 @@ impl ReactCompilerState {
             .validate_blocklisted_imports
             .clone();
         if let Some(err) = validate_restricted_imports(host.import_records(), &restricted) {
-            if let Some(fatal) =
-                handle_error(err, None, Loc::EMPTY, &mut self.diagnostics, &self.options)
-            {
+            if let Some(fatal) = handle_error(err, &mut self.diagnostics, &self.options) {
                 self.fatal = Some(fatal);
             }
         }
@@ -1268,7 +1255,6 @@ pub fn maybe_compile_pending(
         FunctionNode::Function(&tmp),
         name,
         pending.in_react_hoc,
-        pending.body_loc,
     )?;
     let mut flags = pending.flags;
     set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
@@ -1289,7 +1275,6 @@ fn maybe_compile_node(
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
     in_react_hoc: bool,
-    fn_loc: Loc,
 ) -> Option<CodegenFunction> {
     bun_core::scoped_log!(
         react_compiler,
@@ -1331,13 +1316,7 @@ fn maybe_compile_node(
         match find_dynamic_gating_directive(&body_directives) {
             Ok(ident) => ident,
             Err(err) => {
-                if let Some(fatal) = handle_error(
-                    err,
-                    fn_name.as_deref(),
-                    fn_loc,
-                    &mut state.diagnostics,
-                    &state.options,
-                ) {
+                if let Some(fatal) = handle_error(err, &mut state.diagnostics, &state.options) {
                     state.fatal = Some(fatal);
                 }
                 return None;
@@ -1378,13 +1357,7 @@ fn maybe_compile_node(
     ) {
         Err(err) => {
             bun_core::scoped_log!(react_compiler, "  -> compile_fn err: {:?}", err);
-            if let Some(fatal) = handle_error(
-                err,
-                fn_name.as_deref(),
-                fn_loc,
-                &mut state.diagnostics,
-                &state.options,
-            ) {
+            if let Some(fatal) = handle_error(err, &mut state.diagnostics, &state.options) {
                 state.fatal = Some(fatal);
             }
             None

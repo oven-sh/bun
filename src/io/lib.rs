@@ -350,7 +350,7 @@ impl EventLoopCtx {
     // `posix_event_loop`/`windows_event_loop` route their N identical
     // `ctx.platform_event_loop()` derefs through this single accessor.
     #[inline]
-    pub(crate) fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
+    fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
         // event loop is single-threaded so no concurrent `&mut` exists, and
         // every crate-internal caller is a leaf op that drops the borrow
@@ -365,7 +365,7 @@ impl EventLoopCtx {
     /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
     /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
     #[inline]
-    pub(crate) fn file_polls_mut(&self) -> &'static mut Store {
+    fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
         // loop is single-threaded so no concurrent `&mut Store` exists, and
         // every crate-internal caller upholds the leaf-op / decayed-slot
@@ -382,7 +382,7 @@ impl EventLoopCtx {
     /// the call sites already produced; collapses their N identical
     /// `&mut *ctx.pipe_read_buffer()` derefs into this one block.
     #[inline]
-    pub(crate) fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
+    fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
         // SAFETY: per-thread set-once scratch buffer (`BackRef`-shaped); the
         // event loop is single-threaded so this is the sole live `&mut`, and
         // every crate-internal caller drops the borrow before any path that
@@ -390,11 +390,12 @@ impl EventLoopCtx {
         unsafe { &mut *self.pipe_read_buffer() }
     }
     #[inline]
-    pub fn loop_ref(&self) {
+    pub(crate) fn loop_ref(&self) {
         self.loop_mut().ref_();
     }
     #[inline]
-    pub fn loop_unref(&self) {
+    #[cfg(unix)]
+    pub(crate) fn loop_unref(&self) {
         self.loop_mut().unref();
     }
     #[inline]
@@ -402,25 +403,26 @@ impl EventLoopCtx {
         self.loop_mut().dec();
     }
     #[inline]
-    pub fn loop_add_active(&self, n: u32) {
+    pub(crate) fn loop_add_active(&self, n: u32) {
         self.loop_mut().add_active(n);
     }
     #[inline]
-    pub fn loop_sub_active(&self, n: u32) {
+    pub(crate) fn loop_sub_active(&self, n: u32) {
         self.loop_mut().sub_active(n);
     }
     #[cfg(not(windows))]
     #[inline]
-    pub fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {
+    pub(crate) fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {
         self.file_polls_mut().get_init(value)
     }
 
     #[inline]
-    pub fn is_js(&self) -> bool {
+    #[cfg(unix)]
+    pub(crate) fn is_js(&self) -> bool {
         self.is(EventLoopCtxKind::Js)
     }
     #[inline]
-    pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
+    pub(crate) fn loop_(&self) -> *mut bun_uws_sys::Loop {
         self.platform_event_loop_ptr()
     }
     /// Platform-native loop pointer (`us_loop_t*` / `uv_loop_t*`); see
@@ -754,10 +756,10 @@ type EventType = KEvent;
 // (`bun_runtime::webcore::Blob`).
 
 pub struct IoRequestLoop {
-    pub pending: RequestQueue,
-    pub waker: Waker,
+    pub(crate) pending: RequestQueue,
+    pub(crate) waker: Waker,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub epoll_fd: Fd,
+    pub(crate) epoll_fd: Fd,
     /// FreeBSD's `Waker` is `LinuxWaker` (an eventfd), so unlike macOS the
     /// waker fd is NOT itself a kqueue. We create one here and register the
     /// eventfd on it, mirroring how Linux registers the eventfd on epoll_fd.
@@ -885,7 +887,8 @@ impl IoRequestLoop {
         }
     }
 
-    pub fn on_spawn_io_thread() {
+    #[cfg(unix)]
+    pub(crate) fn on_spawn_io_thread() {
         // From here on, only this thread may borrow `IoRequestLoop`;
         // `ThreadCell` enforces that in debug builds.
         LOOP.claim();
@@ -925,7 +928,8 @@ impl IoRequestLoop {
         }
     }
 
-    pub fn tick(&self) {
+    #[cfg(unix)]
+    pub(crate) fn tick(&self) {
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
         let name = bun_core::ZStr::from_static(b"IO Watcher\0");
         bun_core::Output::Source::configure_named_thread(name);
@@ -950,7 +954,7 @@ impl IoRequestLoop {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn tick_epoll(&self) {
+    pub(crate) fn tick_epoll(&self) {
         loop {
             // Process pending requests
             {
@@ -1064,7 +1068,7 @@ impl IoRequestLoop {
     // these so any Windows call site fails at compile time rather than
     // compiling cleanly and only panicking at runtime.
     #[cfg(not(windows))]
-    pub fn pollfd(&self) -> Fd {
+    pub(crate) fn pollfd(&self) -> Fd {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return self.epoll_fd;
@@ -1381,7 +1385,7 @@ const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
 #[cfg(not(windows))]
 impl Pollable {
-    pub(crate) fn init(t: PollableTag, p: *mut Poll) -> Pollable {
+    fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let addr = p as usize as u64;
         debug_assert!(addr & !POLLABLE_ADDR_MASK == 0);
         Pollable {
@@ -1389,15 +1393,15 @@ impl Pollable {
         }
     }
 
-    pub(crate) fn from(int: u64) -> Pollable {
+    fn from(int: u64) -> Pollable {
         Pollable { value: int }
     }
 
-    pub(crate) fn poll(self) -> *mut Poll {
+    fn poll(self) -> *mut Poll {
         (self.value & POLLABLE_ADDR_MASK) as usize as *mut Poll
     }
 
-    pub(crate) fn tag(self) -> PollableTag {
+    fn tag(self) -> PollableTag {
         // Tag was written by `init` from a valid `PollableTag` discriminant.
         match (self.value >> POLLABLE_ADDR_BITS) as u16 {
             0 => PollableTag::Empty,
@@ -1410,7 +1414,7 @@ impl Pollable {
         }
     }
 
-    pub(crate) fn ptr(self) -> u64 {
+    fn ptr(self) -> u64 {
         self.value
     }
 }
@@ -1580,7 +1584,7 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
+    pub(crate) fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
         // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
         unsafe {
             libc::epoll_ctl(
@@ -1634,7 +1638,7 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn on_update_epoll(
+    pub(crate) fn on_update_epoll(
         poll: core::ptr::NonNull<Poll>,
         tag: PollableTag,
         event: linux::epoll_event,
@@ -1669,7 +1673,7 @@ impl Poll {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     // `enumset::EnumSetType` cannot be a const generic, so `flag` is a runtime
     // arg. The `match` below preserves the exhaustiveness check.
-    pub fn register_for_epoll(
+    pub(crate) fn register_for_epoll(
         &mut self,
         flag: Flags,
         tag: PollableTag,
@@ -1776,11 +1780,11 @@ pub enum FilePollKind {
 /// `Store::get(ref) -> Option<&mut FilePoll>` is the safe follow-up.
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct FilePollRef(pub core::ptr::NonNull<FilePoll>);
+pub struct FilePollRef(pub(crate) core::ptr::NonNull<FilePoll>);
 
 impl FilePollRef {
     #[inline]
-    pub fn init(ev: EventLoopHandle, fd: Fd, owner: Owner) -> FilePollRef {
+    pub(crate) fn init(ev: EventLoopHandle, fd: Fd, owner: Owner) -> FilePollRef {
         FilePollRef(
             core::ptr::NonNull::new(FilePoll::init(ev, fd, PollFlagsSet::empty(), owner))
                 .expect("FilePoll::init returns a fresh hive slot"),
@@ -1803,15 +1807,15 @@ impl FilePollRef {
         unsafe { &mut *self.0.as_ptr() }
     }
     #[inline]
-    pub fn fd(self) -> Fd {
+    pub(crate) fn fd(self) -> Fd {
         self.inner().fd
     }
     #[inline]
-    pub fn set_owner(self, owner: Owner) {
+    pub(crate) fn set_owner(self, owner: Owner) {
         self.inner().owner = owner;
     }
     #[inline]
-    pub fn deinit_force_unregister(self) {
+    pub(crate) fn deinit_force_unregister(self) {
         self.inner().deinit_force_unregister();
     }
     /// Single nonnull-asref accessor for the process-global uWS loop pointer.
@@ -1830,7 +1834,7 @@ impl FilePollRef {
         unsafe { &mut *loop_ }
     }
     #[inline]
-    pub fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
+    pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
         let loop_ = Self::uws_loop_mut(loop_);
         #[cfg(not(windows))]
         {
@@ -1872,7 +1876,7 @@ impl FilePollRef {
         }
     }
     #[inline]
-    pub fn has_flag(self, f: FilePollFlag) -> bool {
+    pub(crate) fn has_flag(self, f: FilePollFlag) -> bool {
         self.inner().flags.contains(f)
     }
     #[inline]
@@ -1880,7 +1884,7 @@ impl FilePollRef {
         self.inner().flags.insert(f);
     }
     #[inline]
-    pub fn file_type(self) -> crate::pipes::FileType {
+    pub(crate) fn file_type(self) -> crate::pipes::FileType {
         #[cfg(not(windows))]
         {
             self.inner().file_type()
@@ -1899,19 +1903,19 @@ impl FilePollRef {
         self.inner().is_watching()
     }
     #[inline]
-    pub fn is_active(self) -> bool {
+    pub(crate) fn is_active(self) -> bool {
         self.inner().is_active()
     }
     #[inline]
-    pub fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
+    pub(crate) fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
         self.inner().enable_keeping_process_alive(ev);
     }
     #[inline]
-    pub fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
+    pub(crate) fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
         self.inner().disable_keeping_process_alive(ev);
     }
     #[inline]
-    pub fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {
+    pub(crate) fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {
         if value {
             self.enable_keeping_process_alive(ev)
         } else {
@@ -1948,7 +1952,7 @@ pub mod waker {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub struct LinuxWaker {
-        pub fd: Fd,
+        pub(crate) fd: Fd,
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -1975,7 +1979,7 @@ pub mod waker {
         }
 
         #[inline]
-        pub(crate) fn init_with_file_descriptor(fd: Fd) -> Self {
+        fn init_with_file_descriptor(fd: Fd) -> Self {
             Self { fd }
         }
 
@@ -2194,7 +2198,7 @@ pub mod closer {
     #[cfg(not(windows))]
     #[repr(C)]
     pub struct Closer {
-        pub fd: Fd,
+        pub(crate) fd: Fd,
         task: WorkPoolTask,
     }
 

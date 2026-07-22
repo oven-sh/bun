@@ -26,12 +26,12 @@ pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 /// userland send buffer crosses this even if flow-control window remains, so a
 /// large grant doesn't duplicate the whole body in memory before the first
 /// `flush()`. `onWritable → drainSendBodies` resumes once the socket drains.
-pub const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
+pub(crate) const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
 
 /// Abandon the connection (ENHANCE_YOUR_CALM) if queued control-frame replies
 /// (PING/SETTINGS ACKs) push `write_buffer` past this while the socket is
 /// stalled — caps the PING-reflection growth at a fixed budget instead of OOM.
-pub const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
+pub(crate) const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
@@ -49,7 +49,7 @@ pub use live_streams as LIVE_STREAMS;
 #[path = "h2_client/ClientSession.rs"]
 pub mod client_session;
 #[path = "h2_client/dispatch.rs"]
-pub mod dispatch;
+pub(crate) mod dispatch;
 #[path = "h2_client/encode.rs"]
 pub mod encode;
 #[path = "h2_client/PendingConnect.rs"]
@@ -71,30 +71,30 @@ pub use stream::Stream;
 // using `client` after building the request. Kept as inherent methods so the
 // many call sites in `h2_client/*.rs` need no churn.
 // ═══════════════════════════════════════════════════════════════════════
-pub(crate) mod bridge {
+mod bridge {
     use crate::http_context::HTTPSocket;
     use crate::{HTTPClient, NewHTTPContext};
     use bun_picohttp as picohttp;
 
     impl HTTPClient<'_> {
         #[inline]
-        pub fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
+        pub(crate) fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
             self.register_abort_tracker::<true>(socket);
         }
         #[inline]
-        pub fn h2_retry_after_coalesce(&mut self) {
+        pub(crate) fn h2_retry_after_coalesce(&mut self) {
             self.retry_after_h2_coalesce();
         }
         #[inline]
-        pub fn h2_retry(&mut self) {
+        pub(crate) fn h2_retry(&mut self) {
             self.retry_from_h2();
         }
         #[inline]
-        pub fn h2_fail(&mut self, err: crate::Error) {
+        pub(crate) fn h2_fail(&mut self, err: crate::Error) {
             self.fail_from_h2(err);
         }
         #[inline]
-        pub fn h2_progress_update(
+        pub(crate) fn h2_progress_update(
             &mut self,
             ctx: *mut NewHTTPContext<true>,
             socket: HTTPSocket<true>,
@@ -102,15 +102,19 @@ pub(crate) mod bridge {
             self.progress_update::<true>(ctx, socket);
         }
         #[inline]
-        pub fn h2_do_redirect(&mut self, ctx: *mut NewHTTPContext<true>, socket: HTTPSocket<true>) {
+        pub(crate) fn h2_do_redirect(
+            &mut self,
+            ctx: *mut NewHTTPContext<true>,
+            socket: HTTPSocket<true>,
+        ) {
             self.do_redirect::<true>(ctx, socket);
         }
         #[inline]
-        pub fn h2_clone_metadata(&mut self) {
+        pub(crate) fn h2_clone_metadata(&mut self) {
             self.clone_metadata();
         }
         #[inline]
-        pub fn h2_handle_response_body(
+        pub(crate) fn h2_handle_response_body(
             &mut self,
             buf: &[u8],
             is_only_buffer: bool,
@@ -118,11 +122,11 @@ pub(crate) mod bridge {
             self.handle_response_body(buf, is_only_buffer)
         }
         #[inline]
-        pub fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
+        pub(crate) fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
             self.drain_response_body::<true>(socket);
         }
         #[inline]
-        pub fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
+        pub(crate) fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
             // SAFETY: `build_request` returns a `Request<'_>` whose borrowed
             // slices point only at (a) the thread-local
             // `SHARED_REQUEST_HEADERS_BUF` static and (b) `self.header_buf`,

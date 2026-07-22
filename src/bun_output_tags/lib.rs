@@ -17,7 +17,7 @@ pub mod ansi {
     pub(crate) const ITALIC: &str = "\x1b[3m";
     pub(crate) const UNDERLINE: &str = "\x1b[4m";
     pub const INVERT: &str = "\x1b[7m";
-    pub const STRIKETHROUGH: &str = "\x1b[9m";
+    pub(crate) const STRIKETHROUGH: &str = "\x1b[9m";
     pub(crate) const BLACK: &str = "\x1b[30m";
     pub const RED: &str = "\x1b[31m";
     pub const GREEN: &str = "\x1b[32m";
@@ -54,7 +54,7 @@ pub mod ansi_b {
 
 /// `(tag, ansi_escape)` pairs. 14 entries — linear scan in [`color_for`] is
 /// intentional; this is only hit on `<tag>` markers in diagnostic-output paths.
-pub(crate) const COLOR_TABLE: &[(&str, &str)] = &[
+const COLOR_TABLE: &[(&str, &str)] = &[
     ("b", ansi::BOLD),
     ("d", ansi::DIM),
     ("i", ansi::ITALIC),

@@ -15,11 +15,11 @@ unsafe extern "C" {
 }
 
 impl Exception {
-    pub fn get_stack_trace(&self, global: &JSGlobalObject, stack: &mut ZigStackTrace) {
+    pub(crate) fn get_stack_trace(&self, global: &JSGlobalObject, stack: &mut ZigStackTrace) {
         JSC__Exception__getStackTrace(self, global, stack);
     }
 
-    pub fn value(&self) -> JSValue {
+    pub(crate) fn value(&self) -> JSValue {
         JSC__Exception__asJSValue(self)
     }
 }

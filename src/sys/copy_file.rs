@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(not(windows))]
 use crate::E;
+#[cfg(unix)]
 use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
@@ -288,7 +289,7 @@ pub fn can_use_copy_file_range_syscall() -> bool {
     result == 1
 }
 
-pub static CAN_USE_IOCTL_FICLONE_: AtomicI32 = AtomicI32::new(0);
+static CAN_USE_IOCTL_FICLONE_: AtomicI32 = AtomicI32::new(0);
 
 #[inline]
 pub fn disable_ioctl_ficlone() {
@@ -333,10 +334,11 @@ pub fn can_use_ioctl_ficlone() -> bool {
 // Only the
 // posix paths call the fns below, so c_int is sufficient here.
 #[allow(non_camel_case_types)]
+#[cfg(unix)]
 type fd_t = core::ffi::c_int;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn copy_file_range(
+fn copy_file_range(
     in_: fd_t,
     out: fd_t,
     len: usize,
@@ -429,7 +431,8 @@ pub fn copy_file_range(
     copy_file_read_write_loop(in_, out, len)
 }
 
-pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
+#[cfg(unix)]
+fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
     // PERF: 32 KiB stack buffer is zero-initialized — profile if it shows up on a hot path
     let mut buf = [0u8; 8 * 4096];
     let adjusted_count = buf.len().min(len);

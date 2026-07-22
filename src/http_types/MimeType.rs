@@ -32,7 +32,7 @@ pub type Map = StringHashMap<Table>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Compact {
-    pub value: Table,
+    pub(crate) value: Table,
 }
 
 impl Compact {
@@ -139,7 +139,7 @@ pub enum Category {
 }
 
 impl Category {
-    pub fn from_table(entry: Table) -> Category {
+    pub(crate) fn from_table(entry: Table) -> Category {
         bun_core::comptime_string_map! {
             static CATEGORY_OVERRIDES: Category = {
                 b"text/javascript" => Category::Javascript,
@@ -170,7 +170,7 @@ impl Category {
 }
 
 impl Category {
-    pub fn init(str: &[u8]) -> Category {
+    pub(crate) fn init(str: &[u8]) -> Category {
         if let Some(slash) = strings::index_of_char(str, b'/') {
             let category = &str[0..slash as usize];
             let mut after_slash: &[u8] = if str.len() > slash as usize + 1 {
@@ -267,8 +267,7 @@ pub const OTHER: MimeType = MimeType::init_comptime(b"application/octet-stream",
 pub const CSS: MimeType = MimeType::init_comptime(b"text/css;charset=utf-8", Category::Css);
 pub const JAVASCRIPT: MimeType =
     MimeType::init_comptime(b"text/javascript;charset=utf-8", Category::Javascript);
-pub(crate) const ICO: MimeType =
-    MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
+const ICO: MimeType = MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
 pub const HTML: MimeType = MimeType::init_comptime(b"text/html;charset=utf-8", Category::Html);
 // we transpile json to javascript so that it is importable without import assertions.
 pub const JSON: MimeType =
@@ -439,7 +438,6 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
 }
 
 // this is partially auto-generated
-pub use super::mime_type_list_enum::ALL;
 
 // TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap

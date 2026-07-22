@@ -33,11 +33,11 @@ impl Time {
     // forward via UFCS (`Time::eql(a, b)`) — does not conflict with the
     // derived trait method (that one has a `&self` receiver).
     #[inline]
-    pub fn eql(lhs: Self, rhs: Self) -> bool {
+    pub(crate) fn eql(lhs: Self, rhs: Self) -> bool {
         lhs == rhs
     }
 
-    pub fn parse(input: &mut css::Parser) -> Result<Time> {
+    pub(crate) fn parse(input: &mut css::Parser) -> Result<Time> {
         match input.try_parse(Calc::<Time>::parse) {
             Ok(vv) => match vv {
                 Calc::Value(v) => {
@@ -68,7 +68,7 @@ impl Time {
         }
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // 0.1s is shorter than 100ms
         // anything smaller is longer
         match self {
@@ -94,7 +94,7 @@ impl Time {
         Ok(())
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         match self {
             Time::Seconds(s) => s == 0.0,
             Time::Milliseconds(ms) => ms == 0.0,
@@ -102,14 +102,14 @@ impl Time {
     }
 
     /// Returns the time in milliseconds.
-    pub fn to_ms(self) -> CSSNumber {
+    pub(crate) fn to_ms(self) -> CSSNumber {
         match self {
             Time::Seconds(v) => v * 1000.0,
             Time::Milliseconds(v) => v,
         }
     }
 
-    pub fn try_from_token(token: &Token) -> Maybe<Time, ()> {
+    pub(crate) fn try_from_token(token: &Token) -> Maybe<Time, ()> {
         match token {
             Token::Dimension(dim) => crate::match_ignore_ascii_case! { dim.unit, {
                 b"s" => Ok(Time::Seconds(dim.num.value)),
@@ -124,14 +124,14 @@ impl Time {
         None
     }
 
-    pub fn mul_f32(self, other: f32) -> Time {
+    pub(crate) fn mul_f32(self, other: f32) -> Time {
         match self {
             Time::Seconds(s) => Time::Seconds(s * other),
             Time::Milliseconds(ms) => Time::Milliseconds(ms * other),
         }
     }
 
-    pub fn add_internal(self, other: Time) -> Time {
+    pub(crate) fn add_internal(self, other: Time) -> Time {
         self.add(other)
     }
 
@@ -139,29 +139,29 @@ impl Time {
         Calc::Value(Box::new(self))
     }
 
-    pub fn add(self, other: Self) -> Time {
+    pub(crate) fn add(self, other: Self) -> Time {
         self.op(other, |a, b| a + b)
     }
 
-    pub fn partial_cmp(self, other: Time) -> Option<core::cmp::Ordering> {
+    pub(crate) fn partial_cmp(self, other: Time) -> Option<core::cmp::Ordering> {
         crate::generic::partial_cmp_f32(self.to_ms(), other.to_ms())
     }
 
-    pub fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {
+    pub(crate) fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {
         match self {
             Time::Seconds(s) => Time::Seconds(map_fn(s)),
             Time::Milliseconds(ms) => Time::Milliseconds(map_fn(ms)),
         }
     }
 
-    pub fn sign(self) -> f32 {
+    pub(crate) fn sign(self) -> f32 {
         match self {
             Time::Seconds(v) => CSSNumberFns::sign(v),
             Time::Milliseconds(v) => CSSNumberFns::sign(v),
         }
     }
 
-    pub fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
+    pub(crate) fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(op_fn(a, b)),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => Time::Milliseconds(op_fn(a, b)),

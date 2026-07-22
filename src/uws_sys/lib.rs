@@ -198,58 +198,58 @@ unsafe extern "C" {
 }
 impl UpgradedDuplex {
     #[inline]
-    pub fn ssl_error(&self) -> us_bun_verify_error_t {
+    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
         UpgradedDuplex__ssl_error(self)
     }
     #[inline]
-    pub fn is_established(&self) -> bool {
+    pub(crate) fn is_established(&self) -> bool {
         UpgradedDuplex__is_established(self)
     }
     #[inline]
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         UpgradedDuplex__is_closed(self)
     }
     #[inline]
-    pub fn is_shutdown(&self) -> bool {
+    pub(crate) fn is_shutdown(&self) -> bool {
         UpgradedDuplex__is_shutdown(self)
     }
     #[inline]
-    pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = UpgradedDuplex__ssl(self);
         if p.is_null() { None } else { Some(p) }
     }
     #[inline]
-    pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
+    pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
         UpgradedDuplex__set_timeout(self, seconds)
     }
     #[inline]
-    pub fn flush(&mut self) {
+    pub(crate) fn flush(&mut self) {
         UpgradedDuplex__flush(self)
     }
     #[inline]
-    pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
         // the call, and `(data.as_ptr(), data.len())` is a valid readable region
         // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
         // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
         // the call, and `(data.as_ptr(), data.len())` is a valid readable region
         // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         UpgradedDuplex__shutdown(self)
     }
     #[inline]
-    pub fn shutdown_read(&mut self) {
+    pub(crate) fn shutdown_read(&mut self) {
         UpgradedDuplex__shutdown_read(self)
     }
     #[inline]
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         UpgradedDuplex__close(self)
     }
 }
@@ -449,7 +449,6 @@ pub use socket_kind::SocketKind;
 pub use timer::Timer;
 #[cfg(not(windows))]
 pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows
-pub use app::uws_app_t;
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;

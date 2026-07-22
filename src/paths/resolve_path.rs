@@ -88,7 +88,7 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     ParentEqual::Unrelated
 }
 
-pub(crate) fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
+fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {
     let is_path_separator = P::P.get_separator_func();
@@ -202,7 +202,7 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub(crate) fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
+fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
@@ -376,7 +376,7 @@ pub fn relative_to_common_path_buf() -> *mut PathBuffer {
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
 // https://github.com/nodejs/node/blob/9a7cbe25de88d87429a69050a1a1971234558d97/lib/path.js#L1250-L1259
-pub(crate) fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
+fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     common_path_: &[u8],
     normalized_from_: &[u8],
     normalized_to_: &'a [u8],
@@ -747,7 +747,7 @@ pub fn windows_volume_name_len(path: &[u8]) -> (usize, usize) {
     windows_volume_name_len_t::<u8>(path)
 }
 
-pub(crate) fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
+fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
     if path.len() < 2 {
         return (0, 0);
     }
@@ -808,7 +808,7 @@ pub fn has_any_illegal_chars(maybe_path: &[u8]) -> bool {
     strings::index_of_any(maybe_path_, b"<>:\"|?*").is_some()
 }
 
-pub(crate) fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
+fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
     if !cfg!(windows) {
         return false;
     }
@@ -828,7 +828,7 @@ pub(crate) fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
 }
 
 // path.relative lets you do relative across different share drives
-pub(crate) fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
+fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     if path.is_empty() {
         return &path[..0];
     }
@@ -1175,14 +1175,14 @@ impl Platform {
     }
 
     #[inline]
-    pub const fn separator_string(self) -> &'static str {
+    const fn separator_string(self) -> &'static str {
         match self {
             Platform::Loose | Platform::Posix => "/",
             Platform::Nt | Platform::Windows => "\\",
         }
     }
 
-    pub const fn get_separator_func(self) -> IsSeparatorFunc {
+    const fn get_separator_func(self) -> IsSeparatorFunc {
         match self {
             Platform::Loose => is_sep_any,
             Platform::Nt | Platform::Windows => is_sep_any,
@@ -1196,7 +1196,7 @@ impl Platform {
     }
 
     #[inline(always)]
-    pub fn is_separator_t<T: PathChar>(self, char: T) -> bool {
+    fn is_separator_t<T: PathChar>(self, char: T) -> bool {
         match self {
             Platform::Loose => is_sep_any_t::<T>(char),
             Platform::Nt | Platform::Windows => is_sep_any_t::<T>(char),
@@ -1204,14 +1204,14 @@ impl Platform {
         }
     }
 
-    pub const fn trailing_separator(self) -> [u8; 2] {
+    const fn trailing_separator(self) -> [u8; 2] {
         match self {
             Platform::Nt | Platform::Windows => *b".\\",
             Platform::Posix | Platform::Loose => *b"./",
         }
     }
 
-    pub fn leading_separator_index<T: PathChar>(self, path: &[T]) -> Option<usize> {
+    fn leading_separator_index<T: PathChar>(self, path: &[T]) -> Option<usize> {
         match self {
             Platform::Nt | Platform::Windows => {
                 if path.len() < 1 {
@@ -1318,7 +1318,7 @@ pub fn normalize_string_buf<
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub(crate) fn normalize_string_buf_t<
+fn normalize_string_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1461,7 +1461,7 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
 /// split out of `join_string_buf_t` because Rust can't monomorphize on the
 /// parts' element types — callers pick the overload.
-pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
+fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[T]],
 ) -> &'a [T] {
@@ -1524,10 +1524,7 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
-    buf: &'a mut [T],
-    parts: &[&[u8]],
-) -> &'a [T] {
+fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&[u8]]) -> &'a [T] {
     // Takes `&[&[u8]]` — every in-tree caller passes u8
     // parts — and transcodes to u16 below when `T == u16`.
     let mut written: usize = 0;
@@ -1584,7 +1581,7 @@ enum JoinScratch {
 
 impl JoinScratch {
     #[inline]
-    pub(crate) fn init(base: usize, parts: &[&[u8]]) -> Self {
+    fn init(base: usize, parts: &[&[u8]]) -> Self {
         let mut total = base + 2;
         for p in parts {
             total += p.len() + 1;
@@ -1897,35 +1894,35 @@ pub use bun_core::path_sep::{
     is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t,
 };
 #[inline(always)]
-pub fn is_sep_posix(c: u8) -> bool {
+fn is_sep_posix(c: u8) -> bool {
     is_sep_posix_t::<u8>(c)
 }
 
-pub(crate) fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_windows_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     slice.iter().rposition(|&c| is_sep_any_t::<T>(c))
 }
 
-pub(crate) fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_posix_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     slice.iter().rposition(|&c| c == T::from_u8(SEP_POSIX))
 }
 
-pub(crate) fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_loose_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     last_index_of_sep_t::<T>(slice)
 }
 
-pub(crate) fn normalize_string_loose_buf_t<
+fn normalize_string_loose_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1942,7 +1939,7 @@ pub(crate) fn normalize_string_loose_buf_t<
     )
 }
 
-pub(crate) fn normalize_string_windows_t<
+fn normalize_string_windows_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1959,7 +1956,7 @@ pub(crate) fn normalize_string_windows_t<
     )
 }
 
-pub(crate) fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
+fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
     buf: &'a mut [T],
 ) -> &'a mut [T] {
@@ -2067,7 +2064,7 @@ pub(crate) fn last_index_of_sep(path: &[u8]) -> Option<usize> {
     last_index_of_sep_t::<u8>(path)
 }
 
-pub(crate) fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
+fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
     #[cfg(not(windows))]
     {
         return strings::last_index_of_char_t::<T>(path, T::from_u8(b'/'));

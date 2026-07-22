@@ -244,7 +244,7 @@ macro_rules! __mal_column_impl {
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
 /// value type without a `where [(); field_count::<T>()]:` bound propagating to
 /// every caller.
-pub(crate) const MAX_FIELDS: usize = 32;
+const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
@@ -268,7 +268,7 @@ const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
 
 /// Number of fields in `T`.
 #[inline(always)]
-pub(crate) const fn field_count<T>() -> usize {
+const fn field_count<T>() -> usize {
     fields_of::<T>().len()
 }
 
@@ -699,7 +699,7 @@ impl<T> Slice<T> {
         Reflected::<T>::META[field_index].size
     }
 
-    pub fn set(&mut self, index: usize, elem: T) {
+    fn set(&mut self, index: usize, elem: T) {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::set: index out of bounds"
@@ -713,7 +713,7 @@ impl<T> Slice<T> {
     /// ownership of every field. Dropping the gathered struct would free
     /// columns the storage still owns (double-free on next `get` / `Drop`),
     /// so it is wrapped in `ManuallyDrop`.
-    pub fn get(&self, index: usize) -> ManuallyDrop<T> {
+    fn get(&self, index: usize) -> ManuallyDrop<T> {
         assert!(
             index < self.len,
             "MultiArrayList::Slice::get: index out of bounds"
@@ -721,7 +721,7 @@ impl<T> Slice<T> {
         ManuallyDrop::new(self.gather(index))
     }
 
-    pub fn to_multi_array_list(self) -> MultiArrayList<T> {
+    fn to_multi_array_list(self) -> MultiArrayList<T> {
         if Reflected::<T>::COUNT == 0 || self.capacity == 0 {
             return MultiArrayList::default();
         }
@@ -975,7 +975,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Extend the list by 1 element. Allocates more memory as necessary.
-    pub fn push(&mut self, elem: T) -> Result<(), AllocError> {
+    fn push(&mut self, elem: T) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
         self.append_assume_capacity(elem);
         Ok(())
@@ -1104,7 +1104,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.capacity = new_len;
     }
 
-    pub fn clear_and_free(&mut self) {
+    fn clear_and_free(&mut self) {
         self.free_allocated_bytes();
         self.bytes = Reflected::<T>::DANGLING;
         self.len = 0;
@@ -1200,7 +1200,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
-    pub fn capacity_in_bytes(capacity: usize) -> usize {
+    fn capacity_in_bytes(capacity: usize) -> usize {
         Reflected::<T>::ELEM_BYTES * capacity
     }
 

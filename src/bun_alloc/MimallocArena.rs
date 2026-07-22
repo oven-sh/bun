@@ -318,7 +318,7 @@ impl MimallocArena {
     /// In-place expand/shrink, no relocation.
     /// Returns `true` if the block now has at least `new_len` bytes.
     #[inline]
-    pub fn resize_in_place(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize) -> bool {
+    fn resize_in_place(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize) -> bool {
         // SAFETY: `ptr` was allocated by this arena (caller contract), and is
         // therefore a real mimalloc block head.
         unsafe { !mimalloc::mi_expand(ptr.as_ptr().cast(), new_len).is_null() }
@@ -345,7 +345,7 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_layout` parity.
     #[inline]
-    pub fn alloc_layout(&self, layout: Layout) -> NonNull<u8> {
+    fn alloc_layout(&self, layout: Layout) -> NonNull<u8> {
         let p = self.aligned_alloc(layout.size(), layout.align());
         NonNull::new(p).unwrap_or_else(|| crate::out_of_memory())
     }
@@ -647,7 +647,7 @@ unsafe fn vtable_free(_ctx: *mut c_void, buf: &mut [u8], a: crate::Alignment, _r
 
 /// Per-arena thunks; `ctx` is the
 /// `*const MimallocArena` stashed by `std_allocator()`.
-pub(crate) static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
+static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: vtable_alloc,
     resize: vtable_resize,
     remap: vtable_remap,
@@ -667,7 +667,7 @@ unsafe fn global_vtable_alloc(
     crate::default_alloc::malloc_aligned(len, a.to_byte_units()).cast()
 }
 
-pub(crate) static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
+static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: global_vtable_alloc,
     resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
     remap: crate::basic::MimallocAllocator::remap_with_default_allocator,

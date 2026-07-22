@@ -121,7 +121,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
     assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
 }
 
-pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
+pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
     match value {
         Err(JsError::Thrown) => false,
         Err(JsError::OutOfMemory) => {
@@ -307,7 +307,7 @@ pub fn host_fn_static<R: IntoHostFnReturn>(
 /// these in `to_js_host_call` would trip the return/exception biconditional
 /// when the body legitimately leaves an exception pending.
 #[inline]
-pub fn host_fn_static_passthrough(
+pub(crate) fn host_fn_static_passthrough(
     global: &JSGlobalObject,
     callframe: &CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,

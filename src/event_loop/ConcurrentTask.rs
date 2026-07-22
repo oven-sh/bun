@@ -280,7 +280,7 @@ impl ConcurrentTask {
     /// Heap-allocate a ConcurrentTask and return a raw pointer.
     /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
     #[inline]
-    pub fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
+    pub(crate) fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 

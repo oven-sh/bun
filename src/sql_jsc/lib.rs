@@ -24,7 +24,7 @@ pub mod shared {
     pub mod cached_structure;
 
     #[path = "ConnectionCtorArgs.rs"]
-    pub mod connection_ctor_args;
+    pub(crate) mod connection_ctor_args;
 
     pub mod datetime_text;
 
@@ -35,13 +35,11 @@ pub mod shared {
     pub mod query_binding_iterator;
 
     #[path = "QueryCtorArgs.rs"]
-    pub mod query_ctor_args;
+    pub(crate) mod query_ctor_args;
 
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;
 
     pub use cached_structure::CachedStructure;
-    pub use object_iterator::ObjectIterator;
-    pub use query_binding_iterator::QueryBindingIterator;
-    pub use sql_data_cell::SQLDataCell;
+    pub(crate) use query_binding_iterator::QueryBindingIterator;
 }

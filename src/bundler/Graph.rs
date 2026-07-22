@@ -24,12 +24,12 @@ pub struct Graph<'a> {
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
     pub pool: bun_ptr::BackRef<ThreadPool>,
-    pub heap: &'a ThreadLocalArena,
+    pub(crate) heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
     pub entry_points: Vec<Index>,
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
-    pub entry_point_original_names: IndexStringMap,
+    pub(crate) entry_point_original_names: IndexStringMap,
     /// Every source index has an associated InputFile
     pub input_files: MultiArrayList<InputFile>,
     /// Every source index has an associated Ast
@@ -50,13 +50,13 @@ pub struct Graph<'a> {
     /// - Parsing a file (ParseTask and ServerComponentParseTask)
     /// - onResolve and onLoad functions
     /// - Resolving an onDefer promise
-    pub pending_items: u32,
+    pub(crate) pending_items: u32,
     /// When an `onLoad` plugin calls `.defer()`, the count from `pending_items`
     /// is "moved" into this counter (pending_items -= 1; deferred_pending += 1)
     ///
     /// When `pending_items` hits zero and there are deferred pending tasks, those
     /// tasks will be run, and the count is "moved" back to `pending_items`
-    pub deferred_pending: u32,
+    pub(crate) deferred_pending: u32,
 
     /// A map of build targets to their corresponding module graphs.
     pub build_graphs: EnumMap<options::Target, PathToSourceIndexMap>,
@@ -69,31 +69,31 @@ pub struct Graph<'a> {
     /// Each entry represents a server file importing an HTML file that needs a client build
     ///
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
-    pub html_imports: HtmlImports,
+    pub(crate) html_imports: HtmlImports,
 
-    pub estimated_file_loader_count: usize,
+    pub(crate) estimated_file_loader_count: usize,
 
     /// For Bake, a count of the CSS asts is used to make precise
     /// pre-allocations without re-iterating the file listing.
-    pub css_file_count: usize,
+    pub(crate) css_file_count: usize,
 
-    pub additional_output_files: Vec<options::OutputFile>,
+    pub(crate) additional_output_files: Vec<options::OutputFile>,
 
-    pub kit_referenced_server_data: bool,
-    pub kit_referenced_client_data: bool,
+    pub(crate) kit_referenced_server_data: bool,
+    pub(crate) kit_referenced_client_data: bool,
 
     /// Do any input_files have a secondary_path.len > 0?
     ///
     /// Helps skip a loop.
-    pub has_any_secondary_paths: bool,
+    pub(crate) has_any_secondary_paths: bool,
 }
 
 #[derive(Default)]
 pub struct HtmlImports {
     /// Source index of the server file doing the import
-    pub server_source_indices: Vec<IndexInt>,
+    pub(crate) server_source_indices: Vec<IndexInt>,
     /// Source index of the HTML file being imported
-    pub html_source_indices: Vec<IndexInt>,
+    pub(crate) html_source_indices: Vec<IndexInt>,
 }
 
 pub struct InputFile {
@@ -150,7 +150,7 @@ bitflags::bitflags! {
 }
 
 impl<'a> Graph<'a> {
-    pub fn new(heap: &'a ThreadLocalArena) -> Self {
+    pub(crate) fn new(heap: &'a ThreadLocalArena) -> Self {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use.
@@ -186,7 +186,7 @@ impl<'a> Graph<'a> {
     /// can use this in place of the prior open-coded
     /// `unsafe { self.pool.as_ref() }` / `as_mut()`.
     #[inline]
-    pub fn pool(&self) -> &ThreadPool {
+    pub(crate) fn pool(&self) -> &ThreadPool {
         // BackRef invariant: `pool` is set in `BundleV2::init` to an
         // arena-owned `ThreadPool` and remains valid until `BundleV2::deinit`;
         // no `&mut ThreadPool` is live across any `pool()` borrow (the only
@@ -199,14 +199,14 @@ impl<'a> Graph<'a> {
     /// `ThreadPool::deinit` during teardown; prefer [`Self::pool`] for
     /// scheduling.
     #[inline]
-    pub fn pool_mut(&mut self) -> &mut ThreadPool {
+    pub(crate) fn pool_mut(&mut self) -> &mut ThreadPool {
         // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
         // `Graph`, so no aliasing `&ThreadPool` is live.
         unsafe { self.pool.get_mut() }
     }
 
     #[inline]
-    pub fn path_to_source_index_map(
+    pub(crate) fn path_to_source_index_map(
         &mut self,
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
@@ -217,7 +217,7 @@ impl<'a> Graph<'a> {
     /// each `.defer()` called in an onLoad plugin.
     ///
     /// Returns true if there were more tasks queued.
-    pub fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
+    pub(crate) fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
         transpiler.thread_lock.assert_locked();
 
         if self.deferred_pending > 0 {

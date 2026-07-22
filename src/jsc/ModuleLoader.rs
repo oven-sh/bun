@@ -45,7 +45,7 @@ impl ModuleLoader {
     /// &mut VirtualMachine`) — `ModuleLoader` is a value field of
     /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
     /// Access `module_loader` through `jsc_vm` instead.
-    pub fn reset_arena(jsc_vm: &mut VirtualMachine) {
+    pub(crate) fn reset_arena(jsc_vm: &mut VirtualMachine) {
         // PERF: this unconditionally calls `reset()`. Per
         // `MimallocArena::reset_retain_with_limit`'s doc comment, the
         // "mimalloc's segment cache keeps pages warm anyway" theory behind
@@ -333,7 +333,7 @@ pub fn process_fetch_log(
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__transpileFile(
+unsafe extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
     specifier_ptr: *mut bun_core::String,
@@ -372,7 +372,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__fetchBuiltinModule(
+unsafe extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
     specifier: *const bun_core::String,
@@ -424,7 +424,7 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
 
 /// C++ entry point: if `specifier` names a builtin module, writes its resolved source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
+unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     specifier: *mut bun_core::String,
     ret: *mut ErrorableResolvedSource,
@@ -456,7 +456,7 @@ pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
 
 /// Support embedded .node files.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
+unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
     vm: *mut VirtualMachine,
     in_out_str: *mut bun_core::String,
 ) -> bool {
@@ -479,7 +479,7 @@ pub(crate) unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
 
 /// C++ entry point: whether `data[..len]` names a builtin module.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
+unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
     bun_aliases_get(str).is_some()
@@ -506,7 +506,7 @@ use bun_bundler::transpiler::PluginRunner;
 
 /// C++ entry point: picks the loader for a specifier from its file extension and the VM's loader map.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__getDefaultLoader(
+extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
     str: &bun_core::String,
 ) -> bun_options_types::schema::api::Loader {
@@ -528,7 +528,7 @@ pub(crate) extern "C" fn Bun__getDefaultLoader(
 
 /// C++ entry point: transpiles a plugin-provided virtual module's source, writing the result into `ret`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__transpileVirtualModule(
+unsafe extern "C" fn Bun__transpileVirtualModule(
     global: *mut JSGlobalObject,
     specifier: *const bun_core::String,
     referrer: *const bun_core::String,
@@ -559,7 +559,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileVirtualModule(
 
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__runVirtualModule(
+unsafe extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {

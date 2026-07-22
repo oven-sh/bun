@@ -331,9 +331,9 @@ const SIZE: usize = core::mem::size_of::<VersionExternal>()
 
 pub struct Context<'a> {
     // allocator dropped (global mimalloc)
-    pub log: &'a mut bun_ast::Log,
-    pub buffer: &'a [u8],
-    pub package_manager: Option<&'a mut PackageManager>,
+    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) buffer: &'a [u8],
+    pub(crate) package_manager: Option<&'a mut PackageManager>,
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -417,7 +417,7 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
+fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }
@@ -439,7 +439,7 @@ pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // This won't work for query string params, but I'll let someone file an issue
 // before I add that.
 #[inline]
-pub(crate) fn is_tarball(dependency: &[u8]) -> bool {
+fn is_tarball(dependency: &[u8]) -> bool {
     dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
 }
 
@@ -482,7 +482,7 @@ pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>)
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
-pub(crate) fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
         let at_index = at_index as usize;
         if at_index != 0 {
@@ -569,7 +569,7 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
 /// could resolve outside that directory. `@scope/name` stays valid.
-pub fn is_safe_install_folder_name(name: &[u8]) -> bool {
+pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -1196,7 +1196,7 @@ pub fn parse<'a, 'b>(
     )
 }
 
-pub fn parse_with_optional_tag<'a, 'b>(
+pub(crate) fn parse_with_optional_tag<'a, 'b>(
     alias: String,
     alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
@@ -1219,7 +1219,7 @@ pub fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
-pub fn parse_with_tag(
+pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,
     dependency: &[u8],

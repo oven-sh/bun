@@ -44,25 +44,25 @@ pub use bun_uws::MaybeAnySocket as Socket;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {
-    pub wrapper: Option<ProxyTunnelWrapper>,
-    pub shutdown_err: Cell<Error>,
+    pub(crate) wrapper: Option<ProxyTunnelWrapper>,
+    pub(crate) shutdown_err: Cell<Error>,
     /// active socket is the socket that is currently being used
-    pub socket: Socket,
-    pub write_buffer: bun_io::StreamBuffer,
+    pub(crate) socket: Socket,
+    pub(crate) write_buffer: bun_io::StreamBuffer,
     /// Property of the inner TLS session, not the owning client. Captured from
     /// the client in detachOwner() and restored to the next client in adopt()
     /// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
     /// flag survives across reuse — otherwise a reject_unauthorized=false reuse
     /// would re-pool with the flag erased, letting a later reject_unauthorized=true
     /// request silently reuse a tunnel whose cert failed validation.
-    pub did_have_handshaking_error: bool,
+    pub(crate) did_have_handshaking_error: bool,
     /// Whether the inner TLS session was established with reject_unauthorized=true
     /// (and therefore hostname-verified via checkServerIdentity). A CA-valid but
     /// wrong-hostname cert produces error_no=0 so did_have_handshaking_error stays
     /// false; without this flag, a strict caller could reuse a tunnel where
     /// hostname was never checked.
-    pub established_with_reject_unauthorized: bool,
-    pub ref_count: Cell<u32>,
+    pub(crate) established_with_reject_unauthorized: bool,
+    pub(crate) ref_count: Cell<u32>,
 }
 
 impl Default for ProxyTunnel {
@@ -468,7 +468,7 @@ fn on_handshake(
     }
 }
 
-pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
+pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic;
     // the call chains that reach here (e.g. on_handshake → on_writable → flush,
     // on_open → flush) each NLL-end their `client_from_ctx`/`*ctx` borrow
@@ -603,7 +603,7 @@ fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTu
 // ─── ProxyTunnel methods ─────────────────────────────────────────────────────
 
 impl ProxyTunnel {
-    pub fn start<const IS_SSL: bool>(
+    pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
         ssl_options: &SSLConfig,
@@ -677,7 +677,7 @@ impl ProxyTunnel {
     /// encode the module INVARIANT that `this` is a live intrusive-refcounted
     /// tunnel and no whole-struct `&mut ProxyTunnel` is held across the call.
     /// Callers satisfy that by construction (see [`Self::close_from_callback`]).
-    pub fn close_raw(this: NonNull<Self>, err: Error) {
+    pub(crate) fn close_raw(this: NonNull<Self>, err: Error) {
         // `shutdown_err` is a `Cell<Error>` disjoint from `wrapper`; safe set.
         Self::shutdown_err_of(this).set(err);
         // shutdown() fires on_close synchronously, which accesses only
@@ -690,14 +690,14 @@ impl ProxyTunnel {
         }
     }
 
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         if let Some(wrapper) = &mut self.wrapper {
             // fast shutdown the connection
             let _ = wrapper.shutdown(true);
         }
     }
 
-    pub fn on_writable<const IS_SSL: bool>(&mut self, socket: HTTPSocket<IS_SSL>) {
+    pub(crate) fn on_writable<const IS_SSL: bool>(&mut self, socket: HTTPSocket<IS_SSL>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
         // Capture the raw pointer FIRST and perform every subsequent field
         // access through it. Touching `self` again after deriving `self_ptr`
@@ -735,7 +735,7 @@ impl ProxyTunnel {
         // _guard derefs here.
     }
 
-    pub fn receive(&mut self, buf: &[u8]) {
+    pub(crate) fn receive(&mut self, buf: &[u8]) {
         // Capture raw pointer first; never touch `self` again (see on_writable).
         let self_nn = NonNull::from(&mut *self);
         let _guard = Self::ref_scope(self_nn);
@@ -751,7 +751,7 @@ impl ProxyTunnel {
         // intact because `self` was never reborrowed after capture.
     }
 
-    pub fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
+    pub(crate) fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if let Some(wrapper) = &mut self.wrapper {
             return wrapper.write_data(buf).map_err(|e| match e {
                 WriteDataError::ConnectionClosed => crate::Error::ConnectionClosed,
@@ -763,11 +763,11 @@ impl ProxyTunnel {
     }
 
     #[inline]
-    pub fn detach_socket(&mut self) {
+    pub(crate) fn detach_socket(&mut self) {
         self.socket = Socket::None;
     }
 
-    pub fn detach_and_deref(&mut self) {
+    pub(crate) fn detach_and_deref(&mut self) {
         // detach_socket() BEFORE deref() — if refcount > 1 the tunnel
         // outlives this call and must not retain a dangling socket handle.
         self.detach_socket();
@@ -781,7 +781,7 @@ impl ProxyTunnel {
     /// pooled for keepalive. The inner TLS session is preserved. The tunnel's
     /// refcount is NOT changed — the caller must ensure the ref is transferred
     /// to the pool (or dereffed on failure to pool).
-    pub fn detach_owner(&mut self, client: &HTTPClient) {
+    pub(crate) fn detach_owner(&mut self, client: &HTTPClient) {
         self.socket = Socket::None;
         // Capture the handshaking-error flag from the client — this is a property
         // of the inner TLS session, not the client. adopt() restores it to the
@@ -802,7 +802,7 @@ impl ProxyTunnel {
     /// is reused as-is — no CONNECT and no new TLS handshake. The client's
     /// request/response stage is set to .proxy_headers so the next onWritable
     /// writes the HTTP request directly into the tunnel.
-    pub fn adopt<const IS_SSL: bool>(
+    pub(crate) fn adopt<const IS_SSL: bool>(
         &mut self,
         client: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,

@@ -191,19 +191,19 @@ impl JSType {
 
     /// Slim promise reaction (no rejection handler / context payload).
     /// Internal object used in the promise resolution mechanism.
-    pub const SlimPromiseReaction: JSType = JSType(21);
+    pub(crate) const SlimPromiseReaction: JSType = JSType(21);
 
     /// Full promise reaction (carries onFulfilled/onRejected and async context).
     /// Internal object used in the promise resolution mechanism.
-    pub const FullPromiseReaction: JSType = JSType(22);
+    pub(crate) const FullPromiseReaction: JSType = JSType(22);
 
     /// Context object for Promise.all() operations.
     /// Internal object used to track the state of Promise.all() resolution.
     /// Note: Moved before ObjectType in recent WebKit.
-    pub const PromiseAllContext: JSType = JSType(23);
+    pub(crate) const PromiseAllContext: JSType = JSType(23);
 
     /// Global context for Promise.all() (new in recent WebKit).
-    pub const PromiseAllGlobalContext: JSType = JSType(24);
+    pub(crate) const PromiseAllGlobalContext: JSType = JSType(24);
 
     /// Base JavaScript object type.
     /// ```js
@@ -270,10 +270,10 @@ impl JSType {
     ///   console.log(arguments.length);
     /// }
     /// ```
-    pub const DirectArguments: JSType = JSType(43);
+    pub(crate) const DirectArguments: JSType = JSType(43);
 
-    pub const ScopedArguments: JSType = JSType(44);
-    pub const ClonedArguments: JSType = JSType(45);
+    pub(crate) const ScopedArguments: JSType = JSType(44);
+    pub(crate) const ClonedArguments: JSType = JSType(45);
 
     /// JavaScript Array object.
     /// ```js
@@ -407,7 +407,7 @@ impl JSType {
     /// ```
     pub const ModuleNamespaceObject: JSType = JSType(70);
 
-    pub const ShadowRealm: JSType = JSType(71);
+    pub(crate) const ShadowRealm: JSType = JSType(71);
 
     /// Regular expression object.
     /// ```js
@@ -439,7 +439,7 @@ impl JSType {
     /// const g = gen();
     /// g.next()
     /// ```
-    pub const Generator: JSType = JSType(75);
+    pub(crate) const Generator: JSType = JSType(75);
 
     /// Async generator object for asynchronous iteration.
     /// ```js
@@ -447,17 +447,17 @@ impl JSType {
     ///   yield await promise;
     /// }
     /// ```
-    pub const AsyncGenerator: JSType = JSType(77);
+    pub(crate) const AsyncGenerator: JSType = JSType(77);
 
     /// Iterator for Array objects.
     /// ```js
     /// [1,2,3][Symbol.iterator]()
     /// for (const x of array) {}
     /// ```
-    pub const JSArrayIterator: JSType = JSType(78);
+    pub(crate) const JSArrayIterator: JSType = JSType(78);
 
-    pub const Iterator: JSType = JSType(79);
-    pub const IteratorHelper: JSType = JSType(80);
+    pub(crate) const Iterator: JSType = JSType(79);
+    pub(crate) const IteratorHelper: JSType = JSType(80);
 
     /// Iterator for Map objects.
     /// ```js
@@ -466,30 +466,30 @@ impl JSType {
     /// map.entries()
     /// for (const [k,v] of map) {}
     /// ```
-    pub const MapIterator: JSType = JSType(81);
+    pub(crate) const MapIterator: JSType = JSType(81);
 
     /// Iterator for Set objects.
     /// ```js
     /// set.values()
     /// for (const value of set) {}
     /// ```
-    pub const SetIterator: JSType = JSType(82);
+    pub(crate) const SetIterator: JSType = JSType(82);
 
     /// Iterator for String objects.
     /// ```js
     /// 'hello'[Symbol.iterator]()
     /// for (const char of string) {}
     /// ```
-    pub const StringIterator: JSType = JSType(83);
+    pub(crate) const StringIterator: JSType = JSType(83);
 
-    pub const WrapForValidIterator: JSType = JSType(84);
+    pub(crate) const WrapForValidIterator: JSType = JSType(84);
 
     /// Iterator for RegExp string matching.
     /// ```js
     /// 'abc'.matchAll(/./g)
     /// for (const match of string.matchAll(regex)) {}
     /// ```
-    pub const RegExpStringIterator: JSType = JSType(85);
+    pub(crate) const RegExpStringIterator: JSType = JSType(85);
 
     /// JavaScript Promise object for asynchronous operations.
     /// ```js
@@ -529,9 +529,9 @@ impl JSType {
     /// ```
     pub const WeakSet: JSType = JSType(91);
 
-    pub const WebAssemblyModule: JSType = JSType(92);
-    pub const WebAssemblyInstance: JSType = JSType(93);
-    pub const WebAssemblyGCObject: JSType = JSType(94);
+    pub(crate) const WebAssemblyModule: JSType = JSType(92);
+    pub(crate) const WebAssemblyInstance: JSType = JSType(93);
+    pub(crate) const WebAssemblyGCObject: JSType = JSType(94);
 
     /// Boxed String object.
     /// ```js
@@ -546,7 +546,7 @@ impl JSType {
 
     /// This means that we don't have bindings for the type yet, but it
     /// implements .toJSON()
-    pub const JSAsJSONType: JSType = JSType(0b11110000 | 1);
+    pub(crate) const JSAsJSONType: JSType = JSType(0b11110000 | 1);
 }
 
 impl JSType {
@@ -578,7 +578,7 @@ impl JSType {
         }
     }
 
-    pub fn can_get(self) -> bool {
+    pub(crate) fn can_get(self) -> bool {
         matches!(
             self,
             JSType::Array
@@ -685,7 +685,7 @@ impl JSType {
         )
     }
 
-    pub fn to_typed_array_type(self) -> TypedArrayType {
+    pub(crate) fn to_typed_array_type(self) -> TypedArrayType {
         match self {
             JSType::Int8Array => TypedArrayType::TypeInt8,
             JSType::Int16Array => TypedArrayType::TypeInt16,
@@ -774,12 +774,12 @@ impl JSType {
     }
 
     #[inline]
-    pub fn is_set(self) -> bool {
+    pub(crate) fn is_set(self) -> bool {
         matches!(self, JSType::Set | JSType::WeakSet)
     }
 
     #[inline]
-    pub fn is_map(self) -> bool {
+    pub(crate) fn is_map(self) -> bool {
         matches!(self, JSType::Map | JSType::WeakMap)
     }
 
@@ -811,7 +811,7 @@ impl JSType {
     }
 
     #[inline]
-    pub fn is_arguments(self) -> bool {
+    pub(crate) fn is_arguments(self) -> bool {
         matches!(
             self,
             JSType::DirectArguments | JSType::ClonedArguments | JSType::ScopedArguments

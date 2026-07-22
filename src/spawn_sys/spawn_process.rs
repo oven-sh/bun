@@ -55,18 +55,18 @@ pub type PidFdType = ();
 
 #[derive(Default, Clone, Copy)]
 pub struct WinTimeval {
-    pub sec: i64,
-    pub usec: i64,
+    pub(crate) sec: i64,
+    pub(crate) usec: i64,
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct WinRusage {
-    pub utime: WinTimeval,
-    pub stime: WinTimeval,
-    pub maxrss: u64,
+    pub(crate) utime: WinTimeval,
+    pub(crate) stime: WinTimeval,
+    pub(crate) maxrss: u64,
     // ixrss, idrss, isrss, minflt, majflt, nswap: always zero — omitted
-    pub inblock: u64,
-    pub oublock: u64,
+    pub(crate) inblock: u64,
+    pub(crate) oublock: u64,
     // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
 }
 
@@ -452,7 +452,8 @@ pub struct PosixSpawnResult {
     pub stdin: Option<Fd>,
     pub stdout: Option<Fd>,
     pub stderr: Option<Fd>,
-    pub ipc: Option<Fd>,
+    #[cfg(unix)]
+    pub(crate) ipc: Option<Fd>,
     pub extra_pipes: Vec<ExtraPipe>,
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
@@ -507,7 +508,7 @@ impl PosixSpawnResult {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOSYS,

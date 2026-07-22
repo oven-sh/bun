@@ -4,7 +4,7 @@ use bun_collections::{AutoBitSet, HashMap, VecExt};
 
 use crate::{
     Chunk, Index, IndexInt, LinkerContext, PartRange,
-    chunk::{self, EntryPoint, Order},
+    chunk::{self, Order},
     js_meta::Wrap,
 };
 use bun_core::perf;
@@ -89,7 +89,6 @@ pub fn find_imported_parts_in_js_order(
             import_records: this.graph.ast.items_import_records(),
             entry_bits: chunk.entry_bits(),
             c: &*this,
-            entry_point: chunk.entry_point,
             chunk_index,
             entry_point_chunk_indices,
             stack: Vec::new(),
@@ -139,18 +138,17 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
     }
 }
 
-pub struct FindImportedPartsVisitor<'a, 'ctx> {
-    pub entry_bits: &'a AutoBitSet,
-    pub flags: &'a [crate::js_meta::Flags],
-    pub parts: &'a [bun_ast::PartList<'ctx>],
-    pub import_records: &'a [bun_ast::import_record::List<'ctx>],
-    pub files: Vec<IndexInt>,
-    pub part_ranges: Vec<PartRange>,
-    pub visited: HashMap<IndexInt, ()>,
-    pub parts_prefix: Vec<PartRange>,
-    pub c: &'a LinkerContext<'ctx>,
-    pub entry_point: EntryPoint,
-    pub chunk_index: u32,
+pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
+    pub(crate) entry_bits: &'a AutoBitSet,
+    pub(crate) flags: &'a [crate::js_meta::Flags],
+    pub(crate) parts: &'a [bun_ast::PartList<'ctx>],
+    pub(crate) import_records: &'a [bun_ast::import_record::List<'ctx>],
+    pub(crate) files: Vec<IndexInt>,
+    pub(crate) part_ranges: Vec<PartRange>,
+    pub(crate) visited: HashMap<IndexInt, ()>,
+    pub(crate) parts_prefix: Vec<PartRange>,
+    pub(crate) c: &'a LinkerContext<'ctx>,
+    pub(crate) chunk_index: u32,
     /// Raw column pointer into `c.graph.files` for the single mutable write in
     /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
@@ -203,7 +201,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
     // queuing its imports interleaved with per-part `Part` markers and a
     // trailing `File` marker, then reverses the tail so LIFO pop reproduces
     // the original recursion order exactly.
-    pub fn visit<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
+    pub(crate) fn visit<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
         &mut self,
         source_index: IndexInt,
     ) {

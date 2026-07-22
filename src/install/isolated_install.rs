@@ -3,11 +3,11 @@
 // machine drives.
 // ───────────────────────────────────────────────────────────────────────────
 #[path = "isolated_install/FileCloner.rs"]
-pub mod file_cloner;
+pub(crate) mod file_cloner;
 #[path = "isolated_install/FileCopier.rs"]
 pub mod file_copier;
 #[path = "isolated_install/Hardlinker.rs"]
-pub mod hardlinker;
+pub(crate) mod hardlinker;
 #[path = "isolated_install/Installer.rs"]
 pub mod installer;
 #[path = "isolated_install/Store.rs"]
@@ -15,7 +15,7 @@ pub mod store;
 #[path = "isolated_install/Symlinker.rs"]
 pub mod symlinker;
 
-pub use file_copier::FileCopier;
+pub(crate) use file_copier::FileCopier;
 pub use store::Store;
 /// Alias so `crate::isolated_install::store::EntryId` (used by
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
@@ -173,7 +173,7 @@ struct Wait<'a, 'b> {
 }
 
 impl<'a, 'b> Wait<'a, 'b> {
-    pub(crate) fn is_done(&mut self) -> bool {
+    fn is_done(&mut self) -> bool {
         // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
         // materializes the unique `&mut PackageManager` for this main-thread
         // tick without aliasing `&mut Installer`.

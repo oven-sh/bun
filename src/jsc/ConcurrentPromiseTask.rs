@@ -29,18 +29,18 @@ pub trait ConcurrentPromiseTaskContext: Sized {
 /// - `then(*Context, jsc.JSPromise)` - resolves the promise with the result on the JS thread
 pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context.
-    pub ctx: Box<Context>,
-    pub task: WorkPoolTask,
+    pub(crate) ctx: Box<Context>,
+    pub(crate) task: WorkPoolTask,
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
     /// `EventLoop`) outlives every task scheduled on it.
-    pub event_loop: BackRef<EventLoop>,
+    pub(crate) event_loop: BackRef<EventLoop>,
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
-    pub concurrent_task: ConcurrentTask,
+    pub(crate) concurrent_task: ConcurrentTask,
 
     // This is a poll because we want it to enter the uSockets loop
     // (`ref` is a Rust keyword, hence `ref_`)
-    pub ref_: KeepAlive,
+    pub(crate) ref_: KeepAlive,
 }
 
 bun_threading::intrusive_work_task!(['a, Context: ConcurrentPromiseTaskContext] ConcurrentPromiseTask<'a, Context>, task);
@@ -76,7 +76,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         this
     }
 
-    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
         // `create_on_js_thread`; the WorkPool calls back with exactly that

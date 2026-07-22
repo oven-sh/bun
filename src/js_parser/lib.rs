@@ -21,12 +21,12 @@ pub mod parser;
 pub use parser::*;
 pub mod lexer;
 
-pub mod fold;
+pub(crate) mod fold;
 pub mod lower;
 pub mod p;
 pub mod parse;
 pub mod react_compiler_host;
-pub mod repl_transforms;
+pub(crate) mod repl_transforms;
 pub mod scan;
 pub mod typescript;
 pub mod visit;
@@ -147,7 +147,7 @@ pub mod Macro {
     }
     impl MacroContext {
         #[inline]
-        pub fn call(
+        pub(crate) fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -201,7 +201,7 @@ pub mod Macro {
         /// parser calls without a borrowck conflict; the table lives in
         /// `Transpiler.options` which outlives every parse.
         #[inline]
-        pub fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
+        pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
             if self.data.is_null() {
                 return None;
             }
@@ -304,25 +304,25 @@ pub mod defines {
         const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
 
         #[inline]
-        pub const fn valueless(self) -> bool {
+        pub(crate) const fn valueless(self) -> bool {
             (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_valueless(&mut self, v: bool) {
+        pub(crate) fn set_valueless(&mut self, v: bool) {
             self.0 =
                 (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
         }
         #[inline]
-        pub const fn can_be_removed_if_unused(self) -> bool {
+        pub(crate) const fn can_be_removed_if_unused(self) -> bool {
             (self.0 >> Self::CAN_BE_REMOVED_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_can_be_removed_if_unused(&mut self, v: bool) {
+        pub(crate) fn set_can_be_removed_if_unused(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::CAN_BE_REMOVED_SHIFT))
                 | ((v as u8) << Self::CAN_BE_REMOVED_SHIFT);
         }
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
             // 2-bit field; `E::CallUnwrap` only has discriminants 0/1/2, so
             // an explicit match keeps bit-pattern 3 sound.
             match (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT {
@@ -332,16 +332,16 @@ pub mod defines {
             }
         }
         #[inline]
-        pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
+        pub(crate) fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
             self.0 = (self.0 & !Self::CALL_UNWRAP_MASK)
                 | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
         }
         #[inline]
-        pub const fn method_call_must_be_replaced_with_undefined(self) -> bool {
+        pub(crate) const fn method_call_must_be_replaced_with_undefined(self) -> bool {
             (self.0 >> Self::METHOD_CALL_UNDEF_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
+        pub(crate) fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::METHOD_CALL_UNDEF_SHIFT))
                 | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
         }
@@ -431,7 +431,7 @@ pub mod defines {
         }
 
         #[inline]
-        pub fn original_name(&self) -> Option<&[u8]> {
+        pub(crate) fn original_name(&self) -> Option<&[u8]> {
             match &self.original_name {
                 Some(name) if !name.is_empty() => Some(name.as_ref()),
                 _ => None,
@@ -440,20 +440,20 @@ pub mod defines {
 
         /// True if accessing this value is known to not have any side effects.
         #[inline]
-        pub fn can_be_removed_if_unused(&self) -> bool {
+        pub(crate) fn can_be_removed_if_unused(&self) -> bool {
             self.flags.can_be_removed_if_unused()
         }
         /// True if a call to this value is known to not have any side effects.
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
             self.flags.call_can_be_unwrapped_if_unused()
         }
         #[inline]
-        pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
+        pub(crate) fn method_call_must_be_replaced_with_undefined(&self) -> bool {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub fn valueless(&self) -> bool {
+        pub(crate) fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -477,7 +477,7 @@ pub mod defines {
             }
         }
 
-        pub fn merge(a: &DefineData, b: DefineData) -> DefineData {
+        pub(crate) fn merge(a: &DefineData, b: DefineData) -> DefineData {
             DefineData {
                 value: b.value,
                 flags: Flags::new(
@@ -502,7 +502,7 @@ pub mod defines {
     }
 
     impl Define {
-        pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+        pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
@@ -629,7 +629,7 @@ pub mod renamer {
         slot_counts
     }
 
-    pub(crate) fn assign_nested_scope_slots_helper(
+    fn assign_nested_scope_slots_helper(
         sorted_members: &mut Vec<u32>,
         scope: &Scope,
         symbols: &mut [Symbol],

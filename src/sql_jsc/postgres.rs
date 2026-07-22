@@ -39,10 +39,10 @@ pub mod signature;
 pub use signature::Signature;
 
 #[path = "postgres/command_tag_jsc.rs"]
-pub mod command_tag_jsc;
+pub(crate) mod command_tag_jsc;
 
 #[path = "postgres/error_jsc.rs"]
-pub mod error_jsc;
+pub(crate) mod error_jsc;
 
 #[path = "postgres/PostgresSQLStatement.rs"]
 pub mod postgres_sql_statement;
@@ -62,17 +62,17 @@ pub mod postgres_request;
 #[path = "postgres/DataCell.rs"]
 pub mod data_cell;
 
-pub mod types {
+pub(crate) mod types {
     #[path = "date.rs"]
-    pub mod date;
+    pub(crate) mod date;
 
     #[path = "tag_jsc.rs"]
-    pub mod tag_jsc;
+    pub(crate) mod tag_jsc;
 }
 
-pub mod protocol {
+pub(crate) mod protocol {
     #[path = "error_response_jsc.rs"]
-    pub mod error_response_jsc;
+    pub(crate) mod error_response_jsc;
 }
 
 // Re-exports of base-crate protocol/types modules.

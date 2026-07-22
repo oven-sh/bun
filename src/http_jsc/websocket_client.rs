@@ -66,55 +66,55 @@ const CONTROL_HEADER_SIZE: usize = 6;
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
-    pub ref_count: Cell<u32>,
+    pub(crate) ref_count: Cell<u32>,
 
-    pub tcp: Cell<Socket<SSL>>,
-    pub outgoing_websocket: Cell<Option<NonNull<CppWebSocket>>>,
+    pub(crate) tcp: Cell<Socket<SSL>>,
+    pub(crate) outgoing_websocket: Cell<Option<NonNull<CppWebSocket>>>,
 
-    pub receive_state: Cell<ReceiveState>,
-    pub receiving_type: Cell<Opcode>,
+    pub(crate) receive_state: Cell<ReceiveState>,
+    pub(crate) receiving_type: Cell<Opcode>,
     // we need to start with final so we validate the first frame
-    pub receiving_is_final: Cell<bool>,
+    pub(crate) receiving_is_final: Cell<bool>,
 
     /// Staging area for outgoing control frames and incoming control payloads.
-    pub ping_frame_bytes: Cell<[u8; CONTROL_HEADER_SIZE + 128]>,
-    pub ping_len: Cell<u8>,
+    pub(crate) ping_frame_bytes: Cell<[u8; CONTROL_HEADER_SIZE + 128]>,
+    pub(crate) ping_len: Cell<u8>,
     /// A Ping/Pong/Close payload is mid-accumulation in `ping_frame_bytes`.
-    pub control_frame_started: Cell<bool>,
-    pub close_received: Cell<bool>,
+    pub(crate) control_frame_started: Cell<bool>,
+    pub(crate) close_received: Cell<bool>,
     /// `Some` once `send_close_with_body` has enqueued the close frame: blocks
     /// further outbound writes and drives `clear_data` + `dispatch_close` once
     /// the frame is fully flushed (or the socket dies).
-    pub close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
+    pub(crate) close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
 
-    pub receive_body_remain: Cell<usize>,
-    pub receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
+    pub(crate) receive_body_remain: Cell<usize>,
+    pub(crate) receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
-    pub send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
+    pub(crate) send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
-    pub global_this: GlobalRef,
-    pub poll_ref: Cell<KeepAlive>,
+    pub(crate) global_this: GlobalRef,
+    pub(crate) poll_ref: Cell<KeepAlive>,
 
-    pub header_fragment: Cell<Option<u8>>,
+    pub(crate) header_fragment: Cell<Option<u8>>,
 
-    pub payload_length_frame_bytes: Cell<[u8; 8]>,
-    pub payload_length_frame_len: Cell<u8>,
+    pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
+    pub(crate) payload_length_frame_len: Cell<u8>,
 
     // Non-owning; the allocation is managed by the microtask queue, not deinit.
-    pub initial_data_handler: Cell<Option<NonNull<InitialDataHandler<SSL>>>>,
+    pub(crate) initial_data_handler: Cell<Option<NonNull<InitialDataHandler<SSL>>>>,
     pub event_loop: &'static EventLoop,
-    pub deflate: RefCell<Option<Box<WebSocketDeflate>>>,
+    pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
     /// Track if current message is compressed
-    pub receiving_compressed: Cell<bool>,
+    pub(crate) receiving_compressed: Cell<bool>,
     /// Track compression state of the entire message (across fragments)
-    pub message_is_compressed: Cell<bool>,
+    pub(crate) message_is_compressed: Cell<bool>,
 
     /// `us_ssl_ctx_t` inherited from the upgrade client when it was built
     /// with a custom CA. The socket's `SSL*` references the `SSL_CTX`
     /// inside, so this must outlive the connection. None when the upgrade
     /// used the shared default context.
-    pub secure: Cell<Option<*mut SslCtx>>,
+    pub(crate) secure: Cell<Option<*mut SslCtx>>,
 
     /// Proxy tunnel for wss:// through HTTP proxy.
     /// When set, all I/O goes through the tunnel (TLS encryption/decryption).
@@ -125,7 +125,7 @@ pub struct WebSocket<const SSL: bool> {
     /// the tunnel does not (yet) implement `bun_ptr::RefCounted`. Ownership
     /// semantics match `RefPtr`: assigning here implies a held ref, released
     /// in `clear_data` via `WebSocketProxyTunnel::deref`.
-    pub proxy_tunnel: Cell<Option<NonNull<WebSocketProxyTunnel>>>,
+    pub(crate) proxy_tunnel: Cell<Option<NonNull<WebSocketProxyTunnel>>>,
 }
 
 impl<const SSL: bool> WebSocket<SSL> {
@@ -160,7 +160,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.poll_ref.set(poll_ref);
     }
 
-    pub fn clear_data(&self) {
+    pub(crate) fn clear_data(&self) {
         log!("clearData");
         self.unref_keep_alive();
         self.clear_receive_buffers(true);
@@ -205,7 +205,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn cancel(this_ptr: *mut Self) {
+    pub(crate) extern "C" fn cancel(this_ptr: *mut Self) {
         log!("cancel");
         // clear_data() may drop the tunnel's I/O-layer ref; keep `*this_ptr`
         // alive until we've finished closing the socket below. ScopedRef bumps
@@ -239,7 +239,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub fn fail(&self, code: ErrorCode) {
+    pub(crate) fn fail(&self, code: ErrorCode) {
         jsc::mark_binding!();
         if let Some(ws) = self.outgoing_websocket.take() {
             log!("fail ({})", <&'static str>::from(code));
@@ -336,7 +336,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
-    pub fn terminate(&self, code: ErrorCode) {
+    pub(crate) fn terminate(&self, code: ErrorCode) {
         log!("terminate");
         self.fail(code);
     }
@@ -459,7 +459,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         Ok(())
     }
 
-    pub fn consume(
+    pub(crate) fn consume(
         &self,
         data: &[u8],
         left_in_fragment: usize,
@@ -899,7 +899,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         Step::Terminated
     }
 
-    pub fn send_close(&self) {
+    pub(crate) fn send_close(&self) {
         // Received a bodyless Close: echo a normal-closure frame on the wire,
         // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
         self.send_close_with_body(1000, Some(1005), &[]);
@@ -1244,7 +1244,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
+    pub(crate) fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
         socket.socket == self.tcp.get().socket
     }
 
@@ -1280,7 +1280,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.terminate(ErrorCode::FailedToConnect);
     }
 
-    pub fn has_backpressure(&self) -> bool {
+    pub(crate) fn has_backpressure(&self) -> bool {
         if self.send_buffer.borrow().readable_length() > 0 {
             return true;
         }
@@ -1304,7 +1304,12 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn write_binary_data(this_ptr: *mut Self, ptr: *const u8, len: usize, op: u8) {
+    pub(crate) extern "C" fn write_binary_data(
+        this_ptr: *mut Self,
+        ptr: *const u8,
+        len: usize,
+        op: u8,
+    ) {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
@@ -1357,7 +1362,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
+    pub(crate) extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
@@ -1394,7 +1399,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
+    pub(crate) extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
@@ -1466,7 +1471,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; pointers are valid (or null where checked) by C++ contract.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
+    pub(crate) extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
@@ -1601,7 +1606,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         ws.cast::<c_void>()
     }
 
-    pub extern "C" fn init(
+    pub(crate) extern "C" fn init(
         outgoing: *mut CppWebSocket,
         input_socket: *mut c_void,
         global_this: &JSGlobalObject,
@@ -1655,7 +1660,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Initialize a WebSocket client that uses a proxy tunnel for I/O.
     /// Used for wss:// through HTTP proxy where TLS is handled by the tunnel.
     /// The tunnel takes ownership of socket I/O, and this client reads/writes through it.
-    pub extern "C" fn init_with_tunnel(
+    pub(crate) extern "C" fn init_with_tunnel(
         outgoing: *mut CppWebSocket,
         tunnel_ptr: *mut c_void,
         global_this: &JSGlobalObject,
@@ -1697,7 +1702,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
     /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
     /// this call (the tunnel calls through its raw `connected_websocket` backref).
-    pub unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
+    pub(crate) unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
@@ -1712,7 +1717,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
     /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
     /// this call.
-    pub unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
+    pub(crate) unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
         // (the tunnel calls through its raw `connected_websocket` backref).
         let this = unsafe { ThisPtr::new(this_ptr) };
@@ -1729,7 +1734,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn finalize(this_ptr: *mut Self) {
+    pub(crate) extern "C" fn finalize(this_ptr: *mut Self) {
         log!("finalize");
         // clear_data() may drop the tunnel's I/O-layer ref and the block
         // below drops the C++ ref; keep `*this_ptr` alive until we've
@@ -1788,7 +1793,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn memory_cost(this: *const Self) -> usize {
+    pub(crate) extern "C" fn memory_cost(this: *const Self) -> usize {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &*this };
         let mut cost: usize = size_of::<Self>();
@@ -1947,14 +1952,14 @@ export_websocket_client!(
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct InitialDataHandler<const SSL: bool> {
-    pub adopted: Option<NonNull<WebSocket<SSL>>>,
+    pub(crate) adopted: Option<NonNull<WebSocket<SSL>>>,
     /// Pending-activity ref, dropped when [`Self::handle_without_deinit`] consumes `adopted`.
-    pub ws: Option<CppWebSocketRef>,
-    pub slice: Box<[u8]>,
+    pub(crate) ws: Option<CppWebSocketRef>,
+    pub(crate) slice: Box<[u8]>,
 }
 
 impl<const SSL: bool> InitialDataHandler<SSL> {
-    pub(crate) fn handle_without_deinit(&mut self) {
+    fn handle_without_deinit(&mut self) {
         let Some(this_socket_ptr) = self.adopted.take() else {
             return;
         };
@@ -1985,7 +1990,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
     }
 
     /// `extern "C"` thunk shape for `JSGlobalObject::queue_microtask_callback`.
-    pub(crate) unsafe extern "C" fn handle(this: *mut c_void) {
+    unsafe extern "C" fn handle(this: *mut c_void) {
         let this = this.cast::<Self>();
         // SAFETY: called from microtask queue with the pointer we passed in
         // (heap::alloc in init()/init_with_tunnel()).
@@ -2049,7 +2054,7 @@ pub enum ErrorCode {
 // Mask
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Mask;
+struct Mask;
 
 impl Mask {
     fn generate(global_this: &JSGlobalObject) -> [u8; 4] {
@@ -2057,12 +2062,7 @@ impl Mask {
         entropy[..4].try_into().expect("infallible: size matches")
     }
 
-    pub(crate) fn fill(
-        global_this: &JSGlobalObject,
-        mask_buf: &mut [u8; 4],
-        output: &mut [u8],
-        input: &[u8],
-    ) {
+    fn fill(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], output: &mut [u8], input: &[u8]) {
         *mask_buf = Self::generate(global_this);
         let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
         if input.is_empty() {
@@ -2074,11 +2074,7 @@ impl Mask {
 
     /// In-place variant for when output and input alias the same buffer
     /// (borrowck forbids `&mut [u8]` + `&[u8]` aliasing in `fill`).
-    pub(crate) fn fill_in_place(
-        global_this: &JSGlobalObject,
-        mask_buf: &mut [u8; 4],
-        buf: &mut [u8],
-    ) {
+    fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
         *mask_buf = Self::generate(global_this);
         let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
         if buf.is_empty() {
@@ -2262,7 +2258,7 @@ impl Copy<'_> {
     /// Returns `(frame_len, content_byte_len)`: the size of the full masked
     /// frame to write out and the UTF-8/byte length of the payload it carries
     /// (`Raw` is already a frame, so both are the raw length).
-    pub(crate) fn frame_and_content_len(&self) -> (usize, usize) {
+    fn frame_and_content_len(&self) -> (usize, usize) {
         let byte_len = match self {
             Copy::Utf16(utf16) => strings::element_length_utf16_into_utf8(utf16),
             Copy::Latin1(latin1) => strings::element_length_latin1_into_utf8(latin1),
@@ -2275,7 +2271,7 @@ impl Copy<'_> {
         )
     }
 
-    pub(crate) fn copy(
+    fn copy(
         &self,
         global_this: &JSGlobalObject,
         buf: &mut [u8],
@@ -2286,7 +2282,7 @@ impl Copy<'_> {
     }
 
     /// Frame an already-deflated payload; `is_first_fragment` controls RSV1.
-    pub(crate) fn copy_compressed(
+    fn copy_compressed(
         global_this: &JSGlobalObject,
         buf: &mut [u8],
         compressed_data: &[u8],

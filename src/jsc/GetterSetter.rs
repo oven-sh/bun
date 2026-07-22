@@ -1,11 +1,11 @@
 bun_opaque::opaque_ffi! { pub struct GetterSetter; }
 
 impl GetterSetter {
-    pub fn is_getter_null(&self) -> bool {
+    pub(crate) fn is_getter_null(&self) -> bool {
         JSC__GetterSetter__isGetterNull(self)
     }
 
-    pub fn is_setter_null(&self) -> bool {
+    pub(crate) fn is_setter_null(&self) -> bool {
         JSC__GetterSetter__isSetterNull(self)
     }
 }

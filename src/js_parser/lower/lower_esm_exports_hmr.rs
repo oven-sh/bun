@@ -29,7 +29,7 @@ pub(crate) struct ImportRef {
     pub stmt_index: u32,
 }
 
-pub(crate) struct DeduplicatedImportResult {
+struct DeduplicatedImportResult {
     pub namespace_ref: Ref,
     pub import_record_index: u32,
 }

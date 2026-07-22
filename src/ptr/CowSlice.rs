@@ -169,7 +169,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// Create a Cow that wraps a static slice.
     ///
     /// `Drop` is safe to call, but will have no effect.
-    pub const fn init_static(data: &'static [T]) -> Self {
+    const fn init_static(data: &'static [T]) -> Self {
         Self {
             // SAFETY: const semantics are enforced by is_owned flag
             ptr: data.as_ptr().cast_mut(),

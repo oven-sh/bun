@@ -31,12 +31,12 @@ use crate::mal_prelude::*;
 use crate::options::{self, Format, Loader, OutputFile};
 use crate::{Chunk, LinkerContext};
 pub struct OutputFileList {
-    pub output_files: Vec<options::OutputFile>,
-    pub index_for_chunk: u32,
-    pub index_for_sourcemaps_and_bytecode: Option<u32>,
-    pub additional_output_files_start: u32,
+    pub(crate) output_files: Vec<options::OutputFile>,
+    pub(crate) index_for_chunk: u32,
+    pub(crate) index_for_sourcemaps_and_bytecode: Option<u32>,
+    pub(crate) additional_output_files_start: u32,
 
-    pub total_insertions: u32,
+    pub(crate) total_insertions: u32,
 }
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -46,7 +46,11 @@ pub enum OutputFileListError {
 }
 
 impl OutputFileList {
-    pub fn init(c: &LinkerContext, chunks: &[Chunk], _unused: usize) -> Result<Self, crate::Error> {
+    pub(crate) fn init(
+        c: &LinkerContext,
+        chunks: &[Chunk],
+        _unused: usize,
+    ) -> Result<Self, crate::Error> {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
@@ -66,7 +70,7 @@ impl OutputFileList {
         })
     }
 
-    pub fn take(&mut self) -> Vec<options::OutputFile> {
+    pub(crate) fn take(&mut self) -> Vec<options::OutputFile> {
         // TODO: should this return an error
         debug_assert!(
             self.total_insertions as usize == self.output_files.len(),
@@ -79,7 +83,10 @@ impl OutputFileList {
         core::mem::take(&mut self.output_files)
     }
 
-    pub fn calculate_output_file_list_capacity(c: &LinkerContext, chunks: &[Chunk]) -> (u32, u32) {
+    pub(crate) fn calculate_output_file_list_capacity(
+        c: &LinkerContext,
+        chunks: &[Chunk],
+    ) -> (u32, u32) {
         let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {
@@ -147,7 +154,7 @@ impl OutputFileList {
         )
     }
 
-    pub fn insert_for_chunk(&mut self, output_file: options::OutputFile) -> u32 {
+    pub(crate) fn insert_for_chunk(&mut self, output_file: options::OutputFile) -> u32 {
         let index = self.index_for_chunk();
         debug_assert!(
             index < self.index_for_sourcemaps_and_bytecode.unwrap_or(u32::MAX),
@@ -160,7 +167,7 @@ impl OutputFileList {
         index
     }
 
-    pub fn insert_for_sourcemap_or_bytecode(
+    pub(crate) fn insert_for_sourcemap_or_bytecode(
         &mut self,
         output_file: options::OutputFile,
     ) -> Result<u32, OutputFileListError> {
@@ -178,7 +185,7 @@ impl OutputFileList {
         Ok(index)
     }
 
-    pub fn insert_additional_output_files(
+    pub(crate) fn insert_additional_output_files(
         &mut self,
         additional_output_files: &mut Vec<options::OutputFile>,
     ) {
@@ -199,7 +206,7 @@ impl OutputFileList {
         self.total_insertions += u32::try_from(len).expect("int cast");
     }
 
-    pub fn get_mutable_additional_output_files(&mut self) -> &mut [options::OutputFile] {
+    pub(crate) fn get_mutable_additional_output_files(&mut self) -> &mut [options::OutputFile] {
         &mut self.output_files[self.additional_output_files_start as usize..]
     }
 

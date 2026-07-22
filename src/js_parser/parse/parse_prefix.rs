@@ -991,7 +991,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // Before splitting this up, this used 3 KB of stack space per call.
-    pub fn parse_prefix(
+    pub(crate) fn parse_prefix(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,

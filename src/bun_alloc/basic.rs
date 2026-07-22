@@ -111,7 +111,7 @@ static C_ALLOCATOR_VTABLE: &AllocatorVTable = &AllocatorVTable {
     free: MimallocAllocator::FREE_WITH_DEFAULT_ALLOCATOR,
 };
 
-pub(crate) struct ZAllocator;
+struct ZAllocator;
 
 impl ZAllocator {
     fn aligned_alloc(len: usize, alignment: Alignment) -> *mut u8 {
@@ -171,7 +171,7 @@ impl ZAllocator {
         default_allocator_free;
 }
 
-pub(crate) mod memory_allocator_tags {
+mod memory_allocator_tags {
     use core::ffi::c_void;
 
     const DEFAULT_ALLOCATOR_TAG: usize = 0xBEEFA110C; // "BEEFA110C"  beef a110c i guess

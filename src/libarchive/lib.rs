@@ -32,7 +32,7 @@ pub mod lib {
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     pub type la_ssize_t = isize;
-    pub type la_int64_t = i64;
+    pub(crate) type la_int64_t = i64;
     type time_t = isize;
 
     bun_opaque::opaque_ffi! {
@@ -905,7 +905,7 @@ impl BufferReadStream {
     /// unmoved for the entire lifetime of the returned `BufferReadStream`
     /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
     /// and [`open_read()`] dereference a dangling pointer (UB).
-    pub unsafe fn init(buf: &[u8]) -> Self {
+    pub(crate) unsafe fn init(buf: &[u8]) -> Self {
         // was an out-param constructor (`this.* = ...`)
         Self {
             buf: std::ptr::from_ref::<[u8]>(buf),
@@ -937,7 +937,7 @@ impl BufferReadStream {
         unsafe { &*self.buf }
     }
 
-    pub fn open_read(&mut self) -> lib::Result {
+    pub(crate) fn open_read(&mut self) -> lib::Result {
         // lib.archive_read_set_open_callback(this.archive, this.);
         // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
         // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
@@ -1176,7 +1176,7 @@ pub mod archiver {
 
     pub struct Plucker {
         pub contents: MutableString,
-        pub filename_hash: u64,
+        pub(crate) filename_hash: u64,
         pub found: bool,
         pub fd: Fd,
     }

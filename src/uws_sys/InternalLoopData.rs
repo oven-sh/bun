@@ -54,9 +54,9 @@ pub struct InternalLoopData {
     /// cannot name `bun_threading::ReleaseImpl` directly, so use a layout-only
     /// placeholder of the correct size/align per platform.
     pub mutex: LoopDataMutex,
-    pub parent_ptr: *mut c_void,
-    pub parent_tag: c_char,
-    pub iteration_nr: u64,
+    pub(crate) parent_ptr: *mut c_void,
+    pub(crate) parent_tag: c_char,
+    pub(crate) iteration_nr: u64,
     // SAFETY: erased `Option<&'static jsc::VM>` — tier-0 crate cannot name jsc types.
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
@@ -64,7 +64,7 @@ pub struct InternalLoopData {
 }
 
 impl InternalLoopData {
-    pub fn should_enable_date_header_timer(&self) -> bool {
+    pub(crate) fn should_enable_date_header_timer(&self) -> bool {
         self.sweep_timer_count > 0
     }
 

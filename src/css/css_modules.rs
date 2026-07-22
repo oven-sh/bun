@@ -1,8 +1,7 @@
 use core::fmt::Arguments;
 
 use bun_alloc::Arena as Bump;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::ArrayHashMap;
+use bun_alloc::ArenaVec as BumpVec;
 
 use crate as css;
 pub use crate::Error;
@@ -15,8 +14,6 @@ pub struct CssModule<'a> {
     pub config: &'a Config,
     pub sources: &'a Vec<Box<[u8]>>,
     pub hashes: BumpVec<'a, &'a [u8]>,
-    pub exports_by_source_index: BumpVec<'a, CssModuleExports<'a>>,
-    pub references: &'a mut CssModuleReferences<'a>,
 }
 
 impl<'a> CssModule<'a> {
@@ -25,7 +22,6 @@ impl<'a> CssModule<'a> {
         config: &'a Config,
         sources: &'a Vec<Box<[u8]>>,
         project_root: Option<&[u8]>,
-        references: &'a mut CssModuleReferences<'a>,
     ) -> CssModule<'a> {
         // TODO: this is BAAAAAAAAAAD we are going to remove it
         let hashes = 'hashes: {
@@ -54,44 +50,10 @@ impl<'a> CssModule<'a> {
             }
             break 'hashes hashes;
         };
-        let exports_by_source_index = 'exports_by_source_index: {
-            let mut exports_by_source_index = BumpVec::with_capacity_in(sources.len(), bump);
-            for _ in 0..sources.len() {
-                exports_by_source_index.push(CssModuleExports::default());
-            }
-            break 'exports_by_source_index exports_by_source_index;
-        };
         CssModule {
             config,
             sources,
-            references,
             hashes,
-            exports_by_source_index,
-        }
-    }
-
-    pub fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
-        // (CssModuleExport can't be Default — BumpVec field), so use the
-        // entry()-API instead.
-        use bun_collections::array_hash_map::MapEntry;
-        match self.exports_by_source_index[source_index as usize].entry(name) {
-            MapEntry::Occupied(mut o) => {
-                o.get_mut().is_referenced = true;
-            }
-            MapEntry::Vacant(v) => {
-                v.insert(CssModuleExport {
-                    name: self.config.pattern.write_to_string(
-                        bump,
-                        BumpVec::new_in(bump),
-                        self.hashes[source_index as usize],
-                        self.sources[source_index as usize].as_ref(),
-                        name,
-                    ),
-                    composes: BumpVec::new_in(bump),
-                    is_referenced: true,
-                });
-            }
         }
     }
 
@@ -111,49 +73,16 @@ impl<'a> CssModule<'a> {
         source_index: u32,
     ) -> Option<&'a [u8]> {
         use css::css_properties::css_modules::Specifier;
-        let (reference, key): (CssModuleReference<'a>, &'a [u8]) = match from {
+        let key: &'a [u8] = match from {
             Some(Specifier::Global) => return Some(&name[2..]),
             Some(Specifier::ImportRecordIndex(_)) => {
-                let path = specifier_path
-                    .expect("specifier_path required for Specifier::ImportRecordIndex");
-                (
-                    CssModuleReference::Dependency {
-                        name: &name[2..],
-                        specifier: path,
-                    },
-                    path,
-                )
+                specifier_path.expect("specifier_path required for Specifier::ImportRecordIndex")
             }
-            None => {
-                // Local export. Mark as used.
-                // `CssModuleExport` cannot be `Default` (BumpVec field),
-                // so use the `entry()` API like `get_reference` above.
-                use bun_collections::array_hash_map::MapEntry;
-                match self.exports_by_source_index[source_index as usize].entry(name) {
-                    MapEntry::Occupied(mut o) => {
-                        o.get_mut().is_referenced = true;
-                    }
-                    MapEntry::Vacant(v) => {
-                        let mut res = BumpVec::new_in(bump);
-                        res.extend_from_slice(b"--");
-                        v.insert(CssModuleExport {
-                            name: self.config.pattern.write_to_string(
-                                bump,
-                                res,
-                                self.hashes[source_index as usize],
-                                self.sources[source_index as usize].as_ref(),
-                                &name[2..],
-                            ),
-                            composes: BumpVec::new_in(bump),
-                            is_referenced: true,
-                        });
-                    }
-                }
-                return None;
-            }
+            // Local dashed ident: written unmangled.
+            None => return None,
         };
 
-        let the_hash = hash(
+        Some(hash(
             bump,
             format_args!(
                 "{}_{}_{}",
@@ -162,18 +91,8 @@ impl<'a> CssModule<'a> {
                 bstr::BStr::new(key)
             ),
             false,
-        );
-
-        // Build `--{the_hash}` as a bump Vec — a plain concat
-        // (`bumpalo::Vec<u8>` lacks `io::Write`, and no formatting is needed).
-        let mut k = BumpVec::with_capacity_in(2 + the_hash.len(), bump);
-        k.extend_from_slice(b"--");
-        k.extend_from_slice(the_hash);
-        let _ = self.references.put(k.into_bump_slice(), reference);
-
-        Some(the_hash)
+        ))
     }
-
     pub fn handle_composes(
         &mut self,
         _dest: &mut css::Printer,
@@ -197,52 +116,6 @@ impl<'a> CssModule<'a> {
         }
 
         Ok(())
-    }
-
-    pub fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {
-        use bun_collections::array_hash_map::MapEntry;
-        if let MapEntry::Vacant(v) =
-            self.exports_by_source_index[source_index as usize].entry(local)
-        {
-            v.insert(CssModuleExport {
-                // todo_stuff.depth
-                name: self.config.pattern.write_to_string_with_prefix(
-                    bump,
-                    b"--",
-                    self.hashes[source_index as usize],
-                    self.sources[source_index as usize].as_ref(),
-                    &local[2..],
-                ),
-                composes: BumpVec::new_in(bump),
-                is_referenced: false,
-            });
-        }
-    }
-
-    pub fn add_local(
-        &mut self,
-        bump: &'a Bump,
-        exported: &'a [u8],
-        local: &'a [u8],
-        source_index: u32,
-    ) {
-        use bun_collections::array_hash_map::MapEntry;
-        if let MapEntry::Vacant(v) =
-            self.exports_by_source_index[source_index as usize].entry(exported)
-        {
-            v.insert(CssModuleExport {
-                // todo_stuff.depth
-                name: self.config.pattern.write_to_string(
-                    bump,
-                    BumpVec::new_in(bump),
-                    self.hashes[source_index as usize],
-                    self.sources[source_index as usize].as_ref(),
-                    local,
-                ),
-                composes: BumpVec::new_in(bump),
-                is_referenced: false,
-            });
-        }
     }
 }
 
@@ -329,60 +202,6 @@ impl Pattern {
             }
         }
     }
-
-    pub fn write_to_string_with_prefix<'a>(
-        &self,
-        bump: &'a Bump,
-        prefix: &'static [u8],
-        hash_: &[u8],
-        path: &[u8],
-        local: &[u8],
-    ) -> &'a [u8] {
-        let mut res: BumpVec<'a, u8> = BumpVec::new_in(bump);
-        self.write(hash_, path, local, |slice: &[u8], replace_dots: bool| {
-            res.extend_from_slice(prefix);
-            if replace_dots {
-                let start = res.len();
-                res.extend_from_slice(slice);
-                let end = res.len();
-                for c in &mut res[start..end] {
-                    if *c == b'.' {
-                        *c = b'-';
-                    }
-                }
-                return;
-            }
-            res.extend_from_slice(slice);
-        });
-        res.into_bump_slice()
-    }
-
-    pub fn write_to_string<'a>(
-        &self,
-        _bump: &'a Bump,
-        res_: BumpVec<'a, u8>,
-        hash_: &[u8],
-        path: &[u8],
-        local: &[u8],
-    ) -> &'a [u8] {
-        let mut res = res_;
-        self.write(hash_, path, local, |slice: &[u8], replace_dots: bool| {
-            if replace_dots {
-                let start = res.len();
-                res.extend_from_slice(slice);
-                let end = res.len();
-                for c in &mut res[start..end] {
-                    if *c == b'.' {
-                        *c = b'-';
-                    }
-                }
-                return;
-            }
-            res.extend_from_slice(slice);
-        });
-
-        res.into_bump_slice()
-    }
 }
 
 /// A segment in a CSS modules class name pattern.
@@ -401,68 +220,6 @@ pub enum Segment {
 
     /// A hash of the file name.
     Hash,
-}
-
-/// A map of exported names to values.
-pub type CssModuleExports<'a> = ArrayHashMap<&'a [u8], CssModuleExport<'a>>;
-
-/// A map of placeholders to references.
-pub type CssModuleReferences<'a> = ArrayHashMap<&'a [u8], CssModuleReference<'a>>;
-
-/// An exported value from a CSS module.
-pub struct CssModuleExport<'a> {
-    /// The local (compiled) name for this export.
-    pub name: &'a [u8],
-    /// Other names that are composed by this export.
-    pub composes: BumpVec<'a, CssModuleReference<'a>>,
-    /// Whether the export is referenced in this file.
-    pub is_referenced: bool,
-}
-
-/// A referenced name within a CSS module, e.g. via the `composes` property.
-///
-/// See [CssModuleExport](CssModuleExport).
-pub enum CssModuleReference<'a> {
-    /// A local reference.
-    Local {
-        /// The local (compiled) name for the reference.
-        name: &'a [u8],
-    },
-    /// A global reference.
-    Global {
-        /// The referenced global name.
-        name: &'a [u8],
-    },
-    /// A reference to an export in a different file.
-    Dependency {
-        /// The name to reference within the dependency.
-        name: &'a [u8],
-        /// The dependency specifier for the referenced file.
-        ///
-        /// import record idx
-        specifier: &'a [u8],
-    },
-}
-
-impl<'a> CssModuleReference<'a> {
-    pub fn eql(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Local { name: a }, Self::Local { name: b }) => a == b,
-            (Self::Global { name: a }, Self::Global { name: b }) => a == b,
-            // .dependency => |v| bun.strings.eql(v.name, other.dependency.name) and bun.strings.eql(v.specifier, other.dependency.specifier),
-            (
-                Self::Dependency {
-                    name: an,
-                    specifier: asp,
-                },
-                Self::Dependency {
-                    name: bn,
-                    specifier: bsp,
-                },
-            ) => an == bn && asp == bsp,
-            _ => false,
-        }
-    }
 }
 
 /// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`

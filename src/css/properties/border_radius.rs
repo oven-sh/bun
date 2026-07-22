@@ -18,17 +18,17 @@ use bun_alloc::ArenaVecExt as _;
 // `Size2D::deep_clone`/`Size2D::eql` directly.
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
-    pub top_left: Size2D<LengthPercentage>,
+    pub(crate) top_left: Size2D<LengthPercentage>,
     /// The x and y radius values for the top right corner.
-    pub top_right: Size2D<LengthPercentage>,
+    pub(crate) top_right: Size2D<LengthPercentage>,
     /// The x and y radius values for the bottom right corner.
-    pub bottom_right: Size2D<LengthPercentage>,
+    pub(crate) bottom_right: Size2D<LengthPercentage>,
     /// The x and y radius values for the bottom left corner.
-    pub bottom_left: Size2D<LengthPercentage>,
+    pub(crate) bottom_left: Size2D<LengthPercentage>,
 }
 
 impl BorderRadius {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         BorderRadius {
             top_left: self.top_left.deep_clone(bump),
             top_right: self.top_right.deep_clone(bump),
@@ -37,14 +37,14 @@ impl BorderRadius {
         }
     }
 
-    pub fn eql(&self, other: &Self) -> bool {
+    pub(crate) fn eql(&self, other: &Self) -> bool {
         Size2D::eql(&self.top_left, &other.top_left)
             && Size2D::eql(&self.top_right, &other.top_right)
             && Size2D::eql(&self.bottom_right, &other.bottom_right)
             && Size2D::eql(&self.bottom_left, &other.bottom_left)
     }
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
         let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
@@ -80,7 +80,7 @@ impl BorderRadius {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // `Rect::<&T>::to_css` would need `&T: ToCss + PartialEq`;
         // inline the 4-side serialization to avoid that bound (logic is identical
         // to `values::rect::Rect::to_css`).
@@ -140,18 +140,18 @@ impl BorderRadius {
 
 #[derive(Default)]
 pub struct BorderRadiusHandler {
-    pub top_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub top_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub bottom_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub bottom_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub start_start: Option<Property>,
-    pub start_end: Option<Property>,
-    pub end_end: Option<Property>,
-    pub end_start: Option<Property>,
+    pub(crate) top_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) top_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) bottom_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) bottom_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) start_start: Option<Property>,
+    pub(crate) start_end: Option<Property>,
+    pub(crate) end_end: Option<Property>,
+    pub(crate) end_start: Option<Property>,
     // derive(Default) is sound here because
     // PropertyCategory::default() == Physical (see src/css/logical.rs).
-    pub category: PropertyCategory,
-    pub has_any: bool,
+    pub(crate) category: PropertyCategory,
+    pub(crate) has_any: bool,
 }
 
 // There is no field-by-name reflection, so these helpers are
@@ -272,7 +272,7 @@ macro_rules! logical_property {
 }
 
 impl BorderRadiusHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -422,7 +422,11 @@ impl BorderRadiusHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 
@@ -518,7 +522,7 @@ impl BorderRadiusHandler {
     }
 }
 
-pub fn is_border_radius_property(property_id: PropertyIdTag) -> bool {
+pub(crate) fn is_border_radius_property(property_id: PropertyIdTag) -> bool {
     if is_logical_border_radius_property(property_id) {
         return true;
     }
@@ -533,7 +537,7 @@ pub fn is_border_radius_property(property_id: PropertyIdTag) -> bool {
     )
 }
 
-pub fn is_logical_border_radius_property(property_id: PropertyIdTag) -> bool {
+pub(crate) fn is_logical_border_radius_property(property_id: PropertyIdTag) -> bool {
     matches!(
         property_id,
         PropertyIdTag::BorderStartStartRadius

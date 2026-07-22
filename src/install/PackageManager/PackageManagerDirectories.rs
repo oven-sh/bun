@@ -32,7 +32,7 @@ impl PackageManager {
     /// an owning `Dir` would close the cached fd when the caller drops it.
     /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
-    pub fn get_cache_directory(&mut self) -> Fd {
+    pub(crate) fn get_cache_directory(&mut self) -> Fd {
         get_cache_directory(self)
     }
 
@@ -55,12 +55,12 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
+    pub(crate) fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
         get_cache_directory_and_abs_path(self)
     }
 
     #[inline]
-    pub fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
+    pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
     }
 }
@@ -89,7 +89,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// `this` must be valid for reads and writes for the call's duration, and the
 /// caller must hold no live borrow that overlaps the fields listed above.
 #[inline]
-pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
+pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     // SAFETY: caller contract — `cache_directory_` is disjoint from any
     // borrow the caller holds.
     if let Some(d) = unsafe { (*this).cache_directory_.as_ref() } {
@@ -128,9 +128,9 @@ pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryD
 }
 
 pub struct TemporaryDirectory {
-    pub handle: Dir,
+    pub(crate) handle: Dir,
     pub path: ZBox,
-    pub name: &'static [u8],
+    pub(crate) name: &'static [u8],
 }
 
 // `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
@@ -913,8 +913,8 @@ pub fn path_for_resolution<'a>(
 pub struct CacheDirAndSubpath<'a> {
     /// Borrowed view: the descriptor is owned by the `PackageManager` singleton
     /// (or is `Fd::cwd()`); callers must not close it.
-    pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a ZStr,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
 /// this is copy pasted from `installPackageWithNameAndResolution()`
@@ -1027,7 +1027,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
-pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
+pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
         sys::CreateFlags {
@@ -1262,9 +1262,9 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
 // ────────────────────────────── formatters ────────────────────────────────────
 
-pub struct CacheVersion;
+pub(crate) struct CacheVersion;
 impl CacheVersion {
-    pub const CURRENT: usize = 1;
+    pub(crate) const CURRENT: usize = 1;
 }
 
 // ────────────────────────────── helpers ───────────────────────────────────────

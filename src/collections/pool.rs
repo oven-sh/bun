@@ -97,7 +97,7 @@ impl<T> Node<T> {
 
     /// Iterate over each next node, returning the count of all nodes except the starting one.
     /// This operation is O(N).
-    pub fn count_children(&self) -> usize {
+    fn count_children(&self) -> usize {
         let mut count: usize = 0;
         let mut it: *const Node<T> = self.next;
         while !it.is_null() {
@@ -216,9 +216,9 @@ pub trait ObjectPoolType: Sized {
 
 /// Per-pool mutable state.
 pub struct DataStruct<T> {
-    pub list: SinglyLinkedList<T>,
-    pub loaded: bool,
-    pub count: usize,
+    list: SinglyLinkedList<T>,
+    loaded: bool,
+    count: usize,
 }
 
 impl<T> Default for DataStruct<T> {
@@ -344,7 +344,7 @@ where
     // generic `impl`; storage is supplied via the `S: PoolStorage<T>` type
     // parameter (see `object_pool!` for the usual declaration).
     #[inline]
-    pub(crate) fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
+    fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
         S::with(f)
     }
 

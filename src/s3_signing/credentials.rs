@@ -63,7 +63,7 @@ pub struct MultiPartUploadOptions {
 }
 
 impl MultiPartUploadOptions {
-    pub const ONE_MIB: usize = 1_048_576;
+    pub(crate) const ONE_MIB: usize = 1_048_576;
     /// we limit to 5 GiB
     pub const MAX_SINGLE_UPLOAD_SIZE: usize = 5120 * Self::ONE_MIB;
     pub const MIN_SINGLE_UPLOAD_SIZE: usize = 5 * Self::ONE_MIB;
@@ -110,7 +110,7 @@ impl AWSSignatureCache {
     ///
     /// Returns the 32-byte *value* by copy; the only consumer (`sign` below)
     /// wants the digest, and a fixed-size copy avoids handing out a guard.
-    pub fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
+    pub(crate) fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
         let inner = self.0.lock();
         if inner.date == 0 || inner.date != numeric_day {
             return None;
@@ -118,7 +118,7 @@ impl AWSSignatureCache {
         inner.cache.get(key).copied()
     }
 
-    pub fn set(&self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
+    pub(crate) fn set(&self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
         let mut inner = self.0.lock();
         if inner.date == 0 {
             inner.cache = StringArrayHashMap::new();
@@ -176,7 +176,7 @@ pub struct S3Credentials {
     pub endpoint: Box<[u8]>,
     pub bucket: Box<[u8]>,
     pub session_token: Box<[u8]>,
-    pub storage_class: Option<StorageClass>,
+    pub(crate) storage_class: Option<StorageClass>,
     /// Important for MinIO support.
     pub insecure_http: bool,
     /// indicates if the endpoint is a virtual hosted style bucket
@@ -981,29 +981,29 @@ fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     (year, month, day, hours, minutes, seconds, day_seconds)
 }
 
-pub(crate) const DIGESTED_HMAC_256_LEN: usize = 32;
+const DIGESTED_HMAC_256_LEN: usize = 32;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignResult
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct SignResult {
-    pub amz_date: Box<[u8]>,
-    pub host: Box<[u8]>,
-    pub authorization: Box<[u8]>,
+    pub(crate) amz_date: Box<[u8]>,
+    pub(crate) host: Box<[u8]>,
+    pub(crate) authorization: Box<[u8]>,
     pub url: Box<[u8]>,
 
-    pub content_disposition: Box<[u8]>,
-    pub content_encoding: Box<[u8]>,
-    pub content_md5: Box<[u8]>,
-    pub session_token: Box<[u8]>,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
+    pub(crate) content_disposition: Box<[u8]>,
+    pub(crate) content_encoding: Box<[u8]>,
+    pub(crate) content_md5: Box<[u8]>,
+    pub(crate) session_token: Box<[u8]>,
+    pub(crate) acl: Option<ACL>,
+    pub(crate) storage_class: Option<StorageClass>,
+    pub(crate) request_payer: bool,
     // Self-referential: entries borrow from the Box<[u8]> fields above. PicoHeader
     // must be a raw (ptr,len) pair; see note in sign_request.
-    pub _headers: [PicoHeader; Self::MAX_HEADERS],
-    pub _headers_len: u8,
+    pub(crate) _headers: [PicoHeader; Self::MAX_HEADERS],
+    pub(crate) _headers_len: u8,
 }
 
 impl SignResult {
@@ -1361,7 +1361,7 @@ struct CanonicalRequest;
 
 impl CanonicalRequest {
     // Builds the canonical request at runtime with conditional writes; profile if hot.
-    pub(crate) fn format<'b>(
+    fn format<'b>(
         buf: &'b mut [u8],
         key: SignedHeadersKey,
         method: &[u8],

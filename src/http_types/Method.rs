@@ -263,7 +263,7 @@ impl Optional {
 #[unsafe(no_mangle)]
 /// # Safety
 /// `str` must point to `len` initialised bytes for the duration of the call.
-pub(crate) unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
+unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // SAFETY: genuine FFI boundary — C++ caller passes a non-null, byte-aligned
     // pointer to `len` initialised bytes. The (ptr,len) pair cannot be a `&[u8]` across
     // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not

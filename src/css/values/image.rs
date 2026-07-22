@@ -1,6 +1,5 @@
 use crate as css;
 use crate::css_parser::CssResult as Result;
-use crate::dependencies::UrlDependency;
 use crate::generics::DeepClone as _;
 use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
@@ -27,7 +26,7 @@ pub enum Image {
 impl Image {
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
-    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Image::Gradient(g) => match &**g {
                 Gradient::Linear(linear) => {
@@ -61,7 +60,7 @@ impl Image {
         }
     }
 
-    pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
+    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
         match self {
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
@@ -69,7 +68,10 @@ impl Image {
         }
     }
 
-    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
+    pub(crate) fn get_necessary_prefixes(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
         match self {
             Image::Gradient(grad) => grad.get_necessary_prefixes(targets),
             Image::ImageSet(image_set) => image_set.get_necessary_prefixes(targets),
@@ -77,13 +79,13 @@ impl Image {
         }
     }
 
-    pub fn has_vendor_prefix(&self) -> bool {
+    pub(crate) fn has_vendor_prefix(&self) -> bool {
         let prefix = self.get_vendor_prefix();
         !prefix.is_empty() && prefix != VendorPrefix::NONE
     }
 
     /// Returns the vendor prefix used in the image value.
-    pub fn get_vendor_prefix(&self) -> VendorPrefix {
+    pub(crate) fn get_vendor_prefix(&self) -> VendorPrefix {
         match self {
             Image::Gradient(a) => a.get_vendor_prefix(),
             Image::ImageSet(a) => a.get_vendor_prefix(),
@@ -92,18 +94,18 @@ impl Image {
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub fn get_image(&self) -> &Image {
+    pub(crate) fn get_image(&self) -> &Image {
         self
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub fn with_image(&self, _arena: &Arena, image: Image) -> Self {
+    pub(crate) fn with_image(&self, _arena: &Arena, image: Image) -> Self {
         let _ = self;
         image
     }
 
     #[inline]
-    pub fn eql(&self, other: &Image) -> bool {
+    pub(crate) fn eql(&self, other: &Image) -> bool {
         match (self, other) {
             (Image::None, Image::None) => true,
             (Image::Url(a), Image::Url(b)) => a.import_record_idx == b.import_record_idx,
@@ -113,7 +115,7 @@ impl Image {
         }
     }
 
-    pub fn deep_clone(&self, arena: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
         match self {
             Image::None => Image::None,
             Image::Url(u) => Image::Url(Url {
@@ -128,7 +130,7 @@ impl Image {
     /// Returns a legacy `-webkit-gradient()` value for the image.
     ///
     /// May return an error in case the gradient cannot be converted.
-    pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
+    pub(crate) fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
         match self {
             Image::Gradient(gradient) => Some(Image::Gradient(Box::new(
                 gradient.get_legacy_webkit(arena)?,
@@ -137,7 +139,7 @@ impl Image {
         }
     }
 
-    pub fn get_fallbacks(
+    pub(crate) fn get_fallbacks(
         &mut self,
         arena: &Arena,
         targets: &css::targets::Targets,
@@ -210,14 +212,17 @@ impl Image {
         res
     }
 
-    pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
+    pub(crate) fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
         match self {
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
         }
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+    pub(crate) fn get_necessary_fallbacks(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> ColorFallbackKind {
         match self {
             Image::Gradient(grad) => grad.get_necessary_fallbacks(targets),
             _ => ColorFallbackKind::empty(),
@@ -225,7 +230,7 @@ impl Image {
     }
 
     // Variants are tried in declaration order: none, url, gradient, image-set.
-    pub fn parse(input: &mut css::Parser) -> Result<Image> {
+    pub(crate) fn parse(input: &mut css::Parser) -> Result<Image> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -241,7 +246,10 @@ impl Image {
         ImageSet::parse(input).map(Image::ImageSet)
     }
 
-    pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
+    pub(crate) fn to_css(
+        &self,
+        dest: &mut css::Printer,
+    ) -> core::result::Result<(), css::PrintErr> {
         match self {
             Image::None => dest.write_str(b"none"),
             Image::Url(u) => u.to_css(dest),
@@ -276,14 +284,14 @@ impl crate::small_list::ImageFallback for Image {
 /// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet {
     /// The image options to choose from.
-    pub options: Vec<ImageSetOption>,
+    pub(crate) options: Vec<ImageSetOption>,
 
     /// The vendor prefix for the `image-set()` function.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
 }
 
 impl ImageSet {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<ImageSet> {
+    fn parse(input: &mut css::Parser) -> Result<ImageSet> {
         let location = input.current_source_location();
         // SAFETY: borrow detached (`'static` placeholder, see
         // `css_parser::src_str`) so `input` is reusable below.
@@ -304,7 +312,7 @@ impl ImageSet {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), PrintErr> {
         self.vendor_prefix.to_css(dest)?;
         dest.write_str("image-set(")?;
         let prefixed = self.vendor_prefix != VendorPrefix::NONE;
@@ -312,7 +320,7 @@ impl ImageSet {
         dest.write_char(b')')
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         css::Feature::ImageSet.is_compatible(browsers)
             && 'blk: {
                 for opt in self.options.iter() {
@@ -325,14 +333,14 @@ impl ImageSet {
     }
 
     /// Returns the `image-set()` value with the given vendor prefix.
-    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet {
+    fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet {
         ImageSet {
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: prefix,
         }
     }
 
-    pub(crate) fn eql(&self, other: &ImageSet) -> bool {
+    fn eql(&self, other: &ImageSet) -> bool {
         self.vendor_prefix == other.vendor_prefix
             && self.options.len() == other.options.len()
             && self
@@ -342,22 +350,19 @@ impl ImageSet {
                 .all(|(a, b)| a.eql(b))
     }
 
-    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
+    fn deep_clone(&self, arena: &Arena) -> Self {
         ImageSet {
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: self.vendor_prefix,
         }
     }
 
-    pub(crate) fn get_vendor_prefix(&self) -> VendorPrefix {
+    fn get_vendor_prefix(&self) -> VendorPrefix {
         self.vendor_prefix
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    pub(crate) fn get_necessary_prefixes(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> css::VendorPrefix {
+    fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
         targets.prefixes(self.vendor_prefix, css::prefixes::Feature::ImageSet)
     }
 }
@@ -365,17 +370,17 @@ impl ImageSet {
 /// An image option within the `image-set()` function. See [ImageSet](ImageSet).
 pub struct ImageSetOption {
     /// The image for this option.
-    pub image: Image,
+    pub(crate) image: Image,
     /// The resolution of the image.
-    pub resolution: Resolution,
+    pub(crate) resolution: Resolution,
     /// The mime type of the image.
     // Arena-borrowed slice from the tokenizer input; the parser arena outlives
     // this value (see SAFETY notes at the use sites).
-    pub file_type: Option<*const [u8]>,
+    pub(crate) file_type: Option<*const [u8]>,
 }
 
 impl ImageSetOption {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
+    fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
         // `expect_url_or_string` returns a borrow of the parser, so
@@ -415,7 +420,7 @@ impl ImageSetOption {
         })
     }
 
-    pub(crate) fn to_css(
+    fn to_css(
         &self,
         dest: &mut css::Printer,
         is_prefixed: bool,
@@ -424,35 +429,11 @@ impl ImageSetOption {
             let Image::Url(url) = &self.image else {
                 unreachable!()
             };
-            let dep_: Option<UrlDependency> = if dest.dependencies.is_some() {
-                // Hoist `get_import_records` (mut borrow) out of the
-                // arg list so `filename()` (shared borrow) can run; result is `&'a _`.
-                let import_records = dest.get_import_records()?;
-                Some(UrlDependency::new(
-                    dest.arena,
-                    url,
-                    dest.filename(),
-                    import_records,
-                ))
-            } else {
-                None
-            };
-
-            if let Some(dep) = dep_ {
-                // SAFETY: placeholder borrows the printer arena.
-                let placeholder = unsafe { crate::arena_str(dep.placeholder) };
-                dest.serialize_string(placeholder)?;
-                if let Some(dependencies) = &mut dest.dependencies {
-                    // Vec::push aborts on OOM by default.
-                    dependencies.push(css::Dependency::Url(dep));
-                }
-            } else {
-                let record_url = dest.get_import_record_url(url.import_record_idx)?;
-                // SAFETY: `record_url` borrows arena-backed `import_info` data
-                // valid for the printer's `'a`; detach so `dest` is reusable.
-                let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
-                dest.serialize_string(record_url)?;
-            }
+            let record_url = dest.get_import_record_url(url.import_record_idx)?;
+            // SAFETY: `record_url` borrows arena-backed `import_info` data
+            // valid for the printer's `'a`; detach so `dest` is reusable.
+            let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
+            dest.serialize_string(record_url)?;
         } else {
             self.image.to_css(dest)?;
         }
@@ -484,7 +465,7 @@ impl ImageSetOption {
         Ok(())
     }
 
-    pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
+    fn deep_clone(&self, arena: &Arena) -> Self {
         ImageSetOption {
             image: self.image.deep_clone(arena),
             resolution: self.resolution,
@@ -492,7 +473,7 @@ impl ImageSetOption {
         }
     }
 
-    pub(crate) fn eql(&self, rhs: &ImageSetOption) -> bool {
+    fn eql(&self, rhs: &ImageSetOption) -> bool {
         self.image.eql(&rhs.image)
             && self.resolution == rhs.resolution
             && match (self.file_type, rhs.file_type) {

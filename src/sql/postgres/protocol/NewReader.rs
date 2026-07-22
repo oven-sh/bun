@@ -86,7 +86,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.wrapped.read(count)
     }
 
@@ -107,17 +107,17 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(())
     }
 
-    pub fn peek(&self) -> &[u8] {
+    pub(crate) fn peek(&self) -> &[u8] {
         self.wrapped.peek()
     }
 
     #[inline]
-    pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
         self.wrapped.read_z()
     }
 
     #[inline]
-    pub fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
+    pub(crate) fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         if !self.wrapped.ensure_length(count) {
             return Err(AnyPostgresError::ShortRead);
         }
@@ -129,16 +129,19 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(Int::from_be_slice(data.slice()))
     }
 
-    pub fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
+    pub(crate) fn expect_int<Int: ProtocolInt>(
+        &mut self,
+        value: Int,
+    ) -> Result<bool, AnyPostgresError> {
         let actual = self.int::<Int>()?;
         Ok(actual == value)
     }
 
-    pub fn int4(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
+    pub(crate) fn int4(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         self.int::<PostgresInt32>()
     }
 
-    pub fn short(&mut self) -> Result<PostgresShort, AnyPostgresError> {
+    pub(crate) fn short(&mut self) -> Result<PostgresShort, AnyPostgresError> {
         self.int::<PostgresShort>()
     }
 
@@ -161,7 +164,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.read(count)
     }
 }

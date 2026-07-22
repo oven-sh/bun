@@ -14,19 +14,19 @@
 /// Components of a parsed wall-clock timestamp.
 #[derive(Default, Clone, Copy)]
 pub struct DateTimeText {
-    pub year: u16,
-    pub month: u8,
-    pub day: u8,
-    pub hour: u8,
-    pub minute: u8,
-    pub second: u8,
+    pub(crate) year: u16,
+    pub(crate) month: u8,
+    pub(crate) day: u8,
+    pub(crate) hour: u8,
+    pub(crate) minute: u8,
+    pub(crate) second: u8,
     /// Fractional seconds right-padded to microseconds (`.5` → 500_000).
-    pub microsecond: u32,
+    pub(crate) microsecond: u32,
 }
 
 /// MySQL DATE/DATETIME/TIMESTAMP text. Accepts the 10-byte date-only form
 /// (`YYYY-MM-DD`) and either `' '` or `'T'` as the date/time separator.
-pub fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
+pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
     parse(text, true, true)
 }
 
@@ -34,7 +34,7 @@ pub fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
 /// `YYYY-MM-DD HH:MM:SS[.ffffff]` shape — anything else (date-only, `'T'`
 /// separator, `infinity`, BC dates, 5+ digit years) returns `None` so the
 /// caller can fall back to `Date.parse`.
-pub fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
+pub(crate) fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
     parse(text, false, false)
 }
 

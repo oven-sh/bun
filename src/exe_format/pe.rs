@@ -58,8 +58,8 @@ pub enum StripMode {
 
 #[derive(Copy, Clone)]
 pub struct StripOpts {
-    pub require_overlay: bool,
-    pub recompute_checksum: bool,
+    pub(crate) require_overlay: bool,
+    pub(crate) recompute_checksum: bool,
 }
 
 impl Default for StripOpts {
@@ -73,17 +73,14 @@ impl Default for StripOpts {
 
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub struct PEFile {
-    pub data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     // Store offsets instead of pointers to avoid invalidation after resize
-    pub dos_header_offset: usize,
-    pub pe_header_offset: usize,
-    pub optional_header_offset: usize,
-    pub section_headers_offset: usize,
-    pub num_sections: u16,
+    pub(crate) dos_header_offset: usize,
+    pub(crate) pe_header_offset: usize,
+    pub(crate) optional_header_offset: usize,
+    pub(crate) section_headers_offset: usize,
+    pub(crate) num_sections: u16,
     // Cached values from init
-    pub first_raw: u32,
-    pub last_file_end: u32,
-    pub last_va_end: u32,
 }
 
 // PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
@@ -402,16 +399,13 @@ impl PEFile {
             optional_header_offset,
             section_headers_offset,
             num_sections,
-            first_raw,
-            last_file_end,
-            last_va_end,
         }))
     }
 
     // deinit: Drop is automatic — Vec<u8> field freed; Box<PEFile> dropped by caller.
 
     /// Strip Authenticode signatures from the PE file
-    pub fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
+    pub(crate) fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
         let opt = view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)?;
 
         // Read Security directory (index 4)

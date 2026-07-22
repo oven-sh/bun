@@ -61,36 +61,6 @@ mod ext {
 
     /// Inline of `Url::to_css`.
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
-        let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` borrows &mut *dest, so capture
-            // arena/filename first.
-            let arena = dest.arena;
-            // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
-            let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(
-                arena, this, filename, records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
         let import_record = dest.import_record(this.import_record_idx)?;
         let is_internal = import_record.tag.is_internal();
         // `get_import_record_url` reborrows &mut *dest, so capture
@@ -293,13 +263,13 @@ pub use css_parser::CssResult as Result;
 /// PERF: nullable optimization
 #[derive(Default, CssEql, CssHash, DeepClone)]
 pub struct TokenList {
-    pub v: Vec<TokenOrValue>,
+    pub(crate) v: Vec<TokenOrValue>,
 }
 
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
-    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
@@ -316,20 +286,6 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::Url(url) => {
-                    if dest.dependencies.is_some()
-                        && is_custom_property
-                        && !url.is_absolute(dest.get_import_records()?)
-                    {
-                        let pretty = std::ptr::from_ref::<[u8]>(
-                            dest.get_import_records()?[url.import_record_idx as usize]
-                                .path
-                                .pretty,
-                        );
-                        return dest.new_error(
-                            css::PrinterErrorKind::ambiguous_url_in_custom_property { url: pretty },
-                            Some(url.loc),
-                        );
-                    }
                     ext::url_to_css(url, dest)?;
                     has_whitespace = false;
                 }
@@ -364,7 +320,7 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::DashedIdent(v) => {
-                    dest.write_dashed_ident(v, true)?;
+                    dest.write_dashed_ident(v)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::AnimationName(v) => {
@@ -427,7 +383,7 @@ impl TokenList {
         Ok(())
     }
 
-    pub fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
         for token_or_value in self.v.iter() {
             if let TokenOrValue::Token(token) = token_or_value {
                 token.to_css(dest)?;
@@ -438,7 +394,11 @@ impl TokenList {
         Ok(())
     }
 
-    pub fn write_whitespace_if_needed(&self, i: usize, dest: &mut Printer) -> PrintResult<bool> {
+    pub(crate) fn write_whitespace_if_needed(
+        &self,
+        i: usize,
+        dest: &mut Printer,
+    ) -> PrintResult<bool> {
         if !dest.minify
             && i != self.v.len() - 1
             && !matches!(
@@ -454,7 +414,11 @@ impl TokenList {
         }
     }
 
-    pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
+    pub(crate) fn parse(
+        input: &mut Parser,
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<TokenList> {
         let mut tokens: Vec<TokenOrValue> = Vec::new();
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
 
@@ -476,7 +440,7 @@ impl TokenList {
         Self::parse(input, options, 0)
     }
 
-    pub fn parse_raw(
+    pub(crate) fn parse_raw(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
         options: &ParserOptions,
@@ -530,7 +494,7 @@ impl TokenList {
         Ok(())
     }
 
-    pub fn parse_into(
+    pub(crate) fn parse_into(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
         options: &ParserOptions,
@@ -735,7 +699,7 @@ impl TokenList {
         Ok(())
     }
 
-    pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         let mut tokens = TokenList::default();
         tokens.v.reserve_exact(self.v.len());
         for old in self.v.iter() {
@@ -751,7 +715,7 @@ impl TokenList {
         tokens
     }
 
-    pub fn get_fallbacks(
+    pub(crate) fn get_fallbacks(
         &mut self,
         bump: &Arena,
         targets: &css::targets::Targets,
@@ -804,7 +768,10 @@ impl TokenList {
         res
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+    pub(crate) fn get_necessary_fallbacks(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {
             match token_or_value {
@@ -880,7 +847,7 @@ impl UnresolvedColor {
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
             css_values::color::clamp_unit_f32(c) as i32
         }
@@ -961,7 +928,7 @@ impl UnresolvedColor {
         }
     }
 
-    pub(crate) fn parse(
+    fn parse(
         input: &mut Parser,
         f: &[u8],
         options: &ParserOptions,
@@ -1025,10 +992,7 @@ impl UnresolvedColor {
         Err(input.new_custom_error(ParserError::invalid_value))
     }
 
-    pub(crate) fn light_dark_owned(
-        light: UnresolvedColor,
-        dark: UnresolvedColor,
-    ) -> UnresolvedColor {
+    fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
         UnresolvedColor::LightDark {
             light: TokenList {
                 v: vec![TokenOrValue::UnresolvedColor(light)],
@@ -1055,15 +1019,15 @@ impl css_values::color::LightDarkOwned for UnresolvedColor {
 #[derive(CssEql, CssHash, DeepClone)]
 pub struct Variable {
     /// The variable name.
-    pub name: DashedIdentReference,
+    pub(crate) name: DashedIdentReference,
     /// A fallback value in case the variable is not defined.
-    pub fallback: Option<TokenList>,
+    pub(crate) fallback: Option<TokenList>,
 }
 
 impl Variable {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    pub(crate) fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
+    fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
         let name = ext::dashed_ident_ref_parse(input, options)?;
 
         let fallback = if input.try_parse(|i| i.expect_comma()).is_ok() {
@@ -1075,7 +1039,7 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         dest.write_str("var(")?;
         ext::dashed_ident_ref_to_css(&self.name, dest)?;
         if let Some(fallback) = &self.fallback {
@@ -1085,7 +1049,7 @@ impl Variable {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         Variable {
             name: self.name,
             fallback: self
@@ -1102,12 +1066,12 @@ impl Variable {
 #[derive(CssEql, CssHash, DeepClone)]
 pub struct EnvironmentVariable {
     /// The environment variable name.
-    pub name: EnvironmentVariableName,
+    pub(crate) name: EnvironmentVariableName,
     /// Optional indices into the dimensions of the environment variable.
     /// TODO(zack): this could totally be a smallvec, why isn't it?
-    pub indices: Vec<CSSInteger>,
+    pub(crate) indices: Vec<CSSInteger>,
     /// A fallback value in case the variable is not defined.
-    pub fallback: Option<TokenList>,
+    pub(crate) fallback: Option<TokenList>,
 }
 
 impl EnvironmentVariable {
@@ -1122,7 +1086,7 @@ impl EnvironmentVariable {
         input.parse_nested_block(|i| EnvironmentVariable::parse_nested(i, options, depth))
     }
 
-    pub(crate) fn parse_nested(
+    fn parse_nested(
         input: &mut Parser,
         options: &ParserOptions,
         depth: usize,
@@ -1163,7 +1127,7 @@ impl EnvironmentVariable {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
             name: self.name,
             indices: self.indices.clone(),
@@ -1191,7 +1155,7 @@ pub enum EnvironmentVariableName {
 impl EnvironmentVariableName {
     // eql / hash — provided by `#[derive(CssEql, CssHash)]`.
 
-    pub(crate) fn parse(input: &mut Parser) -> Result<EnvironmentVariableName> {
+    fn parse(input: &mut Parser) -> Result<EnvironmentVariableName> {
         if let Ok(ua) = input.try_parse(UAEnvironmentVariable::parse) {
             return Ok(EnvironmentVariableName::Ua(ua));
         }
@@ -1206,7 +1170,7 @@ impl EnvironmentVariableName {
         Ok(EnvironmentVariableName::Unknown(ident))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             EnvironmentVariableName::Ua(ua) => ua.to_css(dest),
             EnvironmentVariableName::Custom(custom) => ext::dashed_ident_ref_to_css(custom, dest),
@@ -1289,15 +1253,15 @@ impl EnumProperty for UAEnvironmentVariable {
 #[derive(CssEql, CssHash, DeepClone)]
 pub struct Function {
     /// The function name.
-    pub name: Ident,
+    pub(crate) name: Ident,
     /// The function arguments.
-    pub arguments: TokenList,
+    pub(crate) arguments: TokenList,
 }
 
 impl Function {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
         dest.write_char(b'(')?;
         self.arguments.to_css(dest, is_custom_property)?;
@@ -1306,7 +1270,7 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         Function {
             name: self.name,
             arguments: self.arguments.get_fallback(bump, kind),
@@ -1350,7 +1314,7 @@ impl TokenOrValue {
 
     // deinit(): all arms only freed owned fields — handled by `Drop`.
 
-    pub(crate) fn is_whitespace(&self) -> bool {
+    fn is_whitespace(&self) -> bool {
         matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
     }
 }
@@ -1460,9 +1424,9 @@ impl core::fmt::Debug for EnvironmentVariable {
 /// In this case, the raw tokens are stored instead.
 pub struct UnparsedProperty {
     /// The id of the property.
-    pub property_id: css::properties::PropertyId,
+    pub(crate) property_id: css::properties::PropertyId,
     /// The property value, stored as a raw token list.
-    pub value: TokenList,
+    pub(crate) value: TokenList,
 }
 
 impl UnparsedProperty {
@@ -1521,9 +1485,9 @@ impl UnparsedProperty {
 /// A CSS custom property, representing any unknown property.
 pub struct CustomProperty {
     /// The name of the property.
-    pub name: CustomPropertyName,
+    pub(crate) name: CustomPropertyName,
     /// The property value, stored as a raw token list.
-    pub value: TokenList,
+    pub(crate) value: TokenList,
 }
 
 impl CustomProperty {
@@ -1572,12 +1536,12 @@ impl PartialEq for CustomPropertyName {
 }
 
 impl CustomPropertyName {
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             CustomPropertyName::Custom(custom) => {
                 // DashedIdent.toCss → dest.writeDashedIdent(ident, true),
                 // which applies CSS-Modules dashed-ident renaming.
-                dest.write_dashed_ident(custom, true)
+                dest.write_dashed_ident(custom)
             }
             CustomPropertyName::Unknown(unknown) => {
                 // SAFETY: arena-owned slice valid for printer lifetime.
@@ -1587,7 +1551,7 @@ impl CustomPropertyName {
         }
     }
 
-    pub fn from_str(name: &[u8]) -> CustomPropertyName {
+    pub(crate) fn from_str(name: &[u8]) -> CustomPropertyName {
         if name.starts_with(b"--") {
             return CustomPropertyName::Custom(DashedIdent {
                 v: std::ptr::from_ref::<[u8]>(name),
@@ -1610,7 +1574,7 @@ impl CustomPropertyName {
     /// SAFETY: caller must ensure the parser arena outlives the borrow
     /// (slices are arena-owned `*const [u8]`; see `DashedIdent::as_slice`).
     #[inline]
-    pub fn as_str(&self) -> &[u8] {
+    pub(crate) fn as_str(&self) -> &[u8] {
         // SAFETY: see doc comment.
         unsafe { crate::arena_str(self.as_ptr()) }
     }
@@ -1618,11 +1582,7 @@ impl CustomPropertyName {
     // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.
 }
 
-pub(crate) fn try_parse_color_token(
-    f: &[u8],
-    state: &ParserState,
-    input: &mut Parser,
-) -> Option<CssColor> {
+fn try_parse_color_token(f: &[u8], state: &ParserState, input: &mut Parser) -> Option<CssColor> {
     if strings::eql_any_case_insensitive_ascii(
         f,
         &[

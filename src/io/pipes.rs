@@ -15,7 +15,7 @@ pub enum PollOrFd {
 }
 
 impl PollOrFd {
-    pub fn tag_name(&self) -> &'static str {
+    pub(crate) fn tag_name(&self) -> &'static str {
         match self {
             PollOrFd::Poll(_) => "poll",
             PollOrFd::Fd(_) => "fd",
@@ -23,13 +23,13 @@ impl PollOrFd {
         }
     }
 
-    pub fn set_owner(&mut self, owner: Owner) {
+    pub(crate) fn set_owner(&mut self, owner: Owner) {
         if let PollOrFd::Poll(poll) = self {
             poll.set_owner(owner);
         }
     }
 
-    pub fn get_fd(&self) -> Fd {
+    pub(crate) fn get_fd(&self) -> Fd {
         match self {
             PollOrFd::Closed => Fd::INVALID,
             PollOrFd::Fd(fd) => *fd,
@@ -44,7 +44,7 @@ impl PollOrFd {
         }
     }
 
-    pub fn get_poll_mut(&mut self) -> Option<FilePollRef> {
+    pub(crate) fn get_poll_mut(&mut self) -> Option<FilePollRef> {
         match self {
             PollOrFd::Poll(poll) => Some(*poll),
             _ => None,
@@ -122,7 +122,7 @@ impl PollOrFd {
         }
     }
 
-    pub fn close<F>(&mut self, ctx: Option<*mut c_void>, on_close_fn: Option<F>)
+    pub(crate) fn close<F>(&mut self, ctx: Option<*mut c_void>, on_close_fn: Option<F>)
     where
         F: FnOnce(*mut c_void),
     {

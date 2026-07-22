@@ -49,7 +49,7 @@ pub struct SSLConfig {
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
     /// context.
-    pub cached_hash: AtomicU64,
+    pub(crate) cached_hash: AtomicU64,
 }
 
 /// Casing alias for callers that snake_cased the type name.
@@ -62,19 +62,19 @@ pub type SslConfig = SSLConfig;
 #[repr(transparent)]
 pub struct SharedPtr(Arc<SSLConfig>);
 
-pub type WeakPtr = Weak<SSLConfig>;
+pub(crate) type WeakPtr = Weak<SSLConfig>;
 
 impl SharedPtr {
     #[inline]
-    pub fn new(config: SSLConfig) -> Self {
+    pub(crate) fn new(config: SSLConfig) -> Self {
         Self(Arc::new(config))
     }
     #[inline]
-    pub fn get(&self) -> &SSLConfig {
+    pub(crate) fn get(&self) -> &SSLConfig {
         &self.0
     }
     #[inline]
-    pub fn clone_weak(&self) -> WeakPtr {
+    pub(crate) fn clone_weak(&self) -> WeakPtr {
         Arc::downgrade(&self.0)
     }
 }
@@ -95,7 +95,7 @@ impl From<Arc<SSLConfig>> for SharedPtr {
 }
 
 impl SSLConfig {
-    pub const ZERO: SSLConfig = SSLConfig {
+    pub(crate) const ZERO: SSLConfig = SSLConfig {
         server_name: core::ptr::null(),
         key_file_name: core::ptr::null(),
         cert_file_name: core::ptr::null(),
@@ -160,7 +160,7 @@ impl SSLConfig {
     /// Extract the raw `*const SSLConfig` from an optional shared handle for
     /// pointer-equality comparison (interned configs have stable addresses).
     #[inline]
-    pub fn raw_ptr<D>(maybe_shared: Option<&D>) -> Option<*const SSLConfig>
+    pub(crate) fn raw_ptr<D>(maybe_shared: Option<&D>) -> Option<*const SSLConfig>
     where
         D: core::ops::Deref<Target = SSLConfig>,
     {
@@ -236,7 +236,7 @@ impl SSLConfig {
         copy
     }
 
-    pub fn is_same(&self, other: &SSLConfig) -> bool {
+    pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {
         macro_rules! eq_cstr {
             ($f:ident) => {
                 if !cstr_eq(self.$f, other.$f) {
@@ -309,7 +309,7 @@ impl SSLConfig {
     // Takes `&self` (not `&mut`) because the intern registry calls this through
     // a pointer derived from `Arc::as_ptr`, which only grants shared provenance.
     // The memoization write goes through `AtomicU64` (interior mutability).
-    pub fn content_hash(&self) -> u64 {
+    pub(crate) fn content_hash(&self) -> u64 {
         let cached = self.cached_hash.load(Ordering::Relaxed);
         if cached != 0 {
             return cached;
@@ -371,7 +371,7 @@ impl SSLConfig {
     /// fields for content comparison while we're still in the map. For
     /// non-interned configs, `remove()` is a cheap no-op (pointer-identity
     /// check fails).
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         global_registry::remove(self);
         free_string(&mut self.server_name);
         free_string(&mut self.key_file_name);

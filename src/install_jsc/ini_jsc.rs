@@ -21,7 +21,10 @@ pub fn ini_testing_load_npmrc_from_js(
 pub struct IniTestingAPIs;
 
 impl IniTestingAPIs {
-    pub fn load_npmrc_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn load_npmrc_from_js(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         use bun_api::BunInstall;
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
@@ -188,7 +191,7 @@ impl IniTestingAPIs {
         Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }
 
-    pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use bun_ast::ToJSError;
         use bun_ini::Parser;
         use bun_jsc::JsError;

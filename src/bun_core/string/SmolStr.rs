@@ -66,43 +66,43 @@ impl SmolStr {
         SmolStr::from_inlined(Inlined::EMPTY)
     }
 
-    pub fn len(&self) -> u32 {
+    fn len(&self) -> u32 {
         if self.is_inlined() {
             return ((self.raw_ptr_bits() >> 56) & 0b0111_1111) as u32;
         }
         self.raw_len()
     }
 
-    pub fn ptr(&mut self) -> *mut u8 {
+    fn ptr(&mut self) -> *mut u8 {
         (self.raw_ptr_bits() & NEGATED_TAG) as *mut u8
     }
 
-    pub fn ptr_const(&self) -> *const u8 {
+    fn ptr_const(&self) -> *const u8 {
         (self.raw_ptr_bits() & NEGATED_TAG) as *const u8
     }
 
-    pub fn mark_inlined(&mut self) {
+    fn mark_inlined(&mut self) {
         self.set_raw_ptr_bits(self.raw_ptr_bits() | TAG);
     }
 
-    pub fn mark_heap(&mut self) {
+    fn mark_heap(&mut self) {
         self.set_raw_ptr_bits(self.raw_ptr_bits() & NEGATED_TAG);
     }
 
-    pub fn is_inlined(&self) -> bool {
+    fn is_inlined(&self) -> bool {
         (self.raw_ptr_bits() & TAG) != 0
     }
 
     /// ## Panics
     /// if `self` is too long to fit in an inlined string
-    pub fn to_inlined(&self) -> Inlined {
+    fn to_inlined(&self) -> Inlined {
         debug_assert!(self.len() as usize <= Inlined::MAX_LEN);
         let mut inlined = Inlined(self.0);
         inlined.set_tag(1);
         inlined
     }
 
-    pub fn from_baby_list(baby_list: Vec<u8>) -> SmolStr {
+    fn from_baby_list(baby_list: Vec<u8>) -> SmolStr {
         // Take ownership of the Vec's storage; Drop on SmolStr frees it.
         let mut baby_list = mem::ManuallyDrop::new(baby_list);
         let len = baby_list.len() as u32;
@@ -116,7 +116,7 @@ impl SmolStr {
         smol_str
     }
 
-    pub fn from_inlined(inlined: Inlined) -> SmolStr {
+    fn from_inlined(inlined: Inlined) -> SmolStr {
         let mut smol_str = SmolStr(inlined.0);
         smol_str.mark_inlined();
         smol_str
@@ -227,12 +227,12 @@ impl From<InlinedError> for crate::CrateError {
 }
 
 impl Inlined {
-    pub(crate) const MAX_LEN: usize = 120 / 8; // = 15
-    pub(crate) const EMPTY: Inlined = Inlined(1u128 << 127); // data=0, __len=0, _tag=1
+    const MAX_LEN: usize = 120 / 8; // = 15
+    const EMPTY: Inlined = Inlined(1u128 << 127); // data=0, __len=0, _tag=1
 
     /// ## Errors
     /// if `str` is longer than `MAX_LEN`
-    pub(crate) fn init(str: &[u8]) -> Result<Inlined, InlinedError> {
+    fn init(str: &[u8]) -> Result<Inlined, InlinedError> {
         if str.len() > Self::MAX_LEN {
             return Err(InlinedError::StringTooLong);
         }
@@ -246,11 +246,11 @@ impl Inlined {
     }
 
     #[inline]
-    pub(crate) fn len(&self) -> u8 {
+    fn len(&self) -> u8 {
         ((self.0 >> 120) & 0x7F) as u8
     }
 
-    pub(crate) fn set_len(&mut self, new_len: u8) {
+    fn set_len(&mut self, new_len: u8) {
         debug_assert!(new_len < 128); // u7
         self.0 = (self.0 & !(0x7Fu128 << 120)) | ((new_len as u128) << 120);
     }
@@ -261,13 +261,13 @@ impl Inlined {
         self.0 = (self.0 & !(1u128 << 127)) | ((tag as u128) << 127);
     }
 
-    pub(crate) fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         // Bytes 0..len of the backing u128 are the inline data on little-endian;
         // `u128: Pod` lets us view them safely.
         &crate::bytes_of(&self.0)[..self.len() as usize]
     }
 
-    pub(crate) fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
+    fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
         // SAFETY: the first 15 bytes of the u128 backing storage are the `data` field
         // (little-endian, asserted at module top). `ptr()` derives a `*mut u8` from
         // `&mut self.0`, so the resulting reference has provenance over the full u128 and

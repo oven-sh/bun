@@ -52,7 +52,7 @@ impl KeepAlive {
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
+    pub(crate) fn unref_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != Status::Active {
             return;
         }
@@ -92,7 +92,7 @@ impl KeepAlive {
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
+    pub(crate) fn ref_concurrently(&mut self, vm: EventLoopCtx) {
         if self.status != Status::Inactive {
             return;
         }

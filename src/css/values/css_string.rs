@@ -20,7 +20,10 @@ impl CssStringFns {
         input.expect_string().map(std::ptr::from_ref::<[u8]>)
     }
 
-    pub fn to_css(this: &CssString, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(
+        this: &CssString,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr> {
         // SAFETY: per the `CssString` invariant above, the pointee borrows the
         // parser arena which outlives the `Printer` it is being written to.
         let s = unsafe { crate::arena_str(*this) };

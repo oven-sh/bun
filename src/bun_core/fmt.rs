@@ -23,14 +23,14 @@ pub mod js_lexer {
     /// ASCII fast path; bun_js_parser extends with the full Unicode ID_Start
     /// table.
     #[inline]
-    pub fn is_identifier_start(c: i32) -> bool {
+    pub(crate) fn is_identifier_start(c: i32) -> bool {
         matches!(c, 0x24 /* $ */ | 0x5F /* _ */)
             || (c >= b'a' as i32 && c <= b'z' as i32)
             || (c >= b'A' as i32 && c <= b'Z' as i32)
             || c > 0x7F // non-ASCII: the full Unicode table lives in bun_js_parser
     }
     #[inline]
-    pub fn is_identifier_continue(c: i32) -> bool {
+    pub(crate) fn is_identifier_continue(c: i32) -> bool {
         is_identifier_start(c) || (c >= b'0' as i32 && c <= b'9' as i32)
     }
 }
@@ -48,7 +48,7 @@ pub mod js_printer {
         }
         f.write_char('"')
     }
-    pub fn write_pre_quoted_string(
+    pub(crate) fn write_pre_quoted_string(
         input: &[u8],
         f: &mut impl fmt::Write,
         quote: u8,
@@ -87,33 +87,33 @@ impl TableSymbols {
         enable_ansi_colors: false,
     };
 
-    pub const fn top_left_sep(self) -> &'static str {
+    const fn top_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┌" } else { "|" }
     }
-    pub const fn top_right_sep(self) -> &'static str {
+    const fn top_right_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┐" } else { "|" }
     }
     pub const fn top_column_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┬" } else { "-" }
     }
 
-    pub const fn bottom_left_sep(self) -> &'static str {
+    const fn bottom_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "└" } else { "|" }
     }
-    pub const fn bottom_right_sep(self) -> &'static str {
+    const fn bottom_right_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┘" } else { "|" }
     }
-    pub const fn bottom_column_sep(self) -> &'static str {
+    const fn bottom_column_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┴" } else { "-" }
     }
 
-    pub const fn middle_left_sep(self) -> &'static str {
+    const fn middle_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "├" } else { "|" }
     }
-    pub const fn middle_right_sep(self) -> &'static str {
+    const fn middle_right_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┤" } else { "|" }
     }
-    pub const fn middle_column_sep(self) -> &'static str {
+    const fn middle_column_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┼" } else { "|" }
     }
 
@@ -135,9 +135,9 @@ pub struct Table<
     const COLUMN_RIGHT_PAD: usize,
     const ENABLE_ANSI_COLORS: bool,
 > {
-    pub column_names: &'a [&'a [u8]],
-    pub column_inside_lengths: &'a [usize],
-    pub column_color: &'static str,
+    column_names: &'a [&'a [u8]],
+    column_inside_lengths: &'a [usize],
+    column_color: &'static str,
 }
 
 impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
@@ -181,7 +181,7 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
         );
     }
 
-    pub fn print_line(
+    fn print_line(
         &self,
         left_edge_separator: &str,
         right_edge_separator: &str,
@@ -230,7 +230,7 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct RedactedNpmUrlFormatter<'a> {
-    pub url: &'a [u8],
+    url: &'a [u8],
 }
 
 impl Display for RedactedNpmUrlFormatter<'_> {
@@ -279,7 +279,7 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct RedactedSourceFormatter<'a> {
-    pub text: &'a [u8],
+    text: &'a [u8],
 }
 
 impl Display for RedactedSourceFormatter<'_> {
@@ -309,7 +309,7 @@ impl Display for RedactedSourceFormatter<'_> {
     }
 }
 
-pub fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
+fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
     RedactedSourceFormatter { text: str }
 }
 
@@ -319,7 +319,7 @@ pub fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct DependencyUrlFormatter<'a> {
-    pub url: &'a [u8],
+    url: &'a [u8],
 }
 
 impl Display for DependencyUrlFormatter<'_> {
@@ -343,7 +343,7 @@ pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct IntegrityFormatter<const SHORT: bool> {
-    pub bytes: [u8; SHA512_DIGEST],
+    bytes: [u8; SHA512_DIGEST],
 }
 
 impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
@@ -515,7 +515,7 @@ pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::R
     Ok(())
 }
 
-pub fn format_utf16_type_with_path_options(
+fn format_utf16_type_with_path_options(
     slice_: &[u16],
     writer: &mut impl fmt::Write,
     opts: PathFormatOptions,
@@ -582,8 +582,8 @@ impl Display for FormatUTF16<'_> {
 }
 
 pub struct FormatUTF8<'a> {
-    pub buf: &'a [u8],
-    pub path_fmt_opts: Option<PathFormatOptions>,
+    buf: &'a [u8],
+    path_fmt_opts: Option<PathFormatOptions>,
 }
 
 impl Display for FormatUTF8<'_> {
@@ -1188,7 +1188,7 @@ pub fn fmt_identifier(name: &[u8]) -> FormatValidIdentifier<'_> {
 /// Different implementation than string_mutable because string_mutable may avoid allocating
 /// This will always allocate
 pub struct FormatValidIdentifier<'a> {
-    pub name: &'a [u8],
+    name: &'a [u8],
 }
 
 impl Display for FormatValidIdentifier<'_> {
@@ -1269,7 +1269,7 @@ impl Display for FormatValidIdentifier<'_> {
 /// - Encodes "\n" as "%0A" to support multi-line strings.
 ///   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
 /// - Strips ANSI output as it will appear malformed.
-pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
     let mut offset: usize = 0;
     let end = self_.len() as u32;
     while (offset as u32) < end {
@@ -1325,7 +1325,7 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
 /// [`github_action`] (which only escapes the message-class metacharacters), this
 /// escapes the property-class metacharacters per the actions/toolkit spec:
 /// `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`, `:`->`%3A`, `,`->`%2C`.
-pub fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
     let mut start: usize = 0;
     for (i, &byte) in self_.iter().enumerate() {
         let replacement: &str = match byte {
@@ -1349,7 +1349,7 @@ pub fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8])
 }
 
 pub struct GithubActionPropertyFormatter<'a> {
-    pub text: &'a [u8],
+    text: &'a [u8],
 }
 
 impl Display for GithubActionPropertyFormatter<'_> {
@@ -1366,7 +1366,7 @@ pub fn github_action_property(self_: &[u8]) -> GithubActionPropertyFormatter<'_>
 // QuotedFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn quoted_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+fn quoted_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
     let remain = self_;
     if strings::contains_newline_or_non_ascii_or_quote(remain) {
         js_printer::write_json_string(self_, writer, strings::Encoding::Utf8)
@@ -1433,7 +1433,7 @@ pub enum ColorCode {
 }
 
 impl ColorCode {
-    pub fn color(self) -> &'static str {
+    fn color(self) -> &'static str {
         match self {
             ColorCode::Magenta => "\x1b[35m",
             ColorCode::Blue => "\x1b[34m",
@@ -1514,7 +1514,7 @@ pub enum Keyword {
 }
 
 impl Keyword {
-    pub fn color_code(self) -> ColorCode {
+    fn color_code(self) -> ColorCode {
         use ColorCode::*;
         use Keyword as K;
         match self {
@@ -1584,9 +1584,9 @@ impl Keyword {
     }
 }
 
-pub struct Keywords;
+struct Keywords;
 impl Keywords {
-    pub fn get(s: &[u8]) -> Option<Keyword> {
+    fn get(s: &[u8]) -> Option<Keyword> {
         crate::comptime_string_map! {
             static KEYWORDS: Keyword = {
                 b"abstract" => Keyword::Abstract,
@@ -1657,11 +1657,11 @@ impl Keywords {
     }
 }
 
-pub struct RedactedKeywords;
+struct RedactedKeywords;
 impl RedactedKeywords {
     // 5 entries — a `matches!` chain is plenty at this size (the big keyword
     // table in `Keywords::get` is where the length-dispatched map pays off).
-    pub fn has(s: &[u8]) -> bool {
+    fn has(s: &[u8]) -> bool {
         matches!(
             s,
             b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
@@ -2240,7 +2240,6 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 pub const SEP_DASH: bool = false;
 
 pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
-    pub pretty: bool,
     _marker: core::marker::PhantomData<E>,
 }
 
@@ -2268,7 +2267,6 @@ impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<
 
 pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListFormatter<E, LIST> {
     EnumTagListFormatter {
-        pretty: true,
         _marker: core::marker::PhantomData,
     }
 }
@@ -2508,8 +2506,8 @@ impl_digit_count_signed!(i8, i16, i32, i64, isize);
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct SizeFormatter {
-    pub value: usize,
-    pub opts: SizeFormatterOptions,
+    value: usize,
+    opts: SizeFormatterOptions,
 }
 
 #[derive(Clone, Copy)]
@@ -2857,11 +2855,11 @@ pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
 // Const generics can't derive an array length from a type's bit-width, so
 // this is generic over u64 with an explicit nibble count.
 pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
-    pub value: u64,
+    value: u64,
 }
 
 impl<const LOWER: bool, const NIBBLES: usize> HexIntFormatter<LOWER, NIBBLES> {
-    pub fn get_out_buf(value: u64) -> [u8; NIBBLES] {
+    fn get_out_buf(value: u64) -> [u8; NIBBLES] {
         let table = if LOWER {
             &LOWER_HEX_TABLE
         } else {
@@ -2955,8 +2953,7 @@ pub fn u64_hex_var_lower(buf: &mut [u8; 16], mut n: u64) -> &[u8] {
 /// Equivalent to `{d:.<precision>}` but trims trailing zeros
 /// if decimal part is less than `precision` digits.
 pub struct TrimmedPrecisionFormatter<const PRECISION: usize> {
-    pub num: f64,
-    pub precision: usize,
+    num: f64,
 }
 
 impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
@@ -2990,10 +2987,7 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
 pub fn trimmed_precision<const PRECISION: usize>(
     value: f64,
 ) -> TrimmedPrecisionFormatter<PRECISION> {
-    TrimmedPrecisionFormatter {
-        num: value,
-        precision: PRECISION,
-    }
+    TrimmedPrecisionFormatter { num: value }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3141,8 +3135,8 @@ pub fn fmt_slice<'a, T: AsRef<[u8]>>(data: &'a [T], delim: &'static str) -> Form
 }
 
 pub struct FormatSlice<'a, T: AsRef<[u8]>> {
-    pub slice: &'a [T],
-    pub delim: &'static str,
+    slice: &'a [T],
+    delim: &'static str,
 }
 
 impl<T: AsRef<[u8]>> Display for FormatSlice<'_, T> {
@@ -3171,7 +3165,7 @@ pub fn double(number: f64) -> FormatDouble {
 }
 
 pub struct FormatDouble {
-    pub number: f64,
+    number: f64,
 }
 
 unsafe extern "C" {
@@ -3309,8 +3303,8 @@ pub fn nullable_fallback<T: Display>(
 }
 
 pub struct NullableFallback<'a, T: Display> {
-    pub value: Option<T>,
-    pub null_fallback: &'a [u8],
+    value: Option<T>,
+    null_fallback: &'a [u8],
 }
 
 impl<T: Display> Display for NullableFallback<'_, T> {
@@ -3327,7 +3321,7 @@ impl<T: Display> Display for NullableFallback<'_, T> {
 // escapePowershell
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct EscapePowershell<'a>(pub &'a [u8]);
+pub struct EscapePowershell<'a>(&'a [u8]);
 
 pub fn escape_powershell(str: &[u8]) -> EscapePowershell<'_> {
     EscapePowershell(str)
@@ -3405,11 +3399,11 @@ impl OutOfRangeValue for bun_alloc::String {
 }
 
 pub struct NewOutOfRangeFormatter<'a, T: OutOfRangeValue> {
-    pub value: T,
-    pub min: i64,
-    pub max: i64,
-    pub field_name: &'a [u8],
-    pub msg: &'a [u8],
+    value: T,
+    min: i64,
+    max: i64,
+    field_name: &'a [u8],
+    msg: &'a [u8],
 }
 
 impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
@@ -3566,7 +3560,7 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
 ///   - other `0x00..=0x1F` → `\u00XX` (lowercase hex)
 ///   - `0x20..=0xFF` → emitted verbatim in run-batched `write_str` calls
 ///     (input is treated as UTF-8/Latin-1 bytes; no transcoding).
-pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
+fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     let mut run = 0;
     for (i, &b) in s.iter().enumerate() {
         let esc: &str = match b {
@@ -3605,7 +3599,7 @@ pub fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Resul
 /// non-escaped bytes are widened (`b as char`) so 0x80..=0xFF are emitted as
 /// their U+0080..U+00FF UTF-8 encodings rather than passed through as raw
 /// (invalid) single bytes. ASCII runs are still batched via `write_bytes`.
-pub fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
+fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     let mut run = 0;
     for (i, &b) in s.iter().enumerate() {
         let esc: &str = match b {

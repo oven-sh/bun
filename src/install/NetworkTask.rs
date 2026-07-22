@@ -23,7 +23,7 @@ use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 // names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
 // `append_lower_case` but doesn't itself implement `strings::Appender` (that
 // impl lives in `bun_resolver`, which this crate can't reach without a cycle).
-pub struct FilenameStoreAppender<'a>(pub &'a FilenameStore);
+pub struct FilenameStoreAppender<'a>(pub(crate) &'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         self.0.append(s)
@@ -56,36 +56,36 @@ pub struct NetworkTask {
     // (`ptr::write(real, ptr::read(async_http))`) targets the inner `AsyncHTTP`
     // directly via `*mut AsyncHTTP`, which is sound because `MaybeUninit<T>`
     // is `#[repr(transparent)]`.
-    pub unsafe_http_client: MaybeUninit<AsyncHTTP<'static>>,
-    pub response: HTTPClientResult<'static>,
-    pub task_id: crate::package_manager_task::Id,
+    pub(crate) unsafe_http_client: MaybeUninit<AsyncHTTP<'static>>,
+    pub(crate) response: HTTPClientResult<'static>,
+    pub(crate) task_id: crate::package_manager_task::Id,
     // Owned in both `for_manifest` (toOwnedSlice) and `for_tarball`. Aliasing
     // `tarball.url` in the latter would be a self-reference
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
-    pub url_buf: Box<[u8]>,
-    pub retried: u16,
-    pub response_buffer: MutableString,
+    pub(crate) url_buf: Box<[u8]>,
+    pub(crate) retried: u16,
+    pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
     // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
     // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
-    pub package_manager: bun_ptr::ParentRef<PackageManager>,
-    pub callback: Callback,
+    pub(crate) package_manager: bun_ptr::ParentRef<PackageManager>,
+    pub(crate) callback: Callback,
     /// Key in patchedDependencies in package.json
     // `'static` because NetworkTask is stored lifetime-less in
     // `PreallocatedNetworkTasks`; PatchTask's `'a` is a BACKREF on
-    pub apply_patch_task: Option<Box<PatchTask>>,
-    pub next: bun_threading::Link<NetworkTask>,
+    pub(crate) apply_patch_task: Option<Box<PatchTask>>,
+    pub(crate) next: bun_threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
     /// to a worker running libarchive. `None` when streaming extraction is
     /// disabled or this task is not a tarball download.
-    pub tarball_stream: Option<Box<TarballStream>>,
+    pub(crate) tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
     // `'static` matches `PreallocatedTaskStore =
     // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
     // and returned to (`discard_unused_streaming_state`).
-    pub streaming_extract_task: *mut Task<'static>,
+    pub(crate) streaming_extract_task: *mut Task<'static>,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
     /// `async_network_task_queue` — the extract Task published by
@@ -93,9 +93,9 @@ pub struct NetworkTask {
     /// (its `resolve_tasks` handler returns it to the pool). Also read by
     /// the main-thread fallback / retry paths in `run_tasks` to assert
     /// the stream was never started.
-    pub streaming_committed: bool,
+    pub(crate) streaming_committed: bool,
     /// Backing store for the streaming signal the HTTP client polls.
-    pub signal_store: http::signals::Store,
+    pub(crate) signal_store: http::signals::Store,
 }
 
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
@@ -125,11 +125,11 @@ pub enum Callback {
 
 #[derive(Default, Clone, Copy)]
 pub struct DedupeMapEntry {
-    pub is_required: bool,
+    pub(crate) is_required: bool,
     /// Set once the download/extract for this task id has terminally failed so a
     /// later `enqueue_*_for_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
-    pub failed: bool,
+    pub(crate) failed: bool,
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.
@@ -163,7 +163,7 @@ impl NetworkTask {
 
     /// Mutable counterpart of [`http`]; same precondition.
     #[inline]
-    pub fn http_mut(&mut self) -> &mut AsyncHTTP<'static> {
+    pub(crate) fn http_mut(&mut self) -> &mut AsyncHTTP<'static> {
         // SAFETY: see `http()`.
         unsafe { self.unsafe_http_client.assume_init_mut() }
     }
@@ -415,7 +415,7 @@ impl bun_core::output::ErrName for ForManifestError {
 }
 
 impl NetworkTask {
-    pub fn for_manifest(
+    pub(crate) fn for_manifest(
         &mut self,
         name: &[u8],
         scope: &npm::registry::Scope,
@@ -694,13 +694,13 @@ impl NetworkTask {
         Ok(())
     }
 
-    pub fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
+    pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
         // `HTTPClientResultCallback::new`
         // performs type erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
         HTTPClientResultCallback::new::<NetworkTask>(self, Self::notify)
     }
 
-    pub fn schedule(&mut self, batch: &mut Batch) {
+    pub(crate) fn schedule(&mut self, batch: &mut Batch) {
         self.http_mut().schedule(batch);
     }
 }
@@ -739,7 +739,7 @@ impl bun_core::output::ErrName for ForTarballError {
 }
 
 impl NetworkTask {
-    pub fn for_tarball(
+    pub(crate) fn for_tarball(
         &mut self,
         tarball_: ExtractTarball,
         scope: &npm::registry::Scope,
@@ -902,7 +902,7 @@ impl NetworkTask {
     /// Release any streaming-extraction resources that were never used because
     /// the request errored before a drain was scheduled. Called on the main
     /// thread from `runTasks` when falling back to the buffered path.
-    pub fn discard_unused_streaming_state(&mut self, manager: &mut PackageManager) {
+    pub(crate) fn discard_unused_streaming_state(&mut self, manager: &mut PackageManager) {
         debug_assert!(!self.streaming_committed);
         if let Some(stream) = self.tarball_stream.take() {
             drop(stream);
@@ -926,7 +926,7 @@ impl NetworkTask {
     /// Prepare this task for another HTTP attempt (used by retry logic when
     /// streaming extraction never started). Keeps the stream allocation so the
     /// retry can still benefit from streaming.
-    pub fn reset_streaming_for_retry(&mut self) {
+    pub(crate) fn reset_streaming_for_retry(&mut self) {
         debug_assert!(!self.streaming_committed);
         if let Some(stream) = self.tarball_stream.as_deref_mut() {
             stream.reset_for_retry();
@@ -954,7 +954,7 @@ impl NetworkTask {
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
     /// slot returned by `get()`; its prior contents are treated as garbage
     /// (no destructors run).
-    pub unsafe fn write_init(
+    pub(crate) unsafe fn write_init(
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,
         package_manager: *mut PackageManager,

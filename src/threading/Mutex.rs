@@ -37,7 +37,7 @@ use crate::Futex;
 pub struct Mutex {
     // `pub(crate)` so `Condition` can reach `srwlock` / `locking_thread` for
     // `SleepConditionVariableSRW`.
-    pub(crate) impl_: Impl,
+    pub impl_: Impl,
 }
 
 impl Mutex {
@@ -149,15 +149,15 @@ fn current_thread_id() -> ThreadId {
 
 #[cfg(debug_assertions)]
 #[derive(Default)]
-pub(crate) struct DebugImpl {
+pub struct DebugImpl {
     /// 0 means it's not locked.
-    pub(crate) locking_thread: AtomicU64,
-    pub(crate) impl_: ReleaseImpl,
+    pub locking_thread: AtomicU64,
+    pub impl_: ReleaseImpl,
 }
 
 #[cfg(debug_assertions)]
 impl DebugImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             locking_thread: AtomicU64::new(0),
             impl_: ReleaseImpl::new(),
@@ -310,7 +310,7 @@ pub struct FutexImpl {
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 impl FutexImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             state: AtomicU32::new(0),
         }
@@ -396,17 +396,17 @@ impl FutexImpl {
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
     unsafe { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
     unsafe { (*ptr).unlock() }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
+static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();

@@ -107,7 +107,7 @@ pub trait UnionMember<Ts: TypeList> {
 
 #[repr(transparent)]
 pub struct TaggedPtrUnion<Ts: TypeList> {
-    pub repr: TaggedPtr,
+    repr: TaggedPtr,
     _types: PhantomData<Ts>,
 }
 

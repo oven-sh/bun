@@ -582,6 +582,84 @@ describe("Headers", () => {
       });
     });
   });
+  describe("many distinct uncommon names", () => {
+    // Past a small threshold, HTTPHeaderMap builds a hash index over the
+    // uncommon-header vector so per-name lookups stay O(1). Exercise every
+    // mutation/lookup path across that boundary, including after delete()
+    // has shifted vector entries, so a stale index would return the wrong
+    // slot.
+    test("stays correct across get/has/set/append/delete", () => {
+      const N = 200;
+      const name = (i: number) => (i % 2 === 0 ? "x-" : "X-") + i;
+      const h = new Headers();
+      for (let i = 0; i < N; i++) h.append(name(i), "v" + i);
+      expect(h.count).toBe(N);
+
+      for (let i = 0; i < N; i++) {
+        expect(h.get("x-" + i)).toBe("v" + i);
+        expect(h.get("X-" + i)).toBe("v" + i);
+        expect(h.has("x-" + i)).toBe(true);
+      }
+      expect(h.get("x-" + N)).toBeNull();
+      expect(h.has("x-" + N)).toBe(false);
+
+      for (let i = 0; i < N; i += 3) h.set("X-" + i, "s" + i);
+      for (let i = 1; i < N; i += 3) h.append("x-" + i, "a" + i);
+      for (let i = 2; i < N; i += 3) h.delete("x-" + i);
+      for (let i = 0; i < N; i++) {
+        if (i % 3 === 0) expect(h.get("x-" + i)).toBe("s" + i);
+        else if (i % 3 === 1) expect(h.get("x-" + i)).toBe("v" + i + ", a" + i);
+        else {
+          expect(h.get("x-" + i)).toBeNull();
+          expect(h.has("x-" + i)).toBe(false);
+        }
+      }
+
+      const copy = new Headers(h);
+      for (let i = 0; i < N; i += 3) expect(copy.get("x-" + i)).toBe("s" + i);
+
+      h.set("x-late", "z");
+      h.append("x-late", "zz");
+      expect(h.get("X-Late")).toBe("z, zz");
+    });
+
+    // get()/has() on an uncommon name used to scan the whole vector, so the
+    // cost of a single lookup grew with the number of distinct names. Probe
+    // the last N names of an N-entry map and an 8N-entry map: if the lookup
+    // scales with entry count the second run is ~8x slower; with the hash
+    // index it is O(1) and both runs take the same time. The ratio is
+    // self-calibrating across release/debug/ASAN builds so no absolute time
+    // budget is needed.
+    test("per-name lookup is independent of distinct-name count", () => {
+      const N = 1500;
+
+      const small = new Headers();
+      for (let i = 0; i < N; i++) small.append("x-" + i, "v");
+      const smallProbe: string[] = [];
+      for (let i = 0; i < N; i++) smallProbe.push("x-" + (N - 1 - i));
+
+      const large = new Headers();
+      for (let i = 0; i < N * 8; i++) large.append("x-" + i, "v");
+      const largeProbe: string[] = [];
+      for (let i = 0; i < N; i++) largeProbe.push("x-" + (N * 8 - 1 - i));
+
+      const time = (h: Headers, names: string[]) => {
+        const t = performance.now();
+        for (let i = 0; i < N; i++) h.get(names[i]);
+        return performance.now() - t;
+      };
+      const best = (h: Headers, names: string[]) => Math.min(time(h, names), time(h, names), time(h, names));
+
+      time(small, smallProbe);
+      time(large, largeProbe);
+      const tSmall = best(small, smallProbe);
+      const tLarge = best(large, largeProbe);
+
+      expect(small.get("x-0")).toBe("v");
+      expect(large.get("x-" + (N * 8 - 1))).toBe("v");
+      expect(tLarge / Math.max(tSmall, 1)).toBeLessThan(3);
+    });
+  });
   describe("count", () => {
     // @ts-ignore
     const it = typeof new Headers()?.count !== "undefined" ? test : test.skip;

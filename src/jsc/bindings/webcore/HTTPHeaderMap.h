@@ -27,7 +27,10 @@
 #pragma once
 
 #include "HTTPHeaderNames.h"
+#include <memory>
 #include <utility>
+#include <wtf/HashMap.h>
+#include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -170,6 +173,23 @@ public:
 
     WEBCORE_EXPORT HTTPHeaderMap();
 
+    HTTPHeaderMap(const HTTPHeaderMap &other)
+        : m_commonHeaders(other.m_commonHeaders)
+        , m_uncommonHeaders(other.m_uncommonHeaders)
+        , m_setCookieHeaders(other.m_setCookieHeaders)
+    {
+    }
+    HTTPHeaderMap(HTTPHeaderMap &&) = default;
+    HTTPHeaderMap &operator=(const HTTPHeaderMap &other)
+    {
+        m_commonHeaders = other.m_commonHeaders;
+        m_uncommonHeaders = other.m_uncommonHeaders;
+        m_setCookieHeaders = other.m_setCookieHeaders;
+        m_uncommonHeadersIndex = nullptr;
+        return *this;
+    }
+    HTTPHeaderMap &operator=(HTTPHeaderMap &&) = default;
+
     // Gets a copy of the data suitable for passing to another thread.
     WEBCORE_EXPORT HTTPHeaderMap isolatedCopy() const &;
     WEBCORE_EXPORT HTTPHeaderMap isolatedCopy() &&;
@@ -181,6 +201,7 @@ public:
     {
         m_commonHeaders.clear();
         m_uncommonHeaders.clear();
+        m_uncommonHeadersIndex = nullptr;
     }
 
     void shrinkToFit()
@@ -233,7 +254,11 @@ public:
     const CommonHeadersVector &commonHeaders() const { return m_commonHeaders; }
     const UncommonHeadersVector &uncommonHeaders() const { return m_uncommonHeaders; }
     CommonHeadersVector &commonHeaders() { return m_commonHeaders; }
-    UncommonHeadersVector &uncommonHeaders() { return m_uncommonHeaders; }
+    UncommonHeadersVector &uncommonHeaders()
+    {
+        m_uncommonHeadersIndex = nullptr;
+        return m_uncommonHeaders;
+    }
     Vector<String, 0> &getSetCookieHeaders() { return m_setCookieHeaders; }
 
     const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }
@@ -274,11 +299,22 @@ public:
     void addUncommonHeaderCloneName(const StringView name, const String &value);
 
 private:
+    using UncommonHeadersIndex = HashMap<String, unsigned, ASCIICaseInsensitiveHash>;
+
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
+
+    size_t findUncommonHeaderIndex(const StringView name) const;
+    void appendUncommonHeader(const String &name, const String &value);
 
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;
+
+    // Lazily built once m_uncommonHeaders grows past the point where a linear
+    // scan per lookup becomes quadratic in aggregate. The stored keys alias the
+    // String already held by the vector entry, so the index costs one bucket
+    // per name rather than a second copy of the name.
+    mutable std::unique_ptr<UncommonHeadersIndex> m_uncommonHeadersIndex;
 };
 
 template<class Encoder>

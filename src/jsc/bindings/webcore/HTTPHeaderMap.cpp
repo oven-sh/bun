@@ -76,8 +76,41 @@ String lowercaseHeaderName(const String& name)
     return result;
 }
 
+// Linear scan stays faster than hashing for the handful-of-headers case that
+// dominates real traffic. Past this many distinct uncommon names, build a hash
+// index so get/set/append/has stay O(1) instead of degrading to O(N) per call.
+static constexpr unsigned uncommonHeadersIndexThreshold = 64;
+
 HTTPHeaderMap::HTTPHeaderMap()
 {
+}
+
+size_t HTTPHeaderMap::findUncommonHeaderIndex(const StringView name) const
+{
+    if (!m_uncommonHeadersIndex) {
+        unsigned size = m_uncommonHeaders.size();
+        if (size <= uncommonHeadersIndexThreshold) {
+            return m_uncommonHeaders.findIf([&](auto& header) {
+                return equalIgnoringASCIICase(header.key, name);
+            });
+        }
+        auto index = makeUnique<UncommonHeadersIndex>();
+        index->reserveInitialCapacity(size);
+        for (unsigned i = 0; i < size; ++i)
+            index->add(m_uncommonHeaders[i].key, i);
+        m_uncommonHeadersIndex = WTF::move(index);
+    }
+
+    auto it = m_uncommonHeadersIndex->find<ASCIICaseInsensitiveStringViewHashTranslator>(name);
+    return it != m_uncommonHeadersIndex->end() ? it->value : notFound;
+}
+
+void HTTPHeaderMap::appendUncommonHeader(const String& name, const String& value)
+{
+    unsigned index = m_uncommonHeaders.size();
+    m_uncommonHeaders.append(UncommonHeader { name, value });
+    if (m_uncommonHeadersIndex)
+        m_uncommonHeadersIndex->add(m_uncommonHeaders[index].key, index);
 }
 
 HTTPHeaderMap HTTPHeaderMap::isolatedCopy() const&
@@ -112,6 +145,8 @@ size_t HTTPHeaderMap::memoryCost() const
     size_t cost = m_commonHeaders.size() * sizeof(CommonHeader);
     cost += m_uncommonHeaders.size() * sizeof(UncommonHeader);
     cost += m_setCookieHeaders.size() * sizeof(String);
+    if (m_uncommonHeadersIndex)
+        cost += m_uncommonHeadersIndex->capacity() * (sizeof(String) + sizeof(unsigned));
     for (auto& header : m_commonHeaders)
         cost += header.value.sizeInBytes();
 
@@ -128,9 +163,7 @@ size_t HTTPHeaderMap::memoryCost() const
 
 String HTTPHeaderMap::getUncommonHeader(const StringView name) const
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    auto index = findUncommonHeaderIndex(name);
     return index != notFound ? m_uncommonHeaders[index].value : String();
 }
 
@@ -168,36 +201,30 @@ void HTTPHeaderMap::set(const String& name, const String& value)
 
 void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    auto index = findUncommonHeaderIndex(name);
     if (index == notFound)
-        m_uncommonHeaders.append(UncommonHeader { name, value });
+        appendUncommonHeader(name, value);
     else
         m_uncommonHeaders[index].value = value;
 }
 
 void HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    auto index = findUncommonHeaderIndex(name);
     if (index == notFound)
-        m_uncommonHeaders.append(UncommonHeader { name, value });
+        appendUncommonHeader(name, value);
     else
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    auto index = findUncommonHeaderIndex(name);
     if (index == notFound) {
         std::span<Latin1Character> ptr;
         auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
         memcpy(ptr.data(), name.span8().data(), name.length());
-        m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
+        appendUncommonHeader(nameCopy, value);
     } else
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
@@ -209,11 +236,9 @@ void HTTPHeaderMap::add(const String& name, const String& value)
         add(headerName, value);
         return;
     }
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    auto index = findUncommonHeaderIndex(name);
     if (index == notFound)
-        m_uncommonHeaders.append(UncommonHeader { name, value });
+        appendUncommonHeader(name, value);
     else
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
@@ -229,7 +254,7 @@ void HTTPHeaderMap::append(const String& name, const String& value)
         else
             m_commonHeaders.append(CommonHeader { headerName, value });
     } else {
-        m_uncommonHeaders.append(UncommonHeader { name, value });
+        appendUncommonHeader(name, value);
     }
 }
 
@@ -248,9 +273,7 @@ bool HTTPHeaderMap::contains(const StringView name) const
     if (findHTTPHeaderName(name, headerName))
         return contains(headerName);
 
-    return m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    }) != notFound;
+    return findUncommonHeaderIndex(name) != notFound;
 }
 
 bool HTTPHeaderMap::remove(const StringView name)
@@ -270,9 +293,19 @@ bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
     ASSERT(!findHTTPHeaderName(name, headerName));
 #endif
 
-    return m_uncommonHeaders.removeFirstMatching([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    auto index = findUncommonHeaderIndex(name);
+    if (index == notFound)
+        return false;
+
+    m_uncommonHeaders.removeAt(index);
+    if (m_uncommonHeadersIndex) {
+        m_uncommonHeadersIndex->remove<ASCIICaseInsensitiveStringViewHashTranslator>(name);
+        for (auto& entry : *m_uncommonHeadersIndex) {
+            if (entry.value > index)
+                --entry.value;
+        }
+    }
+    return true;
 }
 
 String HTTPHeaderMap::get(HTTPHeaderName name) const
@@ -313,9 +346,7 @@ HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(HTTPHeaderName name) const
 
 HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(const String& name) const
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    auto index = findUncommonHeaderIndex(name);
     return (HeaderIndex) { .index = index, .isCommon = false };
 }
 

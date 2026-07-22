@@ -2,12 +2,30 @@ import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv as env, tempDir, tls, tmpdirSync } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
 setDefaultTimeout(1000 * 60 * 5);
+
+// Cover every platform/arch/abi/cpu combination so the asset list matches
+// whichever target this test runs on. Non-matching names are ignored.
+const assetNames: string[] = [];
+for (const os of ["windows", "linux", "darwin"]) {
+  for (const arch of ["x64", "aarch64"]) {
+    for (const abi of ["", "-musl", "-android"]) {
+      for (const cpu of ["", "-baseline"]) {
+        assetNames.push(`bun-${os}-${arch}${abi}${cpu}.zip`);
+        assetNames.push(`bun-${os}-${arch}${abi}${cpu}-profile.zip`);
+      }
+    }
+  }
+}
+
+function sha256Hex(body: string) {
+  return new Bun.CryptoHasher("sha256").update(body).digest("hex");
+}
 
 describe.concurrent(() => {
   it("two invalid arguments, should display error message and suggest command", async () => {
@@ -99,70 +117,27 @@ describe.concurrent(() => {
   });
 
   it("zero arguments, should succeed", async () => {
-    const tagName = bunExe().includes("-debug") ? "canary" : `bun-v${Bun.version}`;
+    const archiveBody = "this is not a real zip archive";
+    const digest = `sha256:${sha256Hex(archiveBody)}`;
     using server = Bun.serve({
       tls: tls,
       port: 0,
-      async fetch() {
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname.startsWith("/releases/")) {
+          return new Response(archiveBody);
+        }
+        const tagName = pathname.endsWith("/canary") ? "canary" : `bun-v${Bun.version}`;
         return new Response(
           JSON.stringify({
             "tag_name": tagName,
-            "assets": [
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-aarch64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-aarch64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-aarch64.zip`,
-              },
-            ],
+            "assets": assetNames.map(name => ({
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": name,
+              "digest": digest,
+              "browser_download_url": `https://${server.hostname}:${server.port}/releases/${tagName}/${name}`,
+            })),
           }),
         );
       },
@@ -185,17 +160,21 @@ describe.concurrent(() => {
         ...env,
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
     });
 
     closeTempDirHandle();
 
-    // Should not contain error message
-    expect(await proc.stderr.text()).not.toContain("error:");
-    // Reap the subprocess: stderr can close before the child exits, and an
-    // unreaped child is force-killed by the test runner at test end without
-    // draining the Subprocess refcount — LSan then flags it as a leak.
-    await proc.exited;
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Should not fail argument parsing, the integrity gate, or the staging-dir
+    // writes (the Windows FILE_SHARE_DELETE case above); the run proceeds into
+    // unpacking, where the bogus archive is rejected.
+    expect(stderr).not.toContain("error: This command updates Bun itself");
+    expect(stderr).not.toContain("did not return a sha256 checksum");
+    expect(stderr).not.toContain("did not match the checksum");
+    expect(stderr).not.toContain("temporary directory");
+    expect(stderr).not.toContain("temp file");
   });
 });
 
@@ -213,18 +192,10 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
   });
   const stagingRootPath = String(stagingRoot);
 
-  // Cover every platform/arch/abi/cpu combination so the asset list matches
-  // whichever target this test runs on. Non-matching names are ignored.
-  const assetNames: string[] = [];
-  for (const os of ["windows", "linux", "darwin"]) {
-    for (const arch of ["x64", "aarch64"]) {
-      for (const abi of ["", "-musl"]) {
-        for (const cpu of ["", "-baseline"]) {
-          assetNames.push(`bun-${os}-${arch}${abi}${cpu}.zip`);
-        }
-      }
-    }
-  }
+  // The downloaded artifact only needs to be non-empty so the upgrade
+  // reaches the staging step; it is expected to fail when unpacking.
+  const archiveBody = "this is not a real zip archive";
+  const digest = `sha256:${sha256Hex(archiveBody)}`;
 
   using server = Bun.serve({
     tls: tls,
@@ -232,9 +203,7 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
     async fetch(req) {
       const { pathname } = new URL(req.url);
       if (pathname.startsWith("/releases/")) {
-        // The downloaded artifact only needs to be non-empty so the upgrade
-        // reaches the staging step; it is expected to fail when unpacking.
-        return new Response("this is not a real zip archive");
+        return new Response(archiveBody);
       }
       return new Response(
         JSON.stringify({
@@ -243,6 +212,7 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
             "url": "foo",
             "content_type": "application/zip",
             "name": name,
+            "digest": digest,
             "browser_download_url": `https://${server.hostname}:${server.port}/releases/${tagName}/${name}`,
           })),
         }),
@@ -295,74 +265,121 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
   expect(exitCode).toBe(1);
 });
 
+async function runUpgrade({
+  tagName,
+  archiveBody,
+  digest,
+  flag,
+  extraEnv = {},
+}: {
+  tagName: string;
+  archiveBody: string;
+  digest: string | null | undefined;
+  flag: "--stable" | "--canary";
+  extraEnv?: Record<string, string>;
+}) {
+  let downloaded = false;
+  using server = Bun.serve({
+    tls: tls,
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname.startsWith("/releases/")) {
+        downloaded = true;
+        return new Response(archiveBody);
+      }
+      const asset: Record<string, unknown> = {
+        "url": "foo",
+        "content_type": "application/zip",
+      };
+      if (digest !== undefined) asset.digest = digest;
+      return new Response(
+        JSON.stringify({
+          "tag_name": tagName,
+          "assets": assetNames.map(name => ({
+            ...asset,
+            "name": name,
+            "browser_download_url": `https://${server.hostname}:${server.port}/releases/${tagName}/${name}`,
+          })),
+        }),
+      );
+    },
+  });
+
+  const cwd = tmpdirSync();
+  const execPath = join(cwd, basename(bunExe()));
+  await copyFile(bunExe(), execPath);
+
+  await using proc = Bun.spawn({
+    cmd: [execPath, "upgrade", flag],
+    cwd,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+      ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      ...extraEnv,
+    },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode, downloaded, execPath };
+}
+
 it("verifies the downloaded release archive against the digest reported by the release asset", async () => {
   const archiveBody = "this is not a real zip archive";
-  const correctDigest = `sha256:${new Bun.CryptoHasher("sha256").update(archiveBody).digest("hex")}`;
+  const correctDigest = `sha256:${sha256Hex(archiveBody)}`;
   const wrongDigest = `sha256:${Buffer.alloc(32, 0xab).toString("hex")}`;
 
-  const assetNames: string[] = [];
-  for (const os of ["windows", "linux", "darwin"]) {
-    for (const arch of ["x64", "aarch64"]) {
-      for (const abi of ["", "-musl"]) {
-        for (const cpu of ["", "-baseline"]) {
-          assetNames.push(`bun-${os}-${arch}${abi}${cpu}.zip`);
-        }
-      }
-    }
-  }
-
-  const runUpgrade = async (tagName: string, digest: string) => {
-    using server = Bun.serve({
-      tls: tls,
-      port: 0,
-      async fetch(req) {
-        const { pathname } = new URL(req.url);
-        if (pathname.startsWith("/releases/")) {
-          return new Response(archiveBody);
-        }
-        return new Response(
-          JSON.stringify({
-            "tag_name": tagName,
-            "assets": assetNames.map(name => ({
-              "url": "foo",
-              "content_type": "application/zip",
-              "name": name,
-              "digest": digest,
-              "browser_download_url": `https://${server.hostname}:${server.port}/releases/${tagName}/${name}`,
-            })),
-          }),
-        );
-      },
-    });
-
-    const cwd = tmpdirSync();
-    const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
-
-    await using proc = Bun.spawn({
-      cmd: [execPath, "upgrade", "--stable"],
-      cwd,
-      stdout: null,
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        NODE_TLS_REJECT_UNAUTHORIZED: "0",
-        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
-        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-      },
-    });
-
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
-  };
-
-  const mismatched = await runUpgrade("bun-v9.9.7", wrongDigest);
+  const mismatched = await runUpgrade({ tagName: "bun-v9.9.7", archiveBody, digest: wrongDigest, flag: "--stable" });
   expect(mismatched.stderr).toContain("did not match the checksum reported by the GitHub API for this release");
   expect(mismatched.exitCode).toBe(1);
 
-  const matched = await runUpgrade("bun-v9.9.8", correctDigest);
+  const matched = await runUpgrade({ tagName: "bun-v9.9.8", archiveBody, digest: correctDigest, flag: "--stable" });
   expect(matched.stderr).toContain("9.9.8");
   expect(matched.stderr).not.toContain("did not match the checksum reported by the GitHub API for this release");
   expect(matched.exitCode).toBe(1);
+});
+
+describe.each(["--stable", "--canary"] as const)("%s", flag => {
+  const tagName = flag === "--canary" ? "canary" : "bun-v9.9.9";
+  const archiveBody = "this is not a real zip archive";
+
+  it("refuses to download when the release asset has no checksum", async () => {
+    // An asset with a `digest` that is absent, null, or malformed must be
+    // treated as unverifiable: no download, no install, no execution.
+    for (const digest of [undefined, null, "", "sha256:not-hex", "md5:" + Buffer.alloc(16).toString("hex")]) {
+      const result = await runUpgrade({ tagName, archiveBody, digest, flag });
+      expect({ digest, stderr: result.stderr }).toEqual({
+        digest,
+        stderr: expect.stringContaining("did not return a sha256 checksum"),
+      });
+      expect(result.downloaded).toBe(false);
+      expect(result.exitCode).toBe(1);
+    }
+  });
+
+  it("refuses to install when the downloaded archive does not match the checksum", async () => {
+    const wrongDigest = `sha256:${Buffer.alloc(32, 0xab).toString("hex")}`;
+    using stagingRoot = tempDir("bun-upgrade-integrity", {});
+    const result = await runUpgrade({
+      tagName,
+      archiveBody,
+      digest: wrongDigest,
+      flag,
+      extraEnv: { BUN_TMPDIR: String(stagingRoot) },
+    });
+    expect(result.stderr).toContain("did not match the checksum reported by the GitHub API for this release");
+    expect(result.downloaded).toBe(true);
+    // The archive is rejected before it is written to the staging directory,
+    // so nothing from the download touches disk and nothing is executed.
+    expect(existsSync(String(stagingRoot))).toBe(true);
+    expect(readdirSync(String(stagingRoot))).toEqual([]);
+    // The installed binary must be untouched.
+    expect(statSync(result.execPath).size).toBe(statSync(bunExe()).size);
+    expect(result.exitCode).toBe(1);
+  });
 });

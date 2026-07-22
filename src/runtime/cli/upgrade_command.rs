@@ -182,6 +182,7 @@ impl UpgradeCommand {
         refresher: Option<&mut Progress::Progress>,
         mut progress: Option<&mut Progress::Node>,
         use_profile: bool,
+        use_canary: bool,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
@@ -212,8 +213,13 @@ impl UpgradeCommand {
         let url_buf: &'static mut Vec<u8> = crate::cli::cli_arena().alloc(Vec::new());
         write!(
             url_buf,
-            "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
+            "https://{}{}",
             bstr::BStr::new(github_api_domain),
+            if use_canary {
+                "/repos/oven-sh/bun/releases/tags/canary"
+            } else {
+                "/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest"
+            },
         )
         .expect("oom");
         let api_url = URL::parse(&url_buf[..]);
@@ -562,7 +568,7 @@ impl UpgradeCommand {
 
         let use_profile = argv_contains(b"--profile");
 
-        let mut version: Version = if !use_canary {
+        let mut version: Version = {
             // `Progress::start` returns `&mut Node` borrowing `refresher`;
             // leak the Progress and use raw pointers so we can pass both
             // `&mut refresher` and `&mut progress` to `get_latest_version`.
@@ -581,6 +587,7 @@ impl UpgradeCommand {
                 // SAFETY: progress points into the same leaked allocation (see above).
                 Some(unsafe { &mut *progress }),
                 use_profile,
+                use_canary,
             )?
             else {
                 return Ok(());
@@ -591,16 +598,6 @@ impl UpgradeCommand {
             // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
 
-            if !Environment::IS_CANARY {
-                if version.name().is_some() && version.is_current() {
-                    bun_core::pretty_errorln!(
-                        "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{})<r>",
-                        bstr::BStr::new(&version.name().unwrap())
-                    );
-                    Global::exit(0);
-                }
-            }
-
             if version.name().is_none() {
                 bun_core::pretty_errorln!(
                     "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expected format)"
@@ -608,36 +605,41 @@ impl UpgradeCommand {
                 Global::exit(1);
             }
 
-            if !Environment::IS_CANARY {
-                bun_core::pretty_errorln!(
-                    "<r><b>Bun <cyan>v{}<r> is out<r>! You're on <blue>v{}<r>\n",
-                    bstr::BStr::new(&version.name().unwrap()),
-                    Global::package_json_version
-                );
-            } else {
-                bun_core::pretty_errorln!(
-                    "<r><b>Downgrading from Bun <blue>{}-canary<r> to Bun <cyan>v{}<r><r>\n",
-                    Global::package_json_version,
-                    bstr::BStr::new(&version.name().unwrap())
-                );
+            if !use_canary {
+                if !Environment::IS_CANARY {
+                    if version.is_current() {
+                        bun_core::pretty_errorln!(
+                            "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{})<r>",
+                            bstr::BStr::new(&version.name().unwrap())
+                        );
+                        Global::exit(0);
+                    }
+
+                    bun_core::pretty_errorln!(
+                        "<r><b>Bun <cyan>v{}<r> is out<r>! You're on <blue>v{}<r>\n",
+                        bstr::BStr::new(&version.name().unwrap()),
+                        Global::package_json_version
+                    );
+                } else {
+                    bun_core::pretty_errorln!(
+                        "<r><b>Downgrading from Bun <blue>{}-canary<r> to Bun <cyan>v{}<r><r>\n",
+                        Global::package_json_version,
+                        bstr::BStr::new(&version.name().unwrap())
+                    );
+                }
+                Output::flush();
             }
-            Output::flush();
 
             version
-        } else {
-            Version {
-                tag: b"canary"[..].into(),
-                zip_url: const_format::concatcp!(
-                    "https://github.com/oven-sh/bun/releases/download/canary/",
-                    Version::ZIP_FILENAME
-                )
-                .as_bytes()
-                .into(),
-                size: 0,
-                buf: MutableString::init_empty(),
-                digest: Integrity::default(),
-            }
         };
+
+        if !version.digest.tag.is_supported() {
+            bun_core::pretty_errorln!(
+                "<r><red>error:<r> The GitHub API did not return a sha256 checksum for the {} release asset. Refusing to download an unverifiable archive.\n<r>note: run <b>bun upgrade<r> again in a moment; GitHub computes asset checksums shortly after upload",
+                if use_canary { "canary" } else { "latest" },
+            );
+            Global::exit(1);
+        }
 
         let zip_url_bytes = core::mem::take(&mut version.zip_url);
         let zip_url = URL::parse(&zip_url_bytes);
@@ -709,7 +711,7 @@ impl UpgradeCommand {
                 Global::exit(1);
             }
 
-            if version.digest.tag.is_supported() && !version.digest.verify(bytes) {
+            if !version.digest.verify(bytes) {
                 bun_core::pretty_errorln!(
                     "<r><red>error:<r> The file downloaded from {} did not match the checksum reported by the GitHub API for this release.\n<r>note: run <b>bun upgrade<r> again to retry the download",
                     bstr::BStr::new(&zip_url_bytes)

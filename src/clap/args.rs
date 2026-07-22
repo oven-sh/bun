@@ -53,14 +53,11 @@ impl<'a> ArgIter<'a> for SliceIterator<'a> {
 pub struct OsIterator {
     // `remain` borrows the process-global argv, so nothing is allocated per-call.
     remain: &'static [&'static [u8]],
-
 }
 
 impl OsIterator {
     pub(crate) fn init() -> OsIterator {
-        let mut res = OsIterator {
-                remain: os_argv(),
-        };
+        let mut res = OsIterator { remain: os_argv() };
         let _ = res.next(); // skip argv[0]
         res
     }

@@ -1,7 +1,7 @@
 use core::fmt::Arguments;
 
 use bun_alloc::Arena as Bump;
-use bun_alloc::{ArenaVec as BumpVec};
+use bun_alloc::ArenaVec as BumpVec;
 
 use crate as css;
 pub use crate::Error;
@@ -202,7 +202,6 @@ impl Pattern {
             }
         }
     }
-
 }
 
 /// A segment in a CSS modules class name pattern.

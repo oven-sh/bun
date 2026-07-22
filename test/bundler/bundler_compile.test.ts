@@ -372,9 +372,11 @@ describe("bundler", () => {
           env: { ...process.env, __FORK_DEPTH: "1" },
         });
         let out = "";
+        let ipc;
         child.stdout.on("data", d => (out += d));
-        child.on("message", m => console.log("ipc=" + m));
-        child.on("exit", code => {
+        child.on("message", m => (ipc = m));
+        child.on("close", code => {
+          console.log("ipc=" + ipc);
           console.log(out.trim());
           process.exit(code ?? 1);
         });

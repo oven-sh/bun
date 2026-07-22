@@ -177,50 +177,6 @@ impl StandaloneModuleGraph {
             self.files.get_mut(name)
         }
     }
-
-    /// Resolve a module path passed to `child_process.fork()` inside a
-    /// compiled executable to its embedded canonical name. Relative paths are
-    /// joined against the virtual root and extensions are remapped to `.js`
-    /// the same way `new Worker(path)` is resolved (see
-    /// `web_worker.rs::resolve_entry_point_specifier`). Returns `None` when
-    /// the module is not embedded.
-    pub fn resolve_fork_entry(&mut self, specifier: &[u8]) -> Option<Box<[u8]>> {
-        if let Some(file) = self.find(specifier) {
-            return Some(file.name.to_vec().into_boxed_slice());
-        }
-
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = path::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
-            BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(),
-            &mut buf[..],
-            &[specifier],
-        );
-        let joined_len = joined.len();
-        if let Some(file) = self.find(&buf[..joined_len]) {
-            return Some(file.name.to_vec().into_boxed_slice());
-        }
-
-        let ext_len = bun_paths::extension(&buf[..joined_len]).len();
-        let ext = &buf[joined_len - ext_len..joined_len];
-        let probe_len = if ext.is_empty() {
-            buf[joined_len..joined_len + 3].copy_from_slice(b".js");
-            joined_len + 3
-        } else if ext == b".ts" {
-            buf[joined_len - 3..joined_len].copy_from_slice(b".js");
-            joined_len
-        } else if matches!(
-            ext,
-            b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cts" | b".cjs"
-        ) {
-            let base = joined_len - ext.len();
-            buf[base..base + 3].copy_from_slice(b".js");
-            base + 3
-        } else {
-            return None;
-        };
-        self.find(&buf[..probe_len])
-            .map(|f| f.name.to_vec().into_boxed_slice())
-    }
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at

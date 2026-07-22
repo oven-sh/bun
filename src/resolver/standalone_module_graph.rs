@@ -27,4 +27,43 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// so `process.execArgv` (lower-tier `bun_jsc` callers holding only the
     /// trait object) can read it without downcasting to the concrete graph.
     fn compile_exec_argv(&self) -> &[u8];
+
+    /// Resolve a `new Worker(path)` / `child_process.fork(path)` specifier to
+    /// its embedded canonical name. `bun build --compile` renames sources to
+    /// `.js` in the graph, so this joins `specifier` against the virtual root
+    /// and probes `.ts` / `.tsx` / `.jsx` / `.mjs` / `.mts` / `.cts` / `.cjs`
+    /// (and extensionless) as `.js`. Returns `None` when nothing matched.
+    fn resolve_embedded_entry(&self, specifier: &[u8]) -> Option<&[u8]> {
+        if let Some(name) = self.find(specifier) {
+            return Some(name);
+        }
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
+            self.base_public_path_with_default_suffix(),
+            &mut buf[..],
+            &[specifier],
+        );
+        let joined_len = joined.len();
+        if let Some(name) = self.find(&buf[..joined_len]) {
+            return Some(name);
+        }
+
+        let ext_len = bun_paths::extension(&buf[..joined_len]).len();
+        let ext = &buf[joined_len - ext_len..joined_len];
+        let probe_len = if ext.is_empty() {
+            buf[joined_len..joined_len + 3].copy_from_slice(b".js");
+            joined_len + 3
+        } else if ext == b".ts" {
+            buf[joined_len - 3..joined_len].copy_from_slice(b".js");
+            joined_len
+        } else if matches!(ext, b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cts" | b".cjs") {
+            let base = joined_len - ext.len();
+            buf[base..base + 3].copy_from_slice(b".js");
+            base + 3
+        } else {
+            return None;
+        };
+        self.find(&buf[..probe_len])
+    }
 }

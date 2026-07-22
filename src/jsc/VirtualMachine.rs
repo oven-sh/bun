@@ -3201,6 +3201,14 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
+        // Consumed by `boot_standalone` before this runs; scrub it from
+        // `process.env` so grandchildren spawned with default env don't
+        // inherit a stale fork target. On Windows `std::env::remove_var`
+        // doesn't touch the WTF-8 snapshot the env loader reads.
+        if let Some(idx) = map.map.get_index(b"BUN_INTERNAL_FORK_ENTRY") {
+            map.map.swap_remove_at(idx);
+        }
+
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
             let (_, kv) = map.map.swap_remove_at(idx);
             let fd_s = kv.value;

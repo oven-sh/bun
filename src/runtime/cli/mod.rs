@@ -1425,8 +1425,10 @@ pub mod command {
     /// `process.argv[2..]`.
     #[cold]
     fn resolve_standalone_fork_entry(
-        graph: &mut bun_standalone_graph::Graph,
+        graph: &bun_standalone_graph::Graph,
     ) -> Option<(Box<[u8]>, usize)> {
+        use bun_resolver::StandaloneModuleGraph as _;
+
         let raw = bun_core::env_var::BUN_INTERNAL_FORK_ENTRY::get()?;
         if raw.is_empty() {
             return None;
@@ -1443,20 +1445,23 @@ pub mod command {
             .map(|i| i + 1)
             .unwrap_or(argv.len());
 
-        let entry = graph.resolve_fork_entry(&module_path).unwrap_or_else(|| {
-            let mut cwd_buf = bun_paths::PathBuffer::uninit();
-            let cwd = bun_core::getcwd(&mut cwd_buf)
-                .map(|z| z.as_bytes())
-                .unwrap_or(b".");
-            let mut out = bun_paths::path_buffer_pool::get();
-            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-                cwd,
-                &mut out[..],
-                &[&module_path],
-            )
-            .to_vec()
-            .into_boxed_slice()
-        });
+        let entry = match graph.resolve_embedded_entry(&module_path) {
+            Some(name) => name.to_vec().into_boxed_slice(),
+            None => {
+                let mut cwd_buf = bun_paths::PathBuffer::uninit();
+                let cwd = bun_core::getcwd(&mut cwd_buf)
+                    .map(|z| z.as_bytes())
+                    .unwrap_or(b".");
+                let mut out = bun_paths::path_buffer_pool::get();
+                bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                    cwd,
+                    &mut out[..],
+                    &[&module_path],
+                )
+                .to_vec()
+                .into_boxed_slice()
+            }
+        };
 
         Some((entry, idx))
     }

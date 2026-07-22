@@ -1694,8 +1694,11 @@ const w = new Worker(require("path").join(__dirname, "worker.js"));
 w.on("message", m => console.log(m));
 w.on("exit", () => console.log("main-warned:" + count));`,
     "worker.js": `const { parentPort } = require("worker_threads");
-process.on("warning", x => { if (x.code === "DEP0119") parentPort.postMessage("worker-warned"); });
-process.binding("uv").errname(-2);`,
+let warned = 0;
+process.on("warning", x => { if (x.code === "DEP0119") warned++; });
+process.binding("uv").errname(-2);
+process.binding("uv").errname(-2); // the worker-local latch must hold too
+setImmediate(() => parentPort.postMessage("worker-warned:" + warned));`,
   });
   const child = spawnSync({
     cmd: [bunExe(), "--pending-deprecation", "main.js"],
@@ -1703,7 +1706,7 @@ process.binding("uv").errname(-2);`,
     cwd: String(dir),
   });
   const out = child.stdout.toString();
-  expect(out).toContain("worker-warned");
+  expect(out).toContain("worker-warned:1");
   expect(out).toContain("main-warned:1");
   expect(child.exitCode).toBe(0);
 });

@@ -317,9 +317,11 @@ impl HotReloaderEventLoop for EventLoop {
 }
 
 /// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`.
-/// With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` diverges via
-/// `bun_core::reload_process()` before any concurrent task is enqueued, so
-/// this is never reached.
+/// With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` either diverges via
+/// `bun_core::reload_process()` or takes the kill-signal branch — but the
+/// latter requires `watch_kill_signal_has_listeners()`, which is never true
+/// for the `BundleV2`/`AnyEventLoop` instantiations, so this is never
+/// reached.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
@@ -694,7 +696,10 @@ where
             //
             // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
             // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
-            // `RELOAD_IMMEDIATELY` already diverged above so its guard is dead here.
+            // `RELOAD_IMMEDIATELY` either diverged above or took the
+            // kill-signal branch; for the BundleV2/AnyEventLoop instantiations
+            // `watch_kill_signal_has_listeners()` is never true, so this path
+            // only runs with `RELOAD_IMMEDIATELY = false`.
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
             // the live event-loop pointer owned by `Ctx`.
@@ -1329,13 +1334,15 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     type EventLoop = bun_event_loop::AnyEventLoop<'static>;
 
     fn event_loop(&self) -> *mut Self::EventLoop {
-        // With RELOAD_IMMEDIATELY=true the only caller
-        // (`Task::enqueue` post-diverge) is dead code.
+        // With RELOAD_IMMEDIATELY=true the only caller (`Task::enqueue`)
+        // diverges or takes the kill-signal branch first, and BundleV2 never
+        // has kill-signal listeners, so this is dead code.
         unreachable!()
     }
 
     fn event_loop_ref(&self) -> &Self::EventLoop {
-        // See `event_loop` above — dead code under RELOAD_IMMEDIATELY=true.
+        // See `event_loop` above — dead for BundleV2 under
+        // RELOAD_IMMEDIATELY=true (no kill-signal listeners).
         unreachable!()
     }
 
@@ -1350,7 +1357,8 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
-        // RELOAD_IMMEDIATELY=true → `Task::run` is never enqueued.
+        // RELOAD_IMMEDIATELY=true never enqueues `Task::run` for BundleV2
+        // (diverges or kill-signal branch; no listeners registered there).
         unreachable!()
     }
 

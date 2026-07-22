@@ -5752,7 +5752,12 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
 
   async function runScript(source: string) {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    // Drain stderr too so a noisy child can't fill the pipe and deadlock.
+    const [stdout, , exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
     return { stdout: stdout.trim(), exitCode };
   }
 

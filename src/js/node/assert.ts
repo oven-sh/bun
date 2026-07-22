@@ -42,6 +42,19 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayBufferIsView = ArrayBuffer.isView;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+// Brand check backed by the URL internal slot: the captured `href` getter
+// throws for non-URLs and ignores `Symbol.hasInstance`/prototype tampering.
+const URLPrototypeHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href").get;
+function isURLBrand(value) {
+  if (typeof value !== "object" || value === null) return false;
+  try {
+    URLPrototypeHrefGetter.$call(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -501,11 +514,14 @@ function compareBranch(actual, expected, comparedObjects?) {
       return false;
     }
     if (tag === undefined) {
-      // DataViews have no indexed elements; compare raw bytes.
-      return compareBranchArray(
-        new Uint8Array(actual.buffer, actual.byteOffset, actual.byteLength),
-        new Uint8Array(expected.buffer, expected.byteOffset, expected.byteLength),
-        comparedObjects,
+      // DataViews have no indexed elements; compare raw bytes, then any own
+      // enumerable properties on the views themselves.
+      return (
+        compareBranchArray(
+          new Uint8Array(actual.buffer, actual.byteOffset, actual.byteLength),
+          new Uint8Array(expected.buffer, expected.byteOffset, expected.byteLength),
+          comparedObjects,
+        ) && withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
       );
     }
     return compareBranchArray(actual, expected, comparedObjects);
@@ -519,7 +535,11 @@ function compareBranch(actual, expected, comparedObjects?) {
     ) {
       return false;
     }
-    return compareBranchArray(new Uint8Array(actual), new Uint8Array(expected), comparedObjects);
+    // Compare contents, then any own enumerable properties on the buffers.
+    return (
+      compareBranchArray(new Uint8Array(actual), new Uint8Array(expected), comparedObjects) &&
+      withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
+    );
   }
 
   if (isKeyObject(actual) || isKeyObject(expected)) {
@@ -527,8 +547,12 @@ function compareBranch(actual, expected, comparedObjects?) {
   }
 
   // URLs must both be URLs with the same href.
-  if (actual instanceof URL || expected instanceof URL) {
-    if (!(actual instanceof URL) || !(expected instanceof URL) || actual.href !== expected.href) {
+  if (isURLBrand(actual) || isURLBrand(expected)) {
+    if (
+      !isURLBrand(actual) ||
+      !isURLBrand(expected) ||
+      URLPrototypeHrefGetter.$call(actual) !== URLPrototypeHrefGetter.$call(expected)
+    ) {
       return false;
     }
     return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
@@ -629,12 +653,17 @@ function compareBranchOwnProperty(actual, expected, key, comparedObjects) {
 function compareBranchMap(actual, expected, comparedObjects) {
   let actualEntries;
   const usedIndices = new SafeSet();
+  // Keys consumed by the identity fast path; without this, one actual entry
+  // could satisfy two expected entries (once by identity, once by deep
+  // equality through the index loop below).
+  const usedIdentityKeys = new SafeSet();
   const expectedIterator = SafeMapPrototypeIterator.$call(expected);
   entryIteration: for (const { 0: key, 1: expectedValue } of expectedIterator) {
     // Fast path: identical key present on both sides.
-    if (SafeMapPrototypeHas.$call(actual, key)) {
+    if (!usedIdentityKeys.has(key) && SafeMapPrototypeHas.$call(actual, key)) {
       const actualValue = SafeMapPrototypeGet.$call(actual, key);
       if (compareBranch(actualValue, expectedValue, comparedObjects)) {
+        usedIdentityKeys.add(key);
         continue;
       }
     }
@@ -646,6 +675,7 @@ function compareBranchMap(actual, expected, comparedObjects) {
     for (let i = 0; i < actualEntries.length; i++) {
       if (
         !usedIndices.has(i) &&
+        !usedIdentityKeys.has(actualEntries[i][0]) &&
         compareBranch(actualEntries[i][0], key, comparedObjects) &&
         compareBranch(actualEntries[i][1], expectedValue, comparedObjects)
       ) {

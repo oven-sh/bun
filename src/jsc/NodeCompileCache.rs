@@ -101,7 +101,7 @@ impl Drop for AlignedBlob {
     fn drop(&mut self) {
         let layout =
             core::alloc::Layout::from_size_align(self.len.max(1), BLOB_ALIGN).expect("valid");
-        // SAFETY: allocated in `from_slice` with the identical layout.
+        // SAFETY: allocated in `new_uninit` with the identical layout.
         unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
     }
 }

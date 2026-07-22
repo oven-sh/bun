@@ -1172,7 +1172,7 @@ function pathToFileURL(filepath: string, options?: { windows?: boolean } | null)
     if (hostnameEndIndex === -1) {
       throw $ERR_INVALID_ARG_VALUE("path", resolved, "Missing UNC resource path");
     }
-    if (hostnameEndIndex === 2) {
+    if (hostnameEndIndex === prefixLength) {
       throw $ERR_INVALID_ARG_VALUE("path", resolved, "Empty UNC servername");
     }
     const hostname = resolved.slice(prefixLength, hostnameEndIndex);

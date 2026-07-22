@@ -3342,7 +3342,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
     auto process = globalObject->processObject();
 
-    if (Bun__Node__ProcessPendingDeprecation) {
+    if (Bun__Node__ProcessPendingDeprecation && !process->m_warnedProcessBinding) {
         // Node latches DEP0111 through its deprecate() wrapper, once per
         // Environment (each worker warns once). Bun's own builtins call
         // process.binding() too (node's internals use internalBinding), so
@@ -4335,8 +4335,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     // Node parity: a self-directed signal with no JS handler will most likely
     // terminate this process, so flush the CPU/heap profiles first (node's
     // Kill binding runs RunAtExit in this case).
+    // `signalToContextIdsMap` is only mutated (and its mutations only guarded)
+    // on the main thread; a worker must not race the read against a rehash.
+    // Workers never set profiler configs, so skipping the flush there is fine.
     if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
-        && !(signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
+        && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
         Bun__writeProfilesBeforeSelfKill();
     }
 

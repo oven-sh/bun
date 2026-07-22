@@ -66,7 +66,7 @@ test("--heap-prof writes the profile when the script calls process.exit", async 
     stderr: "pipe",
   });
 
-  const exitCode = await proc.exited;
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(exitCode).toBe(55);
 
   const glob = new Bun.Glob("*.heapprofile");
@@ -89,7 +89,7 @@ test.skipIf(process.platform === "win32")(
       stderr: "pipe",
     });
 
-    const exitCode = await proc.exited;
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(proc.signalCode).toBe("SIGINT");
     expect(exitCode).not.toBe(0);
 

@@ -1,5 +1,5 @@
 // Timing formatter shared by console.timeEnd/timeLog; node exposes it from
-// internal/util/debuglog, and its tests import it from there.
+// internal/util/debuglog.
 const kSecond = 1000;
 const kMinute = 60 * kSecond;
 const kHour = 60 * kMinute;
@@ -7,6 +7,8 @@ const kHour = 60 * kMinute;
 const StringPrototypePadStart = String.prototype.padStart;
 const StringPrototypeSplit = String.prototype.split;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
+const MathFloor = Math.floor;
+const NumberCtor = Number;
 
 function pad(value) {
   return StringPrototypePadStart.$call(`${value}`, 2, "0");
@@ -20,10 +22,10 @@ function formatTime(ms: number) {
   if (ms >= kSecond) {
     if (ms >= kMinute) {
       if (ms >= kHour) {
-        hours = Math.floor(ms / kHour);
+        hours = MathFloor(ms / kHour);
         ms = ms % kHour;
       }
-      minutes = Math.floor(ms / kMinute);
+      minutes = MathFloor(ms / kMinute);
       ms = ms % kMinute;
     }
     seconds = ms / kSecond;
@@ -39,7 +41,7 @@ function formatTime(ms: number) {
     return `${NumberPrototypeToFixed.$call(seconds, 3)}s`;
   }
 
-  return `${Number(NumberPrototypeToFixed.$call(ms, 3))}ms`;
+  return `${NumberCtor(NumberPrototypeToFixed.$call(ms, 3))}ms`;
 }
 
 export default {

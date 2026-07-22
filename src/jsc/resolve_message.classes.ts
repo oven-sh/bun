@@ -76,6 +76,9 @@ export default [
 
   define({
     name: "BuildMessage",
+    // Error.prototype in the chain, matching ResolveMessage: userland checks
+    // `err instanceof Error` on syntax/build failures too.
+    prototypeBase: "Error",
     construct: true,
     finalize: true,
     configurable: false,

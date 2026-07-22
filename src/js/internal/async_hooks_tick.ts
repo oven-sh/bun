@@ -141,7 +141,9 @@ function dispatchTimerEvent(op, timer) {
     case 2:
     case 3: {
       const asyncId = newAsyncId();
-      const rec = { asyncId, triggerAsyncId: state.exec, interval: op === 3, destroyed: false };
+      // No interval flag needed: destroy is deferred until the timer reports
+      // `_destroyed` (see drainDestroyQueue), which active intervals never do.
+      const rec = { asyncId, triggerAsyncId: state.exec, destroyed: false };
       timerRecords.set(timer, rec);
       if (initHooks.length !== 0) {
         emitInit(asyncId, op === 1 ? "Immediate" : "Timeout", rec.triggerAsyncId, timer);

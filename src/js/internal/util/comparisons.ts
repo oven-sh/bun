@@ -80,7 +80,9 @@ function skipProtoDeepStrictEqual(val1, val2, memos?) {
   if (typeof val1 !== "object" || typeof val2 !== "object" || val1 === null || val2 === null) {
     return false;
   }
-  // Strict equality including prototypes implies equality without them.
+  // Bun.deepEquals(strict) is prototype-blind (see header note), so a true
+  // result can only short-circuit this prototype-skipping mode; inequality
+  // still falls through to the node-correct body below.
   if (Bun.deepEquals(val1, val2, true)) {
     return true;
   }

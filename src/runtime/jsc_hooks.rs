@@ -2012,14 +2012,6 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
         _ => bun_jsc::CrateError::ParseError,
     }
 }
-
-/// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path:
-/// read file → `Transpiler::parse`
-/// → `js_printer::print` → `ResolvedSource`.
-///
-/// # Safety
-/// `jsc_vm` is the live per-thread VM; `ret` is a valid out-param;
-/// `args.extra`, when non-null, points at a live [`TranspileExtra`].
 /// Shared guard for the two parse-failure exits: register the module with the
 /// Node compile cache (Unknown module type maps to CJS, matching Node).
 fn note_compile_cache_parse_failure(
@@ -2035,6 +2027,14 @@ fn note_compile_cache_parse_failure(
     }
 }
 
+
+/// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path:
+/// read file → `Transpiler::parse`
+/// → `js_printer::print` → `ResolvedSource`.
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM; `ret` is a valid out-param;
+/// `args.extra`, when non-null, points at a live [`TranspileExtra`].
 unsafe fn transpile_source_code(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,

@@ -47,6 +47,7 @@
 #include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
+#include "JavaScriptCore/JSDataView.h"
 #include "JavaScriptCore/JSArrayInlines.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
@@ -666,15 +667,21 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     if (a1.size() != a2.size()) {
         return false;
     }
+    // Equal counts don't imply equal names; a lookup that walks the prototype
+    // chain would match `a1 = [1, x: 1]` against `a2` inheriting `x` while
+    // owning some other key. Require name-for-name ownership.
+    HashSet<RefPtr<UniquedStringImpl>> a2Names;
+    for (size_t i = 0; i < a2.size(); i++)
+        a2Names.add(a2[i].impl());
     for (size_t i = 0; i < a1.size(); i++) {
         JSC::PropertyName propertyName(a1[i]);
-        JSValue v1 = o1->get(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue v2 = o2->getIfPropertyExists(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!v2) {
+        if (!a2Names.contains(a1[i].impl())) {
             return false;
         }
+        JSValue v1 = o1->get(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue v2 = o2->get(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
         bool eq = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes>(globalObject, v1, v2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
         if (!eq) {
@@ -1249,8 +1256,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0)
+        if (byteLength == 0) {
+            if constexpr (checkPrototypes) {
+                // node also compares own enumerable properties of ArrayBuffers.
+                break;
+            }
             return true;
+        }
 
         const void* vector = left->data();
         const void* rightVector = right->data();
@@ -1258,10 +1270,41 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (vector == rightVector) [[unlikely]]
-            return true;
+        if (vector != rightVector && memcmp(vector, rightVector, byteLength) != 0)
+            return false;
 
-        return (memcmp(vector, rightVector, byteLength) == 0);
+        if constexpr (checkPrototypes) {
+            // node also compares own enumerable properties of ArrayBuffers.
+            break;
+        }
+        return true;
+    }
+    case DataViewType: {
+        if (c2Type != DataViewType) {
+            return false;
+        }
+
+        // node compares DataViews by contents (their bytes at the view's
+        // offset), then falls through to own enumerable properties.
+        JSC::JSDataView* left = uncheckedDowncast<JSC::JSDataView>(c1);
+        JSC::JSDataView* right = uncheckedDowncast<JSC::JSDataView>(c2);
+        size_t byteLength = left->byteLength();
+        if (right->byteLength() != byteLength) {
+            return false;
+        }
+        if (byteLength > 0) {
+            const void* vector = left->vector();
+            const void* rightVector = right->vector();
+            if (!vector || !rightVector) [[unlikely]] {
+                return false;
+            }
+            if (vector != rightVector && memcmp(vector, rightVector, byteLength) != 0)
+                return false;
+        }
+        if constexpr (checkPrototypes) {
+            break;
+        }
+        return true;
     }
     case JSDateType: {
         if (c2Type != JSDateType) {

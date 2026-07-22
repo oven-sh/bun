@@ -262,12 +262,12 @@ impl ResolveMessage {
 
     pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         let mut text = Vec::new();
-        if write!(
-            &mut text,
-            "ResolveMessage: {}",
-            bstr::BStr::new(&self.msg.data.text)
-        )
-        .is_err()
+        // Keep `String(err)` consistent with `err.message`/`err.stack`, which
+        // route through `node_message()` for the reshaped module-not-found
+        // cases.
+        let node_message = self.node_message();
+        let message: &[u8] = node_message.as_deref().unwrap_or(&self.msg.data.text);
+        if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message)).is_err()
         {
             return global.throw_out_of_memory_value();
         }

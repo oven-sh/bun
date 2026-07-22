@@ -151,6 +151,32 @@ export function requireResolve(
 ) {
   const paths = typeof options === "object" && options !== null ? options.paths : undefined;
   if (paths !== undefined) {
+    // node resolves builtin ids before validating `paths`
+    // (lib/internal/modules/cjs/loader.js, Module._resolveFilename), so
+    // `require.resolve("node:fs", { paths: [0] })` must not throw.
+    if (typeof id === "string") {
+      if (id.startsWith("node:") || id.startsWith("bun:")) {
+        return $resolveSync(
+          id,
+          typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
+          false,
+          true,
+          undefined,
+        );
+      }
+      const builtins = require("node:module").builtinModules;
+      for (let i = 0; i < builtins.length; i++) {
+        if (builtins[i] === id) {
+          return $resolveSync(
+            id,
+            typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
+            false,
+            true,
+            undefined,
+          );
+        }
+      }
+    }
     if (!$isArray(paths)) {
       throw $ERR_INVALID_ARG_VALUE("options.paths", paths);
     }

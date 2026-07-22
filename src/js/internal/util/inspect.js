@@ -459,6 +459,11 @@ function formatURLCustom(depth, opts) {
   return `${constructor.name} ${inspect(obj, opts)}`;
 }
 
+const URLSearchParamsPrototypeEntries = URLSearchParams.prototype.entries;
+const URLSearchParamsIteratorNext = ObjectGetPrototypeOf(
+  URLSearchParamsPrototypeEntries.$call(new URLSearchParams()),
+).next;
+
 // Port of node's URLSearchParams.prototype[util.inspect.custom].
 function formatURLSearchParamsCustom(recurseTimes, ctx) {
   if (typeof recurseTimes === "number" && recurseTimes < 0) return ctx.stylize("[Object]", "special");
@@ -470,7 +475,11 @@ function formatURLSearchParamsCustom(recurseTimes, ctx) {
   }
 
   const output = [];
-  for (const pair of this) {
+  // Iterate via captured prototype methods so a tampered
+  // `URLSearchParams.prototype[Symbol.iterator]` can't skew console output.
+  const iter = URLSearchParamsPrototypeEntries.$call(this);
+  for (let step = URLSearchParamsIteratorNext.$call(iter); !step.done; step = URLSearchParamsIteratorNext.$call(iter)) {
+    const pair = step.value;
     ArrayPrototypePush.$call(output, `${inspect(pair[0], innerOpts)} => ${inspect(pair[1], innerOpts)}`);
   }
 

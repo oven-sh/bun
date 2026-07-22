@@ -367,6 +367,9 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
         InitError::InvalidCA => {
             Output::err("HTTPThread", "the provided CA is invalid", ());
         }
+        InitError::InvalidCRL => {
+            Output::err("HTTPThread", "the provided CRL is invalid", ());
+        }
         InitError::FailedToOpenSocket => {
             bun_core::err_generic!("failed to start HTTP client thread");
         }
@@ -539,6 +542,7 @@ impl HttpThread {
                     });
 
                     return Err(match err {
+                        InitError::InvalidCRL => crate::Error::InvalidCRL,
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
                         | InitError::InvalidCAFile

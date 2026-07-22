@@ -398,8 +398,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // silent-registry failure to ~30 min with the default 5
                     // retries. Fail fast instead; transient transport errors
                     // (ConnectionRefused/Closed, DNS) still retry.
-                    let is_idle_timeout =
-                        matches!(task.response.fail, Some(http::Error::Timeout));
+                    let is_idle_timeout = matches!(task.response.fail, Some(http::Error::Timeout));
 
                     if !is_idle_timeout && task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -672,8 +671,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     // See the manifest arm above: a full idle-timeout is not a
                     // transient blip, so don't multiply it by `max_retry_count`.
-                    let is_idle_timeout =
-                        matches!(task.response.fail, Some(http::Error::Timeout));
+                    let is_idle_timeout = matches!(task.response.fail, Some(http::Error::Timeout));
 
                     if !is_idle_timeout && task.retried < manager.options.max_retry_count {
                         task.retried += 1;

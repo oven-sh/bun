@@ -159,6 +159,77 @@ test("object argument with a sparse numeric key", async () => {
   });
 });
 
+describe("nested macro imports", () => {
+  const files = {
+    "inner.ts": `export function stamp() { return "MACRO_" + 7; }\n`,
+    "outer.ts": `
+      import { stamp } from "./inner.ts" with { type: "macro" };
+      export function outer() { return "OUTER(" + stamp() + ")"; }
+      export async function outerAsync() { return "OUTER(" + stamp() + ")"; }
+    `,
+    "outer-prefix.ts": `
+      import { stamp } from "macro:./inner.ts";
+      export function outer() { return "OUTER(" + stamp() + ")"; }
+    `,
+    "use-sync.ts": `
+      import { outer } from "./outer.ts" with { type: "macro" };
+      console.log(outer());
+    `,
+    "use-async.ts": `
+      import { outerAsync } from "./outer.ts" with { type: "macro" };
+      console.log(await outerAsync());
+    `,
+    "use-prefix.ts": `
+      import { outer } from "./outer-prefix.ts" with { type: "macro" };
+      console.log(outer());
+    `,
+  };
+
+  for (const entry of ["use-sync.ts", "use-async.ts", "use-prefix.ts"]) {
+    test.concurrent(`bun run ${entry}`, async () => {
+      using dir = tempDir("macro-nested-run", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({
+        stdout: expect.stringMatching(/OUTER\(MACRO_7\)\n$/),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
+
+  test.concurrent("bun build inlines the nested macro result", async () => {
+    using dir = tempDir("macro-nested-build", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./use-sync.ts", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: "", exitCode: 0 });
+    const out = await Bun.file(path.join(String(dir), "dist", "use-sync.js")).text();
+    expect(out).toContain("OUTER(MACRO_7)");
+    expect(out).not.toContain("stamp");
+    expect(out).not.toContain("inner.ts");
+  });
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

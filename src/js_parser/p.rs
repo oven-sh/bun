@@ -3575,12 +3575,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
-        path: ParsedPath<'a>,
+        mut path: ParsedPath<'a>,
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, crate::Error> {
-        let is_macro =
+        let wants_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
+        // Inside the macro runtime the visit pass will not evaluate nested macro
+        // calls (see the `is_macro_runtime` gate in visit_expr), so erasing this
+        // import would leave the call site with no binding. Keep it as a regular
+        // import instead so the outer macro can call the inner function at runtime.
+        let is_macro = wants_macro && !self.options.features.is_macro_runtime;
+        if wants_macro
+            && self.options.features.is_macro_runtime
+            && crate::Macro::is_macro_path(path.text)
+        {
+            path.text = &path.text[crate::Macro::NAMESPACE_WITH_COLON.len()..];
+        }
         let mut stmt = stmt_;
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);

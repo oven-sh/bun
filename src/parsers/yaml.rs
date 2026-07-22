@@ -2086,10 +2086,8 @@ impl ParseResultError {
         }
         Ok(())
     }
-}
 
-impl ParseResultError {
-    pub fn from_parse_error<Enc: Encoding>(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
+    fn from_parse_error<Enc: Encoding>(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
         match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,

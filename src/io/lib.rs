@@ -764,7 +764,7 @@ pub struct IoRequestLoop {
     /// waker fd is NOT itself a kqueue. We create one here and register the
     /// eventfd on it, mirroring how Linux registers the eventfd on epoll_fd.
     #[cfg(target_os = "freebsd")]
-    pub kqueue_fd: Fd,
+    pub(crate) kqueue_fd: Fd,
 }
 
 // §Concurrency: `OnceLock` for init gate; the singleton itself stays raw because

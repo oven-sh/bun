@@ -2323,16 +2323,6 @@ fn parse_build_command_options(
                 Output::err_generic("format must be 'cjs' or 'esm' when bytecode is true.", ());
                 Global::exit(1);
             }
-            // ESM bytecode requires --compile because module_info (import/export metadata)
-            // is only available in compiled binaries. Without it, JSC must parse the file
-            // twice (once for module analysis, once for bytecode), which is a deopt.
-            if format == options::Format::Esm && !ctx.bundler_options.compile {
-                Output::err_generic(
-                    "ESM bytecode requires --compile. Use --format=cjs for bytecode without --compile.",
-                    (),
-                );
-                Global::exit(1);
-            }
         }
     }
 

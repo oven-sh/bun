@@ -577,7 +577,8 @@ pub mod js_bundler {
                 this.bytecode = bytecode;
 
                 if bytecode {
-                    // Default to CJS for bytecode, since esm doesn't really work yet.
+                    // Default to CJS for bytecode for backward compatibility;
+                    // pass `format: "esm"` explicitly to opt into ESM bytecode.
                     this.format = options::Format::Cjs;
                     if did_set_target && this.target != Target::Bun && this.bytecode {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1249,13 +1250,6 @@ pub mod js_bundler {
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }
-            }
-
-            // ESM bytecode requires compile because module_info (import/export metadata)
-            // is only available in compiled binaries. Without it, JSC must parse the file
-            // twice (once for module analysis, once for bytecode), which is a deopt.
-            if this.bytecode && this.format == options::Format::Esm && this.compile.is_none() {
-                return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
             }
 
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints

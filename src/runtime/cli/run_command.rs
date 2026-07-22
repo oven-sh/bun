@@ -1482,6 +1482,13 @@ impl Run {
                 }
             }
             cli::command::HotReload::Watch => {
+                // Opt `--watch` into keeping the watcher alive on
+                // `process.exit()` (the loop below recovers the VM, and a file
+                // change re-execs the process). `--hot` re-evaluates in place,
+                // where process-exit state (e.g. the one-shot `process.on('exit')`
+                // dispatch) would persist across runs, so it is left unset and
+                // keeps exiting the process as before.
+                vm.watch_exit_keepalive = true;
                 // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
@@ -1504,6 +1511,10 @@ impl Run {
         }
 
         match vm.load_entry_point(entry) {
+            // `process.exit()` during evaluation (`--watch`) unwinds the run via
+            // a JSC termination exception; skip the rejected-entry handling and
+            // fall through to the watcher loop, which keeps the process alive.
+            _ if vm.watch_exit_requested => {}
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
@@ -1541,8 +1552,13 @@ impl Run {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        // don't run the GC if we don't actually need to. Skip entirely on a
+        // watch exit: the run is over and a termination exception is pending,
+        // so ticking here would run the VM with it still set (the watcher loop
+        // clears it before its own ticks).
+        if !vm.watch_exit_requested
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena = bumpalo::Bump` has no
             // per-heap collect, so this is a no-op unless the arena type
@@ -1565,10 +1581,28 @@ impl Run {
             loop {
                 while vm.is_event_loop_alive() {
                     vm.tick();
+                    // A `--watch` `process.exit()` during this tick raises a
+                    // termination exception; stop ticking before running more
+                    // JS with it pending.
+                    if vm.watch_exit_requested {
+                        break;
+                    }
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
-                vm.on_before_exit();
+                // Skip the beforeExit dispatch if the run already exited via
+                // `process.exit()` (matches Node, which does not fire
+                // `beforeExit` on `process.exit()`).
+                if !vm.watch_exit_requested {
+                    vm.on_before_exit();
+                }
+                // Clear a pending termination left by `process.exit()` so the
+                // loop can keep ticking. Re-checked after `on_before_exit` too:
+                // a `beforeExit` handler may itself call `process.exit()`, which
+                // sets the flag only now.
+                if vm.watch_exit_requested {
+                    vm.clear_watch_exit_termination();
+                }
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across

@@ -151,6 +151,12 @@ pub struct TestRunner<'a> {
     ///
     /// [`on_process_exit_during_tests`]: crate::cli::test_command::on_process_exit_during_tests
     pub total_test_files: u32,
+    /// Set for the duration of `load_entry_point_for_test_runner` in
+    /// `TestCommand::run`. Distinguishes a top-level-module `process.exit()`
+    /// (the Node re-spawn pattern) from one inside a `describe()` callback,
+    /// which runs later via `Collection::step` but is still
+    /// `Phase::Collection`.
+    pub module_load_in_progress: bool,
     pub summary: Summary,
 
     pub bun_test_root: bun_test::BunTestRoot,

@@ -551,6 +551,52 @@ test("CallFrame.p.isNative", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 });
 
+// https://github.com/oven-sh/bun/issues/17303
+// https://github.com/oven-sh/bun/issues/18250
+test("CallFrame.p.getColumnNumber is 1-based and matches toString()", async () => {
+  // Run in a subprocess so the column isn't shifted by the CJS-wrapper transform applied
+  // to .js test files: the function-call column must be observable at exactly 1.
+  const src = [
+    `let frames;`,
+    `Error.prepareStackTrace = (_, s) => s;`,
+    `function callee() { frames = new Error().stack; }`,
+    `callee();`,
+    `Error.prepareStackTrace = undefined;`,
+    `const callee0 = frames[0];`,
+    `const caller = frames[1];`,
+    `const colOf = f => Number(/:(\\d+):(\\d+)\\)?$/.exec(f.toString())[2]);`,
+    `console.log(JSON.stringify({`,
+    `  calleeMatch: callee0.getColumnNumber() === colOf(callee0),`,
+    `  callerCol: caller.getColumnNumber(),`,
+    `  callerStrCol: colOf(caller),`,
+    `  json: callee0.toJSON().columnNumber === callee0.getColumnNumber(),`,
+    `}));`,
+  ].join("\n");
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // `callee()` starts at column 1; V8 reports 1, source-map-support subtracts 1 to get 0.
+  expect(JSON.parse(stdout)).toEqual({ calleeMatch: true, callerCol: 1, callerStrCol: 1, json: true });
+  expect(exitCode).toBe(0);
+});
+
+test("CallFrame.p.getLineNumber/getColumnNumber return null for native frames", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (e, s) => s;
+  let frames;
+  nativeFrameForTesting(() => {
+    const err = new Error("");
+    Error.captureStackTrace(err);
+    frames = err.stack;
+    return 0;
+  });
+  Error.prepareStackTrace = prevPrepareStackTrace;
+  const nativeFrame = frames[1];
+  expect(nativeFrame.isNative()).toBe(true);
+  expect(nativeFrame.getLineNumber()).toBeNull();
+  expect(nativeFrame.getColumnNumber()).toBeNull();
+});
+
 test("return non-strings from Error.prepareStackTrace", () => {
   // This behavior is allowed by V8 and used by the node-depd npm package.
   let prevPrepareStackTrace = Error.prepareStackTrace;

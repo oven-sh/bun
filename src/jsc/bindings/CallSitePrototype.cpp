@@ -134,15 +134,22 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalO
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L484-L486
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->lineNumber().oneBasedInt(), 1)));
+    auto line = callSite->lineNumber();
+    if (line == OrdinalNumber::beforeFirst())
+        return JSC::JSValue::encode(JSC::jsNull());
+    return JSC::JSValue::encode(jsNumber(line.oneBasedInt()));
 }
 
+// V8's CallSite#getColumnNumber() is 1-based (https://v8.dev/docs/stack-trace-api). It returns null
+// when no position is available. source-map-support relies on the 1-based value to compute a
+// 0-based offset for originalPositionFor().
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L488-L489
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
+    auto column = callSite->columnNumber();
+    if (column == OrdinalNumber::beforeFirst())
+        return JSC::JSValue::encode(JSC::jsNull());
+    return JSC::JSValue::encode(jsNumber(column.oneBasedInt()));
 }
 
 // TODO:
@@ -258,7 +265,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
     obj->putDirect(vm, JSC::Identifier::fromString(vm, "sourceURL"_s), callSite->sourceURL());
     obj->putDirect(vm, JSC::Identifier::fromString(vm, "lineNumber"_s), jsNumber(callSite->lineNumber().oneBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), jsNumber(callSite->columnNumber().zeroBasedInt()));
+    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), jsNumber(callSite->columnNumber().oneBasedInt()));
     obj->putDirect(vm, JSC::Identifier::fromString(vm, "functionName"_s), callSite->functionName());
     return JSC::JSValue::encode(obj);
 }

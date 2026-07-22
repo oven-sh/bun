@@ -1694,10 +1694,14 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     // `emit("close")` (test-http-should-emit-close-when-connection-is-aborted).
     //
     // `#pendingAbortMessage` is the `_httpMessage` captured when the destroy
-    // was initiated from JS (`#closeHandle`); detachSocket() may have cleared
-    // `_httpMessage` in the meantime.
-    const message = this._httpMessage ?? this.#pendingAbortMessage;
+    // was initiated from JS (`#closeHandle`). It is only honoured when the
+    // captured response was itself destroy()ed: a `res.end()` followed by a
+    // JS-initiated socket.destroy() also reaches detachSocket() via the
+    // dispatcher's finished branch, and Node.js does not abort the request
+    // once the response has finished (resOnFinish shifts state.incoming).
+    const pending = this.#pendingAbortMessage;
     this.#pendingAbortMessage = undefined;
+    const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
     const req = message?.req;
 
     if (req && !req.destroyed && !req[kHandle]?.upgraded) {

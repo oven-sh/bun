@@ -1547,6 +1547,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   // connection whose pipelined responses have buffered past the high water mark.
   _paused = false;
   #pendingCallback = null;
+  #pendingAbortMessage;
   constructor(server: Server, handle, encrypted) {
     // allowHalfOpen: node's connectionListener sockets never auto-end the
     // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1661,7 +1662,6 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
     handle.close();
   }
-  #pendingAbortMessage;
   #onClose() {
     // freeParser equivalent: runs before 'close' listeners so they observe the
     // released parser (free() invoked, kOnTimeout nulled).

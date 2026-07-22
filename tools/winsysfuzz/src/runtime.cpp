@@ -570,6 +570,12 @@ bool CallCtx::PreFault() {
       if (!(sys_ == SYS_NtDeviceIoControlFile && xi >= 0 && xi < argc_ &&
             (ULONG)args_[xi] == r.ioctlCode))
         continue;
+      // A code match at ANY callsite would land on the socket ioctls that
+      // mswsock issues internally ('o:' key) - that module's own plumbing,
+      // whose buffers and IOSBs are not bun's. A payload fault must land at
+      // the boundary bun crosses: only bun-issued ('b') or API-boundary
+      // ('k'/'n') calls. Same principle as every other o:-key exclusion.
+      if (KeyOf(frames_[0]).tag == 'o') continue;
     }
     LONG hit = InterlockedIncrement(&r.hits);
     if (r.hitIndex != 0 && hit != r.hitIndex) continue;

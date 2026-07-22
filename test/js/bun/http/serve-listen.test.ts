@@ -205,11 +205,7 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);

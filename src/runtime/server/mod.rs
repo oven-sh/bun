@@ -2883,10 +2883,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 // SAFETY: ls is a live uws ListenSocket FFI handle
                                 // (just set by on_listen).
                                 Some(ls) => {
-                                    u16::try_from(
-                                        bun_opaque::opaque_deref_mut(ls).get_local_port(),
-                                    )
-                                    .unwrap_or(port)
+                                    u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
+                                        .unwrap_or(port)
                                 }
                                 None => port,
                             };

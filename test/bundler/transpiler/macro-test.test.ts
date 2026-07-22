@@ -242,11 +242,7 @@ describe("nested macro imports", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toMatchObject({
       stdout: expect.stringMatching(/OUTER\(MACRO_7\)\n$/),
       stderr: "",

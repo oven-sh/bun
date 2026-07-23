@@ -41,6 +41,17 @@
 # alpine 3.23 x64 + x64-baseline only).
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
 
+# Same single-gc() + single-setImmediate FinalizationRegistry-timing pattern
+# as test-tls-connect-memleak.js above, for the plain-TCP connect callback. The
+# listener IS removed via once() (the thing the test is actually asserting);
+# what fails is the FR cleanup callback arriving within one setImmediate under
+# JSC's conservative stack scan. Tipped over on glibc x64 (not just musl) once
+# net.ts gained the diagnostics_channel hasSubscribers check inside connect(),
+# which shifts the release-build stack frame. Passes on linux aarch64, darwin,
+# windows; see PR #32628 builds 76982/77007. Remove when upstream adopts
+# gcUntil() here or JSC's sanitizeStackForVM call in gc() lands for this path.
+[ LINUX-X64 ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on linux x64
+
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public
 # Bun.Socket whose setKeepAlive is documented in MILLISECONDS, so net.ts

@@ -245,11 +245,6 @@ impl Blob {
     }
 
     #[inline]
-    pub fn set_not_heap_allocated(&mut self) {
-        self.ref_count = bun_ptr::RawRefCount::init(0);
-    }
-
-    #[inline]
     pub fn content_type_slice(&self) -> &[u8] {
         self.content_type.get().as_slice()
     }
@@ -797,17 +792,6 @@ pub mod store {
                 ..Default::default()
             }
         }
-
-        #[inline]
-        pub fn is_seekable(&self) -> Option<bool> {
-            if let Some(s) = self.seekable {
-                return Some(s);
-            }
-            if self.mode != 0 {
-                return Some(bun_core::kind_from_mode(self.mode) == bun_core::FileKind::File);
-            }
-            None
-        }
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -828,11 +812,6 @@ pub mod store {
     }
 
     impl S3 {
-        #[inline]
-        pub fn is_seekable(&self) -> Option<bool> {
-            Some(true)
-        }
-
         pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
@@ -861,22 +840,6 @@ pub mod store {
                 path_name = &path_name[1..];
             }
             path_name
-        }
-
-        pub fn init_with_referenced_credentials(
-            pathlike: PathLike,
-            mime_type: Option<MimeType>,
-            credentials: Rc<bun_s3_signing::S3Credentials>,
-        ) -> S3 {
-            S3 {
-                credentials: Some(credentials),
-                pathlike,
-                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-                options: bun_s3_signing::MultiPartUploadOptions::default(),
-                acl: None,
-                storage_class: None,
-                request_payer: false,
-            }
         }
 
         pub fn init(
@@ -1038,16 +1001,6 @@ pub mod store {
     }
 
     impl StoreRef {
-        /// Adopt an existing +1. Does **not** increment.
-        ///
-        /// # Safety
-        /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`,
-        /// and the caller transfers one outstanding reference.
-        #[inline]
-        pub unsafe fn adopt(ptr: NonNull<Store>) -> Self {
-            Self { ptr }
-        }
-
         /// Wrap a raw `*Store`, incrementing its intrusive refcount.
         ///
         /// # Safety
@@ -1064,14 +1017,6 @@ pub mod store {
         #[inline]
         pub fn as_ptr(&self) -> *mut Store {
             self.ptr.as_ptr()
-        }
-
-        /// Raw `NonNull<Store>` view (does not touch the refcount). For
-        /// passing the parent `Store` alongside a `&mut` into one of its
-        /// fields without materialising an aliasing `&Store`.
-        #[inline]
-        pub fn as_non_null(&self) -> NonNull<Store> {
-            self.ptr
         }
 
         /// Leak the held +1 and return the raw pointer. Pair with a later

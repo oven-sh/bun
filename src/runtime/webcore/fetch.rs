@@ -5,7 +5,7 @@
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
 pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
-    "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
+    "fetch() request with GET/HEAD method cannot have body.";
 pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
@@ -333,19 +333,13 @@ impl StringOrURL {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetch / nodeHttpClient entry points
+// Bun__fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
+/// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
-}
-
-/// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
-#[bun_jsc::host_fn]
-pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<true>(ctx, callframe))
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
@@ -1607,6 +1601,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
+    // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
+    // not enforce forbidden methods. has_request_body() encodes exactly that.
     if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,

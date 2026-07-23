@@ -41,6 +41,8 @@ pub struct SecureContext {
     /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
     /// (~50 KB), so the GC can account for the off-heap allocation.
     pub extra_memory: usize,
+    /// True when `ctx` is a digest-interned `SSL_CTX*` shared with other consumers.
+    pub shared: bool,
 }
 
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
@@ -186,7 +188,7 @@ impl SecureContext {
         Ok(result)
     }
 
-    /// `tls.createSecureContext()` entry - builds a context that owns its
+    /// `tls.createSecureContext()` / `new tls.SecureContext()` entry - builds a context that owns its
     /// SSL_CTX exclusively: no digest memoisation at either the JS-wrapper
     /// cache or the native SSLContextCache level, so prototype mutators like
     /// `addCACert` can never affect another context (or the cached
@@ -227,6 +229,7 @@ impl SecureContext {
             ctx,
             digest: d,
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
+            shared: false,
         });
         Ok(Self::to_js_boxed(sc, global))
     }
@@ -325,6 +328,7 @@ impl SecureContext {
             ctx,
             digest: d,
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
+            shared: true,
         }))
     }
 
@@ -348,6 +352,11 @@ impl SecureContext {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        if this.shared {
+            return Err(global.throw(format_args!(
+                "cannot mutate a shared SecureContext; use tls.createSecureContext()"
+            )));
+        }
         let args = frame.arguments();
         if args.is_empty() {
             return Err(

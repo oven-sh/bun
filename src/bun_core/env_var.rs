@@ -54,6 +54,10 @@ new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_
 // if it fires the request fails with `error.Timeout`. Covers the TLS
 // handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
+// Opening-handshake timeout for the `new WebSocket()` client, in seconds.
+// A peer that accepts the TCP connection but never answers the upgrade fails
+// with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.
+new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
@@ -91,6 +95,10 @@ new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
+// Compressed bytes to buffer in `TarballStream.pending` before the HTTP
+// thread schedules a drain; collapses the per-chunk thread-pool futex wake
+// into roughly one per `threshold` bytes.
+new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {});
@@ -137,6 +145,9 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+// A string, not a boolean: node suppresses warnings only when the value is
+// exactly "1" (lib/internal/process/pre_execution.js).
+new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
@@ -236,6 +247,9 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
     new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
+    // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
+    // tests can drive the multi-select by writing keystrokes to a pipe.
+    new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF, "BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", {});
@@ -243,7 +257,6 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304, "BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304", {});
     new_feature_flag!(pub BUN_NO_CODESIGN_MACHO_BINARY, "BUN_NO_CODESIGN_MACHO_BINARY", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_NO_LIBDEFLATE, "BUN_FEATURE_FLAG_NO_LIBDEFLATE", {});
-    new_feature_flag!(pub NODE_NO_WARNINGS, "NODE_NO_WARNINGS", {});
     new_feature_flag!(pub BUN_TRACE, "BUN_TRACE", {});
 }
 

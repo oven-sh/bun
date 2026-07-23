@@ -24,12 +24,6 @@ use crate::transpiler::{
     BunPluginTarget, ParseResult, PluginResolver, PluginRunner, ResolveQueue, ResolveResults,
 };
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CSSResolveError {
-    #[error("ResolveMessage")]
-    ResolveMessage,
-}
-
 type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 
 // Matches `Transpiler::IS_CACHE_ENABLED`; inlined so `get_hashed_filename`
@@ -49,25 +43,12 @@ pub struct Linker {
     pub resolve_queue: *mut ResolveQueue,
     pub resolver: *mut Resolver<'static>,
     pub resolve_results: *mut ResolveResults,
-    pub any_needs_runtime: bool,
-    pub runtime_import_record: Option<ImportRecord>,
     pub hashed_filenames: HashedFileNameMap,
-    pub import_counter: usize,
-    pub tagged_resolutions: TaggedResolution,
 
     pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
 
 pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
-
-#[derive(Default)]
-pub struct TaggedResolution {
-    pub react_refresh: Option<resolver::Result>,
-    // These tags cannot safely be used
-    // Projects may use different JSX runtimes across folders
-    // jsx_import: Option<resolver::Result>,
-    // jsx_classic: Option<resolver::Result>,
-}
 
 // ── relative_paths_list singleton ────────────────────────────────────────
 // `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
@@ -270,11 +251,7 @@ impl Linker {
             resolve_queue,
             resolver,
             resolve_results,
-            any_needs_runtime: false,
-            runtime_import_record: None,
             hashed_filenames: HashedFileNameMap::default(),
-            import_counter: 0,
-            tagged_resolutions: TaggedResolution::default(),
             plugin_runner: None,
         }
     }
@@ -282,8 +259,7 @@ impl Linker {
     /// Re-seat the self-referential back-pointers after the owning
     /// `Transpiler` has been moved to its final address. Only re-assigns the
     /// pointer fields; does NOT reset
-    /// `import_counter` / `plugin_runner` / `tagged_resolutions` /
-    /// `any_needs_runtime`. Use instead of `init` from
+    /// `plugin_runner`. Use instead of `init` from
     /// `Transpiler::wire_after_move`.
     pub fn reseat_self_refs(
         &mut self,
@@ -300,14 +276,6 @@ impl Linker {
         self.resolver = resolver;
         self.resolve_results = resolve_results;
         self.fs = fs;
-    }
-
-    /// Accessor for the `relative_paths_list` singleton. Returns `*mut`
-    /// because the contract is a global pointer — fabricating `&'static mut`
-    /// here would alias on every call.
-    #[inline]
-    pub fn relative_paths_list() -> *mut ImportPathsList {
-        relative_paths_list_ptr()
     }
 
     // ── getModKey / getHashedFilename ────────────────────────────────────
@@ -454,8 +422,6 @@ impl Linker {
                                 )?;
                             }
 
-                            ast.runtime_import_record_id = Some(record_index);
-                            ast.needs_runtime = true;
                             continue;
                         }
                     }
@@ -693,9 +659,7 @@ impl Linker {
 
             ImportPathFormat::AbsoluteUrl => {
                 if namespace == b"node" {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(&source_path[0..5] == b"node:");
-                    }
+                    debug_assert!(&source_path[0..5] == b"node:");
 
                     let mut buf: Vec<u8> = Vec::new();
                     // assumption: already starts with "node:"

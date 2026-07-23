@@ -2155,3 +2155,90 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
     await once(proxy, "close");
   }
 });
+
+// RFC 3986 §3.1: the URL scheme is case-insensitive. The explicit
+// `fetch(url, { proxy })` option goes through the WHATWG URL parser, which
+// lowercases the scheme; the http_proxy / HTTP_PROXY environment variables go
+// through bun_url::URL::parse, which borrows the scheme as-is. Before the fix,
+// `http_proxy=HTTP://host:port` failed every request with
+// UnsupportedProxyProtocol while the identical string via `{ proxy }` worked.
+// curl and Node's undici EnvHttpProxyAgent both accept the uppercase form.
+describe("http_proxy env var scheme is case-insensitive", () => {
+  const cases = [
+    ["http_proxy", "HTTP"],
+    ["HTTP_PROXY", "Http"],
+    ["http_proxy", "hTtP"],
+  ] as const;
+
+  test.concurrent.each(cases)("%s=%s://... is accepted", async (envKey, scheme) => {
+    using origin = Bun.serve({ port: 0, fetch: () => new Response("origin") });
+    const proxy = net.createServer(clientSocket => {
+      clientSocket.on("error", () => {});
+      clientSocket.once("data", data => {
+        const body = "PROXIED " + data.toString("latin1").split("\r\n")[0];
+        clientSocket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+    try {
+      const targetUrl = `http://127.0.0.1:${origin.port}/x`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = await fetch(${JSON.stringify(targetUrl)}, { keepalive: false }); console.log(r.status, await r.text());`,
+        ],
+        env: {
+          ...bunEnv,
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+          HTTP_PROXY: undefined,
+          http_proxy: undefined,
+          HTTPS_PROXY: undefined,
+          https_proxy: undefined,
+          [envKey]: `${scheme}://127.0.0.1:${proxyPort}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(`200 PROXIED GET ${targetUrl} HTTP/1.1`);
+      expect(exitCode).toBe(0);
+    } finally {
+      proxy.close();
+      await once(proxy, "close");
+    }
+  });
+
+  // An unrecognized scheme must still be rejected loudly instead of silently
+  // going direct.
+  test.concurrent("socks5:// is still rejected with UnsupportedProxyProtocol", async () => {
+    using origin = Bun.serve({ port: 0, fetch: () => new Response("origin") });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { await fetch(${JSON.stringify(`http://127.0.0.1:${origin.port}/x`)}); console.log("OK"); } catch (e) { console.log("ERR", e?.code ?? e?.name); }`,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: "socks5://127.0.0.1:1",
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ERR UnsupportedProxyProtocol");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -2,7 +2,7 @@
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { validateFunction, validateObject } = require("internal/validators");
+const { validateFunction, validateObject, validateString } = require("internal/validators");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
 const queryObjectsNative = $newCppFunction("NodeV8Module.cpp", "jsFunctionQueryObjects", 1);
@@ -94,7 +94,10 @@ function getHeapSpaceStatistics() {
 function getHeapCodeStatistics() {
   notimpl("getHeapCodeStatistics");
 }
-function setFlagsFromString() {
+function setFlagsFromString(flags) {
+  // Validate before reporting the gap: node rejects a non-string argument
+  // regardless of whether the flag itself can be applied.
+  validateString(flags, "flags");
   notimpl("setFlagsFromString");
 }
 function deserialize(value) {

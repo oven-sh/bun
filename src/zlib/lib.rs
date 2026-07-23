@@ -11,7 +11,6 @@ use bun_collections::VecExt as _;
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
 
-pub const MIN_WBITS: c_int = 8;
 pub const MAX_WBITS: c_int = 15;
 
 unsafe extern "C" {
@@ -234,100 +233,6 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             }
             _ => unreachable!(),
         }
-    }
-
-    pub fn error_message(&self) -> Option<&[u8]> {
-        if !self.zlib.err_msg.is_null() {
-            // SAFETY: err_msg is a NUL-terminated C string from zlib (static or stream-owned).
-            return Some(
-                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
-            );
-        }
-        None
-    }
-
-    pub fn read_all(&mut self, is_done: bool) -> crate::Result<()>
-    where
-        W: bun_io::Write,
-    {
-        while self.state == ZlibReaderState::Uninitialized
-            || self.state == ZlibReaderState::Inflating
-        {
-            // Before the call of inflate(), the application should ensure
-            // that at least one of the actions is possible, by providing
-            // more input and/or consuming more output, and updating the
-            // next_* and avail_* values accordingly. If the caller of
-            // inflate() does not provide both available input and available
-            // output space, it is possible that there will be no progress
-            // made. The application can consume the uncompressed output
-            // when it wants, for example when the output buffer is full
-            // (avail_out == 0), or after each call of inflate(). If inflate
-            // returns Z_OK and with zero avail_out, it must be called again
-            // after making room in the output buffer because there might be
-            // more output pending.
-
-            // - Decompress more input starting at next_in and update
-            //   next_in and avail_in accordingly. If not all input can be
-            //   processed (because there is not enough room in the output
-            //   buffer), then next_in and avail_in are updated accordingly,
-            //   and processing will resume at this point for the next call
-            //   of inflate().
-
-            // - Generate more output starting at next_out and update
-            //   next_out and avail_out accordingly. inflate() provides as
-            //   much output as possible, until there is no more input data
-            //   or no more space in the output buffer (see below about the
-            //   flush parameter).
-
-            if self.zlib.avail_out == 0 {
-                self.context.write_all(&self.buf)?;
-                self.zlib.avail_out = BUFFER_SIZE as uInt;
-                self.zlib.next_out = self.buf.as_mut_ptr();
-            }
-
-            // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
-            // SAFETY: self.zlib was initialized via inflateInit2_.
-            let rc = unsafe { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
-            self.state = ZlibReaderState::Inflating;
-
-            match rc {
-                ReturnCode::StreamEnd => {
-                    self.state = ZlibReaderState::End;
-                    let remainder = &self.buf[0..BUFFER_SIZE - self.zlib.avail_out as usize];
-                    self.context.write_all(remainder)?;
-                    self.end();
-                    return Ok(());
-                }
-                ReturnCode::MemError => {
-                    self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                }
-                ReturnCode::BufError => {
-                    // BufError with avail_in == 0 means we need more input data
-                    if self.zlib.avail_in == 0 {
-                        if is_done {
-                            // Stream is truncated - we're at EOF but decoder needs more data
-                            self.state = ZlibReaderState::Error;
-                            return Err(crate::Error::ZlibError);
-                        }
-                        // Not at EOF - we can retry with more data
-                        return Err(crate::Error::ShortRead);
-                    }
-                    self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::ZlibError);
-                }
-                ReturnCode::StreamError
-                | ReturnCode::DataError
-                | ReturnCode::NeedDict
-                | ReturnCode::VersionError
-                | ReturnCode::ErrNo => {
-                    self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::ZlibError);
-                }
-                ReturnCode::Ok => {}
-            }
-        }
-        Ok(())
     }
 }
 

@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
-use super::{get_signature, Expect};
+use super::{get_signature, throw, Expect};
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -113,16 +113,18 @@ pub(crate) fn to_contain_equal(
     let expected_fmt = expected.to_fmt(&mut formatter2);
     if not {
         let signature: &str = get_signature("toContainEqual", "<green>expected<r>", true);
-        return this.throw_fmt(
+        return throw!(
+            this,
             global,
             signature,
             concat!("\n\n", "Expected to not contain: <green>{}<r>\n"),
-            format_args!("{}", expected_fmt),
+            expected_fmt,
         );
     }
 
     let signature: &str = get_signature("toContainEqual", "<green>expected<r>", false);
-    this.throw_fmt(
+    throw!(
+        this,
         global,
         signature,
         concat!(
@@ -130,6 +132,7 @@ pub(crate) fn to_contain_equal(
             "Expected to contain: <green>{}<r>\n",
             "Received: <red>{}<r>\n"
         ),
-        format_args!("{}{}", expected_fmt, value_fmt),
+        expected_fmt,
+        value_fmt,
     )
 }

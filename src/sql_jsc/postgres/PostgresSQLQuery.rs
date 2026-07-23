@@ -92,6 +92,11 @@ pub struct Flags {
     pub bigint: bool,
     pub simple: bool,
     pub pipelined: bool,
+    /// Set when this request's dispatch incremented the connection's
+    /// `pipelined_requests` / `nonpipelinable_requests` counter; cleared when
+    /// `finish_request` consumes that contribution. Makes the decrement
+    /// idempotent across the three `finish_request` call sites.
+    pub counted: bool,
     pub result_mode: PostgresSQLQueryResultMode,
 }
 
@@ -103,6 +108,7 @@ impl Default for Flags {
             bigint: false,
             simple: false,
             pipelined: false,
+            counted: false,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
     }
@@ -542,6 +548,7 @@ impl PostgresSQLQuery {
                 connection
                     .nonpipelinable_requests
                     .set(connection.nonpipelinable_requests.get() + 1);
+                this.update_flags(|f| f.counted = true);
                 this.status.set(Status::Running);
             } else {
                 this.status.set(Status::Pending);
@@ -675,7 +682,10 @@ impl PostgresSQLQuery {
                                     connection.flags.set(f);
                                 }
                                 this.status.set(Status::Binding);
-                                this.update_flags(|f| f.pipelined = true);
+                                this.update_flags(|f| {
+                                    f.pipelined = true;
+                                    f.counted = true;
+                                });
                                 connection
                                     .pipelined_requests
                                     .set(connection.pipelined_requests.get() + 1);

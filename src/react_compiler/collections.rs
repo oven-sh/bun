@@ -60,10 +60,6 @@ impl<K, V> IndexMap<K, V> {
         self.0.is_empty()
     }
     #[inline]
-    pub fn capacity(&self) -> usize {
-        self.0.capacity()
-    }
-    #[inline]
     pub fn clear(&mut self) {
         self.0.clear();
     }
@@ -99,20 +95,8 @@ impl<K, V> IndexMap<K, V> {
         Some((k, &self.0.values()[i]))
     }
     #[inline]
-    pub fn get_index_mut(&mut self, i: usize) -> Option<(&mut K, &mut V)> {
-        self.0.get_index_mut(i)
-    }
-    #[inline]
     pub fn first(&self) -> Option<(&K, &V)> {
         self.get_index(0)
-    }
-    #[inline]
-    pub fn last(&self) -> Option<(&K, &V)> {
-        self.get_index(self.len().checked_sub(1)?)
-    }
-    #[inline]
-    pub fn pop(&mut self) -> Option<(K, V)> {
-        self.0.pop().map(|kv| (kv.key, kv.value))
     }
 
     #[inline]
@@ -124,13 +108,6 @@ impl<K, V> IndexMap<K, V> {
     pub fn drain(&mut self, range: core::ops::RangeFull) -> IntoIter<K, V> {
         let _ = range;
         core::mem::take(self).into_iter()
-    }
-
-    pub fn into_values(self) -> alloc::vec::IntoIter<V, AstAlloc> {
-        self.0.into_entries().1.into_iter()
-    }
-    pub fn into_keys(self) -> alloc::vec::IntoIter<K, AstAlloc> {
-        self.0.into_entries().0.into_iter()
     }
 }
 
@@ -146,10 +123,6 @@ impl<K: Hash + Eq, V> IndexMap<K, V> {
     #[inline]
     pub fn contains_key(&self, key: &K) -> bool {
         self.0.contains(key)
-    }
-    #[inline]
-    pub fn get_index_of(&self, key: &K) -> Option<usize> {
-        self.0.get_index(key)
     }
     #[inline]
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
@@ -320,22 +293,6 @@ impl<K> IndexSet<K> {
     pub fn first(&self) -> Option<&K> {
         self.0.keys().first()
     }
-    #[inline]
-    pub fn last(&self) -> Option<&K> {
-        self.0.keys().last()
-    }
-    #[inline]
-    pub fn pop(&mut self) -> Option<K> {
-        self.0.pop().map(|kv| kv.key)
-    }
-    #[inline]
-    pub fn retain<F: FnMut(&K) -> bool>(&mut self, mut f: F) {
-        self.0.retain(|k, _| f(k));
-    }
-    pub fn drain(&mut self, range: core::ops::RangeFull) -> alloc::vec::IntoIter<K, AstAlloc> {
-        let _ = range;
-        core::mem::take(&mut self.0).into_entries().0.into_iter()
-    }
 }
 
 impl<K: Hash + Eq> IndexSet<K> {
@@ -353,16 +310,8 @@ impl<K: Hash + Eq> IndexSet<K> {
         self.0.get_index(key).map(|i| &self.0.keys()[i])
     }
     #[inline]
-    pub fn get_index_of(&self, key: &K) -> Option<usize> {
-        self.0.get_index(key)
-    }
-    #[inline]
     pub fn shift_remove(&mut self, key: &K) -> bool {
         self.0.remove(key).is_some()
-    }
-    #[inline]
-    pub fn swap_remove(&mut self, key: &K) -> bool {
-        self.0.swap_remove(key)
     }
     #[inline]
     pub fn remove(&mut self, key: &K) -> bool {

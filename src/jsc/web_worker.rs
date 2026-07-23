@@ -1285,6 +1285,19 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Destroy the per-VM c-ares channel now: `ares_destroy()` fires
+            // every pending query callback with `ARES_EDESTRUCTION` and then
+            // the socket-state callback for each fd it closes, both of which
+            // dereference state (`JSGlobalObject`, `RareData.file_polls`,
+            // `runtime_state().timer`) that step 3/5 below free. Deferring it
+            // to `destroy()`'s `deinit_runtime_state` is a UAF. Must FOLLOW
+            // `close_all_socket_groups`: its on_close JS can call
+            // `dns.resolve*()`, and `Resolver::get_channel()` lazily re-inits
+            // on `channel == None` — running this earlier lets a re-created
+            // channel survive to `GlobalData::drop` (the original UAF).
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.close_dns_for_terminate)();
+            }
             // Stop cross-thread posters first: markTerminating() serializes
             // with postTaskTo() on the contexts-map lock, so after this call
             // every task another thread has already enqueued is visible to the
@@ -1391,7 +1404,6 @@ impl WebWorker {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
             drop(unsafe { bun_core::heap::take(env_map) });
         }
-        bun_core::delete_all_pools_for_thread_exit();
         // Same reason as the uWS loop below: this thread's C++ thread_local destructors are not
         // guaranteed to run before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.

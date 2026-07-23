@@ -24,9 +24,7 @@ use crate::webcore::blob::store::Data as StoreData;
 // Canonical re-exports (struct + registry live in bun_http now)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_http::ssl_config::{
-    GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr, global_registry,
-};
+pub use bun_http::ssl_config::SSLConfig;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
@@ -178,21 +176,37 @@ impl SSLConfigFromJs for SSLConfig {
         result.secure_options = generated.secure_options;
         result.ssl_min_version = generated.ssl_min_version;
         result.ssl_max_version = generated.ssl_max_version;
+        result.session_timeout = generated.session_timeout;
+        result.allow_partial_trust_chain = generated.allow_partial_trust_chain;
+        if let Some(sigalgs) = generated.sigalgs.get() {
+            result.sigalgs = zbox_into_raw(&sigalgs.to_owned_slice_z());
+            any = true;
+        }
         any = any
             || result.low_memory_mode
             || generated.reject_unauthorized.is_some()
             || generated.request_cert
             || result.secure_options != 0
             || result.ssl_min_version != 0
-            || result.ssl_max_version != 0;
+            || result.ssl_max_version != 0
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
         result.key = handle_file_for_field(global, "key", &generated.key)?;
+        result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
             || result.ca.is_some()
             || result.cert.is_some()
-            || result.key.is_some();
+            || result.key.is_some()
+            || result.crl.is_some()
+            || result.secure_options != 0
+            || result.ssl_min_version != 0
+            || result.ssl_max_version != 0
+            || !result.sigalgs.is_null()
+            || result.session_timeout != 0
+            || result.allow_partial_trust_chain;
 
         if let Some(key_file) = generated.key_file.get() {
             result.key_file_name = handle_path(global, "keyFile", &key_file)?;
@@ -239,16 +253,6 @@ impl SSLConfigFromJs for SSLConfig {
         // We don't need to deinit `result` if `any` is false.
         if any { Ok(Some(result)) } else { Ok(None) }
     }
-}
-
-/// Free-function aliases for callers that prefer module-path syntax.
-#[inline]
-pub fn from_js(
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
 }
 
 /// The `SSLConfig` for the `tls: true` shorthand: every option at its

@@ -137,7 +137,6 @@ impl Default for InitOptions {
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
-    pub has_loaded_constructors: bool,
     // LIFETIME-ERASED: `Transpiler<'a>` borrows `log`/`allocator`; VM is
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
@@ -207,7 +206,6 @@ pub struct VirtualMachine {
     /// hide bun:wrap from stack traces
     pub hide_bun_stackframes: bool,
 
-    pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
@@ -235,8 +233,6 @@ pub struct VirtualMachine {
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,
 
-    pub transpiled_count: usize,
-    pub resolved_count: usize,
     pub had_errors: bool,
 
     pub macros: MacroMap,
@@ -251,7 +247,6 @@ pub struct VirtualMachine {
     /// on the 0↔1 transition so the guard is reentrant; this is the signal
     /// [`drop_source_code_printer_if_macro_owned`] uses.
     pub macro_guard_depth: u32,
-    pub no_macros: bool,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
     pub has_any_macro_remappings: bool,
@@ -287,14 +282,11 @@ pub struct VirtualMachine {
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub resolved_path_dups: Vec<Box<[u8]>>,
-    pub is_us_loop_entered: bool,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
-
-    pub auto_install_dependencies: bool,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
@@ -317,11 +309,6 @@ pub struct VirtualMachine {
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
     pub has_terminated: bool,
-
-    #[cfg(debug_assertions)]
-    pub debug_thread_id: std::thread::ThreadId,
-    #[cfg(not(debug_assertions))]
-    pub debug_thread_id: (),
 
     /// `Cell` so [`EventLoop`] (a value field of this struct) can flip the flag
     /// through `vm_ref()` (`&VirtualMachine`) without forming an overlapping
@@ -705,11 +692,6 @@ impl VirtualMachine {
         VM.get().is_some()
     }
 
-    /// Installs `vm` as the current thread's VM.
-    pub fn set_current(vm: *mut VirtualMachine) {
-        VM.set(Some(vm));
-    }
-
     /// Returns `&'static` so callers can hold the global across `&mut self`
     /// reborrows (`JSGlobalObject` is a separate JSC heap allocation, so no
     /// overlap with `VirtualMachine` storage). Same `'static`-on-the-JS-thread
@@ -1063,14 +1045,6 @@ impl VirtualMachine {
         self.event_loop_mut().wakeup();
     }
 
-    pub fn on_quiet_unhandled_rejection_handler(
-        this: &mut VirtualMachine,
-        _: &JSGlobalObject,
-        _: JSValue,
-    ) {
-        this.unhandled_error_counter += 1;
-    }
-
     pub fn on_quiet_unhandled_rejection_handler_capture_value(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
@@ -1178,13 +1152,6 @@ impl VirtualMachine {
         self.transpiler_store.enabled = true;
     }
 
-    pub fn prepare_loop(&mut self) {}
-
-    pub fn enter_uws_loop(&mut self) {
-        // event_loop_handle is set in ensure_waker before any caller reaches here.
-        self.platform_loop_opt().expect("event_loop_handle").run();
-    }
-
     pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {
         // accessed here (no overlapping `&mut EventLoop`).
         self.event_loop_mut().enqueue_task(task);
@@ -1197,16 +1164,6 @@ impl VirtualMachine {
     #[inline(always)]
     pub fn drain_microtasks(&mut self) {
         let _ = self.event_loop_mut().drain_microtasks();
-    }
-
-    pub fn assert_on_js_thread(&self) {
-        #[cfg(debug_assertions)]
-        {
-            assert!(
-                std::thread::current().id() == self.debug_thread_id,
-                "VirtualMachine accessed from wrong thread"
-            );
-        }
     }
 
     /// Acquires the JSC API lock for the duration of `f()`.
@@ -1458,6 +1415,15 @@ impl VirtualMachine {
     }
 
     pub fn on_before_exit(&mut self) {
+        // Node only emits 'beforeExit' on a natural drain; a fatal uncaught
+        // exception that brought us here is an implicit process.exit(1). Arm
+        // the hard-exit flag ourselves since we're skipping the dispatch that
+        // would have set it, so a throw from an 'exit' listener still stops
+        // subsequent listeners.
+        if self.unhandled_error_counter > 0 {
+            self.exit_on_uncaught_exception = true;
+            return;
+        }
         ExitHandler::dispatch_on_before_exit(self);
         let mut dispatch = false;
         loop {
@@ -1467,7 +1433,10 @@ impl VirtualMachine {
                 dispatch = true;
             }
 
-            if dispatch {
+            // Same guard as on entry: a fatal throw during the inner drain
+            // must not re-dispatch. The main-thread case already hard-exits
+            // via `exit_on_uncaught_exception`; this covers workers.
+            if dispatch && self.unhandled_error_counter == 0 {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
 
@@ -1594,6 +1563,13 @@ impl VirtualMachine {
                     .as_deref_mut()
                     .unwrap()
                     .close_all_socket_groups(vm_ref);
+            }
+            // Destroy the per-VM c-ares channel while JSC / `RareData.file_polls`
+            // / `runtime_state` are all still live — `ares_destroy()` re-enters
+            // them from its EDESTRUCTION and socket-state callbacks. Mirrors
+            // `WebWorker::shutdown`.
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.close_dns_for_terminate)();
             }
 
             // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
@@ -1825,6 +1801,14 @@ pub struct RuntimeHooks {
     /// `vm` is the live per-thread VM; `runtime_state` must still be installed
     /// and the JSC heap must not have been swept yet.
     pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
+    /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
+    /// the event loop, `RareData.file_polls`, and `runtime_state` are all
+    /// live. `ares_destroy()` re-enters the resolver's socket-state and query
+    /// callbacks; deferring it to `deinit_runtime_state`'s `RuntimeState` drop
+    /// runs those callbacks against freed state. No-op when the resolver was
+    /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
+    /// right after `close_all_socket_groups`.
+    pub close_dns_for_terminate: fn(),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -2012,7 +1996,7 @@ impl VirtualMachine {
         //
         // Note (validity): the zeroed bytes are NOT a valid
         // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
-        // fn(...)`, (debug) `debug_thread_id: ThreadId`, every `Vec`/`Box`/
+        // fn(...)`, every `Vec`/`Box`/
         // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), `URL`
         // (`&[u8]` references), and `Option<bool>` (bool-niche → zero = Some)
         // have no all-zero repr. We therefore never materialize
@@ -2116,8 +2100,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).channel_ref).write(Default::default());
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
-            #[cfg(debug_assertions)]
-            addr_of_mut!((*vm).debug_thread_id).write(std::thread::current().id());
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
             addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_threading::Mutex::new());
@@ -2218,20 +2200,6 @@ impl VirtualMachine {
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
-        Ok(vm)
-    }
-
-    /// `init` + set `main` to `entry_path`. Convenience for the
-    /// `bun -e` / `bun run <file>` boot path.
-    pub fn init_with_main(
-        opts: InitOptions,
-        entry_path: &[u8],
-    ) -> crate::CrateResult<*mut VirtualMachine> {
-        let vm = Self::init(opts)?;
-        // SAFETY: `vm` is the unique live VM on this thread.
-        let vm_ref = unsafe { &mut *vm };
-        vm_ref.set_main(entry_path);
-        vm_ref.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         Ok(vm)
     }
 
@@ -2470,20 +2438,6 @@ impl VirtualMachine {
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))
-    }
-
-    /// Drain pending tasks/microtasks if the event loop is not currently
-    /// re-entered. Convenience used after top-level evaluation on
-    /// the `bun -e` path.
-    pub fn drain_queues_if_needed(&mut self) {
-        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
-        // accessed here (no overlapping `&mut EventLoop`).
-        if self.event_loop_mut().entered_event_loop_count > 0 {
-            return;
-        }
-        self.event_loop_mut().tick();
-        let _ = self.event_loop_mut().drain_microtasks();
-        self.global().handle_rejected_promises();
     }
 }
 
@@ -2814,7 +2768,6 @@ pub struct Options {
     // CLI option struct lives in `bun_cli`, a forward dep). See
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
     pub is_main_thread: bool,
-    pub destruct_main_thread_on_exit: bool,
 }
 
 /// State of the child-side IPC channel: enabled-but-waiting for a JS listener, or fully initialized.
@@ -2838,18 +2791,11 @@ pub struct IPCInstance {
     #[cfg(not(unix))]
     pub group: (),
     pub data: crate::ipc::SendQueue,
-    pub has_disconnect_called: bool,
 }
 
 impl IPCInstance {
     pub fn new(v: IPCInstance) -> *mut IPCInstance {
         bun_core::heap::into_raw(Box::new(v))
-    }
-    pub fn ipc(&mut self) -> Option<&mut crate::ipc::SendQueue> {
-        Some(&mut self.data)
-    }
-    pub fn get_global_this(&self) -> Option<*mut JSGlobalObject> {
-        Some(self.global_this)
     }
     /// Only reached from the `get_ipc_instance` error path.
     ///
@@ -3625,31 +3571,6 @@ impl VirtualMachine {
         self.event_loop_mut().enqueue_task_concurrent(task);
     }
 
-    /// `cond` is `&Cell<bool>` (not `&mut bool`): the re-entrant
-    /// `tick()/auto_tick()` calls run JS that flips the flag through an
-    /// independently-captured handle, so the read must not be `noalias`.
-    /// `Cell` is `!Freeze`, which suppresses the LLVM `noalias`/`readonly`
-    /// attributes and forces a real reload on every `.get()` — no raw-pointer
-    /// laundering needed for the condition.
-    pub fn wait_for(&mut self, cond: &core::cell::Cell<bool>) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is
-        // LLVM-`noalias`, but `tick()/auto_tick()` re-enter JS which reaches
-        // `self` again via `VirtualMachine::get()`. Launder `self` so each
-        // access goes through an opaque address.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        while !cond.get() {
-            // SAFETY: `this` is the unique live VM; each deref is a momentary
-            // access only (no borrow held across the re-entrant call).
-            unsafe { (*this).event_loop_mut().tick() };
-            if !cond.get() {
-                // SAFETY: as above — momentary deref of the unique live VM,
-                // no borrow held across the re-entrant call.
-                unsafe { (*this).auto_tick() };
-            }
-        }
-    }
-
     /// Ticks the event loop until no tasks keep it alive.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {
@@ -4229,7 +4150,6 @@ impl VirtualMachine {
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
         ret.result = Some(result);
-        self.resolved_count += 1;
 
         Ok(())
     }
@@ -4794,7 +4714,6 @@ impl VirtualMachine {
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);
-        self.has_loaded_constructors = true;
         if let Some(IPCInstanceUnion::Initialized(inst)) = self.ipc {
             // SAFETY: `inst` was produced by `IPCInstance::new` and stays live
             // until `IPCInstance::deinit`; repoint at the new global so
@@ -5370,7 +5289,6 @@ impl VirtualMachine {
                 },
                 source_map: None,
                 prefetched_source_code: None,
-                name: None,
             })
         } else {
             self.resolve_source_mapping(
@@ -6426,7 +6344,6 @@ impl VirtualMachine {
             mapping,
             source_map: Some(map),
             prefetched_source_code: None,
-            name: None,
         })
     }
 
@@ -6474,7 +6391,6 @@ impl VirtualMachine {
                     core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
                     crate::ipc::SocketUnion::Uninitialized,
                 ),
-                has_disconnect_called: false,
             });
             // PROVENANCE: `from_fd` STORES the `*mut SendQueue` in the socket
             // ext slot for the socket's lifetime, so that pointer must derive
@@ -6526,7 +6442,6 @@ impl VirtualMachine {
                     core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
                     crate::ipc::SocketUnion::Uninitialized,
                 ),
-                has_disconnect_called: false,
             });
             // Per-use raw deref — do NOT bind a `&mut IPCInstance` here: it
             // would remain live across `deinit(instance)` on the failure
@@ -6566,11 +6481,6 @@ impl VirtualMachine {
         unsafe { (*instance).data.write_version_packet(self.global()) };
 
         Some(instance)
-    }
-
-    /// To satisfy the interface from NewHotReloader().
-    pub fn get_loaders(&mut self) -> &mut bun_ast::LoaderHashTable {
-        &mut self.transpiler.options.loaders
     }
 
     /// To satisfy the interface from NewHotReloader().

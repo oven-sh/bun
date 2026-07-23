@@ -22,25 +22,6 @@
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
-#if CPU(X86_64) && !OS(WINDOWS)
-extern "C" void bun_warn_avx_missing(const char* url)
-{
-    __builtin_cpu_init();
-    if (__builtin_cpu_supports("avx")) {
-        return;
-    }
-
-    static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
-    const size_t len = strlen(str);
-
-    char buf[512];
-    strcpy(buf, str);
-    strcpy(buf + len, url);
-    strcpy(buf + len + strlen(url), "\n\0");
-    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
-}
-#endif
-
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
 extern "C" int32_t get_process_priority(int32_t pid)
@@ -233,25 +214,21 @@ extern "C" size_t Bun__memoryFootprint()
 #define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
-extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
+extern "C" void clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 {
-    static LARGE_INTEGER ticksPerSec;
+    // C++11 thread-safe static init: Timespec::now() runs on multiple threads.
+    // QueryPerformanceFrequency is documented to always succeed on Windows XP+.
+    static const LARGE_INTEGER ticksPerSec = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+
     LARGE_INTEGER ticks;
-
-    if (!ticksPerSec.QuadPart) {
-        QueryPerformanceFrequency(&ticksPerSec);
-        if (!ticksPerSec.QuadPart) {
-            errno = ENOTSUP;
-            return -1;
-        }
-    }
-
     QueryPerformanceCounter(&ticks);
 
     *tv_sec = (int64_t)(ticks.QuadPart / ticksPerSec.QuadPart);
     *tv_nsec = (int64_t)(((ticks.QuadPart % ticksPerSec.QuadPart) * NS_PER_SEC) / ticksPerSec.QuadPart);
-
-    return 0;
 }
 
 extern "C" void windows_enable_stdio_inheritance()

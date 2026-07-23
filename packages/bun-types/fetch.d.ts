@@ -34,29 +34,29 @@ declare module "bun" {
 
     interface BunHeadersOverride extends LibOrFallbackHeaders {
       /**
-       * Converts {@link Headers} to a plain JavaScript object.
+       * Convert {@link Headers} to a plain JavaScript object.
        *
-       * About 10x faster than `Object.fromEntries(headers.entries())`.
+       * About 10x faster than `Object.fromEntries(headers.entries())`
        *
-       * Called when you run `JSON.stringify(headers)`.
+       * Called when you run `JSON.stringify(headers)`
        *
-       * Does not preserve insertion order. Well-known header names are lowercased; other header names are left as-is.
+       * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
        */
       toJSON(): Record<string, string> & { "set-cookie"?: string[] };
 
       /**
-       * The number of headers.
+       * Get the total number of headers
        */
       readonly count: number;
 
       /**
-       * Gets all values for the given header name.
+       * Get all headers matching the name
        *
-       * Only `"Set-Cookie"` is supported. Any other header name returns an empty array.
+       * Only supports `"Set-Cookie"`. All other headers are empty arrays.
        *
-       * @param name The header name
+       * @param name - The header name to get
        *
-       * @returns The header's values
+       * @returns An array of header values
        *
        * @example
        * ```ts
@@ -67,6 +67,18 @@ declare module "bun" {
        * ```
        */
       getAll(name: "set-cookie" | "Set-Cookie"): string[];
+
+      /**
+       * Remove all headers.
+       *
+       * @example
+       * ```ts
+       * const headers = new Headers({ "Content-Type": "text/plain" });
+       * headers.clear();
+       * headers.has("Content-Type"); // false
+       * ```
+       */
+      clear(): void;
     }
 
     interface BunRequestOverride extends LibOrFallbackRequest {

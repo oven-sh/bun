@@ -34,13 +34,6 @@ namespace WebCore {
 
 // FIXME: Not every header fits into a map. Notably, multiple Set-Cookie header fields are needed to set multiple cookies.
 
-// ASCII-lowercase a header name. Equivalent to String::convertToASCIILowercase
-// but routes both the 8-bit and 16-bit paths through Highway SIMD kernels so
-// the scan and copy don't depend on the build's -march. Returns the original
-// String (no allocation) when it is already lowercase, matching the WTF
-// behavior.
-String lowercaseHeaderName(const String &);
-
 class HTTPHeaderMap {
 public:
     struct CommonHeader {
@@ -74,7 +67,7 @@ public:
         bool operator==(const UncommonHeader &other) const { return key == other.key && value == other.value; }
     };
 
-    typedef Vector<CommonHeader, 2, CrashOnOverflow, 6> CommonHeadersVector;
+    typedef Vector<CommonHeader, 0, CrashOnOverflow, 6> CommonHeadersVector;
     typedef Vector<UncommonHeader, 0, CrashOnOverflow, 0> UncommonHeadersVector;
 
     class HTTPHeaderMapConstIterator {
@@ -108,7 +101,7 @@ public:
                     return WTF::httpHeaderNameStringImpl(keyAsHTTPHeaderName.value());
                 }
 
-                return lowercaseHeaderName(key);
+                return key.convertToASCIILowercase();
             }
         };
 
@@ -181,6 +174,7 @@ public:
     {
         m_commonHeaders.clear();
         m_uncommonHeaders.clear();
+        m_setCookieHeaders.clear();
     }
 
     void shrinkToFit()
@@ -270,8 +264,9 @@ public:
     template<class Encoder> void encode(Encoder &) const;
     template<class Decoder> [[nodiscard]] static bool decode(Decoder &, HTTPHeaderMap &);
     void setUncommonHeader(const String &name, const String &value);
-    void addUncommonHeader(const String &name, const String &value);
-    void addUncommonHeaderCloneName(const StringView name, const String &value);
+    void setUncommonHeaderCloneName(const StringView name, const String &value);
+    void addUncommonHeader(const String& name, const String& value);
+    void addUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
@@ -326,6 +321,7 @@ void HTTPHeaderMap::encode(Encoder &encoder) const
 {
     encoder << m_commonHeaders;
     encoder << m_uncommonHeaders;
+    encoder << m_setCookieHeaders;
 }
 
 template<class Decoder>
@@ -337,7 +333,12 @@ bool HTTPHeaderMap::decode(Decoder &decoder, HTTPHeaderMap &headerMap)
     if (!decoder.decode(headerMap.m_uncommonHeaders))
         return false;
 
+    if (!decoder.decode(headerMap.m_setCookieHeaders))
+        return false;
+
     return true;
 }
+
+String lowercaseHeaderName(const String& name);
 
 } // namespace WebCore

@@ -459,6 +459,20 @@ describe("execArgv option", async () => {
     );
   });
 
+  it("a glued short-flag value is split like bun's own CLI parser", async () => {
+    // `bun -r./setup.js app.js` puts the verbatim token into process.execArgv,
+    // so the execArgv round-trip must accept and honor -r<path> and -r=<path>.
+    using dir = tempDir("worker-execargv-glued", { "preload-g.js": "globalThis.__glued = 'G';" });
+    for (const form of [`-r${join(String(dir), "preload-g.js")}`, `-r=${join(String(dir), "preload-g.js")}`]) {
+      const w = new Worker("require('worker_threads').parentPort.postMessage(globalThis.__glued);", {
+        eval: true,
+        execArgv: [form],
+      });
+      const [got] = await once(w, "message");
+      expect(got).toBe("G");
+    }
+  });
+
   it("--require in execArgv runs before the worker entry", async () => {
     using dir = tempDir("worker-execargv-require", { "preload-a.js": "console.log('A');" });
     const w = new Worker("console.log('B');", {

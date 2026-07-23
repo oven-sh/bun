@@ -243,12 +243,21 @@ fn normalized(name: &[u8]) -> Vec<u8> {
 }
 
 /// Split a token into (name, value): `--x=v` → (`--x`, `Some(v)`).
-/// Short flags (single dash) never carry `=` values, matching node.
+/// A short flag may glue its value with or without `=` (`-r./a.js`,
+/// `-r=./a.js` → (`-r`, `./a.js`)), matching `bun_clap`'s short-flag
+/// parsing — `create_exec_argv` pushes such tokens verbatim into
+/// `process.execArgv`, so the round-trip must split them the same way.
 fn split_token(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
     if tok.starts_with(b"--") {
         if let Some(pos) = tok.iter().position(|&b| b == b'=') {
             return (&tok[..pos], Some(&tok[pos + 1..]));
         }
+        return (tok, None);
+    }
+    if tok.len() > 2 && tok.starts_with(b"-") {
+        let rest = &tok[2..];
+        let rest = if rest[0] == b'=' { &rest[1..] } else { rest };
+        return (&tok[..2], Some(rest));
     }
     (tok, None)
 }

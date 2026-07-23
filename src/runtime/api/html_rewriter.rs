@@ -16,11 +16,11 @@ use bun_jsc::{
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
 use bun_jsc::virtual_machine::VirtualMachine;
 
+use crate::webcore::blob::BlobExt as _;
+use crate::webcore::response::HeadersRef;
 use crate::webcore::resumable_sink::{
     ResumableHTMLRewriterSink, ResumableSink, ResumableSinkBackpressure, ResumableSinkContext,
 };
-use crate::webcore::blob::BlobExt as _;
-use crate::webcore::response::HeadersRef;
 use crate::webcore::{self, ReadableStream, Response};
 use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
@@ -993,10 +993,13 @@ impl BufferOutputSink {
         }
 
         // SAFETY: sink is a live heap allocation (refcount > 0).
-        let bytes =
-            core::mem::replace(unsafe { &mut (*sink).input_buffer }, MutableString::init_empty());
+        let bytes = core::mem::replace(
+            unsafe { &mut (*sink).input_buffer },
+            MutableString::init_empty(),
+        );
         // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
-        if let Some(ret_err) = unsafe { Self::run_output_sink(sink, bytes.list.as_slice(), is_async) }
+        if let Some(ret_err) =
+            unsafe { Self::run_output_sink(sink, bytes.list.as_slice(), is_async) }
         {
             ret_err.ensure_still_alive();
             ret_err.protect();

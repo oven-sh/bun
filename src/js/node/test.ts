@@ -3206,18 +3206,25 @@ function standaloneQueueHasOnly(entries: StandaloneEntry[]): boolean {
   return entries.some(entryHasOnly);
 }
 
-// Keeps only-marked branches: an only suite keeps all children; a plain suite
-// with only-marked descendants keeps just those branches.
+// Keeps only-marked branches. An only suite keeps all children unless it has
+// only-marked descendants, in which case only those run (node's documented
+// rule); a plain suite with only-marked descendants keeps just those branches.
 function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
+    const children = entry.node.standaloneChildren ?? [];
     if (entry.node.onlyFlag) {
+      if (entry.isSuite && children.some(entryHasOnly)) {
+        const keptChildren = pruneToOnly(children);
+        entry.node.standaloneChildren = keptChildren;
+        entry.node.childrenCount = keptChildren.length;
+      }
       kept.push(entry);
       continue;
     }
     if (!entry.isSuite) continue;
-    if (!entryHasOnly(entry)) continue;
-    const keptChildren = pruneToOnly(entry.node.standaloneChildren ?? []);
+    if (!children.some(entryHasOnly)) continue;
+    const keptChildren = pruneToOnly(children);
     entry.node.standaloneChildren = keptChildren;
     entry.node.childrenCount = keptChildren.length;
     kept.push(entry);

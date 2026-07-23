@@ -89,6 +89,8 @@ const EXCLUDE_FN =
 // (1) self-alias Bun.write(f,f) CopyFileWindows aliasing; (2) any missing/
 // unopenable source -> on_copy_file ENOENT retry loop. Both reported.
 const WRITE_MODE = process.env.WSF_GEN_MODE === "write";
+// serve mode: one server, many hostile concurrent clients, stop mid-traffic.
+const SERVE_MODE = process.env.WSF_GEN_MODE === "serve";
 const KNOWN_BROKEN_FN = process.env.WSF_ALLOW_BROKEN || WRITE_MODE ? /^$/ : /^(write)$/;
 // node module callables ("node:fs" containers): fs.readFileSync(...),
 // child_process.spawn(...). Names that block the process (readline
@@ -675,7 +677,49 @@ function genLifecycle() {
 emit(`// --- generated statements --------------------------------------------------`);
 // Seed the pool early: a burst of creations so methods have receivers.
 for (let i = 0; i < Math.min(6, Math.max(3, Math.floor(nStatements / 8))); i++) genCreate();
-for (let i = 0; i < nStatements; i++) {
+if (SERVE_MODE) {
+  // --- server-traffic scenario -----------------------------------------------
+  const handlers = [
+    `fetch(req) { return new Response("ok"); }`,
+    `fetch(req) { return new Response(BIG, { headers: { "x-h": "v".repeat(2000) } }); }`,
+    `fetch(req) { throw new Error("handler-throw"); }`,
+    `async fetch(req) { await Bun.sleep(5); const b = await req.text().catch(() => ""); return new Response(b); }`,
+    `fetch(req) { return new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(65536)); if (Math.random() < 0.3) c.close(); } })); }`,
+    `fetch(req, srv) { if (srv.upgrade(req)) return; return new Response("no-up", { status: 400 }); }`,
+    `fetch(req) { return new Response(Bun.file(P("big.bin"))); }`,
+    `async fetch(req) { for await (const _ of req.body ?? []) {} return new Response("drained"); }`,
+    `fetch(req, srv) { srv.stop(); return new Response("stopped-self"); }`,
+    `fetch(req) { return Response.redirect("http://" + req.headers.get("host") + "/loop", 302); }`,
+  ];
+  const wsHandlers = `websocket: { open(ws) { ws.send("x".repeat(1024)); if (${rnd() < 0.5}) ws.close(); }, message(ws, m) { try { ws.send(m); ws.publish?.("t", m); } catch {} if (${rnd() < 0.3}) ws.terminate?.(); }, close() {}, drain() {}, ping() {}, pong() {} },`;
+  emit(`const $S = Bun.serve({ port: 0, development: false, ${pick(handlers)}, ${wsHandlers} error(e) { return new Response("err", { status: 500 }); } });`);
+  emit(`const CRLF = String.fromCharCode(13, 10);`);
+  emit(`const $U = "http://127.0.0.1:" + $S.port + "/p";`);
+  const nClients = int(6, 26);
+  const clientKinds = [
+    () => `fetch($U + "?q=" + ${vid}, { signal: AbortSignal.timeout(${int(0, 40)}) }).then(r => r.arrayBuffer()).catch(() => {})`,
+    () => `(async () => { const ac = new AbortController(); const p = fetch($U, { method: "POST", body: BIG, signal: ac.signal }).catch(() => {}); ${rnd() < 0.7 ? `await Bun.sleep(${int(0, 15)}); ac.abort();` : ""} await p; })()`,
+    () => `fetch($U, { method: "POST", body: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("x".repeat(4096))); ${rnd() < 0.5 ? "c.error(new Error(\"body-err\"));" : "c.close();"} } }), duplex: "half" }).then(r => r.text()).catch(() => {})`,
+    () => `Bun.connect({ hostname: "127.0.0.1", port: $S.port, socket: { open(s) { s.write("GET / HTTP/1.1" + CRLF + "Host: x" + CRLF + ${rnd() < 0.5 ? '"Content-Length: 99999" + CRLF + ' : ""}CRLF + ${rnd() < 0.5 ? '"GARBAGE"' : '""'}); ${pick(["s.end();", "s.shutdown?.();", "s.destroy?.();", ""])} }, data(s) { ${rnd() < 0.5 ? "s.end();" : ""} }, close() {}, error() {} } }).catch(() => {})`,
+    () => `(async () => { const ws = new WebSocket("ws://127.0.0.1:" + $S.port + "/ws"); ws.onopen = () => { try { ws.send("m".repeat(${int(1, 65536)})); } catch {} ${rnd() < 0.6 ? "ws.close();" : ""} }; ws.onerror = () => {}; await Bun.sleep(${int(5, 60)}); try { ws.terminate?.() ?? ws.close(); } catch {} })()`,
+    () => `fetch($U, { headers: { "h": "v".repeat(${pick(["100", "8000", "64000"])}) } }).then(r => r.text()).catch(() => {})`,
+  ];
+  emit(`const $clients = [`);
+  for (let i = 0; i < nClients; i++) emit(`  ${pick(clientKinds)()},`);
+  emit(`];`);
+  // stop / reload the server mid-traffic
+  const midOps = [
+    `Bun.sleep(${int(0, 30)}).then(() => { try { $S.stop(${rnd() < 0.5 ? "true" : ""}); } catch {} })`,
+    `Bun.sleep(${int(0, 30)}).then(() => { try { $S.reload({ fetch() { return new Response("reloaded"); } }); } catch {} })`,
+    `Bun.sleep(${int(0, 30)}).then(() => { try { $S.publish?.("t", "broadcast"); } catch {} })`,
+    `Promise.resolve()`,
+  ];
+  emit(`$clients.push(${pick(midOps)});`);
+  emit(`await Promise.race([Promise.allSettled($clients), Bun.sleep(2500)]);`);
+  emit(`try { $S.stop(true); } catch {}`);
+  emit(`await Bun.sleep(30);`);
+}
+for (let i = 0; i < (SERVE_MODE ? 0 : nStatements); i++) {
   const r = rnd();
   if (WRITE_MODE) {
     // Bun.write / Bun.file depth: every call, every source shape

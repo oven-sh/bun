@@ -220,9 +220,9 @@ impl Watcher {
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
-        // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
-        // via `running`/`close_descriptors` and the thread frees the Box.
-        self.thread = Some(
+        let spawn = || {
+            // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
+            // via `running`/`close_descriptors` and the thread frees the Box.
             std::thread::Builder::new()
                 .name("FileWatcher".into())
                 .spawn(move || unsafe {
@@ -242,9 +242,26 @@ impl Watcher {
                         .raw_os_error()
                         .map(bun_errno::from_errno)
                         .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-                    crate::Error::Sys(errno)
-                })?,
-        );
+                    errno
+                })
+        };
+        // pthread_create/CreateThread EAGAIN is transient thread/memory
+        // pressure; retry with bounded backoff (≤255ms total) before
+        // propagating to the caller (which panics under --hot/--watch).
+        let mut backoff_ms = 1u64;
+        self.thread = Some(loop {
+            match spawn() {
+                Ok(handle) => break handle,
+                Err(errno) => {
+                    if errno == bun_errno::SystemErrno::EAGAIN && backoff_ms <= 128 {
+                        std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
+                        backoff_ms *= 2;
+                        continue;
+                    }
+                    return Err(crate::Error::Sys(errno));
+                }
+            }
+        });
         Ok(())
     }
 

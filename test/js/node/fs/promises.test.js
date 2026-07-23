@@ -576,6 +576,15 @@ describe("readFile/writeFile accept AbortSignal-shaped objects", () => {
     w.close();
   });
 
+  test("fs.watch with a pre-aborted signal-shaped object closes on nextTick", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-watch-aborted", { "f.txt": "hello" });
+    const aborted = { aborted: true, reason: new Error("stop"), addEventListener() {}, removeEventListener() {} };
+    const w = fs.watch(dir, { signal: aborted });
+    const { promise, resolve } = Promise.withResolvers();
+    w.on("close", resolve);
+    await promise;
+  });
+
   // node's fs.readFile checks `signal.aborted` on the object itself (not via a
   // brand check), so a pre-aborted polyfill signal rejects with AbortError.
   test("a pre-aborted signal-shaped object rejects with AbortError", async () => {

@@ -14,7 +14,6 @@ const {
   RegExpPrototypeSymbolReplace,
   RegExpPrototypeSymbolSplit,
   StringPrototypeIncludes,
-  StringPrototypeReplace,
   StringPrototypeSplit,
 } = require("internal/repl/node-primordials");
 
@@ -41,7 +40,7 @@ function decorateErrorStack(err) {
   // last REPLn:l:c frame (drops the REPL top-level + vm runner frames).
   if (typeof err?.stack !== "string") return err;
   let lines = StringPrototypeSplit(err.stack, "\n");
-  lines = ArrayPrototypeMap(lines, l => StringPrototypeReplace(l, /^(\s+at )<anonymous> \((.+)\)$/, "$1$2"));
+  lines = ArrayPrototypeMap(lines, l => RegExpPrototypeSymbolReplace(/^(\s+at )<anonymous> \((.+)\)$/, l, "$1$2"));
   let anonIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     if (RegExpPrototypeExec(/^\s+at REPL\d*:\d+:\d+$/, lines[i]) !== null) anonIdx = i;

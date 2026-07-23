@@ -1775,6 +1775,30 @@ describe.concurrent("node:repl process-global side effects", () => {
     },
     interactiveTimeout,
   );
+
+  test(
+    "REPL survives a tampered RegExp.prototype[Symbol.replace]",
+    async () => {
+      const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough();
+      let buf = ""; out.on("data", d => buf += d);
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
+      r.on("exit", () => { console.log(buf); process.exit(0); });
+      inp.write("RegExp.prototype[Symbol.replace] = () => { throw 0 }\\n");
+      inp.write("oops\\n");
+      inp.write("1+1\\n");
+      inp.end();
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("Uncaught ReferenceError");
+      expect(stdout).toContain("> 2");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
 });
 
 // JSC's Error#stack is an own data property (V8's is an accessor), so a frozen

@@ -514,6 +514,9 @@ async function runOneFile(
     }
   }
   const drainStderr = drainStderrText();
+  // Defuse: a throwing test:stderr listener rejects this while the stdout
+  // read is still suspended, before the finally's .catch attaches.
+  drainStderr.catch(kDefaultFunction);
 
   try {
     const stdout = await new Response(proc.stdout).text();
@@ -590,7 +593,8 @@ async function runOneFile(
     }
 
     // node emits the file node's completion before its verdict, and a failed
-    // completion carries the error too.
+    // completion carries the error too (observed on v26.3.0: the complete is
+    // emitted even when the child reported tests and only subtests failed).
     reporter.emitMessage("test:complete", {
       __proto__: null,
       ...fileNode,

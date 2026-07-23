@@ -1456,16 +1456,12 @@ impl VirtualMachine {
             substitute
         };
         if !handled {
-            // Node's fatal path exits without another loop turn: already
-            // queued I/O completions, timers, immediates, and later ticks
-            // never run — only 'exit' listeners do (via process_exit).
-            // Steady-state main-thread throws take it directly; the
-            // wind-down flag covers the beforeExit/exit phases. Watch/hot
-            // mode keeps the process alive for reload instead (same policy
-            // as the entry-point rejection path in run_command), and
-            // process_exit() RETURNS on a worker so a worker falls through
-            // and routes the error to its parent below.
-            if (self.exit_on_uncaught_exception || self.hot_reload == 0) && self.is_main_thread() {
+            // `beforeExit` has already been dispatched, so the run is winding
+            // down and there is no loop turn left to defer to: print the error
+            // and exit, like node's fatal-exception path. Main thread only:
+            // process_exit() RETURNS on a worker, so the panic would fire; a
+            // worker falls through and exits 1 below (e.g. a beforeExit throw).
+            if self.exit_on_uncaught_exception && self.is_main_thread() {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or

@@ -1507,8 +1507,10 @@ describe.concurrent("--interactive", () => {
   );
 
   // node's `-i` is an alias for --interactive. Bun's own `-i` is
-  // --install=fallback, which has no meaning under node emulation, so the node
-  // meaning wins there; everywhere else `-i` stays --install=fallback.
+  // --install=fallback, which has no meaning under node emulation or on an
+  // invocation that reaches the REPL (bare `bun -i` boots it with the
+  // bunfig/default resolver options); `-i <script>` and `-i -e code` keep
+  // the auto-install meaning.
   test(
     "bun-as-node: `node -i` enters the REPL",
     async () => {
@@ -1528,6 +1530,72 @@ describe.concurrent("--interactive", () => {
     },
     interactiveTimeout,
   );
+
+  test.each([
+    [["-i"], "bare bun -i"],
+    [["run", "-i", "--interactive"], "bun run -i --interactive"],
+    [["-i", "-e", ""], "bun -i -e ''"],
+  ])("%# %s reaches the REPL", async (extra, _label) => {
+    // The three -i spellings the install-meaning predicate must classify as
+    // REPL-bound (Arguments.rs repl_bound_i).
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...extra],
+      env,
+      stdin: Buffer.from("1+1\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("Welcome to Bun");
+    expect(stdout).toContain("2");
+    expect({ stderrHasError: stderr.includes("error"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
+  }, interactiveTimeout);
+
+  test.each(["module", "commonjs", "module-typescript", "commonjs-typescript"])(
+    "--input-type=%s with a file entry is ignored like node",
+    async inputType => {
+      using dir = tempDir("input-type-file", { "entry.js": `console.log("ran");` });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `--input-type=${inputType}`, "entry.js"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("ran");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  test("--input-type with an invalid value exits 9 with node's message", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=bogus", "-e", "1"],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 wording, including the missing space.
+    expect(stderr).toContain('--input-type must be "module","commonjs", "module-typescript" or "commonjs-typescript"');
+    expect(exitCode).toBe(9);
+  });
+
+  test("--input-type with --eval fails loudly instead of ignoring the option", async () => {
+    // node applies module semantics to -e input; bun doesn't implement that,
+    // so accepting-and-ignoring would silently run with the wrong semantics.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=module", "-e", "console.log(typeof require)"],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--input-type is not supported with --eval/--print input");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 
   test(
     "bun run --interactive is not a silent no-op",

@@ -1136,7 +1136,31 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 && args.flag(b"-i")
                 && ctx.positionals.is_empty()
                 && ctx.runtime_options.eval.script.is_empty());
-        ctx.runtime_options.input_type_specified = args.option(b"--input-type").is_some();
+        if let Some(input_type) = args.option(b"--input-type") {
+            match input_type {
+                b"module" | b"commonjs" | b"module-typescript" | b"commonjs-typescript" => {}
+                _ => {
+                    // Node v26.3.0 validates the value at parse time for every
+                    // mode and exits 9; wording verbatim (including the
+                    // missing space after "module",).
+                    bun_core::pretty_errorln!(
+                        "--input-type must be \"module\",\"commonjs\", \"module-typescript\" or \"commonjs-typescript\""
+                    );
+                    Output::flush();
+                    Global::exit(9);
+                }
+            }
+            // Node applies --input-type to -e/-p string input; bun does not
+            // implement that, so fail loudly instead of evaluating with the
+            // wrong module semantics. A file entry point ignores the option
+            // and the REPL rejects it, both like node.
+            if args.option(b"--eval").is_some() || args.option(b"--print").is_some() {
+                bun_core::pretty_errorln!("--input-type is not supported with --eval/--print input in bun");
+                Output::flush();
+                Global::exit(1);
+            }
+            ctx.runtime_options.input_type_specified = true;
+        }
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");

@@ -1532,7 +1532,6 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
   });
 });
 
-// https://github.com/oven-sh/bun/issues/2955
 it.concurrent("send/publish with an empty payload returns the frame size, not 0", async () => {
   let srvWs: ServerWebSocket<unknown>;
   const opened = Promise.withResolvers<void>();
@@ -1567,8 +1566,11 @@ it.concurrent("send/publish with an empty payload returns the frame size, not 0"
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     client.onopen = () => resolve();
     client.onerror = e => reject(e);
+    client.onclose = e => reject(new Error(`closed ${e.code} before open`));
     await promise;
   }
+  client.onerror = e => gotFour.reject(e);
+  client.onclose = e => gotFour.reject(new Error(`closed ${e.code} before four frames`));
   await opened.promise;
 
   // Every empty-payload send/publish writes a 2-byte frame (RFC 6455 header,
@@ -1598,12 +1600,10 @@ it.concurrent("send/publish with an empty payload returns the frame size, not 0"
     serverPublishBinary: 2,
   });
 
-  // The empty frames were delivered, not dropped: the four direct ws.send*
-  // calls above arrive in order.
   await gotFour.promise;
   expect(received.slice(0, 4)).toEqual(["text(0)", "text(0)", "binary(0)", "text(1)"]);
 
-  // 0 still means dropped: once the socket is closed every variant returns 0.
+  client.onclose = null;
   srvWs!.close();
   expect({
     send: srvWs!.send(""),

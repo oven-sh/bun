@@ -137,14 +137,9 @@ extern "C" fn select_alpn_callback(
                 let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
                 ZigString::init(name.to_bytes()).to_js(&global)
             };
-            // The user callback (and the error handler below) run from inside
-            // SSL_do_handshake on this socket: JS that writes to or destroys a
-            // different TLS socket on the same loop re-points the per-loop BIO
-            // routing state, and this handshake's next flight would land on
-            // that other socket's fd. Snapshot and restore it around every
-            // JS-running region. Only a Connected usockets socket uses the
-            // shared loop BIO; UpgradedDuplex/Pipe own mem BIOs (BIO_get_data
-            // is a BUF_MEM*), so skip the save there.
+            // Snapshot the per-loop BIO routing state around JS that may touch
+            // another TLS socket. Connected usockets only: UpgradedDuplex/Pipe
+            // own mem BIOs whose BIO_get_data is a BUF_MEM*, not loop_ssl_data.
             let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
             if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_save(

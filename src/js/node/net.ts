@@ -964,12 +964,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L524
       self.read(0);
     }
-    // Node has no try/catch around these emits; a listener throw reaches C++
-    // InternalCallbackScope and becomes uncaughtException. Bun's native dispatch
-    // routes a throw here to this table's error handler, so reportError in the
-    // catch gives Node-identical behaviour without changing Bun.connect's
-    // documented handshake-throw-to-error-handler contract.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+    // Node: a listener throw here reaches InternalCallbackScope as
+    // uncaughtException; Bun's dispatch would route it to this table's error
+    // handler instead. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
     try {
       if (server) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
@@ -979,8 +976,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
             server.prependOnceListener("secureConnection", connectionListener);
           }
           server.emit("secureConnection", self);
-          // Same post-emit reader check onconnection does for plain net sockets:
-          // the 'connection' emit runs no user code for natively-accepted TLS.
+          // Same post-emit reader check onconnection does for plain net sockets.
           if (self.readableFlowing !== null || self.listenerCount("data") > 0 || self.listenerCount("readable") > 0) {
             self[kReaderInterest] = true;
           }

@@ -693,11 +693,8 @@ pub mod ssl_wrapper {
             }
             // SSL_shutdown only queues close_notify into the write BIO; nothing
             // else pumps it on the memory-BIO paths (duplex / named pipe), so
-            // drain it now or the peer never sees our shutdown. A close_notify
-            // record is ~31 bytes and handle_writing loops on BIO_read, so a
-            // small buffer suffices — shutdown() runs inside handle_traffic's
-            // frame, which already holds a BUFFER_SIZE array.
-            let mut buffer = [0u8; 4096];
+            // drain it now or the peer never sees our shutdown.
+            let mut buffer = [0u8; BUFFER_SIZE];
             Self::r(this).handle_writing(&mut buffer);
             ret == 1 // truly closed
         }

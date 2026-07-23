@@ -5766,3 +5766,87 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("async fs ops snapshot path buffers backed by resizable ArrayBuffers before a shrink can decommit them", async () => {
+  // Pinning the backing ArrayBuffer blocks transfer()/detach but not
+  // ArrayBuffer.prototype.resize: shrinking decommits the tail pages, so a
+  // work-pool thread reading the path bytes after the shrink would fault.
+  // The path bytes must instead be copied at call time (as Node does).
+  using dir = tempDir("fs-rab-path", {
+    "rab-path-fixture.js": String.raw`
+      import fs from "node:fs";
+      import path from "node:path";
+
+      const dir = process.cwd();
+
+      // A resizable-backed path arg is snapshotted at call time: shrinking
+      // right after the call must not affect the rename.
+      {
+        const src = path.join(dir, "real-src.txt");
+        fs.writeFileSync(src, "hi");
+        const srcBytes = Buffer.from(src);
+        const rab = new ArrayBuffer(64 * 1024, { maxByteLength: 64 * 1024 });
+        new Uint8Array(rab).set(srcBytes);
+        const view = new Uint8Array(rab, 0, srcBytes.length);
+        const renamed = fs.promises.rename(view, path.join(dir, "real-dest.txt"));
+        rab.resize(0);
+        await renamed;
+        if (!fs.existsSync(path.join(dir, "real-dest.txt"))) throw new Error("rename did not happen");
+      }
+
+      // Issues 256 renames of a missing source, then shrinks the backing
+      // store while they are still queued on the work pool. Every rename must
+      // reject with ENOENT; a resolution or any other code means the path
+      // bytes were not snapshotted correctly.
+      async function expectAllEnoent(pathArg, rab, dest) {
+        const all = [];
+        for (let i = 0; i < 256; i++) {
+          all.push(fs.promises.rename(pathArg, dest).then(() => "resolved", err => err.code));
+        }
+        rab.resize(0);
+        const codes = await Promise.all(all);
+        if (!codes.every(c => c === "ENOENT")) {
+          throw new Error("expected all ENOENT, got: " + JSON.stringify([...new Set(codes)]));
+        }
+      }
+
+      // Uint8Array view over a resizable ArrayBuffer.
+      {
+        const srcBytes = Buffer.from(path.join(dir, "missing-view"));
+        const rab = new ArrayBuffer(128 * 1024, { maxByteLength: 128 * 1024 });
+        new Uint8Array(rab).set(srcBytes);
+        const view = new Uint8Array(rab, 0, srcBytes.length);
+        await expectAllEnoent(view, rab, path.join(dir, "dest-view"));
+      }
+
+      // DataView over a resizable ArrayBuffer.
+      {
+        const srcBytes = Buffer.from(path.join(dir, "missing-dataview"));
+        const rab = new ArrayBuffer(128 * 1024, { maxByteLength: 128 * 1024 });
+        new Uint8Array(rab).set(srcBytes);
+        const view = new DataView(rab, 0, srcBytes.length);
+        await expectAllEnoent(view, rab, path.join(dir, "dest-dataview"));
+      }
+
+      // Resizable ArrayBuffer passed directly as the path.
+      {
+        const srcBytes = Buffer.from(path.join(dir, "missing-direct"));
+        const rab = new ArrayBuffer(srcBytes.length, { maxByteLength: srcBytes.length });
+        new Uint8Array(rab).set(srcBytes);
+        await expectAllEnoent(rab, rab, path.join(dir, "dest-direct"));
+      }
+
+      console.log("done");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "rab-path-fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+});

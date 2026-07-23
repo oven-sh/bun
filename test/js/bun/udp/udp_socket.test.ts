@@ -627,11 +627,11 @@ test("error handler is called with (socket, error)", async () => {
     },
   });
   const client = await udpSocket({ port: 0, hostname: "127.0.0.1" });
+  let retry: ReturnType<typeof setInterval> | undefined;
   try {
-    const retry = setInterval(() => client.send("ping", server.port, "127.0.0.1"), 20);
+    retry = setInterval(() => client.send("ping", server.port, "127.0.0.1"), 20);
     client.send("ping", server.port, "127.0.0.1");
     const args = await promise;
-    clearInterval(retry);
     expect({
       length: args.length,
       arg0IsServer: args[0] === server,
@@ -644,6 +644,7 @@ test("error handler is called with (socket, error)", async () => {
       message: "boom",
     });
   } finally {
+    if (retry) clearInterval(retry);
     client.close();
     server.close();
   }

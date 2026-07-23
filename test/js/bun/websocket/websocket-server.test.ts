@@ -1354,6 +1354,39 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
 // publish() fans out to N subscribers and must report backpressure/drops the
 // same way ws.send() does for a single socket.
 describe.concurrent("publish() return value reflects subscriber backpressure", () => {
+  // Raw RFC6455 client that handshakes then pauses its read side so the server
+  // accumulates backpressure for it. Resolves once the upgrade 101 is seen.
+  async function connectStalledSubscriber(port: number): Promise<net.Socket> {
+    const handshake = Promise.withResolvers<void>();
+    const slow = net.connect({ port, host: "127.0.0.1" }, () => {
+      slow.write(
+        "GET /slow HTTP/1.1\r\n" +
+          "Host: x\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Version: 13\r\n\r\n",
+      );
+    });
+    // Buffer until the response headers are complete; the 101 may be split
+    // across TCP segments.
+    let response = "";
+    slow.on("data", (d: Buffer) => {
+      response += d.toString("latin1");
+      if (!response.includes("\r\n\r\n")) return;
+      if (response.includes(" 101 ")) {
+        slow.pause();
+        handshake.resolve();
+      } else {
+        handshake.reject(new Error("upgrade failed: " + response));
+      }
+    });
+    slow.on("error", handshake.reject);
+    slow.on("close", () => handshake.reject(new Error("slow socket closed before upgrade")));
+    await handshake.promise;
+    return slow;
+  }
+
   // One paused raw-TCP subscriber; the server-side handle is captured so the
   // test can compare publish() to send() on the same socket.
   async function withSlowSubscriber(
@@ -1395,36 +1428,8 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
       await promise;
     }
 
-    // "slow": raw RFC6455 client that handshakes then pauses its read side so
-    // the server accumulates backpressure for it.
-    const handshake = Promise.withResolvers<void>();
-    const slow = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
-      slow.write(
-        "GET /slow HTTP/1.1\r\n" +
-          "Host: x\r\n" +
-          "Upgrade: websocket\r\n" +
-          "Connection: Upgrade\r\n" +
-          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-          "Sec-WebSocket-Version: 13\r\n\r\n",
-      );
-    });
-    // Buffer until the response headers are complete; the 101 may be split
-    // across TCP segments.
-    let response = "";
-    slow.on("data", (d: Buffer) => {
-      response += d.toString("latin1");
-      if (!response.includes("\r\n\r\n")) return;
-      if (response.includes(" 101 ")) {
-        slow.pause();
-        handshake.resolve();
-      } else {
-        handshake.reject(new Error("upgrade failed: " + response));
-      }
-    });
-    slow.on("error", handshake.reject);
-    slow.on("close", () => handshake.reject(new Error("slow socket closed before upgrade")));
+    const slow = await connectStalledSubscriber(server.port);
     try {
-      await handshake.promise;
       await opened.slow.promise;
       await opened.sender.promise;
       run({ server, slow: sockets.slow, sender: sockets.sender });
@@ -1568,36 +1573,11 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
       healthy.onclose = () => reject(new Error("healthy closed before open"));
       await promise;
     }
+    healthy.onerror = e => allReceived.reject(e);
+    healthy.onclose = () => allReceived.reject(new Error(`healthy closed after ${received}/${expectedTotal}`));
 
-    // Stalled subscriber: raw RFC6455 client that handshakes then pauses its
-    // read side so the server accumulates backpressure for it and it alone.
-    const handshake = Promise.withResolvers<void>();
-    const slow = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
-      slow.write(
-        "GET /slow HTTP/1.1\r\n" +
-          "Host: x\r\n" +
-          "Upgrade: websocket\r\n" +
-          "Connection: Upgrade\r\n" +
-          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-          "Sec-WebSocket-Version: 13\r\n\r\n",
-      );
-    });
-    let response = "";
-    slow.on("data", (d: Buffer) => {
-      response += d.toString("latin1");
-      if (!response.includes("\r\n\r\n")) return;
-      if (response.includes(" 101 ")) {
-        slow.pause();
-        handshake.resolve();
-      } else {
-        handshake.reject(new Error("upgrade failed: " + response));
-      }
-    });
-    slow.on("error", handshake.reject);
-    slow.on("close", () => handshake.reject(new Error("slow socket closed before upgrade")));
-
+    const slow = await connectStalledSubscriber(server.port);
     try {
-      await handshake.promise;
       await opened.slow.promise;
       await opened.healthy.promise;
 
@@ -1632,6 +1612,7 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
       });
       expect(h.dropped).toBeGreaterThan(0);
     } finally {
+      healthy.onclose = null;
       healthy.close();
       slow.destroy();
     }

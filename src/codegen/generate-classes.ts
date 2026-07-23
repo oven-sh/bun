@@ -399,8 +399,10 @@ function generatePrototype(typeName, obj) {
 JSC_DEFINE_HOST_FUNCTION(${fnName}, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::JSValue thisValue = callFrame->thisValue();
-    if (!thisValue.inherits<${className(typeName)}>()) [[unlikely]]
-        return JSC::JSValue::encode(thisValue);
+    if (!thisValue.inherits<${className(typeName)}>()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "${typeName}"_s);
+    }
     static constexpr ASCIILiteral props[] = { ${props.map(p => `${JSON.stringify(p)}_s`).join(", ")} };
     return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "${typeName}"_s, props, ${props.length});
 }

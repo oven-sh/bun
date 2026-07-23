@@ -459,10 +459,16 @@ describe("util.inspect web-platform classes", () => {
     expect(util.format("%o", AbortSignal.abort())).toBe("AbortSignal { aborted: true }");
   });
 
-  test("calling with a foreign receiver falls through without throwing", () => {
-    const fn = Response.prototype[customSymbol];
-    expect(fn.call({}, 2, {})).toEqual({});
-    expect(fn.call(null, 2, {})).toBeNull();
-    expect(() => inspect(Object.create(Response.prototype))).not.toThrow();
+  test("calling with a foreign receiver throws ERR_INVALID_THIS", () => {
+    for (const C of [Response, Request, Headers, Blob, URLSearchParams, FormData, AbortSignal, AbortController]) {
+      const fn = C.prototype[customSymbol];
+      expect(() => fn.call(null)).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }));
+      expect(() => fn.call({}, 2, {})).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+      );
+    }
+    // inspect.js filters the prototype object itself out of the customInspect
+    // dispatch, so inspecting it still formats as a plain object.
+    expect(() => inspect(Headers.prototype)).not.toThrow();
   });
 });

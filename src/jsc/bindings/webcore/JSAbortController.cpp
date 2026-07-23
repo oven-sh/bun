@@ -49,6 +49,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include "streams/WebStreamsInspectCustom.h"
+#include "ErrorCode.h"
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -149,8 +150,10 @@ const ClassInfo JSAbortControllerPrototype::s_info = { "AbortController"_s, &Bas
 JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSValue thisValue = callFrame->thisValue();
-    if (!thisValue.inherits<JSAbortController>()) [[unlikely]]
-        return JSValue::encode(thisValue);
+    if (!thisValue.inherits<JSAbortController>()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "AbortController"_s);
+    }
     static constexpr ASCIILiteral props[] = { "signal"_s };
     return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "AbortController"_s, props, std::size(props));
 }

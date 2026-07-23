@@ -160,8 +160,10 @@ const ClassInfo JSAbortSignalPrototype::s_info = { "AbortSignal"_s, &Base::s_inf
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSValue thisValue = callFrame->thisValue();
-    if (!thisValue.inherits<JSAbortSignal>()) [[unlikely]]
-        return JSValue::encode(thisValue);
+    if (!thisValue.inherits<JSAbortSignal>()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "AbortSignal"_s);
+    }
     static constexpr ASCIILiteral props[] = { "aborted"_s };
     return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "AbortSignal"_s, props, std::size(props));
 }

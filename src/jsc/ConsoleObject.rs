@@ -2174,6 +2174,23 @@ pub mod formatter {
             Self::get_advanced(value, global_this, TagOptions::empty())
         }
 
+        /// `Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype === value`,
+        /// the same gate `util.inspect` uses so a class's prototype object is
+        /// rendered as a plain object instead of being fed to its own
+        /// brand-checked `[nodejs.util.inspect.custom]`.
+        fn is_constructor_prototype(value: JSValue, global_this: &JSGlobalObject) -> JsResult<bool> {
+            let Some(constructor) = value.get_own_truthy(global_this, "constructor")? else {
+                return Ok(false);
+            };
+            if !constructor.is_cell() {
+                return Ok(false);
+            }
+            let Some(prototype) = constructor.get(global_this, "prototype")? else {
+                return Ok(false);
+            };
+            Ok(prototype == value)
+        }
+
         pub fn get_advanced(
             value: JSValue,
             global_this: &JSGlobalObject,
@@ -2258,7 +2275,10 @@ pub mod formatter {
                             ..Default::default()
                         });
                     }
-                    Ok(Some(callback_value)) if callback_value.is_callable() => {
+                    Ok(Some(callback_value))
+                        if callback_value.is_callable()
+                            && !Tag::is_constructor_prototype(value, global_this)? =>
+                    {
                         return Ok(TagResult {
                             tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
                                 function: callback_value,
@@ -3928,12 +3948,23 @@ pub mod formatter {
                 // A custom inspector that returns its own `this` would recurse
                 // forever; re-tag without the custom hook so it falls through to
                 // default formatting (mirrors util.inspect's `ret !== context`).
-                let tag = if result == self.custom_formatted_object.this {
-                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
+                // `print_private` consults `self.disable_inspect_custom` rather
+                // than the tag option, so the suppression has to flow through
+                // the formatter field as well.
+                if result == self.custom_formatted_object.this {
+                    let prev = self.disable_inspect_custom;
+                    self.disable_inspect_custom = true;
+                    let _restore = defer_restore!(self.disable_inspect_custom, prev);
+                    let tag = Tag::get_advanced(
+                        result,
+                        self.global_this,
+                        TagOptions::DISABLE_INSPECT_CUSTOM,
+                    )?;
+                    self.format::<C>(tag, writer_, result, self.global_this)?;
                 } else {
-                    Tag::get(result, self.global_this)?
-                };
-                self.format::<C>(tag, writer_, result, self.global_this)?;
+                    let tag = Tag::get(result, self.global_this)?;
+                    self.format::<C>(tag, writer_, result, self.global_this)?;
+                }
             }
             Ok(())
         }
@@ -4677,7 +4708,9 @@ pub mod formatter {
                 if let Some(callback) =
                     value.fast_get(self.global_this, jsc::BuiltinName::InspectCustom)?
                 {
-                    if callback.is_callable() {
+                    if callback.is_callable()
+                        && !Tag::is_constructor_prototype(value, self.global_this)?
+                    {
                         self.custom_formatted_object = CustomFormattedObject {
                             function: callback,
                             this: value,

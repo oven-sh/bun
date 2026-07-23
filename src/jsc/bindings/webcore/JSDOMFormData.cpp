@@ -57,6 +57,7 @@
 #include "ZigGeneratedClasses.h"
 #include "GCDefferalContext.h"
 #include "streams/WebStreamsInspectCustom.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -224,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototype_inspectCustom, (JSGlobalObject *
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSDOMFormData>(thisValue);
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "FormData"_s);
     JSValue data = WebCore::getInternalProperties(vm, lexicalGlobalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     // getInternalProperties stamps @@toStringTag for toJSON; strip it so the

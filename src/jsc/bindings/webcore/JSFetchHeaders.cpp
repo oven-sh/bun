@@ -44,6 +44,7 @@
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include "streams/WebStreamsInspectCustom.h"
+#include "ErrorCode.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -328,7 +329,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototype_inspectCustom, (JSGlobalObject 
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSFetchHeaders>(thisValue);
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Headers"_s);
     JSValue data = WebCore::getInternalProperties(vm, lexicalGlobalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "Headers"_s, asObject(data)));

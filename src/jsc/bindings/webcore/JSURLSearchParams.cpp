@@ -60,6 +60,7 @@
 #include "wtf/StdLibExtras.h"
 #include "streams/WebStreamsInspectCustom.h"
 #include "ZigGlobalObject.h"
+#include "ErrorCode.h"
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -200,7 +201,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototype_inspectCustom, (JSGlobalObje
     JSValue thisValue = callFrame->thisValue();
     auto* thisObject = dynamicDowncast<JSURLSearchParams>(thisValue);
     if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "URLSearchParams"_s);
 
     JSValue depthValue = callFrame->argument(0);
     JSValue optionsValue = callFrame->argument(1);

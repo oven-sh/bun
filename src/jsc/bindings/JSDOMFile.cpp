@@ -5,6 +5,7 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSDOMFile.h"
 #include "streams/WebStreamsInspectCustom.h"
+#include "ErrorCode.h"
 
 using namespace JSC;
 
@@ -17,8 +18,10 @@ extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObj
 JSC_DEFINE_HOST_FUNCTION(JSBlob__inspectCustom, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::JSValue thisValue = callFrame->thisValue();
-    if (!thisValue.inherits<WebCore::JSBlob>()) [[unlikely]]
-        return JSC::JSValue::encode(thisValue);
+    if (!thisValue.inherits<WebCore::JSBlob>()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Blob"_s);
+    }
 
     if (JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(thisValue))) {
         static constexpr ASCIILiteral props[] = { "size"_s, "type"_s, "name"_s, "lastModified"_s };

@@ -2455,6 +2455,7 @@ mod stylesheet_impl {
                 err: None,
                 selector_expansion_multiplier: 1,
                 selector_expansion_total: 0,
+                token_expansion_total: 0,
             };
 
             if self.rules.minify(&mut minify_ctx, false).is_err() {

@@ -804,6 +804,44 @@ impl TokenList {
         res
     }
 
+    /// Number of `TokenOrValue` nodes in this list, counting through nested
+    /// `Function`/`var()`/`env()`/`light-dark()` etc. so the result reflects
+    /// the allocation a `deep_clone` of this list performs. Used by the
+    /// minify-time token-expansion budget (see
+    /// [`css_rules::MAX_TOKEN_EXPANSION`](crate::css_rules::MAX_TOKEN_EXPANSION)).
+    pub fn token_weight(&self) -> usize {
+        let mut n = self.v.len();
+        for t in self.v.iter() {
+            match t {
+                TokenOrValue::Function(f) => n += f.arguments.token_weight(),
+                TokenOrValue::Var(v) => {
+                    if let Some(fallback) = &v.fallback {
+                        n += fallback.token_weight();
+                    }
+                }
+                TokenOrValue::Env(e) => {
+                    // `indices` is an unbounded `Vec<i32>` that every
+                    // deep_clone reallocates; count each index as one unit
+                    // (conservative: i32 is much smaller than TokenOrValue).
+                    n += e.indices.len();
+                    if let Some(fallback) = &e.fallback {
+                        n += fallback.token_weight();
+                    }
+                }
+                TokenOrValue::UnresolvedColor(c) => match c {
+                    UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                        n += alpha.token_weight();
+                    }
+                    UnresolvedColor::LightDark { light, dark } => {
+                        n += light.token_weight() + dark.token_weight();
+                    }
+                },
+                _ => {}
+            }
+        }
+        n
+    }
+
     pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {

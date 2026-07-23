@@ -118,10 +118,9 @@ pub struct DirInfo {
     pub package_json_for_browser_field: Option<&'static PackageJSON>,
     pub enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
-    /// package.json used for bundling
-    /// it's the deepest one in the hierarchy with a "name" field
-    /// or, if using `bun run`, the name field is optional
-    /// https://github.com/oven-sh/bun/issues/229
+    /// Nearest enclosing package.json; governs `"type"` / sideEffects for
+    /// bundling. Not gated on a `"name"` field: Node's module-format rule
+    /// looks only at the nearest package.json's `"type"`.
     // No write site exists in any caller — kept `Option<&'static>` for
     // ergonomics. If a write is ever added, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,

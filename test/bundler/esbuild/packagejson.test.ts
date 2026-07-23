@@ -1967,6 +1967,51 @@ describe("bundler", () => {
       "/package.json": `{ "type": "module" }`,
     },
   });
+  // Node resolves `.js` module format from the nearest package.json's `"type"` field
+  // alone; a missing `"name"` must not cause the bundler to drop that package.json and
+  // treat the file as ESM (which would leave the namespace empty / `default` undefined).
+  itBundled("packagejson/TypeCommonJSWithoutName", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./c.js";
+        console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(ns.default));
+      `,
+      "/c.js": `globalThis.__x = 1;`,
+      "/package.json": `{ "type": "commonjs" }`,
+    },
+    target: "node",
+    run: {
+      stdout: `["default"] {}`,
+    },
+  });
+  itBundled("packagejson/TypeCommonJSWithoutNameInSubdir", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./pkg/c.js";
+        console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(ns.default));
+      `,
+      "/pkg/c.js": `globalThis.__x = 1;`,
+      "/pkg/package.json": `{ "type": "commonjs" }`,
+    },
+    target: "node",
+    run: {
+      stdout: `["default"] {}`,
+    },
+  });
+  itBundled("packagejson/TypeCommonJSWithName", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./c.js";
+        console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(ns.default));
+      `,
+      "/c.js": `globalThis.__x = 1;`,
+      "/package.json": `{ "name": "p", "type": "commonjs" }`,
+    },
+    target: "node",
+    run: {
+      stdout: `["default"] {}`,
+    },
+  });
   itBundled("packagejson/NodePathsESBuildIssue2752", {
     files: {
       "/src/entry.js": /* js */ `

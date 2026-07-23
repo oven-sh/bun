@@ -1562,13 +1562,23 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
+        // `primary_side_effects_data` describes `path_pair.primary` (the path the
+        // bundler actually parses); the secondary is only carried for the
+        // dual-package-hazard rewrite and gets its own resolve result when it is
+        // reached via `require()`. Evaluating the sideEffects map against the
+        // secondary path here would overwrite the primary's classification.
+        let mut is_primary = true;
         while let Some(path) = iter.next() {
+            let compute_side_effects = is_primary;
+            is_primary = false;
             let name = path.name();
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
-            let mut needs_side_effects = true;
-            if let Some(existing) = Result::deref_package_json(result.package_json) {
+            let mut needs_side_effects = compute_side_effects;
+            if let Some(existing) = Result::deref_package_json(result.package_json)
+                && compute_side_effects
+            {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
@@ -6082,10 +6092,7 @@ impl<'a> Resolver<'a> {
             info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
             if let Some(parent_package_json) = parent_.package_json() {
-                // https://github.com/oven-sh/bun/issues/229
-                if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
-                    info.enclosing_package_json = Some(parent_package_json);
-                }
+                info.enclosing_package_json = Some(parent_package_json);
 
                 if parent_package_json.dependencies.map.count() > 0
                     || parent_package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
@@ -6228,9 +6235,7 @@ impl<'a> Resolver<'a> {
                             info.package_json_for_browser_field = Some(pkg);
                         }
 
-                        if !pkg.name.is_empty() || self.care_about_bin_folder {
-                            info.enclosing_package_json = Some(pkg);
-                        }
+                        info.enclosing_package_json = Some(pkg);
 
                         if pkg.dependencies.map.count() > 0
                             || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID

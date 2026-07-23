@@ -641,7 +641,11 @@ impl Stdio {
         }
 
         // Nothing to write: treat an empty blob the same as "ignore"
-        // (/dev/null at fds 0-2, left closed at extra slots).
+        // (/dev/null at fds 0-2, left closed at extra slots). This diverges
+        // from the empty-ArrayBuffer stdin case above, which now keeps the
+        // pipe; `extract_blob` is also called from the shell's redirect path
+        // (`Cmd.rs`) where a synchronous `on_close_io` inside `start()` would
+        // alias the `&mut subproc.stdin` held at the call site.
         if blob.fast_size() == 0 {
             *self = Stdio::Ignore;
             return Ok(());

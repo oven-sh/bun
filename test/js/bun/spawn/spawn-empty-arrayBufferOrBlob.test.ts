@@ -28,7 +28,8 @@ describe("spawn with empty", () => {
 // An empty stdin buffer should hand the child the same fd type as a non-empty
 // one (a pipe/socket on macOS+Windows, a memfd on Linux), not /dev/null or NUL.
 // Node's spawnSync({input: Buffer.alloc(0)}) never gives the child a character
-// device on any platform.
+// device on any platform. Blob/Response are not covered here: `extract_blob`
+// still maps an empty body to Ignore (see the comment at that site).
 describe("empty buffer stdin is not the null device", () => {
   const probe =
     `const fs = require("fs"); let n = 0;` +

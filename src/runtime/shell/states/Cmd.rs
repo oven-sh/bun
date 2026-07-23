@@ -725,7 +725,9 @@ impl Cmd {
                     if flags.stdin() {
                         let bytes = buf.byte_slice();
                         // An empty buffer delivers EOF immediately; `Stdio::Ignore`
-                        // matches what `Stdio::extract`/`extract_blob` already do.
+                        // matches `extract_blob` (`Stdio::extract` now keeps an
+                        // empty ArrayBuffer at stdin as a real pipe, but the shell
+                        // reaches this arm before `extract` would run).
                         stdio[STDIN_NO] = if bytes.is_empty() {
                             Stdio::Ignore
                         } else {

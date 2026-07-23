@@ -319,6 +319,16 @@ async function worker(w: number) {
         continue;
       }
     }
+    // A HANG whose run fired ZERO rules is not fault-induced: the schedule
+    // never took effect, so the program hangs on its own (slow test / this
+    // box) - never a fault finding.
+    if ((outcome === "HANG" || outcome === "stalled") && rr.fired === 0) {
+      console.log(`   [${n}] hang with 0 rules fired - program's own hang, not a fault finding`);
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+      continue;
+    }
     // Verify: replay the same schedule; two of three (including the
     // original) reproducing = confirmed. Then minimize.
     let bad = 1;

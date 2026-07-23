@@ -381,6 +381,322 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
+  describe("Bun.write(path, new Response(readableStream))", () => {
+    it("JS ReadableStream (start/close)", async () => {
+      using dir = tempDir("bun-write-response-rs-start", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello-js-stream"));
+          c.close();
+        },
+      });
+      const n = await Bun.write(dest, new Response(rs));
+      expect(await Bun.file(dest).text()).toBe("hello-js-stream");
+      expect(n).toBe(15);
+      await gcTick();
+    });
+
+    it("JS ReadableStream (pull, multiple chunks)", async () => {
+      using dir = tempDir("bun-write-response-rs-pull", {});
+      const dest = path.join(String(dir), "out.txt");
+      const chunks = ["one-", "two-", "three"];
+      let i = 0;
+      const rs = new ReadableStream({
+        pull(c) {
+          if (i < chunks.length) {
+            c.enqueue(new TextEncoder().encode(chunks[i++]));
+          } else {
+            c.close();
+          }
+        },
+      });
+      const n = await Bun.write(dest, new Response(rs));
+      expect(await Bun.file(dest).text()).toBe("one-two-three");
+      expect(n).toBe(13);
+      await gcTick();
+    });
+
+    it("Bun.file().stream() wrapped in Response", async () => {
+      using dir = tempDir("bun-write-response-file-stream", {
+        "src.txt": "hello-file-stream",
+      });
+      const src = path.join(String(dir), "src.txt");
+      const dest = path.join(String(dir), "out.txt");
+      const n = await Bun.write(dest, new Response(Bun.file(src).stream()));
+      expect(await Bun.file(dest).text()).toBe("hello-file-stream");
+      expect(n).toBe(17);
+      await gcTick();
+    });
+
+    it("Request with ReadableStream body", async () => {
+      using dir = tempDir("bun-write-request-rs", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello-request"));
+          c.close();
+        },
+      });
+      const req = new Request("http://example.com", { method: "POST", body: rs });
+      const n = await Bun.write(dest, req);
+      expect(await Bun.file(dest).text()).toBe("hello-request");
+      expect(n).toBe(13);
+      await gcTick();
+    });
+
+    it("rejects when the stream errors", async () => {
+      using dir = tempDir("bun-write-response-rs-error", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        pull(c) {
+          c.error(new Error("boom"));
+        },
+      });
+      let caught;
+      await Bun.write(dest, new Response(rs)).then(
+        () => {},
+        e => (caught = e),
+      );
+      expect(caught).toBeInstanceOf(Error);
+      expect(caught.message).toBe("boom");
+    });
+
+    it("marks the Response body as used", async () => {
+      using dir = tempDir("bun-write-response-rs-used", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello"));
+          c.close();
+        },
+      });
+      const resp = new Response(rs);
+      await Bun.write(dest, resp);
+      expect(resp.bodyUsed).toBe(true);
+    });
+
+    it("truncates a longer pre-existing destination", async () => {
+      using dir = tempDir("bun-write-response-rs-trunc", {
+        "out.txt": Buffer.alloc(64, "X").toString(),
+      });
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello"));
+          c.close();
+        },
+      });
+      expect(await Bun.write(dest, new Response(rs))).toBe(5);
+      expect(await Bun.file(dest).text()).toBe("hello");
+    });
+
+    it("creates missing parent directories by default", async () => {
+      using dir = tempDir("bun-write-response-rs-mkdirp", {});
+      const dest = path.join(String(dir), "a", "b", "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("nested"));
+          c.close();
+        },
+      });
+      expect(await Bun.write(dest, new Response(rs))).toBe(6);
+      expect(await Bun.file(dest).text()).toBe("nested");
+    });
+
+    it("with { createPath: false }, rejects and leaves the body unused", async () => {
+      using dir = tempDir("bun-write-response-rs-noent", {});
+      const dest = path.join(String(dir), "missing", "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("keep"));
+          c.close();
+        },
+      });
+      const resp = new Response(rs);
+      let caught;
+      await Bun.write(dest, resp, { createPath: false }).then(
+        () => {},
+        e => (caught = e),
+      );
+      expect(caught?.code).toBe("ENOENT");
+      // The open failed before the stream was read, so the body is still intact.
+      expect(resp.bodyUsed).toBe(false);
+      expect(await resp.text()).toBe("keep");
+    });
+
+    it("supports a type: 'direct' stream, counting each chunk once", async () => {
+      using dir = tempDir("bun-write-response-rs-direct", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          c.write(new TextEncoder().encode("ab"));
+          c.write("héllo"); // latin1 JSString: 5 chars, 6 UTF-8 bytes
+          c.write("日本\uD800"); // utf16 JSString; the lone surrogate encodes as U+FFFD (3 bytes)
+          c.close();
+        },
+      });
+      const resp = new Response(rs);
+      const n = await Bun.write(dest, resp);
+      expect({ n, text: await Bun.file(dest).text(), bodyUsed: resp.bodyUsed }).toEqual({
+        n: 17,
+        text: "abhéllo日本\uFFFD",
+        bodyUsed: true,
+      });
+    });
+
+    it.skipIf(isWindows)("honours { mode }", async () => {
+      using dir = tempDir("bun-write-response-rs-mode", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("m"));
+          c.close();
+        },
+      });
+      await Bun.write(dest, new Response(rs), { mode: 0o600 });
+      expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+    });
+
+    it("fetch Response whose body is still arriving", async () => {
+      using dir = tempDir("bun-write-response-fetch-streaming", {});
+      const dest = path.join(String(dir), "out.bin");
+      const size = 32 * 16384;
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                for (let i = 0; i < 32; i++) c.enqueue(Buffer.alloc(16384, 0x41 + (i % 26)));
+                c.close();
+              },
+            }),
+          ),
+      });
+      // A chunked body large enough to pause the HTTP thread for backpressure
+      // before the JS side has told it whether to stream or buffer. Before the
+      // fix, Bun.write overwrote `locked.task` without firing the producer's
+      // `on_start_buffering`, so the fetch tasklet stayed paused forever.
+      const res = await fetch(server.url);
+      const n = await Bun.write(dest, res);
+      expect({ n, size: Bun.file(dest).size, bodyUsed: res.bodyUsed }).toEqual({
+        n: size,
+        size,
+        bodyUsed: true,
+      });
+      // first and last chunk contents
+      const buf = await Bun.file(dest).bytes();
+      expect(buf[0]).toBe(0x41);
+      expect(buf[size - 1]).toBe(0x41 + (31 % 26));
+    });
+
+    it("fetch Response after its .body getter was touched", async () => {
+      using dir = tempDir("bun-write-response-fetch-body-touched", {});
+      const dest = path.join(String(dir), "out.txt");
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                c.enqueue(new TextEncoder().encode("fetch-body-content"));
+                c.close();
+              },
+            }),
+          ),
+      });
+      const res = await fetch(server.url);
+      // Materialises a ByteStream-backed readable on `locked.readable`
+      // without consuming it.
+      void res.body;
+      const n = await Bun.write(dest, res);
+      expect({ n, text: await Bun.file(dest).text() }).toEqual({
+        n: 18,
+        text: "fetch-body-content",
+      });
+    });
+
+    it("server Request after its .body getter was touched", async () => {
+      using dir = tempDir("bun-write-server-req-body-touched", {});
+      const dest = path.join(String(dir), "out.txt");
+      const { promise, resolve, reject } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          if (!req.body) return new Response("no-body");
+          try {
+            resolve(await Bun.write(dest, req));
+          } catch (e) {
+            reject(e);
+          }
+          return new Response("ok");
+        },
+      });
+      const res = await fetch(server.url, { method: "POST", body: "server-request-payload" });
+      expect(await res.text()).toBe("ok");
+      expect({ n: await promise, text: await Bun.file(dest).text() }).toEqual({
+        n: 22,
+        text: "server-request-payload",
+      });
+    });
+
+    it("new Response(req.body) inside a server handler", async () => {
+      // The original #13237 reproduction.
+      using dir = tempDir("bun-write-server-req-body-wrapped", {});
+      const dest = path.join(String(dir), "out.txt");
+      const { promise, resolve, reject } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            resolve(await Bun.write(dest, new Response(req.body)));
+          } catch (e) {
+            reject(e);
+          }
+          return new Response("ok");
+        },
+      });
+      const res = await fetch(server.url, { method: "POST", body: "wrapped-request-payload" });
+      expect(await res.text()).toBe("ok");
+      expect({ n: await promise, text: await Bun.file(dest).text() }).toEqual({
+        n: 23,
+        text: "wrapped-request-payload",
+      });
+    });
+
+    it("rejects a locked source without truncating the destination", async () => {
+      using dir = tempDir("bun-write-response-rs-locked", {
+        "out.txt": "PRECIOUS-EXISTING-CONTENTS",
+      });
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hi"));
+          c.close();
+        },
+      });
+      const resp = new Response(rs);
+      rs.getReader(); // locks the body's stream without disturbing it
+      let caught;
+      try {
+        await Bun.write(dest, resp);
+      } catch (e) {
+        caught = e;
+      }
+      expect({
+        message: caught?.message,
+        text: await Bun.file(dest).text(),
+        bodyUsed: resp.bodyUsed,
+      }).toEqual({
+        message: "ReadableStream has already been used",
+        text: "PRECIOUS-EXISTING-CONTENTS",
+        bodyUsed: false,
+      });
+    });
+  });
+
   it("Bun.write('output.html', '')", async () => {
     using tmpbase = tempDir("bun-write-output-html", {});
     await Bun.write(tmpbase + "output.html", "lalalala");

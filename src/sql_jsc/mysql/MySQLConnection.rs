@@ -1742,17 +1742,6 @@ impl ReaderContext for Reader {
         self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
     }
-
-    fn read_z(self) -> Result<Data, AnyMySQLError> {
-        let remaining = self.read_buffer().remaining();
-        if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
-            let slice = bun_ptr::RawSlice::new(&remaining[0..zero as usize]);
-            self.skip(isize::try_from(zero + 1).expect("int cast"));
-            return Ok(Data::Temporary(slice));
-        }
-
-        Err(AnyMySQLError::ShortRead)
-    }
 }
 
 // Canonical type lives in `bun_sql::mysql`; re-export so this module's

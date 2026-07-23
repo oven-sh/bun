@@ -11,7 +11,6 @@ pub trait ReaderContext: Copy {
     fn skip(self, count: isize);
     fn ensure_capacity(self, count: usize) -> bool;
     fn read(self, count: usize) -> Result<Data, AnyMySQLError>;
-    fn read_z(self) -> Result<Data, AnyMySQLError>;
     fn set_offset_from_start(self, offset: usize);
     /// Bytes from the current offset to the end of the framed packet body, or
     /// `usize::MAX` when no packet is framed (header decoding).
@@ -66,14 +65,17 @@ impl<C: ReaderContext> NewReader<C> {
     }
 
     pub fn read_z(self) -> Result<Data, AnyMySQLError> {
-        if bun_core::strings::index_of_char(self.peek(), 0).is_none() {
-            return Err(if self.wrapped.packet_remaining() == usize::MAX {
-                AnyMySQLError::ShortRead
-            } else {
-                AnyMySQLError::MalformedPacket
-            });
+        match bun_core::strings::index_of_char(self.peek(), 0) {
+            Some(zero) => {
+                let data = self.wrapped.read(zero as usize)?;
+                self.wrapped.skip(1);
+                Ok(data)
+            }
+            None if self.wrapped.packet_remaining() == usize::MAX => {
+                Err(AnyMySQLError::ShortRead)
+            }
+            None => Err(AnyMySQLError::MalformedPacket),
         }
-        self.wrapped.read_z()
     }
 
     pub fn byte(self) -> Result<u8, AnyMySQLError> {

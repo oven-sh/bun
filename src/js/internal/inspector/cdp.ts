@@ -474,6 +474,120 @@ class InspectorCDPAdapter {
     return script.map;
   }
 
+  // Array#map adapter (map also passes index/array; the cast keeps the
+  // AnyObject element type of the inline closure it replaces).
+  #mapToOriginalLocation(location: AnyObject): AnyObject {
+    return this.#toOriginalLocation(location) as AnyObject;
+  }
+
+  #onBreakpointReset(bp: AnyObject, clientBreakpointId: string, result: AnyObject, error: AnyObject) {
+    if (error || typeof result.breakpointId !== "string") return;
+    const { breakpointId } = result;
+    this.#breakpointIdAliases.$delete(bp.jscId);
+    bp.jscId = breakpointId;
+    if (breakpointId !== clientBreakpointId) this.#breakpointIdAliases.$set(breakpointId, clientBreakpointId);
+  }
+
+  #onEvaluateForAwaitPromise(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {
+    if (error) {
+      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      return;
+    }
+    const remote = result.result;
+    const objectId = remote?.objectId;
+    if (!result.wasThrown && remote?.type === "object" && objectId) {
+      // JSC's Runtime.awaitPromise resolves any thenable and returns
+      // non-thenable objects as-is, so no subtype check is needed.
+      this.#sendToBackend(
+        "Runtime.awaitPromise",
+        {
+          promiseObjectId: objectId,
+          returnByValue: params.returnByValue,
+          generatePreview: params.generatePreview,
+          saveResult: params.saveResult,
+        },
+        id,
+        method,
+      );
+      return;
+    }
+    // Primitive / thrown: nothing to await; primitives already carry
+    // value regardless of returnByValue.
+    this.#replyToClient(id, this.#translateResult(method, result));
+  }
+
+  #onProfilerStartReply(id: number, _result: AnyObject, error: AnyObject) {
+    if (error) {
+      this.#profilerTracking = false;
+      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      return;
+    }
+    this.#replyToClient(id, {});
+  }
+
+  #onProfilerStopReply(id: number, _result: AnyObject, error: AnyObject) {
+    // The success reply waits for trackingComplete; only an error answers here.
+    if (error && this.#profilerStopClientId === id) {
+      this.#profilerStopClientId = undefined;
+      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+    }
+  }
+
+  #forwardCallFunctionOn(id: number, method: string, params: AnyObject, targetObjectId: unknown) {
+    this.#sendToBackend(
+      "Runtime.callFunctionOn",
+      {
+        objectId: targetObjectId,
+        functionDeclaration: params.functionDeclaration,
+        arguments: params.arguments,
+        doNotPauseOnExceptionsAndMuteConsole: params.silent,
+        returnByValue: params.returnByValue,
+        generatePreview: params.generatePreview,
+        awaitPromise: params.awaitPromise,
+      },
+      id,
+      method,
+    );
+  }
+
+  #onGlobalObjectForCallFunctionOn(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {
+    const globalObjectId = result.result?.objectId;
+    if (error || !globalObjectId) {
+      this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
+      return;
+    }
+    this.#forwardCallFunctionOn(id, method, params, globalObjectId);
+  }
+
+  #onPreParseBreakpointSet(
+    id: number,
+    method: string,
+    params: AnyObject,
+    url: string | undefined,
+    urlRegex: string | undefined,
+    condition: string | undefined,
+    result: AnyObject,
+    error: AnyObject,
+  ) {
+    if (error) {
+      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      return;
+    }
+    const breakpointId = result.breakpointId;
+    if (typeof breakpointId === "string") {
+      this.#preParseBreakpoints.$set(breakpointId, {
+        jscId: breakpointId,
+        url,
+        urlRegex,
+        lineNumber: params.lineNumber ?? 0,
+        columnNumber: params.columnNumber,
+        condition,
+        resolved: false,
+      });
+    }
+    this.#replyToClient(id, this.#translateResult(method, result));
+  }
+
   #toOriginalLocation(location: AnyObject | undefined): AnyObject | undefined {
     if (!location) return location;
     const map = this.#sourceMapFor(location.scriptId);
@@ -547,13 +661,7 @@ class InspectorCDPAdapter {
         },
         null,
         "Debugger.setBreakpointByUrl",
-        (result, error) => {
-          if (error || typeof result.breakpointId !== "string") return;
-          const { breakpointId } = result;
-          this.#breakpointIdAliases.$delete(bp.jscId);
-          bp.jscId = breakpointId;
-          if (breakpointId !== clientBreakpointId) this.#breakpointIdAliases.$set(breakpointId, clientBreakpointId);
-        },
+        this.#onBreakpointReset.bind(this, bp, clientBreakpointId),
       );
     }
   }
@@ -576,7 +684,7 @@ class InspectorCDPAdapter {
 
   #toOriginalLocations(locations: AnyObject[] | undefined): AnyObject[] {
     if (!locations) return [];
-    return locations.map(location => this.#toOriginalLocation(location) as AnyObject);
+    return locations.map(this.#mapToOriginalLocation, this);
   }
 
   handleClientMessage(message: string): void {
@@ -711,33 +819,13 @@ class InspectorCDPAdapter {
         // Promise itself instead of returning the objectId to await on).
         if (params.awaitPromise === true) {
           const firstStep = { ...jscParams, returnByValue: false };
-          this.#sendToBackend("Runtime.evaluate", firstStep, null, method, (result, error) => {
-            if (error) {
-              this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
-              return;
-            }
-            const remote = result.result;
-            const objectId = remote?.objectId;
-            if (!result.wasThrown && remote?.type === "object" && objectId) {
-              // JSC's Runtime.awaitPromise resolves any thenable and returns
-              // non-thenable objects as-is, so no subtype check is needed.
-              this.#sendToBackend(
-                "Runtime.awaitPromise",
-                {
-                  promiseObjectId: objectId,
-                  returnByValue: params.returnByValue,
-                  generatePreview: params.generatePreview,
-                  saveResult: params.saveResult,
-                },
-                id,
-                method,
-              );
-              return;
-            }
-            // Primitive / thrown: nothing to await; primitives already carry
-            // value regardless of returnByValue.
-            this.#replyToClient(id, this.#translateResult(method, result));
-          });
+          this.#sendToBackend(
+            "Runtime.evaluate",
+            firstStep,
+            null,
+            method,
+            this.#onEvaluateForAwaitPromise.bind(this, id, method, params),
+          );
           return;
         }
         this.#sendToBackend("Runtime.evaluate", jscParams, id, method);
@@ -765,23 +853,8 @@ class InspectorCDPAdapter {
 
       case "Runtime.callFunctionOn": {
         const { objectId, executionContextId } = params;
-        const forward = (targetObjectId: unknown) =>
-          this.#sendToBackend(
-            "Runtime.callFunctionOn",
-            {
-              objectId: targetObjectId,
-              functionDeclaration: params.functionDeclaration,
-              arguments: params.arguments,
-              doNotPauseOnExceptionsAndMuteConsole: params.silent,
-              returnByValue: params.returnByValue,
-              generatePreview: params.generatePreview,
-              awaitPromise: params.awaitPromise,
-            },
-            id,
-            method,
-          );
         if (objectId) {
-          forward(objectId);
+          this.#forwardCallFunctionOn(id, method, params, objectId);
           return;
         }
         if (executionContextId === undefined) {
@@ -797,14 +870,7 @@ class InspectorCDPAdapter {
           { expression: "globalThis", objectGroup: params.objectGroup },
           null,
           method,
-          (result, error) => {
-            const globalObjectId = result.result?.objectId;
-            if (error || !globalObjectId) {
-              this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
-              return;
-            }
-            forward(globalObjectId);
-          },
+          this.#onGlobalObjectForCallFunctionOn.bind(this, id, method, params),
         );
         return;
       }
@@ -931,25 +997,13 @@ class InspectorCDPAdapter {
         if (known === undefined) {
           // No script (and so no map) yet: remember the original coordinates
           // so the breakpoint can be re-set through the map at scriptParsed.
-          this.#sendToBackend("Debugger.setBreakpointByUrl", jscParams, null, method, (result, error) => {
-            if (error) {
-              this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
-              return;
-            }
-            const breakpointId = result.breakpointId;
-            if (typeof breakpointId === "string") {
-              this.#preParseBreakpoints.$set(breakpointId, {
-                jscId: breakpointId,
-                url,
-                urlRegex,
-                lineNumber: params.lineNumber ?? 0,
-                columnNumber: params.columnNumber,
-                condition,
-                resolved: false,
-              });
-            }
-            this.#replyToClient(id, this.#translateResult(method, result));
-          });
+          this.#sendToBackend(
+            "Debugger.setBreakpointByUrl",
+            jscParams,
+            null,
+            method,
+            this.#onPreParseBreakpointSet.bind(this, id, method, params, url, urlRegex, condition),
+          );
           return;
         }
         this.#sendToBackend("Debugger.setBreakpointByUrl", jscParams, id, method);
@@ -1022,14 +1076,7 @@ class InspectorCDPAdapter {
           { includeSamples: true },
           null,
           method,
-          (_result, error) => {
-            if (error) {
-              this.#profilerTracking = false;
-              this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
-              return;
-            }
-            this.#replyToClient(id, {});
-          },
+          this.#onProfilerStartReply.bind(this, id),
         );
         return;
 
@@ -1041,12 +1088,13 @@ class InspectorCDPAdapter {
         this.#profilerTracking = false;
         this.#profilerStopClientId = id;
         // The success reply waits for trackingComplete; only an error answers here.
-        this.#sendToBackend("ScriptProfiler.stopTracking", undefined, null, method, (_result, error) => {
-          if (error && this.#profilerStopClientId === id) {
-            this.#profilerStopClientId = undefined;
-            this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
-          }
-        });
+        this.#sendToBackend(
+          "ScriptProfiler.stopTracking",
+          undefined,
+          null,
+          method,
+          this.#onProfilerStopReply.bind(this, id),
+        );
         return;
 
       case "Console.enable":

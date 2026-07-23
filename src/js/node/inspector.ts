@@ -329,12 +329,40 @@ function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object
 // Node's tests) navigate from the top frame to the console call site. The
 // CallSite objects Bun's captureStackTrace produces already carry
 // source-mapped (original) positions, unlike raw JSC frames.
+function returnCallSites(_error, sites) {
+  return sites;
+}
+
+function dispatchInProcessBackendMessage(backendMessage: string) {
+  // The command executes here, on this thread; hand every message it
+  // produced (response + events) back through the adapters.
+  deliverBackendMessages(dispatchInProcessInspectorMessage(backendMessage, drainInProcessBackend));
+  scheduleBackendDrain();
+}
+
+function settleInProcessPost(callback, error, value) {
+  if (!callback) return;
+  if (error === null || error === undefined) callback(null, value);
+  else if (error.closed) callback($ERR_INSPECTOR_CLOSED());
+  else callback(makeProtocolError(error), undefined);
+}
+
+function settleLocalPost(callback, result) {
+  if (result instanceof Error) {
+    callback(result, undefined);
+  } else if (result !== null && typeof result === "object" && kProtocolError in result) {
+    callback(result[kProtocolError], undefined);
+  } else {
+    callback(null, result);
+  }
+}
+
 function captureConsoleStackTrace(hook: Function) {
   const holder: { stack?: any } = {};
   const previousPrepare = ErrorObject.prepareStackTrace;
   const previousLimit = ErrorObject.stackTraceLimit;
   try {
-    ErrorObject.prepareStackTrace = (_error, sites) => sites;
+    ErrorObject.prepareStackTrace = returnCallSites;
     ErrorObject.stackTraceLimit = 30;
     errorCaptureStackTrace.$call(ErrorObject, holder, hook);
     const sites = holder.stack;
@@ -602,8 +630,11 @@ function toWarning(e: unknown): Error {
 }
 
 // Each enabled session owns its buffer, so the event is applied once per session.
-function forEachNetworkSession(fn: (session: Session, state: NetworkState) => void) {
-  for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state);
+// The per-event context rides as an explicit argument so the per-session
+// callbacks can be hoisted module-level functions instead of per-event
+// closures (no-inline-closures rule).
+function forEachNetworkSession<C>(fn: (session: Session, state: NetworkState, ctx: C) => void, ctx: C) {
+  for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state, ctx);
 }
 
 const Network = {
@@ -615,21 +646,7 @@ const Network = {
     const request = requestFromObject(params);
     // The request charset sits at the top level, not inside `request`.
     const requestIsUTF8 = params.charset === "utf-8";
-    forEachNetworkSession((session, state) => {
-      // A duplicate requestId drops the whole event for that session.
-      if (state.requests.$has(requestId)) return;
-      state.requests.$set(
-        requestId,
-        new NetworkRequestEntry(request.hasPostData, requestIsUTF8, state.maxResourceBufferSize),
-      );
-      emitToSession(session, "Network.requestWillBeSent", {
-        requestId,
-        request,
-        timestamp,
-        wallTime,
-        initiator: { type: "script" },
-      });
-    });
+    forEachNetworkSession(sessionRequestWillBeSent, { requestId, request, requestIsUTF8, timestamp, wallTime });
   },
 
   responseReceived(params: any) {
@@ -638,26 +655,14 @@ const Network = {
     const timestamp = requireEventNumber(params, "timestamp");
     const type = requireEventString(params, "type");
     const response = responseFromObject(params, "response", true);
-    forEachNetworkSession((session, state) => {
-      const entry = state.requests.$get(requestId);
-      if (entry === undefined) return;
-      entry.responseIsUTF8 = response.charset === "utf-8";
-      emitToSession(session, "Network.responseReceived", { requestId, timestamp, type, response });
-    });
+    forEachNetworkSession(sessionResponseReceived, { requestId, timestamp, type, response });
   },
 
   loadingFinished(params: any) {
     if (networkEnabledSessions.size === 0) return;
     const requestId = requireEventString(params, "requestId");
     const timestamp = requireEventNumber(params, "timestamp");
-    forEachNetworkSession((session, state) => {
-      // Node emits before the lookup, so an unknown requestId still reaches the frontend.
-      emitToSession(session, "Network.loadingFinished", { requestId, timestamp });
-      const entry = state.requests.$get(requestId);
-      if (entry === undefined) return;
-      if (entry.isStreaming) dropNetworkEntry(state, requestId, entry);
-      else entry.isResponseFinished = true;
-    });
+    forEachNetworkSession(sessionLoadingFinished, { requestId, timestamp });
   },
 
   loadingFailed(params: any) {
@@ -666,11 +671,7 @@ const Network = {
     const timestamp = requireEventNumber(params, "timestamp");
     const type = requireEventString(params, "type");
     const errorText = requireEventString(params, "errorText");
-    forEachNetworkSession((session, state) => {
-      emitToSession(session, "Network.loadingFailed", { requestId, timestamp, type, errorText });
-      const entry = state.requests.$get(requestId);
-      if (entry !== undefined) dropNetworkEntry(state, requestId, entry);
-    });
+    forEachNetworkSession(sessionLoadingFailed, { requestId, timestamp, type, errorText });
   },
 
   // dataSent is never emitted; it only feeds Network.getRequestPostData.
@@ -684,15 +685,7 @@ const Network = {
       requireEventInt(params, "dataLength");
       requireEventUint8Array(params, "data");
     }
-    forEachNetworkSession((_session, state) => {
-      const entry = state.requests.$get(requestId);
-      if (entry === undefined) return;
-      if (finished) {
-        entry.isRequestFinished = true;
-        return;
-      }
-      pushNetworkBlob(state, entry, entry.requestDataBlobs, params.data);
-    });
+    forEachNetworkSession(sessionDataSent, { requestId, finished, data: params.data });
   },
 
   dataReceived(params: any) {
@@ -702,40 +695,21 @@ const Network = {
     const dataLength = requireEventInt(params, "dataLength");
     const encodedDataLength = requireEventInt(params, "encodedDataLength");
     const data = requireEventUint8Array(params, "data");
-    forEachNetworkSession((session, state) => {
-      const entry = state.requests.$get(requestId);
-      if (entry === undefined) return;
-      // Buffer until a frontend asks to stream, then emit live.
-      if (entry.isStreaming) {
-        emitToSession(session, "Network.dataReceived", {
-          requestId,
-          timestamp,
-          dataLength,
-          encodedDataLength,
-          data: Buffer.from(data).toString("base64"),
-        });
-      } else {
-        pushNetworkBlob(state, entry, entry.responseDataBlobs, data);
-      }
-    });
+    forEachNetworkSession(sessionDataReceived, { requestId, timestamp, dataLength, encodedDataLength, data });
   },
 
   webSocketCreated(params: any) {
     if (networkEnabledSessions.size === 0) return;
     const requestId = requireEventString(params, "requestId");
     const url = requireEventString(params, "url");
-    forEachNetworkSession(session => {
-      emitToSession(session, "Network.webSocketCreated", { requestId, url, initiator: { type: "script" } });
-    });
+    forEachNetworkSession(sessionWebSocketCreated, { requestId, url });
   },
 
   webSocketClosed(params: any) {
     if (networkEnabledSessions.size === 0) return;
     const requestId = requireEventString(params, "requestId");
     const timestamp = requireEventNumber(params, "timestamp");
-    forEachNetworkSession(session => {
-      emitToSession(session, "Network.webSocketClosed", { requestId, timestamp });
-    });
+    forEachNetworkSession(sessionWebSocketClosed, { requestId, timestamp });
   },
 
   webSocketHandshakeResponseReceived(params: any) {
@@ -743,11 +717,109 @@ const Network = {
     const requestId = requireEventString(params, "requestId");
     const timestamp = requireEventNumber(params, "timestamp");
     const response = responseFromObject(params, "response", false);
-    forEachNetworkSession(session => {
-      emitToSession(session, "Network.webSocketHandshakeResponseReceived", { requestId, timestamp, response });
-    });
+    forEachNetworkSession(sessionWebSocketHandshakeResponseReceived, { requestId, timestamp, response });
   },
 };
+
+function sessionRequestWillBeSent(session, state, ctx) {
+  const { requestId, request } = ctx;
+  // A duplicate requestId drops the whole event for that session.
+  if (state.requests.$has(requestId)) return;
+  state.requests.$set(
+    requestId,
+    new NetworkRequestEntry(request.hasPostData, ctx.requestIsUTF8, state.maxResourceBufferSize),
+  );
+  emitToSession(session, "Network.requestWillBeSent", {
+    requestId,
+    request,
+    timestamp: ctx.timestamp,
+    wallTime: ctx.wallTime,
+    initiator: { type: "script" },
+  });
+}
+
+function sessionResponseReceived(session, state, ctx) {
+  const { requestId, response } = ctx;
+  const entry = state.requests.$get(requestId);
+  if (entry === undefined) return;
+  entry.responseIsUTF8 = response.charset === "utf-8";
+  emitToSession(session, "Network.responseReceived", {
+    requestId,
+    timestamp: ctx.timestamp,
+    type: ctx.type,
+    response,
+  });
+}
+
+function sessionLoadingFinished(session, state, ctx) {
+  const { requestId } = ctx;
+  // Node emits before the lookup, so an unknown requestId still reaches the frontend.
+  emitToSession(session, "Network.loadingFinished", { requestId, timestamp: ctx.timestamp });
+  const entry = state.requests.$get(requestId);
+  if (entry === undefined) return;
+  if (entry.isStreaming) dropNetworkEntry(state, requestId, entry);
+  else entry.isResponseFinished = true;
+}
+
+function sessionLoadingFailed(session, state, ctx) {
+  const { requestId } = ctx;
+  emitToSession(session, "Network.loadingFailed", {
+    requestId,
+    timestamp: ctx.timestamp,
+    type: ctx.type,
+    errorText: ctx.errorText,
+  });
+  const entry = state.requests.$get(requestId);
+  if (entry !== undefined) dropNetworkEntry(state, requestId, entry);
+}
+
+function sessionDataSent(_session, state, ctx) {
+  const entry = state.requests.$get(ctx.requestId);
+  if (entry === undefined) return;
+  if (ctx.finished) {
+    entry.isRequestFinished = true;
+    return;
+  }
+  pushNetworkBlob(state, entry, entry.requestDataBlobs, ctx.data);
+}
+
+function sessionDataReceived(session, state, ctx) {
+  const { requestId, data } = ctx;
+  const entry = state.requests.$get(requestId);
+  if (entry === undefined) return;
+  // Buffer until a frontend asks to stream, then emit live.
+  if (entry.isStreaming) {
+    emitToSession(session, "Network.dataReceived", {
+      requestId,
+      timestamp: ctx.timestamp,
+      dataLength: ctx.dataLength,
+      encodedDataLength: ctx.encodedDataLength,
+      data: Buffer.from(data).toString("base64"),
+    });
+  } else {
+    pushNetworkBlob(state, entry, entry.responseDataBlobs, data);
+  }
+}
+
+function sessionWebSocketCreated(session, _state, ctx) {
+  emitToSession(session, "Network.webSocketCreated", {
+    requestId: ctx.requestId,
+    url: ctx.url,
+    initiator: { type: "script" },
+  });
+}
+
+function sessionWebSocketClosed(session, _state, ctx) {
+  emitToSession(session, "Network.webSocketClosed", { requestId: ctx.requestId, timestamp: ctx.timestamp });
+}
+
+function sessionWebSocketHandshakeResponseReceived(session, _state, ctx) {
+  emitToSession(session, "Network.webSocketHandshakeResponseReceived", {
+    requestId: ctx.requestId,
+    timestamp: ctx.timestamp,
+    response: ctx.response,
+  });
+}
 
 // Node routes every entry point through broadcastToFrontend, which defaults a
 // missing params to {} and then validateObject()s it.
@@ -979,6 +1051,9 @@ function collectCoverageScripts(): any[] | Error {
   }
 }
 
+// Mirrors Node v26.3.0 lib/inspector.js Session (connect/post/EventEmitter
+// contract), with dispatch translated onto JSC's protocol via the in-process
+// CDP adapter instead of V8's connection.
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
@@ -1002,13 +1077,8 @@ class Session extends EventEmitter {
     if (this.#adapter !== undefined) return this.#adapter;
     InspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter;
     const adapter = new InspectorCDPAdapter(
-      (backendMessage: string) => {
-        // The command executes here, on this thread; hand every message it
-        // produced (response + events) back through the adapters.
-        deliverBackendMessages(dispatchInProcessInspectorMessage(backendMessage, drainInProcessBackend));
-        scheduleBackendDrain();
-      },
-      (clientMessage: string) => this.#deliverClientMessage(clientMessage),
+      dispatchInProcessBackendMessage,
+      this.#deliverClientMessage.bind(this),
       // No wait-for-debugger or exit-handshake state: an in-process Session
       // never retains the context, matching Node's non-preventShutdown path.
       undefined,
@@ -1058,7 +1128,7 @@ class Session extends EventEmitter {
       return;
     }
     if (this.#dispatchingClientCommand) {
-      queueMicrotask(() => this.#onClientMessage(parsed));
+      queueMicrotask(this.#onClientMessage.bind(this, parsed));
     } else {
       this.#onClientMessage(parsed);
     }
@@ -1160,7 +1230,7 @@ class Session extends EventEmitter {
     if (!this.#connected) {
       const error = $ERR_INSPECTOR_NOT_CONNECTED();
       if (callback) {
-        queueMicrotask(() => callback(error));
+        queueMicrotask(callback.bind(undefined, error));
         return;
       }
       throw error;
@@ -1178,26 +1248,13 @@ class Session extends EventEmitter {
         // Node's post() is asynchronous: with a callback the reply arrives
         // through it; without one nothing is returned and a protocol error
         // is neither thrown nor otherwise observable.
-        this.#postInProcess(method, params as object | undefined, (error, value) => {
-          if (!callback) return;
-          if (error === null || error === undefined) callback(null, value);
-          else if (error.closed) callback($ERR_INSPECTOR_CLOSED());
-          else callback(makeProtocolError(error), undefined);
-        });
+        this.#postInProcess(method, params as object | undefined, settleInProcessPost.bind(undefined, callback));
         return;
       }
     }
 
     if (callback) {
-      queueMicrotask(() => {
-        if (result instanceof Error) {
-          callback(result, undefined);
-        } else if (result !== null && typeof result === "object" && kProtocolError in result) {
-          callback(result[kProtocolError], undefined);
-        } else {
-          callback(null, result);
-        }
-      });
+      queueMicrotask(settleLocalPost.bind(undefined, callback, result));
     } else {
       // Sync throw for errors when no callback
       if (result instanceof Error) {

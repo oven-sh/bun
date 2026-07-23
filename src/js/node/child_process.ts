@@ -503,12 +503,12 @@ function spawnSync(file, args, options) {
     );
     error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
     return {
-      signal: null,
-      status: null,
-      output: [null, null, null],
       pid: 0,
-      stdout: null,
-      stderr: null,
+      output: null,
+      stdout: undefined,
+      stderr: undefined,
+      status: null,
+      signal: null,
       error,
     };
   }
@@ -541,7 +541,6 @@ function spawnSync(file, args, options) {
     }
   }
 
-  var error;
   try {
     var {
       stdout = null,
@@ -573,9 +572,21 @@ function spawnSync(file, args, options) {
       maxBuffer: options.maxBuffer,
     });
   } catch (err) {
-    error = err;
-    stdout = null;
-    stderr = null;
+    // Bun.spawnSync threw, so the child never started (e.g. ENOENT / EACCES).
+    // Node reports this "never started" case with a dedicated result shape:
+    // the process has no pid, no output and no exit status, and stdout/stderr
+    // are left undefined rather than null.
+    err.syscall = "spawnSync " + options.file;
+    err.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
+    return {
+      pid: 0,
+      output: null,
+      stdout: undefined,
+      stderr: undefined,
+      status: null,
+      signal: null,
+      error: err,
+    };
   }
 
   // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
@@ -585,15 +596,11 @@ function spawnSync(file, args, options) {
 
   const result = {
     signal: signalCode ?? null,
-    status: exitCode,
+    status: exitCode ?? null,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, outputStdout, outputStderr],
     pid,
   };
-
-  if (error) {
-    result.error = error;
-  }
 
   if (outputStdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
@@ -606,7 +613,7 @@ function spawnSync(file, args, options) {
   result.stdout = result.output[1];
   result.stderr = result.output[2];
 
-  if (exitedDueToTimeout && error == null) {
+  if (exitedDueToTimeout) {
     result.error = new SystemError(
       "spawnSync " + options.file + " ETIMEDOUT",
       options.file,
@@ -615,7 +622,7 @@ function spawnSync(file, args, options) {
       "ETIMEDOUT",
     );
   }
-  if (exitedDueToMaxBuffer && error == null) {
+  if (exitedDueToMaxBuffer) {
     result.error = new SystemError(
       "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
       options.file,

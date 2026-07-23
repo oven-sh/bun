@@ -4,7 +4,7 @@ import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { promisify } from "node:util";
+import { getSystemErrorName, promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -634,14 +634,40 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   expect(signal).toBe("SIGTRAP");
 });
 
-it("spawnSync(does-not-exist)", () => {
+it("spawnSync(does-not-exist) matches Node's ENOENT result shape", () => {
   const x = spawnSync("does-not-exist");
+  // The spawn itself failed, so the child never started. Node reports this
+  // "never started" case with status/signal/output null, pid 0, and leaves
+  // stdout/stderr undefined (see https://github.com/oven-sh/bun/issues/31767).
   expect(x.error?.code).toEqual("ENOENT");
+  // errno is the libuv-negated value, which differs by platform (-2 on POSIX,
+  // -4058 on Windows); assert via its name like Node's own spawnsync test does.
+  expect(getSystemErrorName(x.error.errno)).toEqual("ENOENT");
   expect(x.error.path).toEqual("does-not-exist");
+  expect(x.error.syscall).toEqual("spawnSync does-not-exist");
+  expect(x.error.spawnargs).toEqual([]);
+  expect(x.status).toEqual(null);
   expect(x.signal).toEqual(null);
-  expect(x.output).toEqual([null, null, null]);
-  expect(x.stdout).toEqual(null);
-  expect(x.stderr).toEqual(null);
+  expect(x.output).toEqual(null);
+  expect(x.pid).toEqual(0);
+  expect(x.stdout).toBeUndefined();
+  expect(x.stderr).toBeUndefined();
+});
+
+it("spawnSync() success path keeps a Node-compatible result shape", () => {
+  const x = spawnSync(bunExe(), ["-v"], { env: bunEnv });
+  // The child ran to completion, so output/pid/stdout/stderr are real and
+  // there is no error. This must stay untouched by the ENOENT fix above.
+  expect(x.error).toBeUndefined();
+  expect(x.status).toEqual(0);
+  expect(x.signal).toEqual(null);
+  expect(x.pid).toBeGreaterThan(0);
+  expect(x.output).toHaveLength(3);
+  expect(x.output[0]).toEqual(null);
+  expect(Buffer.isBuffer(x.stdout)).toBe(true);
+  expect(Buffer.isBuffer(x.stderr)).toBe(true);
+  expect(x.output[1]).toBe(x.stdout);
+  expect(x.output[2]).toBe(x.stderr);
 });
 
 // https://github.com/oven-sh/bun/issues/32067

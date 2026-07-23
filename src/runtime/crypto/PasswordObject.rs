@@ -91,17 +91,17 @@ impl AlgorithmValue {
                                     .throw_invalid_argument_type("hash", "cost", "number"));
                             }
 
-                            let rounds = rounds_value.coerce_to_i32(global_object)?;
+                            // Compare the f64 directly so out-of-i32-range
+                            // values throw instead of wrapping mod 2^32.
+                            let rounds = rounds_value.as_number();
 
-                            if rounds < 4 || rounds > 31 {
+                            if !(4.0..=31.0).contains(&rounds) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
                                     "Rounds must be between 4 and 31"
                                 )));
                             }
 
-                            algorithm = AlgorithmValue::Bcrypt(
-                                u8::try_from(rounds).expect("int cast") & 0x3F,
-                            );
+                            algorithm = AlgorithmValue::Bcrypt(rounds as u8);
                         }
 
                         return Ok(algorithm);
@@ -115,15 +115,20 @@ impl AlgorithmValue {
                                     .throw_invalid_argument_type("hash", "timeCost", "number"));
                             }
 
-                            let time_cost = time_value.coerce_to_i32(global_object)?;
+                            // Compare the f64 directly so out-of-i32-range
+                            // values throw instead of wrapping mod 2^32, and
+                            // apply verify's upper bound so hash() never
+                            // produces a PHC string verify() refuses.
+                            let time_cost = time_value.as_number();
+                            let max = pwhash::argon2::MAX_VERIFY_TIME_COST;
 
-                            if time_cost < 1 {
+                            if !(1.0..=f64::from(max)).contains(&time_cost) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Time cost must be greater than 0"
+                                    "Time cost must be between 1 and {max}"
                                 )));
                             }
 
-                            argon.time_cost = u32::try_from(time_cost).expect("int cast");
+                            argon.time_cost = time_cost as u32;
                         }
 
                         if let Some(memory_value) = value.get_truthy(global_object, "memoryCost")? {
@@ -135,18 +140,19 @@ impl AlgorithmValue {
                                 ));
                             }
 
-                            let memory_cost = memory_value.coerce_to_i32(global_object)?;
+                            let memory_cost = memory_value.as_number();
+                            let max = pwhash::argon2::MAX_VERIFY_MEMORY_COST;
 
                             // argon2 requires `memoryCost >= 8 * parallelism`;
                             // Bun hard-codes `parallelism = 1` (see
                             // `Argon2Params::to_params`), so the floor is 8.
-                            if memory_cost < 8 {
+                            if !(8.0..=f64::from(max)).contains(&memory_cost) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be at least 8"
+                                    "Memory cost must be between 8 and {max}"
                                 )));
                             }
 
-                            argon.memory_cost = u32::try_from(memory_cost).expect("int cast");
+                            argon.memory_cost = memory_cost as u32;
                         }
 
                         return Ok(match algo {

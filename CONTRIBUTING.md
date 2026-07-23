@@ -368,6 +368,46 @@ $ bun run build -DUSE_STATIC_LIBATOMIC=OFF
 
 The built version of Bun may not work on other systems if compiled this way.
 
+## Codebase map (where to start)
+
+If you are new to the repository, the following high-level tour of the
+top-level directories should make the onboarding step easier. The exact
+subdirectories change over time — re-run `ls` if anything looks
+different — but the major subsystems have been stable for a while:
+
+- `src/bun.js/` — Bun's runtime APIs (HTTP server, file I/O, child
+  process, module loader). Implemented mostly in Zig with a small
+  JavaScript bootstrap. Start here if you are working on a built-in
+  module or a runtime feature.
+- `src/js/` — built-in JavaScript shims that Bun ships as part of the
+  binary (e.g. `node:fs`, `node:crypto`, `WebStreams`, `console`,
+  `timers`). Each `.js` file is paired with Zig bindings in
+  `src/bun.js/bindings/`.
+- `src/bun.zig` — entry point of the Zig side. The `main` and
+  `bun_run` implementations live here.
+- `src/bundler/` — the JavaScript/TypeScript bundler (links to the
+  upstream resolver, parser, linker, etc.).
+- `src/cli/` — the `bun` CLI itself: argument parsing, help text, and
+  per-command dispatch. Touch this folder when adding or changing a CLI
+  command.
+- `packages/bun-types/` — TypeScript type definitions for Bun / Node
+  APIs that ship as a separate npm package. Touch this when you add a
+  public API.
+- `docs/` and `docs/guides/` — Markdown documentation that powers
+  <https://bun.com/docs>. Style and structure follow the standard
+  Starlight conventions.
+- `test/` — JavaScript-based integration tests that run against the
+  built binary, plus the JS unit test runner.
+- `bench/` — performance benchmarks (HTTP, file I/O, bundler, etc.).
+- `.github/` — CI workflows, the issue and PR templates, and the
+  `CODEOWNERS` rules that route PRs back to the right reviewer.
+
+If you want to land a small first change, scanning the labels
+[`gfi`](https://github.com/oven-sh/bun/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+and `help wanted` is the fastest way. If nothing is small enough,
+start by sprinkling `learn` (`<A-j>`/`<S-l>`) over `src/bun.js/` to
+get a feel for the runtime's hot paths.
+
 ## Using bun-debug
 
 - Disable logging: `BUN_DEBUG_QUIET_LOGS=1 bun-debug ...` (to disable all debug logging)

@@ -8,7 +8,8 @@ use std::sync::Arc;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_openat,
+    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable, is_pollable_from_mode,
+    shell_dup, shell_openat,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -250,7 +251,6 @@ pub enum BuiltinIO {
         buf: PinnedArrayBuf,
         i: u32,
     },
-    Blob(Arc<BuiltinBlob>),
     Ignore,
 }
 
@@ -315,15 +315,14 @@ impl BuiltinIO {
 
     /// Bump refcounts and return a shallow copy. Only reachable from the
     /// `duplicate_out` path, which fires before any `.jsbuf` redirect, so
-    /// `ArrayBuf`/`Blob` are unreachable here. The `Buf` target is copied
-    /// verbatim so stderr writes accumulate in (and flush from) stdout's
-    /// buffer; that aliasing is the carried `IoKind`.
+    /// `ArrayBuf` is unreachable here. The `Buf` target is copied verbatim so
+    /// stderr writes accumulate in (and flush from) stdout's buffer; that
+    /// aliasing is the carried `IoKind`.
     fn dup_ref(&self) -> BuiltinIO {
         match self {
             BuiltinIO::Fd(fd) => BuiltinIO::Fd(fd.clone()),
             BuiltinIO::Buf(target) => BuiltinIO::Buf(*target),
             BuiltinIO::Ignore => BuiltinIO::Ignore,
-            BuiltinIO::Blob(b) => BuiltinIO::Blob(Arc::clone(b)),
             BuiltinIO::ArrayBuf { .. } => {
                 unreachable!("duplicate_out precedes jsbuf redirects")
             }
@@ -394,7 +393,7 @@ impl BuiltinIO {
                 *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
-            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
+            BuiltinIO::Ignore => Ok(buf.len()),
         }
     }
 
@@ -561,129 +560,7 @@ impl Builtin {
                 };
                 // SAFETY: `path_buf` ends in NUL by construction.
                 let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
-                let perm: bun_sys::Mode = 0o666;
-                let cwd_fd = Self::cwd(interp, cmd);
-                let evtloop = interp.event_loop;
-
-                let mut pollable = false;
-                let mut is_socket = false;
-                let mut is_nonblocking = false;
-
-                let redirfd: bun_sys::Fd = if redirect.stdin() {
-                    match shell_openat(cwd_fd, path, redirect.to_flags(), perm) {
-                        Err(e) => {
-                            let sys = e.to_shell_system_error();
-                            return Some(Self::cmd_write_failing_error(
-                                interp,
-                                cmd,
-                                format_args!(
-                                    "bun: {}: {}",
-                                    bstr::BStr::new(sys.message.byte_slice()),
-                                    bstr::BStr::new(path.as_bytes()),
-                                ),
-                            ));
-                        }
-                        Ok(f) => f,
-                    }
-                } else {
-                    let result = bun_io::open_for_writing_impl(
-                        cwd_fd,
-                        &path,
-                        redirect.to_flags(),
-                        perm,
-                        &mut pollable,
-                        &mut is_socket,
-                        false,
-                        &mut is_nonblocking,
-                        (),
-                        |_| {},
-                        is_pollable_from_mode,
-                        shell_openat,
-                    );
-                    match result {
-                        Err(e) => {
-                            let sys = e.to_shell_system_error();
-                            return Some(Self::cmd_write_failing_error(
-                                interp,
-                                cmd,
-                                format_args!(
-                                    "bun: {}: {}",
-                                    bstr::BStr::new(sys.message.byte_slice()),
-                                    bstr::BStr::new(path.as_bytes()),
-                                ),
-                            ));
-                        }
-                        Ok(f) => {
-                            #[cfg(windows)]
-                            {
-                                use bun_sys::FdExt as _;
-                                match f.make_lib_uv_owned_for_syscall(
-                                    bun_sys::Tag::open,
-                                    bun_sys::ErrorCase::CloseOnFail,
-                                ) {
-                                    Err(e) => {
-                                        let sys = e.to_shell_system_error();
-                                        return Some(Self::cmd_write_failing_error(
-                                            interp,
-                                            cmd,
-                                            format_args!(
-                                                "bun: {}: {}",
-                                                bstr::BStr::new(sys.message.byte_slice()),
-                                                bstr::BStr::new(path.as_bytes()),
-                                            ),
-                                        ));
-                                    }
-                                    Ok(f2) => f2,
-                                }
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                f
-                            }
-                        }
-                    }
-                };
-
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                if redirect.stdin() {
-                    let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
-                    Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
-                }
-
-                if !redirect.stdout() && !redirect.stderr() {
-                    return None;
-                }
-
-                // Honor the `pollable` computed by `open_for_writing_impl` on
-                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
-                // takes the pollable path; Windows keeps the async writer.
-                let redirect_writer = IOWriter::init(
-                    redirfd,
-                    io_writer::Flags {
-                        pollable: if cfg!(windows) { true } else { pollable },
-                        nonblock: is_nonblocking,
-                        is_socket,
-                        ..Default::default()
-                    },
-                    evtloop,
-                );
-                redirect_writer.set_interp(interp_ptr);
-
-                if redirect.stdout() {
-                    let me = Self::of_mut(interp, cmd);
-                    me.stdout = BuiltinIO::Fd(OutFd {
-                        writer: Arc::clone(&redirect_writer),
-                        captured: None,
-                    });
-                }
-                if redirect.stderr() {
-                    let me = Self::of_mut(interp, cmd);
-                    me.stderr = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer,
-                        captured: None,
-                    });
-                }
+                return Self::open_file_redirect(interp, cmd, path, redirect);
             }
             Some(ast::Redirect::JsBuf(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
@@ -732,51 +609,16 @@ impl Builtin {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
-                    let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
-                        if !b.needs_to_read_file());
-                    if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
-                        let _ = global.throw(format_args!(
-                            "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
-                        ));
-                        return Some(Yield::failed());
-                    }
-                    let original_blob = body.use_();
-                    if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
-                        drop(original_blob);
-                        return None;
-                    }
-                    let blob = Arc::new(BuiltinBlob {
-                        blob: original_blob.dupe(),
-                    });
-                    drop(original_blob);
-                    let me = Self::of_mut(interp, cmd);
-                    if redirect.stdin() {
-                        me.stdin = BuiltinInput::Blob(Arc::clone(&blob));
-                    }
-                    if redirect.stdout() {
-                        me.stdout = BuiltinIO::Blob(Arc::clone(&blob));
-                    }
-                    if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(blob);
-                    }
+                    let blob = body.use_();
+                    return Self::setup_blob_redirect(interp, cmd, global, redirect, blob);
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
-                    if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {
-                        let _ = global.throw(format_args!(
-                            "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
-                        ));
-                        return Some(Yield::failed());
-                    }
-                    let theblob = Arc::new(BuiltinBlob {
-                        blob: blob_ref.dupe(),
-                    });
-                    let me = Self::of_mut(interp, cmd);
-                    if redirect.stdin() {
-                        me.stdin = BuiltinInput::Blob(theblob);
-                    } else if redirect.stdout() {
-                        me.stdout = BuiltinIO::Blob(theblob);
-                    } else if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(theblob);
-                    }
+                    return Self::setup_blob_redirect(
+                        interp,
+                        cmd,
+                        global,
+                        redirect,
+                        blob_ref.dupe(),
+                    );
                 } else {
                     let _ = global.throw(format_args!(
                         "Unknown JS value used in shell: {}",
@@ -799,6 +641,246 @@ impl Builtin {
             None => {}
         }
 
+        None
+    }
+
+    /// Open `path` for the direction indicated by `redirect` and attach an
+    /// `IOReader`/`IOWriter` to stdin/stdout/stderr. Shared by the `Atom`
+    /// redirect arm (`> file`) and the `JsBuf` arm when the target is a
+    /// file-backed Blob (`> ${Bun.file(path)}` / `> ${new Response(Bun.file(path))}`).
+    fn open_file_redirect(
+        interp: &Interpreter,
+        cmd: NodeId,
+        path: &bun_core::ZStr,
+        redirect: ast::RedirectFlags,
+    ) -> Option<Yield> {
+        let perm: bun_sys::Mode = 0o666;
+        let cwd_fd = Self::cwd(interp, cmd);
+        let evtloop = interp.event_loop;
+
+        let mut pollable = false;
+        let mut is_socket = false;
+        let mut is_nonblocking = false;
+
+        let redirfd: bun_sys::Fd = if redirect.stdin() {
+            match shell_openat(cwd_fd, path, redirect.to_flags(), perm) {
+                Err(e) => {
+                    let sys = e.to_shell_system_error();
+                    return Some(Self::cmd_write_failing_error(
+                        interp,
+                        cmd,
+                        format_args!(
+                            "bun: {}: {}",
+                            bstr::BStr::new(sys.message.byte_slice()),
+                            bstr::BStr::new(path.as_bytes()),
+                        ),
+                    ));
+                }
+                Ok(f) => f,
+            }
+        } else {
+            let result = bun_io::open_for_writing_impl(
+                cwd_fd,
+                &path,
+                redirect.to_flags(),
+                perm,
+                &mut pollable,
+                &mut is_socket,
+                false,
+                &mut is_nonblocking,
+                (),
+                |_| {},
+                is_pollable_from_mode,
+                shell_openat,
+            );
+            match result {
+                Err(e) => {
+                    let sys = e.to_shell_system_error();
+                    return Some(Self::cmd_write_failing_error(
+                        interp,
+                        cmd,
+                        format_args!(
+                            "bun: {}: {}",
+                            bstr::BStr::new(sys.message.byte_slice()),
+                            bstr::BStr::new(path.as_bytes()),
+                        ),
+                    ));
+                }
+                Ok(f) => {
+                    #[cfg(windows)]
+                    {
+                        use bun_sys::FdExt as _;
+                        match f.make_lib_uv_owned_for_syscall(
+                            bun_sys::Tag::open,
+                            bun_sys::ErrorCase::CloseOnFail,
+                        ) {
+                            Err(e) => {
+                                let sys = e.to_shell_system_error();
+                                return Some(Self::cmd_write_failing_error(
+                                    interp,
+                                    cmd,
+                                    format_args!(
+                                        "bun: {}: {}",
+                                        bstr::BStr::new(sys.message.byte_slice()),
+                                        bstr::BStr::new(path.as_bytes()),
+                                    ),
+                                ));
+                            }
+                            Ok(f2) => f2,
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        f
+                    }
+                }
+            }
+        };
+
+        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+        if redirect.stdin() {
+            let r = IOReader::init(redirfd, evtloop);
+            r.set_interp(interp_ptr);
+            Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
+        }
+
+        if !redirect.stdout() && !redirect.stderr() {
+            return None;
+        }
+
+        // Honor the `pollable` computed by `open_for_writing_impl` on
+        // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
+        // takes the pollable path; Windows keeps the async writer.
+        let redirect_writer = IOWriter::init(
+            redirfd,
+            io_writer::Flags {
+                pollable: if cfg!(windows) { true } else { pollable },
+                nonblock: is_nonblocking,
+                is_socket,
+                ..Default::default()
+            },
+            evtloop,
+        );
+        redirect_writer.set_interp(interp_ptr);
+
+        if redirect.stdout() {
+            let me = Self::of_mut(interp, cmd);
+            me.stdout = BuiltinIO::Fd(OutFd {
+                writer: Arc::clone(&redirect_writer),
+                captured: None,
+            });
+        }
+        if redirect.stderr() {
+            let me = Self::of_mut(interp, cmd);
+            me.stderr = BuiltinIO::Fd(OutFd {
+                writer: redirect_writer,
+                captured: None,
+            });
+        }
+        None
+    }
+
+    /// Attach a `Blob` redirect target (bare Blob or a Request/Response body)
+    /// to stdin/stdout/stderr.
+    ///
+    /// A file-backed blob (`Bun.file(path)` / `Bun.file(fd)`) is opened via
+    /// `open_file_redirect` / wrapped in an `IOWriter`/`IOReader` so reads and
+    /// writes go to disk. An in-memory blob is only valid for stdin; as a
+    /// stdout/stderr target it is rejected (there is no writable sink).
+    fn setup_blob_redirect(
+        interp: &Interpreter,
+        cmd: NodeId,
+        global: &crate::jsc::JSGlobalObject,
+        redirect: ast::RedirectFlags,
+        blob: crate::webcore::Blob,
+    ) -> Option<Yield> {
+        if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
+            drop(blob);
+            return None;
+        }
+
+        if blob.needs_to_read_file() {
+            if let Some(store) = blob.store.get().as_deref() {
+                if let crate::webcore::blob::store::Data::File(file) = &store.data {
+                    match &file.pathlike {
+                        crate::node::PathOrFileDescriptor::Path(p) => {
+                            let mut path_buf = p.slice().to_vec();
+                            path_buf.push(0);
+                            drop(blob);
+                            let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
+                            return Self::open_file_redirect(interp, cmd, path, redirect);
+                        }
+                        crate::node::PathOrFileDescriptor::Fd(fd) => {
+                            // The store's fd is borrowed from user code; dup
+                            // it so `IOWriter`/`IOReader` own a private fd
+                            // they can close on Drop.
+                            let duped = match shell_dup(*fd) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    drop(blob);
+                                    let sys = e.to_shell_system_error();
+                                    return Some(Self::cmd_write_failing_error(
+                                        interp,
+                                        cmd,
+                                        format_args!(
+                                            "bun: {}\n",
+                                            bstr::BStr::new(sys.message.byte_slice()),
+                                        ),
+                                    ));
+                                }
+                            };
+                            drop(blob);
+                            let evtloop = interp.event_loop;
+                            let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+                            if redirect.stdin() {
+                                let r = IOReader::init(duped, evtloop);
+                                r.set_interp(interp_ptr);
+                                Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
+                                return None;
+                            }
+                            let w = IOWriter::init(
+                                duped,
+                                io_writer::Flags {
+                                    pollable: if cfg!(windows) {
+                                        true
+                                    } else {
+                                        is_pollable(duped)
+                                    },
+                                    ..Default::default()
+                                },
+                                evtloop,
+                            );
+                            w.set_interp(interp_ptr);
+                            if redirect.stdout() {
+                                Self::of_mut(interp, cmd).stdout = BuiltinIO::Fd(OutFd {
+                                    writer: Arc::clone(&w),
+                                    captured: None,
+                                });
+                            }
+                            if redirect.stderr() {
+                                Self::of_mut(interp, cmd).stderr = BuiltinIO::Fd(OutFd {
+                                    writer: w,
+                                    captured: None,
+                                });
+                            }
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        if redirect.stdout() || redirect.stderr() {
+            drop(blob);
+            let _ = global.throw(format_args!(
+                "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
+            ));
+            return Some(Yield::failed());
+        }
+
+        let theblob = Arc::new(BuiltinBlob { blob: blob.dupe() });
+        drop(blob);
+        Self::of_mut(interp, cmd).stdin = BuiltinInput::Blob(theblob);
         None
     }
 

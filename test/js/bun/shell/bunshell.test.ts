@@ -481,6 +481,79 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  // `echo` is always a shell builtin, so these exercise `Builtin::init_redirections`
+  // (the JsBuf arm) directly. The guard on Response/Request bodies had its polarity
+  // inverted: `new Response(new Blob([..]))` was accepted and the output silently
+  // dropped, while `new Response(Bun.file(..))` threw "immutable blob". Each case
+  // runs in a spawned process because a throw from the builtin redirect setup
+  // currently leaves the interpreter keepalive pinned in-process.
+  describe("redirect builtin stdout to Blob / Response body", () => {
+    const run = async (expr: string, dir: string) => {
+      const code = /* ts */ `
+        import { $ } from "bun";
+        try {
+          await $\`echo hello > \${${expr}}\`;
+          console.log("ok");
+        } catch (e) {
+          console.log("throw: " + e.message);
+        }
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout.trim();
+    };
+
+    test.concurrent("Response(Bun.file) writes to the file", async () => {
+      using dir = tempDir("shell-resp-bunfile", {});
+      const out = join(String(dir), "out.txt");
+      const result = await run(`new Response(Bun.file(${JSON.stringify(out)}))`, String(dir));
+      expect(result).toBe("ok");
+      expect(await Bun.file(out).text()).toBe("hello\n");
+    });
+
+    test.concurrent.each([
+      ["Response(Blob)", `new Response(new Blob(["x"]))`],
+      ["Response(string)", `new Response("x")`],
+      ["bare Blob", `new Blob(["x"])`],
+    ])("%s rejects (immutable)", async (_label, expr) => {
+      using dir = tempDir("shell-immutable-blob", {});
+      const result = await run(expr, String(dir));
+      expect(result).toBe("throw: Cannot redirect stdout/stderr to an immutable blob. Expected a file");
+    });
+
+    test.concurrent("Bun.file(fd) writes to the fd", async () => {
+      using dir = tempDir("shell-bunfile-fd", {});
+      const out = join(String(dir), "out.txt");
+      const code = /* ts */ `
+        import { $ } from "bun";
+        import { openSync, closeSync } from "node:fs";
+        const fd = openSync(${JSON.stringify(out)}, "w");
+        await $\`echo via-fd > \${Bun.file(fd)}\`;
+        closeSync(fd);
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(out).text()).toBe("via-fd\n");
+    });
+  });
+
   // TODO This sometimes fails
   test("redirect stderr", async () => {
     const buffer = Buffer.alloc(128, 0);

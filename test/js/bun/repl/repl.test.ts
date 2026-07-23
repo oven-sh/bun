@@ -1532,12 +1532,12 @@ describe.concurrent("--interactive", () => {
   );
 
   test.each([
-    [["-i"], "bare bun -i"],
-    [["run", "-i", "--interactive"], "bun run -i --interactive"],
-    [["-i", "-e", ""], "bun -i -e ''"],
+    ["bare bun -i", ["-i"]],
+    ["bun run -i --interactive", ["run", "-i", "--interactive"]],
+    ["bun -i -e ''", ["-i", "-e", ""]],
   ])(
-    "%# %s reaches the REPL",
-    async (extra, _label) => {
+    "%s reaches the REPL",
+    async (_label, extra) => {
       // The three -i spellings the install-meaning predicate must classify as
       // REPL-bound (Arguments.rs repl_bound_i).
       await using proc = Bun.spawn({
@@ -1580,25 +1580,29 @@ describe.concurrent("--interactive", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Verbatim node v26.3.0 wording, including the missing space.
     expect(stderr).toContain('--input-type must be "module","commonjs", "module-typescript" or "commonjs-typescript"');
     expect(exitCode).toBe(9);
   });
 
-  test("--input-type with --eval fails loudly instead of ignoring the option", async () => {
-    // node applies module semantics to -e input; bun doesn't implement that,
-    // so accepting-and-ignoring would silently run with the wrong semantics.
+  test.each(["module", "commonjs"])("--input-type=%s with --eval runs the matching grammar", async inputType => {
+    // Bun's eval grammar accepts ESM and CJS in one source, so both
+    // spellings' requested parse semantics are satisfied by acceptance
+    // (the vendored test-assert-esm-cjs-message-verify.js relies on this).
+    const src =
+      inputType === "module"
+        ? 'import assert from "assert"; assert.ok(1); console.log("ok");'
+        : 'const assert = require("assert"); assert.ok(1); console.log("ok");';
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--input-type=module", "-e", "console.log(typeof require)"],
+      cmd: [bunExe(), `--input-type=${inputType}`, "-e", src],
       env,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("--input-type is not supported with --eval/--print input");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
   });
 
   test(

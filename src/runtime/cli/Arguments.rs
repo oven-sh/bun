@@ -1137,17 +1137,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                     Global::exit(9);
                 }
             }
-            // Node applies --input-type to -e/-p string input; bun does not
-            // implement that, so fail loudly instead of evaluating with the
-            // wrong module semantics. A file entry point ignores the option
+            // Node applies --input-type to -e/-p/STDIN string input. Bun's
+            // eval grammar accepts ESM and CJS in the same source, so every
+            // valid spelling's requested parse semantics are already
+            // satisfied; accept them. A file entry point ignores the option
             // and the REPL rejects it, both like node.
-            if args.option(b"--eval").is_some() || args.option(b"--print").is_some() {
-                bun_core::pretty_errorln!(
-                    "--input-type is not supported with --eval/--print input in bun"
-                );
-                Output::flush();
-                Global::exit(1);
-            }
             ctx.runtime_options.input_type_specified = true;
         }
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));

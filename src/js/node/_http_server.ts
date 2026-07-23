@@ -1608,10 +1608,11 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
       this[kStreamingEnabled] = enable;
       if (enable) {
         handle.ondata = this.#onData.bind(this);
-        handle.ondrain = this.#onDrain.bind(this);
+        handle.ondrain ??= this.#onDrain.bind(this);
       } else {
         handle.ondata = undefined;
-        handle.ondrain = undefined;
+        // ondrain is left as-is: a prior socket.write() may have armed it
+        // (see _write) and still wants the native drain notification.
       }
     }
   }
@@ -1668,6 +1669,14 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     releaseServerParserShim(this);
     this[kHandle] = null;
     this.server?.[kTrackedConnections]?.delete(this);
+    // Settle a deferred _write callback so the Writable does not stall with
+    // kWriting set when the socket closes before the native drain it was
+    // waiting for.
+    const pending = this.#pendingCallback;
+    if (pending) {
+      this.#pendingCallback = null;
+      (pending as Function)(new ConnResetException("aborted"));
+    }
     const timer = this[kSocketTimeoutTimer];
     if (timer) {
       clearTimeout(timer);
@@ -2010,9 +2019,12 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     try {
       if (handle) {
         const flushed = handle.write(_chunk, _encoding);
-        if (!flushed && handle.ondrain) {
-          // Streaming mode (CONNECT tunnels): wait for the native drain
-          // callback before completing the write.
+        if (flushed === false) {
+          // The write routes through uWS's AsyncSocket buffer (shared with
+          // res.write), and the remainder is parked there: hold the Writable
+          // callback until the native drain so further socket.write() chunks
+          // queue in the Duplex instead of piling into the native buffer.
+          handle.ondrain ??= this.#onDrain.bind(this);
           this.#pendingCallback = _callback;
           return false;
         }

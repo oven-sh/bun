@@ -104,6 +104,10 @@ new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR_READER: string, "BUN_POSTGRES_SOCKET_MONITOR_READER", {});
 new!(pub BUN_RUNTIME_TRANSPILER_CACHE_PATH: string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", {});
+// Base delay (ms) for S3Client exponential backoff between retries of a failed
+// part/commit. The Nth retry waits between cap/2 and cap where
+// cap = min(20s, base * 2^(N-1)). See `src/runtime/webcore/s3/multipart.rs`.
+new!(pub BUN_S3_RETRY_BASE_DELAY_MS: unsigned, "BUN_S3_RETRY_BASE_DELAY_MS", { default: 200 });
 new!(pub BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR: boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", { default: false });
 new!(pub BUN_TCC_OPTIONS: string, "BUN_TCC_OPTIONS", {});
 // Standard C compiler environment variable for include paths (colon-separated).

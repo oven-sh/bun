@@ -963,6 +963,49 @@ if (cluster.isPrimary) {
   30_000,
 );
 
+test("round-robin newconn reaches the worker's internalMessage listener via the handle slot", async () => {
+  // Node's child_process passes the received handle as the second arg to the
+  // internalMessage listener; the message object itself carries no fd property.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
+  using dir = tempDir("cluster-handle-slot", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
+  cluster.on("listening", (_w, addr) => {
+    net.connect(addr.port, "127.0.0.1");
+  });
+} else {
+  let reported = false;
+  process.on("internalMessage", (msg, handle) => {
+    if (msg && msg.act === "newconn" && !reported) {
+      reported = true;
+      process.send({
+        hasDollarFd: "$fd" in msg,
+        handleIsObject: typeof handle === "object" && handle !== null,
+        handleHasFd: typeof handle?.fd === "number",
+      });
+    }
+  });
+  net.createServer(() => {}).listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), joinP(String(dir), "main.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ hasDollarFd: false, handleIsObject: true, handleHasFd: true });
+  expect(exitCode).toBe(0);
+});
+
 test("cluster child send() clones and stamps cmd:NODE_CLUSTER", async () => {
   using dir = tempDir("cluster-send-shape", {
     "main.ts": `

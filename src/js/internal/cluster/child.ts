@@ -78,8 +78,8 @@ cluster._setupWorker = function () {
         return;
       }
     }
-    if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
-      handle = makeConnectionHandle(message["$fd"]);
+    if (message.act === "newconn" && typeof handle === "number" && handle >= 0) {
+      handle = makeConnectionHandle(handle);
     }
     try {
       process.emit("internalMessage", message, handle);
@@ -126,11 +126,12 @@ cluster._getServer = function (obj, options, cb) {
   // Set custom data on handle (i.e. tls tickets key)
   if (obj._getServerData) message.data = obj._getServerData();
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L105-L115
   send(message, (reply, handle) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
-    if (handle == null && typeof reply["$fd"] === "number" && reply["$fd"] >= 0) {
-      handle = makeSharedHandle(reply["$fd"]);
+    if (typeof handle === "number" && handle >= 0) {
+      handle = makeSharedHandle(handle);
     }
 
     if (handle) {

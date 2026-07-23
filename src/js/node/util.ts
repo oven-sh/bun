@@ -25,13 +25,11 @@ function isFunction(value) {
 }
 
 // Node semantics (includes the [[Prototype]] identity check that
-// Bun.deepEquals(a, b, true) intentionally omits). Node wraps the internal
-// comparator in a 2-arg forwarder in lib/util.js so the private skipPrototype
-// argument never reaches the public API; mirror that (v26.3.0).
-const { isDeepStrictEqual: internalIsDeepStrictEqual } = require("internal/util/comparisons");
-function isDeepStrictEqual(val1, val2) {
-  return internalIsDeepStrictEqual(val1, val2);
-}
+// Bun.deepEquals(a, b, true) intentionally omits) plus the skipPrototype
+// third argument, which IS public API in node v26.3.0: fn.length === 3 and
+// isDeepStrictEqual(a, b, true) skips prototype identity (asserted by
+// upstream test-util-isDeepStrictEqual.js).
+const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 

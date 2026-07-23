@@ -89,7 +89,8 @@ for (let n = 1; n <= times; n++) {
 const minimize = argv.includes("--minimize");
 let minimalSchedule = "";
 if (minimize) {
-  if (!runs.some(r => r.outcome === "hang" || r.crash)) {
+  const isBadOutcome = (o: string | undefined) => /^hang$/i.test(o ?? "");
+  if (!runs.some(r => isBadOutcome(r.outcome) || r.crash)) {
     console.log(`\nminimize: initial rounds did not reproduce a hang/crash - nothing to minimize`);
   } else {
     let cur = schedule
@@ -105,8 +106,8 @@ if (minimize) {
         dir: join(outDir, `min-${tag}`),
         timeoutMs,
       });
-      const bad = r.outcome === "hang" || !!r.crash;
-      console.log(`    [${tag}] ${rules.length} rule(s): ${bad ? "REPRODUCES" : "clean"} (${r.outcome === "hang" ? "HANG" : r.crash ? "CRASH" : `exit=${r.exitCode}`})`);
+      const bad = isBadOutcome(r.outcome) || !!r.crash;
+      console.log(`    [${tag}] ${rules.length} rule(s): ${bad ? "REPRODUCES" : "clean"} (${isBadOutcome(r.outcome) ? "HANG" : r.crash ? "CRASH" : `exit=${r.exitCode}`})`);
       return bad;
     };
     for (let i = 0; i < cur.length && cur.length > 1; ) {

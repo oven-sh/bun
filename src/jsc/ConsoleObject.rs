@@ -582,9 +582,16 @@ fn message_with_type_and_level_(
     }
 
     // console.trace prints "Trace: <message>" (or just "Trace" with no args),
-    // matching Node, with the stack trace appended below.
+    // matching Node, with the stack trace appended below. The label goes through
+    // FormatOptions so it lands after the console.group indent rather than
+    // before it.
     if message_type == MessageType::Trace {
-        let _ = writer.write_all(if print_length > 0 { b"Trace: " } else { b"Trace\n" });
+        if print_length > 0 {
+            print_options.prefix = b"Trace: ";
+        } else {
+            let _ = formatter::write_indent_n(u32::from(default_indent), writer);
+            let _ = writer.write_all(b"Trace\n");
+        }
     }
 
     if print_length > 0 {
@@ -1307,6 +1314,9 @@ pub struct FormatOptions {
     pub single_line: bool,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
+    /// Label emitted immediately after the indent, before the formatted values
+    /// (used by `console.trace` for its "Trace: " prefix).
+    pub prefix: &'static [u8],
 }
 
 impl Default for FormatOptions {
@@ -1321,6 +1331,7 @@ impl Default for FormatOptions {
             single_line: false,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
+            prefix: b"",
         }
     }
 }
@@ -1493,6 +1504,7 @@ pub fn format2(
         if fmt.write_indent(writer).is_err() {
             return Ok(());
         }
+        let _ = writer.write_all(options.prefix);
 
         if matches!(tag.tag, TagPayload::String) {
             if options.enable_colors {
@@ -1557,6 +1569,7 @@ pub fn format2(
     if fmt.write_indent(writer).is_err() {
         return Ok(());
     }
+    let _ = writer.write_all(options.prefix);
 
     let mut any = false;
     if options.enable_colors {

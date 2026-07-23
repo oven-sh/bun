@@ -31,6 +31,9 @@ using namespace WebCore;
 
 class InProcessInspectorChannel;
 static InProcessInspectorChannel& inProcessInspectorChannel();
+// Deliver the in-process session's buffered events synchronously from a pause
+// loop (a posted drain task cannot run while the thread is parked).
+static void drainInProcessInspectorWhilePaused();
 static void finishDeferredInProcessDetach(Zig::GlobalObject*);
 
 class BunInspectorConnection;
@@ -268,6 +271,11 @@ public:
         }
 
         while (!isDoneProcessingEvents) {
+            // An in-process session shares this pause: deliver its buffered
+            // Debugger.paused (and any replies) synchronously so its
+            // listeners can evaluateOnCallFrame while paused, matching
+            // inProcessRunWhilePaused's same-thread semantics.
+            drainInProcessInspectorWhilePaused();
             size_t closedCount = 0;
             for (auto* connection : connections) {
                 ConnectionStatus status = connection->status.load();
@@ -647,6 +655,15 @@ void InProcessInspectorChannel::drainSynchronously()
     }
 }
 
+static void drainInProcessInspectorWhilePaused()
+{
+    auto& channel = inProcessInspectorChannel();
+    bool wasInPauseLoop = channel.inPauseLoop;
+    channel.inPauseLoop = true;
+    channel.drainSynchronously();
+    channel.inPauseLoop = wasInPauseLoop;
+}
+
 // Pause loop for the inspected thread. When a remote debugger is attached it
 // owns resumption, so defer to the connection loop. With only in-process
 // sessions, mirror Node's same-thread session semantics: deliver
@@ -656,6 +673,8 @@ void InProcessInspectorChannel::drainSynchronously()
 static void inProcessRunWhilePaused(JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
 {
     if (globalObject.inspectorController().frontendRouter().hasRemoteFrontend()) {
+        // The connection loop drains the in-process channel each iteration,
+        // so in-process listeners still observe the pause synchronously.
         BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
         return;
     }

@@ -439,6 +439,14 @@ class InspectorCDPAdapter {
   // disconnectFrontend: if this was the last session retaining the context
   // during the exit handshake, the others finally see the context go.
   handleClientDisconnect(): void {
+    // The leaked native connection keeps this adapter reachable after the
+    // socket closes; drop the per-session state (script records now carry
+    // full source text + mappings) so a closed session retains O(1).
+    this.#scripts.$clear();
+    this.#scriptIdsByUrl.$clear();
+    this.#preParseBreakpoints.$clear();
+    this.#breakpointIdAliases.$clear();
+    this.#pending.$clear();
     const state = this.#disconnectNotify;
     state.adapters?.delete(this);
     this.#notifyWhenWaitingForDisconnect = false;

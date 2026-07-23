@@ -708,10 +708,11 @@ impl Execution {
     /// afterEach after the test body already threw) accumulate instead of
     /// clobbering the primary failure.
     fn discard_junit_failure(buntest: NonNull<BunTest>) {
-        // SAFETY: `buntest` points at the live per-file BunTest; `reporter` is a
-        // `NonNull<CommandLineReporter>` with write provenance (see BunTest docs);
-        // single-threaded test runner, no other borrow live here.
+        // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
+        // test runner, no other borrow live here.
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
+            // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
+            // provenance (see BunTest docs); single-threaded, no other borrow.
             if let Some(junit) = unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
                 junit.last_failure = None;
             }

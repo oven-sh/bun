@@ -231,6 +231,26 @@ pub struct JunitFailure {
     pub body: Vec<u8>,
 }
 
+/// Append `input` to `out`, dropping CSI sequences (`ESC '[' ... final`), so a
+/// matcher message built with colour does not reach the report as SGR residue.
+fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
+    let mut i = 0;
+    while i < input.len() {
+        if input[i] == 0x1b && i + 1 < input.len() && input[i + 1] == b'[' {
+            i += 2;
+            while i < input.len() && !(0x40..=0x7e).contains(&input[i]) {
+                i += 1;
+            }
+            if i < input.len() {
+                i += 1;
+            }
+            continue;
+        }
+        out.push(input[i]);
+        i += 1;
+    }
+}
+
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
@@ -331,27 +351,42 @@ impl JunitReporter {
     /// the exception formatter.
     pub fn record_failure(&mut self, exception: &jsc::ZigException) {
         let failure = self.last_failure.get_or_insert_default();
+        let name = exception.name.to_utf8();
+        let raw_message = exception.message.to_utf8();
+        let mut message = Vec::with_capacity(raw_message.slice().len());
+        push_stripping_ansi(&mut message, raw_message.slice());
+
+        let is_assertion = strings::has_prefix_comptime(&message, b"expect(")
+            && (name.slice().is_empty() || strings::eql(name.slice(), b"Error"));
+
         if failure.name.is_empty() {
-            failure.name = exception.name.to_utf8_bytes();
+            if is_assertion {
+                failure.name.extend_from_slice(b"AssertionError");
+            } else {
+                failure.name.extend_from_slice(name.slice());
+            }
         }
         if failure.message.is_empty() {
-            failure.message = exception.message.to_utf8_bytes();
+            failure.message.extend_from_slice(&message);
         }
 
         let body = &mut failure.body;
         if !body.is_empty() {
             body.push(b'\n');
         }
-        let name = exception.name.to_utf8();
-        let message = exception.message.to_utf8();
-        match (name.slice().is_empty(), message.slice().is_empty()) {
+        let header: &[u8] = if is_assertion {
+            b"AssertionError"
+        } else {
+            name.slice()
+        };
+        match (header.is_empty(), message.is_empty()) {
             (true, true) => body.extend_from_slice(b"error"),
-            (true, false) => body.extend_from_slice(message.slice()),
-            (false, true) => body.extend_from_slice(name.slice()),
+            (true, false) => body.extend_from_slice(&message),
+            (false, true) => body.extend_from_slice(header),
             (false, false) => {
-                body.extend_from_slice(name.slice());
+                body.extend_from_slice(header);
                 body.extend_from_slice(b": ");
-                body.extend_from_slice(message.slice());
+                body.extend_from_slice(&message);
             }
         }
         body.push(b'\n');

@@ -517,7 +517,9 @@ describe("junit reporter", () => {
     const junitPath = join(tmpDir, "junit.xml");
     await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      // FORCE_COLOR so the matcher builds a coloured message, to exercise the
+      // ANSI-strip path.
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", FORCE_COLOR: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -541,6 +543,7 @@ describe("junit reporter", () => {
     expect(typeErr.failure[0].$.message).toContain("null is not an object");
     expect(typeErr.failure[0]._).toContain("fail.test.js:4");
 
+    expect(assertion.failure[0].$.type).toBe("AssertionError");
     expect(assertion.failure[0].$.message).toContain("expect(received).toBe(expected)");
     expect(assertion.failure[0]._).toContain("Expected: 2");
     expect(assertion.failure[0]._).toContain("Received: 1");

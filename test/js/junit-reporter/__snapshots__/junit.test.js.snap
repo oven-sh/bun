@@ -21,7 +21,7 @@ exports[`junit reporter more scenarios 1`] = `
       </testsuite>
       <testcase name="basic passing test" classname="comprehensive test suite" file="comprehensive.test.js" line="26" assertions="1" />
       <testcase name="basic failing test" classname="comprehensive test suite" file="comprehensive.test.js" line="30" assertions="1">
-        <failure type="Error" message="expect(received).toBe(expected)&#10;&#10;Expected: 3&#10;Received: 2&#10;">Error: expect(received).toBe(expected)&#10;&#10;Expected: 3&#10;Received: 2&#10;&#10;      at comprehensive.test.js:31:27&#10;</failure>
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 3&#10;Received: 2&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 3&#10;Received: 2&#10;&#10;      at comprehensive.test.js:31:27&#10;</failure>
       </testcase>
       <testcase name="basic skipped test" classname="comprehensive test suite" file="comprehensive.test.js" line="34" assertions="0">
         <skipped />

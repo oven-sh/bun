@@ -78,10 +78,14 @@ describe("URL-safe base64 encoding", () => {
   test("fs.readFileSync(path, 'base64url') matches Buffer.toString", () => {
     // readFileSync goes through `to_bun_string_from_owned_slice` rather than
     // Buffer.prototype.toString; the two must agree for every length.
+    // `encode_base64_to_bun_string` switches from an inline WTF string to an
+    // external mimalloc-backed string when the encoded output reaches 32 KiB;
+    // 24 * 1024 input bytes encode to exactly 32 KiB, so 24575 / 24576
+    // straddle that branch.
     using dir = tempDir("base64url-fs", {});
     const path = join(String(dir), "bytes.bin");
     const source = fillDeterministic(new Uint8Array(513));
-    for (const len of [0, 1, 2, 3, 4, 5, 6, 7, 8, 510, 511, 512, 513, 32 * 1024, 32 * 1024 + 1, 32 * 1024 + 2]) {
+    for (const len of [0, 1, 2, 3, 4, 5, 6, 7, 8, 510, 511, 512, 513, 24 * 1024 - 1, 24 * 1024, 24 * 1024 + 1]) {
       const bytes = len <= source.length ? source.subarray(0, len) : fillDeterministic(new Uint8Array(len));
       writeFileSync(path, bytes);
       const expected = base64UrlReference(bytes);

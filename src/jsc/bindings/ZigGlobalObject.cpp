@@ -3152,6 +3152,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Extensions to Built-in objects -----
 
+    Bun::installFinalizationRegistryPrototypeHooks(this);
+
     JSC::JSObject* errorConstructor = this->errorConstructor();
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);

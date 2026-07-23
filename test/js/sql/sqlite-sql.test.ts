@@ -1356,6 +1356,55 @@ describe("SQL helpers", () => {
     expect(results[0].value).toBe("test");
   });
 
+  test("unsafe with named parameters (strict mode)", async () => {
+    const strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE named_test (id INTEGER, name TEXT, age INTEGER)`;
+
+    await strictSql.unsafe("INSERT INTO named_test VALUES (:id, :name, :age)", {
+      id: 1,
+      name: "Alice",
+      age: 30,
+    });
+
+    const results = await strictSql.unsafe("SELECT * FROM named_test WHERE name = :name", { name: "Alice" });
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe(1);
+    expect(results[0].name).toBe("Alice");
+    expect(results[0].age).toBe(30);
+
+    await strictSql.close();
+  });
+
+  test("unsafe with named parameters using different prefixes", async () => {
+    const strictSql = new SQL({ adapter: "sqlite", filename: ":memory:", strict: true });
+    await strictSql`CREATE TABLE prefix_test (col TEXT)`;
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES (:value)", { value: "colon" });
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES ($value)", { value: "dollar" });
+    await strictSql.unsafe("INSERT INTO prefix_test VALUES (@value)", { value: "at" });
+
+    const allResults = await strictSql.unsafe("SELECT * FROM prefix_test");
+    expect(allResults).toHaveLength(3);
+    expect(allResults.map(r => r.col).sort()).toEqual(["at", "colon", "dollar"]);
+
+    await strictSql.close();
+  });
+
+  test("unsafe with named parameters without strict mode (requires prefix in keys)", async () => {
+    const defaultSql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    await defaultSql`CREATE TABLE default_test (id INTEGER, name TEXT)`;
+
+    await defaultSql.unsafe("INSERT INTO default_test VALUES (:id, :name)", { ":id": 1, ":name": "Bob" });
+
+    const results = await defaultSql.unsafe("SELECT * FROM default_test WHERE id = :id_param", {
+      ":id_param": 1,
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe(1);
+    expect(results[0].name).toBe("Bob");
+
+    await defaultSql.close();
+  });
+
   test("insert into with select helper using where IN", async () => {
     const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
     await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;

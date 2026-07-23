@@ -2802,6 +2802,8 @@ const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBun
 /**
  * Returns the number of columns required to display the given string.
  */
+const kPerCodePointWidthOptions = { __proto__: null, perCodePoint: true, countAnsiEscapeCodes: true };
+
 function getStringWidth(str, removeControlChars = true) {
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize(str, "NFC");
@@ -2809,7 +2811,7 @@ function getStringWidth(str, removeControlChars = true) {
   // expandEmojiSequence defaulting on), not grapheme clusters. ANSI was
   // already stripped above; node's binding has no ANSI awareness, so any
   // residual escape bytes count as their own code points (Cc = 0).
-  return internalGetStringWidth(str, { perCodePoint: true, countAnsiEscapeCodes: true });
+  return internalGetStringWidth(str, kPerCodePointWidthOptions);
 }
 
 // node's ansi matcher (lib/internal/util/inspect.js, from chalk/ansi-regex):

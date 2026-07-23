@@ -652,6 +652,27 @@ static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)
     return nullptr;
 }
 
+// Container contents first, then own enumerable properties on the Map/Set
+// object itself — node's partial mode checks both (subset semantics), like
+// every other container arm.
+static bool mapSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    bool contents = mapSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!contents)
+        return false;
+    return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+}
+
+static bool setSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    bool contents = setSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!contents)
+        return false;
+    return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+}
+
 static bool isSpecialValue(JSValue value)
 {
     // `typeof x !== "object"`: primitives, null, and callables are decided
@@ -695,7 +716,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualType == JSC::JSMapType && expectedType == JSC::JSMapType) {
         if (uncheckedDowncast<JSC::JSMap>(expected.asCell())->size() > uncheckedDowncast<JSC::JSMap>(actual.asCell())->size())
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, mapSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, mapSubsetAndProps);
     }
 
     const bool actualIsView = actual.isCell() && JSC::isTypedArrayTypeIncludingDataView(actualType);
@@ -776,7 +797,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualType == JSC::JSSetType && expectedType == JSC::JSSetType) {
         if (uncheckedDowncast<JSC::JSSet>(expected.asCell())->size() > uncheckedDowncast<JSC::JSSet>(actual.asCell())->size())
             return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, setSubset);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, setSubsetAndProps);
     }
 
     // Dates and RegExps: internal value compared strictly, own enumerable

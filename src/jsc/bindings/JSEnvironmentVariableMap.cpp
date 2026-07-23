@@ -474,7 +474,7 @@ private:
     }
 };
 
-const JSC::ClassInfo JSSharedEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedEnvMap) };
+const JSC::ClassInfo JSSharedEnvMap::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedEnvMap) };
 
 bool JSSharedEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
@@ -826,7 +826,9 @@ private:
     }
 };
 
-const JSC::ClassInfo JSProcessEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
+// "Object" so calculatedClassName matches JSFinalObject: toStrictEqual and
+// Bun.inspect treat process.env as a plain object, same as Node.
+const JSC::ClassInfo JSProcessEnvMap::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
 
 bool JSProcessEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
@@ -837,6 +839,11 @@ bool JSProcessEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
     if (propertyName.isSymbol() || !uid)
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 
+    // Base::put would mark the caller's slot cacheable and the put_by_id IC
+    // would then write the raw JSValue directly on subsequent puts, bypassing
+    // this override. Disabling put caching keeps reads on the fast IC path.
+    slot.disableCaching();
+
     String stringValue = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -845,11 +852,11 @@ bool JSProcessEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
         return true;
 
     JSValue jsStringValue = jsString(vm, truncateEnvValueAtNul(stringValue));
+    PutPropertySlot newSlot(asObject(cell), slot.isStrictMode());
     if (key->length() == uid->length())
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, jsStringValue, slot));
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, jsStringValue, newSlot));
 
     Identifier truncated = Identifier::fromString(vm, *key);
-    PutPropertySlot newSlot(asObject(cell), slot.isStrictMode());
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, truncated, jsStringValue, newSlot));
 }
 

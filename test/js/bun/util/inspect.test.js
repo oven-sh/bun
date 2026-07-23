@@ -364,6 +364,23 @@ it("inspect", () => {
     value: "not a number",
   });
   expect(Bun.inspect(mapWithOverriddenSize)).toBe("Map {}");
+
+  // Size values >= 2^31 saturate to i32::MAX instead of wrapping negative.
+  const mapWithHugeSize = new Map([[1, 1]]);
+  Object.defineProperty(mapWithHugeSize, "size", { value: 3000000000 });
+  expect(Bun.inspect(mapWithHugeSize)).toBe("Map(2147483647) {\n  1: 1,\n}");
+
+  const setWithHugeSize = new Set([1]);
+  Object.defineProperty(setWithHugeSize, "size", { value: 3000000000 });
+  expect(Bun.inspect(setWithHugeSize)).toBe("Set(2147483647) {\n  1,\n}");
+
+  const mapWithInfiniteSize = new Map([[1, 1]]);
+  Object.defineProperty(mapWithInfiniteSize, "size", { value: Infinity });
+  expect(Bun.inspect(mapWithInfiniteSize)).toBe("Map(2147483647) {\n  1: 1,\n}");
+
+  const setWithInfiniteSize = new Set([1]);
+  Object.defineProperty(setWithInfiniteSize, "size", { value: Infinity });
+  expect(Bun.inspect(setWithInfiniteSize)).toBe("Set(2147483647) {\n  1,\n}");
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");

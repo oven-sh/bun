@@ -4715,7 +4715,7 @@ pub mod formatter {
             let length_value = value
                 .get(self.global_this, "size")?
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_to_i32(self.global_this)?;
+            let length = length_value.coerce::<i32>(self.global_this)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4857,7 +4857,7 @@ pub mod formatter {
             let length_value = value
                 .get(self.global_this, "size")?
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_to_i32(self.global_this)?;
+            let length = length_value.coerce::<i32>(self.global_this)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;

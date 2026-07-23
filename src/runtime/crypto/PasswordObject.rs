@@ -91,7 +91,7 @@ impl AlgorithmValue {
                                     .throw_invalid_argument_type("hash", "cost", "number"));
                             }
 
-                            let rounds = rounds_value.coerce_to_i32(global_object)?;
+                            let rounds = rounds_value.coerce::<i32>(global_object)?;
 
                             if rounds < 4 || rounds > 31 {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
@@ -115,7 +115,7 @@ impl AlgorithmValue {
                                     .throw_invalid_argument_type("hash", "timeCost", "number"));
                             }
 
-                            let time_cost = time_value.coerce_to_i32(global_object)?;
+                            let time_cost = time_value.coerce::<i32>(global_object)?;
 
                             if time_cost < 1 {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
@@ -135,7 +135,7 @@ impl AlgorithmValue {
                                 ));
                             }
 
-                            let memory_cost = memory_value.coerce_to_i32(global_object)?;
+                            let memory_cost = memory_value.coerce::<i32>(global_object)?;
 
                             // argon2 requires `memoryCost >= 8 * parallelism`;
                             // Bun hard-codes `parallelism = 1` (see

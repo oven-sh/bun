@@ -329,8 +329,8 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
 
     Ok([
         // Node.js does no validations.
-        line_number_value.coerce_to_i32(global)?,
-        column_number_value.coerce_to_i32(global)?,
+        line_number_value.coerce::<i32>(global)?,
+        column_number_value.coerce::<i32>(global)?,
     ])
 }
 

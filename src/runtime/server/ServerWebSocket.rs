@@ -1285,7 +1285,7 @@ impl ServerWebSocket {
                 )));
             }
 
-            break 'brk args.ptr[0].coerce_to_i32(global_this)?;
+            break 'brk args.ptr[0].coerce::<i32>(global_this)?;
         };
 
         let message_value: ZigStringSlice = 'brk: {

@@ -35,6 +35,7 @@ impl StartupMessage {
             + z_field_count(b"user", user)
             + z_field_count(b"database", database)
             + z_field_count(b"client_encoding", b"UTF8")
+            + z_field_count(b"DateStyle", b"ISO, MDY")
             + options.len()
             + 1;
 
@@ -57,17 +58,18 @@ impl StartupMessage {
         }
         writer.string(b"client_encoding")?;
         writer.string(b"UTF8")?;
+        // Pin the session DateStyle so date/timestamp text is always ISO
+        // regardless of postgresql.conf / ALTER DATABASE / ALTER ROLE defaults.
+        // A startup-packet parameter outranks every server-side default (GUC
+        // source PGC_S_CLIENT), so this is the same guarantee node-postgres and
+        // postgres.js rely on. Without it a `SQL, DMY` default makes the server
+        // emit `03/04/2026`, which JS Date.parse reads as 4 March.
+        writer.string(b"DateStyle")?;
+        writer.string(b"ISO, MDY")?;
         if !options.is_empty() {
             writer.write(options)?;
         }
         writer.write(&[0u8])?;
         Ok(())
-    }
-
-    pub fn write<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
-        self.write_internal(writer)
     }
 }

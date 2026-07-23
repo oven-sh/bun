@@ -446,6 +446,31 @@ for (let [gcTick, label] of [
         await proc.exited;
       });
 
+      it("stdin.end() rejects with EPIPE when the child exits before consuming the write", async () => {
+        // Child reads a single byte and exits; the parent queues 16MB on stdin
+        // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
+        // named-pipe buffer on Windows) so end() is still draining when the
+        // read end closes. On Windows libuv previously surfaced that as code
+        // "EOF" because uv__process_pipe_write_req used the read-side error
+        // translator.
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", `const b = Buffer.alloc(1); require("fs").readSync(0, b); process.exit(0);`],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+        let caught: any;
+        try {
+          await proc.stdin!.end();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught?.code).toBe("EPIPE");
+        await proc.exited;
+      });
+
       describe("pipe", () => {
         function huge() {
           return spawn({
@@ -453,7 +478,6 @@ for (let [gcTick, label] of [
             stdout: "pipe",
             stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",
-            lazy: true,
           });
         }
 
@@ -529,6 +553,31 @@ for (let [gcTick, label] of [
             });
           });
         }
+
+        it.skipIf(isWindows)("lazy: true releases an unread pipe after the child exits", async () => {
+          // With lazy the reader is paused until JS pulls. If a slot is never
+          // read, on_process_exit must still drain it so the fd and the
+          // Subprocess wrapper are released.
+          const refs: WeakRef<any>[] = [];
+          for (let i = 0; i < 50; i++) {
+            const p = spawn({
+              cmd: ["sh", "-c", "echo out; echo err >&2"],
+              stdout: "pipe",
+              stderr: "pipe",
+              lazy: true,
+            });
+            expect(await p.stdout.text()).toBe("out\n");
+            await p.exited;
+            refs.push(new WeakRef(p));
+          }
+          Bun.gc(true);
+          await Bun.sleep(0);
+          Bun.gc(true);
+          const alive = refs.filter(r => r.deref() !== undefined).length;
+          // Allow a couple of stragglers for GC timing; the regression kept
+          // all 50 Strong-rooted.
+          expect(alive).toBeLessThan(5);
+        });
 
         it("should allow reading stdout after a few milliseconds", async () => {
           for (let i = 0; i < 50; i++) {

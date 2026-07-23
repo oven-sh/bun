@@ -22,9 +22,6 @@ type ByteBitSet = ArrayBitSet<256, 4>;
 
 const WHITESPACE: &[u8] = b" \t\n\r";
 
-// TODO: calculate this for different systems
-const PAGE_SIZE: usize = 16384;
-
 // ──────────────────────────────────────────────────────────────────────────
 // PatchFilePart / PatchFile
 // ──────────────────────────────────────────────────────────────────────────
@@ -178,9 +175,6 @@ impl<'a> PatchFile<'a> {
                         total
                     };
 
-                    // PERF: small (<= PAGE_SIZE) allocations could use an arena.
-                    let _ = PAGE_SIZE;
-
                     // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
                     let file_contents: Vec<u8> = {
                         let mut contents = vec![0u8; count];
@@ -292,12 +286,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     #[cfg(unix)]
     let _ = state; // suppress unused on posix
 
-    // Purposefully use `bun.default_allocator` here because if the file size is big like
-    // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
-    //
-    // But if the file size is small, like less than a single page, it's probably ok
-    // to use the arena
-    let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {
@@ -535,7 +523,7 @@ pub struct PatchMutationPart<'a> {
 
 /// Ensure context, insertion, deletion values are in sync with HunkLineType enum
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum PartType {
     #[default]
     Context = 0,
@@ -1570,19 +1558,12 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     if b_part_start >= line.len() {
         return None;
     }
-    let lmao_bro = &line[b_part_start..];
-    core::hint::black_box(lmao_bro);
     let b_part_end = match strings::index_of_any(&line[b_part_start..], b" \n\r\t") {
         Some(pos) => pos + b_part_start,
         None => line.len(),
     };
 
     let b_part = &line[b_part_start..b_part_end];
-    for &c in a_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
-    }
     for &c in b_part {
         if !valid_chars.is_set(c as usize) {
             return None;

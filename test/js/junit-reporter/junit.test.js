@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 const xml2js = require("xml2js");
 
@@ -365,12 +366,15 @@ describe("junit reporter", () => {
     expect(flakyEntries).toHaveLength(1);
     expect(flakyEntries[0][0]).not.toContain("<failure");
 
-    // A test that fails every retry attempt is reported once, as a failure.
+    // A test that fails every retry attempt is reported once, as a failure,
+    // and the failure message reflects the final attempt (not the first).
     const exhaustedEntries = [
       ...xmlContent.matchAll(/<testcase[^>]*name="exhausted test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g),
     ];
     expect(exhaustedEntries).toHaveLength(1);
     expect(exhaustedEntries[0][0]).toContain("<failure");
+    expect(exhaustedEntries[0][0]).toContain("always fails 3");
+    expect(exhaustedEntries[0][0]).not.toContain("always fails 1");
 
     expect(xmlContent).toContain('name="stable test"');
 
@@ -383,6 +387,172 @@ describe("junit reporter", () => {
     expect(suite.$.failures).toBe("1");
 
     expect(proc.exitCode).toBe(1);
+  });
+
+  it("produces well-formed XML when test names contain control characters", async () => {
+    const tmpDir = tempDirWithFiles("junit-ctrl", {
+      "package.json": "{}",
+      "ctrl.test.js":
+        'import { test } from "bun:test";\n' +
+        'test("ctrl \\x00nul\\x1besc\\x07bell", () => { throw new Error("x"); });\n' +
+        'test("keeps\\twhitespace\\nfine", () => {});\n',
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlBytes = await file(junitPath).bytes();
+    // Raw control characters (other than TAB/LF/CR) are not well-formed XML 1.0
+    // and must not appear in the output at all.
+    for (const c of [0x00, 0x07, 0x1b]) {
+      expect(xmlBytes).not.toContain(c);
+    }
+
+    const xmlContent = new TextDecoder().decode(xmlBytes);
+    // &#0; / &#27; are also illegal as numeric references in XML 1.0.
+    expect(xmlContent).not.toMatch(/&#(0|7|27);/);
+
+    // The report must parse as XML.
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const testcases = result.testsuites.testsuite[0].testcase;
+    expect(testcases[0].$.name).toBe("ctrl nulescbell");
+    // TAB and LF are valid XML Chars and should pass through untouched.
+    expect(testcases[1].$.name).toBe("keeps\twhitespace\nfine");
+    expect(exitCode).toBe(1);
+  });
+
+  it("escapes the classname attribute exactly once", async () => {
+    const tmpDir = tempDirWithFiles("junit-escape", {
+      "package.json": "{}",
+      "escape.test.js": `
+        import { describe, test } from "bun:test";
+        describe("suite <a> & \\"b\\"", () => {
+          describe("inner > stuff", () => {
+            test("t", () => {});
+          });
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    // Double-escaping would produce &amp;lt; / &amp;amp; etc.
+    expect(xmlContent).not.toContain("&amp;lt;");
+    expect(xmlContent).not.toContain("&amp;amp;");
+    expect(xmlContent).not.toContain("&amp;gt;");
+    expect(xmlContent).not.toContain("&amp;quot;");
+
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const fileSuite = result.testsuites.testsuite[0];
+    const outer = fileSuite.testsuite[0];
+    const inner = outer.testsuite[0];
+    const tc = inner.testcase[0];
+    // The classname should decode back to the original describe names joined by " > ".
+    expect(outer.$.name).toBe('suite <a> & "b"');
+    expect(tc.$.classname).toBe('inner > stuff > suite <a> & "b"');
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the test body's error in <failure> when afterEach also throws", async () => {
+    const tmpDir = tempDirWithFiles("junit-aftereach", {
+      "package.json": "{}",
+      "after.test.js": `
+        import { test, afterEach } from "bun:test";
+        afterEach(() => { throw new Error("cleanup broke"); });
+        test("t", () => { throw new Error("actual test failure"); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const tc = result.testsuites.testsuite[0].testcase[0];
+    // The primary failure (from the test body) should win type/message;
+    // the afterEach error should be appended to the body.
+    expect(tc.failure[0].$.message).toContain("actual test failure");
+    expect(tc.failure[0]._).toContain("actual test failure");
+    expect(tc.failure[0]._).toContain("cleanup broke");
+    expect(exitCode).toBe(1);
+  });
+
+  it("includes the error type, message and stack in <failure>", async () => {
+    const tmpDir = tempDirWithFiles("junit-failure", {
+      "package.json": "{}",
+      "fail.test.js": `
+        import { test, expect } from "bun:test";
+        test("thrown error", () => { throw new Error("boom: the important message"); });
+        test("type error", () => { null.foo; });
+        test("assertion", () => { expect(1).toBe(2); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      // FORCE_COLOR so the matcher builds a coloured message, to exercise the
+      // ANSI-strip path.
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const testcases = result.testsuites.testsuite[0].testcase;
+    expect(testcases).toHaveLength(3);
+
+    const [thrown, typeErr, assertion] = testcases;
+
+    expect(thrown.failure[0].$.type).toBe("Error");
+    expect(thrown.failure[0].$.message).toContain("boom: the important message");
+    expect(thrown.failure[0]._).toContain("boom: the important message");
+    expect(thrown.failure[0]._).toContain("fail.test.js:3");
+
+    expect(typeErr.failure[0].$.type).toBe("TypeError");
+    expect(typeErr.failure[0].$.message).toContain("null is not an object");
+    expect(typeErr.failure[0]._).toContain("fail.test.js:4");
+
+    expect(assertion.failure[0].$.type).toBe("AssertionError");
+    expect(assertion.failure[0].$.message).toContain("expect(received).toBe(expected)");
+    expect(assertion.failure[0]._).toContain("Expected: 2");
+    expect(assertion.failure[0]._).toContain("Received: 1");
+    expect(assertion.failure[0]._).toContain("fail.test.js:5");
+
+    // No ANSI escape sequences should leak into the report. escape_xml drops
+    // the ESC byte, so a leak would surface as bare CSI residue.
+    expect(xmlContent).not.toMatch(/\[[\d;]*[A-HJKSTfm]/);
+    expect(exitCode).toBe(1);
   });
 });
 

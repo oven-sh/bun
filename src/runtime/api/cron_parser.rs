@@ -1,7 +1,7 @@
 //! Cron expression parser and next-occurrence calculator.
 //!
 //! Parses standard 5-field cron expressions (minute hour day month weekday)
-//! into a bitset representation, and computes the next matching UTC time.
+//! into a bitset representation, and computes the next matching local time.
 //!
 //! Supports:
 //!   - Wildcards: *
@@ -14,7 +14,42 @@
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
 use bun_core::strings;
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_jsc::{GregorianDateTime, JSGlobalObject, JsResult};
+
+/// Time zone for `CronExpression::next`.
+#[derive(Clone, Copy)]
+pub enum CronTz {
+    /// The process's local time zone (default).
+    Local,
+    /// A resolved IANA time-zone ID from `JSGlobalObject::resolve_time_zone_id`.
+    Named(u32),
+}
+
+impl CronTz {
+    fn ms_to_gregorian(self, g: &JSGlobalObject, ms: f64) -> GregorianDateTime {
+        match self {
+            CronTz::Local => g.ms_to_gregorian_date_time(ms),
+            CronTz::Named(id) => g.ms_to_gregorian_date_time_in_zone(ms, id),
+        }
+    }
+
+    fn gregorian_to_ms(
+        self,
+        g: &JSGlobalObject,
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+    ) -> JsResult<f64> {
+        match self {
+            CronTz::Local => g.gregorian_date_time_to_ms(year, month, day, hour, minute, 0, 0),
+            CronTz::Named(id) => {
+                Ok(g.gregorian_date_time_to_ms_in_zone(year, month, day, hour, minute, 0, 0, id))
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct CronExpression {
@@ -112,26 +147,116 @@ impl CronExpression {
         &buf[..written]
     }
 
-    /// Compute the next UTC time (in ms since epoch) that matches this
-    /// expression, strictly after `from_ms`. Returns None if no match found
+    /// POSIX cron: if both DOM and DOW are restricted (not `*`), match either;
+    /// otherwise match both (a `*` field matches all anyway).
+    fn matches_day(&self, day: i32, weekday: i32) -> bool {
+        let day_ok = bit_set(self.days, u32::try_from(day).expect("int cast"));
+        let weekday_ok = bit_set(self.weekdays, u32::try_from(weekday).expect("int cast"));
+        if !self.days_is_wildcard && !self.weekdays_is_wildcard {
+            day_ok || weekday_ok
+        } else {
+            day_ok && weekday_ok
+        }
+    }
+
+    /// Check if a real instant matches all five fields in `tz`.
+    fn matches_instant(&self, global_object: &JSGlobalObject, tz: CronTz, ms: f64) -> bool {
+        let t = tz.ms_to_gregorian(global_object, ms);
+        bit_set(self.minutes, u32::try_from(t.minute).expect("int cast"))
+            && bit_set(self.hours, u32::try_from(t.hour).expect("int cast"))
+            && bit_set(self.months, u32::try_from(t.month).expect("int cast"))
+            && self.matches_day(t.day, t.weekday)
+    }
+
+    /// Convert a matching wall-clock `dt` to a real instant strictly after
+    /// `from_ms`, handling DST. Returns None if no such instant exists for
+    /// this wall-clock minute (fall-back FORMER already passed and the
+    /// schedule is fixed-time, so it fires once — cronie semantics).
+    fn resolve_local_match(
+        &self,
+        global_object: &JSGlobalObject,
+        tz: CronTz,
+        dt: GregorianDateTime,
+        from_ms: f64,
+        from_dt: GregorianDateTime,
+    ) -> JsResult<Option<f64>> {
+        let result =
+            tz.gregorian_to_ms(global_object, dt.year, dt.month, dt.day, dt.hour, dt.minute)?;
+        // During fall-back, `result` is the FORMER occurrence and the wall-clock
+        // walk steps over the second one. For schedules with `*` minute or `*`
+        // hour, scan real-time minutes (capped at the largest DST shift) to
+        // recover the repeated window. Two cases need the scan:
+        //   (a) result > from_ms but a fall-back transition lies in
+        //       (from_ms, result] — detected by more real than wall-clock
+        //       minutes having elapsed (UTC-distance of the two local
+        //       breakdowns gives the wall-clock delta without a TZ lookup).
+        //   (b) result <= from_ms — `dt` is ambiguous and mapped to its
+        //       earlier instant, already past; the later instant may match.
+        if self.minutes == ALL_MINUTES || self.hours == ALL_HOURS {
+            let wall_from = global_object.gregorian_date_time_to_ms_utc(
+                from_dt.year,
+                from_dt.month,
+                from_dt.day,
+                from_dt.hour,
+                from_dt.minute,
+                0,
+                0,
+            )?;
+            let wall_dt = global_object.gregorian_date_time_to_ms_utc(
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0,
+            )?;
+            if result <= from_ms || result - from_ms > wall_dt - wall_from {
+                let mut probe = ((from_ms / MINUTE_MS).floor() + 1.0) * MINUTE_MS;
+                let mut cap = from_ms + (MAX_DST_SHIFT_MIN + 1.0) * MINUTE_MS;
+                if result > from_ms {
+                    cap = cap.min(result);
+                }
+                while probe < cap {
+                    if self.matches_instant(global_object, tz, probe) {
+                        return Ok(Some(probe));
+                    }
+                    probe += MINUTE_MS;
+                }
+            }
+        }
+        Ok(if result > from_ms { Some(result) } else { None })
+    }
+
+    /// Compute the next time (in ms since epoch) that matches this expression
+    /// in `tz`, strictly after `from_ms`. Returns None if no match found
     /// within 8 years.
     pub(crate) fn next(
         &self,
         global_object: &JSGlobalObject,
         from_ms: f64,
+        tz: CronTz,
     ) -> JsResult<Option<f64>> {
-        let mut dt = global_object.ms_to_gregorian_date_time_utc(from_ms);
-        let start_year = dt.year;
+        let from_dt = tz.ms_to_gregorian(global_object, from_ms);
+        let start_year = from_dt.year;
+        let mut dt = from_dt;
         dt.minute += 1;
-        dt.second = 0;
 
         while dt.year - start_year <= 8 {
-            // Normalize overflow + recompute weekday via a UTC round-trip.
-            dt = global_object.ms_to_gregorian_date_time_utc(
-                global_object.gregorian_date_time_to_ms_utc(
-                    dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0,
-                )?,
+            // Carry hour/minute manually so the candidate {hour,minute} is
+            // checked against the bitfields *before* DST shifts it; normalize
+            // the date+weekday via a UTC round-trip (pure calendar math —
+            // day overflow and weekday are TZ-independent).
+            if dt.minute > 59 {
+                dt.minute -= 60;
+                dt.hour += 1;
+            }
+            if dt.hour > 23 {
+                dt.hour -= 24;
+                dt.day += 1;
+            }
+            let n = global_object.ms_to_gregorian_date_time_utc(
+                global_object
+                    .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, 12, 0, 0, 0)?,
             );
+            dt.year = n.year;
+            dt.month = n.month;
+            dt.day = n.day;
+            dt.weekday = n.weekday;
 
             if !bit_set(self.months, u32::try_from(dt.month).expect("int cast")) {
                 dt.month += 1;
@@ -140,16 +265,7 @@ impl CronExpression {
                 dt.minute = 0;
                 continue;
             }
-            // POSIX: if both DOM and DOW are restricted (not `*`), either
-            // matching is enough; otherwise the `*` field matches all anyway.
-            let day_ok = bit_set(self.days, u32::try_from(dt.day).expect("int cast"));
-            let weekday_ok = bit_set(self.weekdays, u32::try_from(dt.weekday).expect("int cast"));
-            let day_match = if !self.days_is_wildcard && !self.weekdays_is_wildcard {
-                day_ok || weekday_ok
-            } else {
-                day_ok && weekday_ok
-            };
-            if !day_match {
+            if !self.matches_day(dt.day, dt.weekday) {
                 dt.day += 1;
                 dt.hour = 0;
                 dt.minute = 0;
@@ -165,9 +281,10 @@ impl CronExpression {
                 continue;
             }
 
-            return Ok(Some(global_object.gregorian_date_time_to_ms_utc(
-                dt.year, dt.month, dt.day, dt.hour, dt.minute, 0, 0,
-            )?));
+            if let Some(r) = self.resolve_local_match(global_object, tz, dt, from_ms, from_dt)? {
+                return Ok(Some(r));
+            }
+            dt.minute += 1;
         }
         Ok(None)
     }
@@ -177,7 +294,11 @@ impl CronExpression {
 // Name lookup tables
 // ============================================================================
 
-const ALL_HOURS: u32 = (1 << 24) - 1;
+const MINUTE_MS: f64 = 60_000.0;
+const MAX_DST_SHIFT_MIN: f64 = 120.0;
+
+pub(crate) const ALL_MINUTES: u64 = (1 << 60) - 1;
+pub(crate) const ALL_HOURS: u32 = (1 << 24) - 1;
 pub(crate) const ALL_DAYS: u32 = ((1u64 << 32) - 1) as u32 & !1u32;
 pub(crate) const ALL_MONTHS: u16 = ((1u32 << 13) - 1) as u16 & !1u16;
 pub(crate) const ALL_WEEKDAYS: u8 = (1 << 7) - 1;

@@ -14,22 +14,13 @@ use bun_options_types::LoaderExt as _;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
-    JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource,
+    JSInternalPromise, JSValue, ResolvedSource,
 };
 
 // Re-exports.
 pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 pub use bun_resolve_builtins::HardcodedModule;
 pub use bun_resolver::node_fallbacks;
-
-// LAYERING: re-export from the crate-level mount (`crate::async_module`)
-// instead of `#[path]`-mounting `AsyncModule.rs` a second time. A duplicate
-// mount compiles two distinct `Queue` types — `VirtualMachine.modules` is
-// typed against `crate::async_module::Queue`, so a second copy here would be
-// a different (incompatible) type and double-emits the
-// `Bun__onFulfillAsyncModule` extern.
-pub use crate::async_module;
-pub use crate::async_module::{AsyncModule, Queue as AsyncModuleQueue};
 
 bun_core::declare_scope!(ModuleLoader, hidden);
 
@@ -316,47 +307,6 @@ pub(crate) fn fetch_builtin_module(
     // valid out-param; `global` is the live JS-thread global passed through
     // opaquely to the §Dispatch hook.
     unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer, out) }
-}
-
-/// because the §Dispatch fn-ptr signature must be monomorphic across the crate
-/// boundary. The branch is a single length-check / `dirWithTrailingSlash` —
-/// the fn-ptr indirection is one call per `import` / `require.resolve`,
-/// dominated by the resolver's dir-cache walk.
-pub fn resolve_maybe_needs_trailing_slash(
-    res: &mut ErrorableString,
-    global: &mut JSGlobalObject,
-    specifier: bun_core::String,
-    source: bun_core::String,
-    query_string: Option<&mut bun_core::String>,
-    is_esm: bool,
-    is_a_file_path: bool,
-    is_user_require_resolve: bool,
-) -> JsResult<()> {
-    let Some(hooks) = loader_hooks() else {
-        // No high tier (unit tests) — fail closed with ModuleNotFound so
-        // callers surface a real ResolveMessage rather than `undefined`.
-        *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), JSValue::UNDEFINED);
-        return Ok(());
-    };
-    let qs = query_string
-        .map(std::ptr::from_mut::<bun_core::String>)
-        .unwrap_or(core::ptr::null_mut());
-    // SAFETY: hook contract — `global` is the live JS-thread global
-    // (mutable: hook may throw on it); `res`/`qs` are valid
-    // out-params for the call (single-threaded, no aliasing).
-    let ok = unsafe {
-        (hooks.resolve)(
-            res,
-            global,
-            specifier,
-            source,
-            qs,
-            is_esm,
-            is_a_file_path,
-            is_user_require_resolve,
-        )
-    };
-    if ok { Ok(()) } else { Err(JsError::Thrown) }
 }
 
 /// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,

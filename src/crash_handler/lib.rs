@@ -72,8 +72,6 @@ pub use draft::*;
 // placeholders to be replaced with a real debug-info backend in a later pass.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod debug {
-    use super::draft::StackTrace;
-
     /// `@returnAddress()` — forwards to the canonical stub in bun_core so that
     /// when it's wired to a real intrinsic, all callers (incl. the canonical
     /// `StoredTrace::capture`) pick it up together.
@@ -87,11 +85,6 @@ pub mod debug {
     #[inline]
     pub(crate) fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
         bun_core::capture_stack_trace(begin, addrs)
-    }
-
-    /// Fallback when ENABLE == false.
-    pub fn panic_impl(_ert: Option<&StackTrace<'_>>, _begin: Option<usize>, msg: &[u8]) -> ! {
-        panic!("{}", bstr::BStr::new(msg))
     }
 
     pub(crate) const HAVE_ERROR_RETURN_TRACING: bool = false;
@@ -546,6 +539,14 @@ mod draft {
         pub fn is_main_thread() -> bool {
             MAIN_THREAD_ID.load(Ordering::Relaxed) == bun_threading::current_thread_id()
         }
+
+        /// Zig: `Cli.cmd = command` (cli.zig `createContextData`). `bun_runtime`
+        /// stores `Command.Tag.char()` here at dispatch so crash-report trace
+        /// strings encode which subcommand was running instead of `_` (pre-init).
+        pub fn set_cmd_char(c: u8) {
+            CMD_CHAR.store(c, Ordering::Relaxed);
+        }
+
         pub(crate) fn cmd_char() -> Option<u8> {
             match CMD_CHAR.load(Ordering::Relaxed) {
                 0 => None,
@@ -635,6 +636,10 @@ mod draft {
         BusError(usize),
         /// Posix-only
         FloatingPointError(usize),
+        /// Posix-only; libc/mimalloc `abort()`, `std::terminate`, etc.
+        Abort,
+        /// Posix-only; `__builtin_trap()` / WTF `CRASH()` / `brk` on aarch64.
+        Trap(usize),
         /// Windows-only
         DatatypeMisalignment,
         /// Windows-only
@@ -659,7 +664,9 @@ mod draft {
                 CrashReason::IllegalInstruction(_) => libc::SIGILL,
                 CrashReason::BusError(_) => libc::SIGBUS,
                 CrashReason::FloatingPointError(_) => libc::SIGFPE,
-                CrashReason::Panic(_)
+                CrashReason::Trap(_) => libc::SIGTRAP,
+                CrashReason::Abort
+                | CrashReason::Panic(_)
                 | CrashReason::Unreachable
                 | CrashReason::DatatypeMisalignment
                 | CrashReason::StackOverflow
@@ -683,6 +690,10 @@ mod draft {
                 CrashReason::BusError(addr) => write!(writer, "Bus error at address 0x{:X}", addr),
                 CrashReason::FloatingPointError(addr) => {
                     write!(writer, "Floating point error at address 0x{:X}", addr)
+                }
+                CrashReason::Abort => writer.write_str("abort() called"),
+                CrashReason::Trap(addr) => {
+                    write!(writer, "Trap instruction at address 0x{:X}", addr)
                 }
                 CrashReason::DatatypeMisalignment => writer.write_str("Unaligned memory access"),
                 CrashReason::StackOverflow => writer.write_str("Stack overflow"),
@@ -851,9 +862,10 @@ mod draft {
     /// Where the crash trace is seeded from. Each call site has exactly one.
     #[derive(Clone, Copy)]
     pub enum TraceSeed<'a> {
-        /// Signal/exception handler saved the fault register context: walk frame
-        /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
-        /// becomes frame 0.
+        /// Signal/exception handler saved the fault register context. `pc`
+        /// becomes frame 0. POSIX: `fp` is the saved frame-pointer register and
+        /// the walk follows the fp chain. Windows: `fp` is the `*const CONTEXT`
+        /// from `EXCEPTION_POINTERS` and the walk uses `RtlVirtualUnwind`.
         Fault { pc: usize, fp: usize },
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
@@ -1587,7 +1599,7 @@ mod draft {
     };
 
     const METADATA_VERSION_LINE: &str = const_format::formatcp!(
-        "Bun {}v{} {} {}{}\n",
+        "Bun {}v{} {} {}\n",
         if Environment::IS_DEBUG {
             "Debug "
         } else if Environment::IS_CANARY {
@@ -1598,11 +1610,6 @@ mod draft {
         bun_core::package_json_version_with_sha,
         bun_core::os_display,
         ARCH_DISPLAY_STRING,
-        if Environment::BASELINE {
-            " (baseline)"
-        } else {
-            ""
-        },
     );
 
     /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
@@ -1669,6 +1676,8 @@ mod draft {
                 libc::SIGILL => CrashReason::IllegalInstruction(addr),
                 libc::SIGBUS => CrashReason::BusError(addr),
                 libc::SIGFPE => CrashReason::FloatingPointError(addr),
+                libc::SIGABRT => CrashReason::Abort,
+                libc::SIGTRAP => CrashReason::Trap(addr),
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
@@ -1718,6 +1727,11 @@ mod draft {
             libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
+            // abort() (mimalloc/glibc heap corruption, std::terminate) and
+            // __builtin_trap()/WTF CRASH()/`brk` on aarch64 raise these; without
+            // handlers they bypass bun.report entirely.
+            libc::sigaction(libc::SIGABRT, act_ptr, core::ptr::null_mut());
+            libc::sigaction(libc::SIGTRAP, act_ptr, core::ptr::null_mut());
         }
         Ok(())
     }
@@ -2059,9 +2073,15 @@ mod draft {
         // SAFETY: kernel provides a valid EXCEPTION_RECORD; ExceptionAddress is
         // the faulting instruction.
         let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
-        // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
-        // by `pc`; the frame-pointer slot is unused.
-        crash_handler(reason, TraceSeed::Fault { pc, fp: 0 });
+        // Windows: capture_from_context walks via RtlVirtualUnwind seeded from
+        // the fault CONTEXT, so the handler's own frames are never captured.
+        crash_handler(
+            reason,
+            TraceSeed::Fault {
+                pc,
+                fp: info.ContextRecord as usize,
+            },
+        );
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -2304,14 +2324,12 @@ mod draft {
     /// eg: 'https://bun.report/1.1.3/we04c...
     ///                               ^ this tells you it is windows x86_64
     ///
-    /// Baseline gets a weirder encoding of a mix of b and e.
+    /// x64 ships one nehalem build; the old baseline codes ('B','b','e','g')
+    /// are no longer emitted but the backend still accepts them from old bins.
     struct Platform;
 
     impl Platform {
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
-        // Baseline is `Environment::BASELINE`, not a Cargo feature — `cfg(feature = "baseline")`
-        // was always false because no such feature exists, so baseline builds emitted the
-        // non-baseline char and bun.report symbolicated them against the wrong artifact.
         const CURRENT: u8 = {
             // Android folds into the Linux variants. bun.report decodes the same
             // single-char codes; introducing new ones would break older decoders.
@@ -2320,7 +2338,7 @@ mod draft {
                 target_arch = "x86_64"
             ))]
             {
-                if Environment::BASELINE { b'B' } else { b'l' }
+                b'l'
             }
             #[cfg(all(
                 any(target_os = "linux", target_os = "android"),
@@ -2331,7 +2349,7 @@ mod draft {
             }
             #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
             {
-                if Environment::BASELINE { b'b' } else { b'm' }
+                b'm'
             }
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             {
@@ -2339,7 +2357,7 @@ mod draft {
             }
             #[cfg(all(windows, target_arch = "x86_64"))]
             {
-                if Environment::BASELINE { b'e' } else { b'w' }
+                b'w'
             }
             #[cfg(all(windows, target_arch = "aarch64"))]
             {
@@ -2347,7 +2365,7 @@ mod draft {
             }
             #[cfg(all(target_os = "freebsd", target_arch = "x86_64"))]
             {
-                if Environment::BASELINE { b'g' } else { b'f' }
+                b'f'
             }
             #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
             {
@@ -2678,6 +2696,12 @@ mod draft {
             }
 
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
+
+            CrashReason::Abort => writer.write_byte(b'a')?,
+            CrashReason::Trap(addr) => {
+                writer.write_byte(b'b')?;
+                write_u64_as_two_vlqs(writer, addr)?;
+            }
         }
 
         if opts.action == TraceStringAction::ViewTrace {
@@ -3053,18 +3077,6 @@ mod draft {
         }
     }
 
-    /// In many places we catch errors, the trace for them is absorbed and only a
-    /// single line (the error name) is printed. When this is set, we will print
-    /// trace strings for those errors (or full stacks in debug builds).
-    ///
-    /// This can be enabled by passing `--verbose-error-trace` to the CLI.
-    /// In release builds with error return tracing enabled, this is also exposed.
-    /// You can test if this feature is available by checking `bun --help` for the flag.
-    #[inline]
-    pub fn handle_error_return_trace(err_name: &[u8], maybe_trace: Option<&StackTrace>) {
-        handle_error_return_trace_extra::<false>(err_name, maybe_trace);
-    }
-
     unsafe extern "C" {
         fn WTF__DumpStackTrace(ptr: *const usize, count: usize);
     }
@@ -3252,22 +3264,6 @@ mod draft {
         Ok(())
     }
 
-    pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
-        // Not `unwrap_or_else`: the default trim anchor must be read from this
-        // frame, not from a closure's popped frame (see `panic_impl`).
-        let first_address = match first_address {
-            Some(addr) => addr,
-            None => debug::return_address(),
-        };
-        let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(first_address, &mut addrs);
-        let stack = StackTrace {
-            index: n,
-            instruction_addresses: &addrs,
-        };
-        dump_stack_trace(&stack, limits);
-    }
-
     /// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
     /// Used in places where we intentionally crash for testing purposes so that we don't clutter CI
     /// with core dumps.
@@ -3308,16 +3304,11 @@ mod draft {
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
 
-    /// For large codebases such as bun.bake.DevServer, it may be helpful
-    /// to dump a large amount of state to a file to aid debugging a crash.
-    ///
     /// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
     pub fn append_pre_crash_handler<T: 'static>(
         ptr: *mut T,
         handler: fn(&mut T) -> crate::Result<()>,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Rust can't capture `handler` in a bare `fn` item, so box a closure that
-        // performs the cast+call. Errors are intentionally swallowed (best-effort dump).
         let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
             // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
             // when registered and remove_pre_crash_handler() unregisters it before drop.

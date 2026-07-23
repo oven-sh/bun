@@ -154,8 +154,6 @@ impl Default for DumpStackTraceOptions {
         }
     }
 }
-/// Alias for `DumpStackTraceOptions`; also re-exported from `bun_crash_handler`.
-pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
 /// T0 fallback prints raw return
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
@@ -410,6 +408,7 @@ pub mod debug_flags {
         let _ = str_;
         false
     }
+
     #[inline]
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
@@ -497,7 +496,7 @@ pub const os_display: &str = if cfg!(target_os = "android") {
     env::OS.display_string()
 };
 
-// Bun v1.0.0 (Linux x64 baseline)
+// Bun v1.0.0 (Linux x64)
 // Bun v1.0.0-debug (Linux x64)
 // Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string: &str = concatcp!(
@@ -511,7 +510,7 @@ pub const unhandled_error_bun_version_string: &str = concatcp!(
     os_display,
     " ",
     arch_name,
-    if env::BASELINE { " baseline)" } else { ")" },
+    ")",
 );
 
 pub const arch_name: &str = if cfg!(target_arch = "x86_64") {
@@ -624,6 +623,7 @@ pub(crate) fn is_exiting() -> bool {
 // args and are `noreturn`/kernel-validated — no memory-safety preconditions,
 // so `safe fn` discharges the link-time proof and the call sites are plain
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
+#[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
@@ -696,7 +696,14 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
-            for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+            for &s in &[
+                libc::SIGSEGV,
+                libc::SIGBUS,
+                libc::SIGILL,
+                libc::SIGFPE,
+                libc::SIGABRT,
+                libc::SIGTRAP,
+            ] {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
         }
@@ -755,11 +762,6 @@ pub fn mimalloc_cleanup(force: bool) {
 // 2. if I want to configure allocator later
 #[inline]
 pub fn configure_allocator(_: AllocatorConfiguration) {}
-
-#[cold]
-pub fn notimpl() -> ! {
-    Output::panic(core::format_args!("Not implemented yet!!!!!"));
-}
 
 // Make sure we always print any leftover
 #[cold]

@@ -489,25 +489,6 @@ impl Request {
         self.reported_estimated_size.get()
     }
 
-    pub fn get_remote_socket_info(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<Option<JSValue>> {
-        let Some(info) = self.request_context.get_remote_socket_info() else {
-            return Ok(None);
-        };
-        // `create_dto` routes through `create_utf8_for_js` which can throw —
-        // propagate, don't swallow, so we never return `None` while a JS
-        // exception is pending.
-        crate::socket::socket_address::SocketAddress::create_dto(
-            global_object,
-            &info.ip,
-            info.port as u16,
-            info.is_ipv6,
-        )
-        .map(Some)
-    }
-
     #[bun_uws::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
     pub fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
@@ -525,11 +506,6 @@ impl Request {
         global_object: &JSGlobalObject,
     ) -> Option<ReadableStream> {
         <Self as BodyMixin>::get_body_readable_stream(self, global_object)
-    }
-
-    #[inline]
-    pub fn detach_readable_stream(&self, global_object: &JSGlobalObject) {
-        <Self as BodyMixin>::detach_readable_stream(self, global_object)
     }
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -721,46 +697,6 @@ impl Request {
         formatter.write_indent(writer)?;
         writer.write_str("}")?;
         Ok(())
-    }
-
-    pub fn mime_type(&self) -> &[u8] {
-        if let Some(headers) = self.headers_mut().as_mut() {
-            if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
-                // `fast_get` returns a `ZigString` by value whose
-                // bytes borrow the FetchHeaders' WTF::String storage (NOT the
-                // local). `ZigString::slice` ties the borrow to the local
-                // `content_type`; detach and re-anchor on `self` so the
-                // returned `&[u8]` outlives the temporary.
-                // SAFETY: the bytes point into `self.headers`' WTF storage,
-                // which is held alive for the borrow `&self`.
-                return unsafe { bun_ptr::detach_lifetime(content_type.slice()) };
-            }
-        }
-
-        // Upstream `bun_http_types::MimeType::{OTHER,TEXT}` are `const` items
-        // (not `static`), so `&CONST.value` borrows a temporary `Cow` and cannot be
-        // returned. Mirror their `init_comptime` byte literals here as `'static` slices.
-        const MIME_OTHER_VALUE: &[u8] = b"application/octet-stream";
-        const MIME_TEXT_VALUE: &[u8] = b"text/plain;charset=utf-8";
-
-        match self.body_value() {
-            BodyValue::Blob(blob) => {
-                let ct = blob.content_type_slice();
-                if !ct.is_empty() {
-                    return ct;
-                }
-
-                MIME_OTHER_VALUE
-            }
-            BodyValue::InternalBlob(ib) => ib.content_type(),
-            BodyValue::WTFStringImpl(_) => MIME_TEXT_VALUE,
-            // BodyValue::InlineBlob(ib) => ib.content_type(),
-            BodyValue::Null
-            | BodyValue::Error(_)
-            | BodyValue::Used
-            | BodyValue::Locked(_)
-            | BodyValue::Empty => MIME_OTHER_VALUE,
-        }
     }
 
     pub fn get_cache(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -979,7 +915,6 @@ impl Request {
                     let protocol = self.get_protocol();
                     let url_bytelength = protocol.len() + host.len() + req_url.len();
 
-                    #[cfg(debug_assertions)]
                     debug_assert!(self.size_of_url() == url_bytelength);
 
                     if url_bytelength < 128 {
@@ -995,7 +930,6 @@ impl Request {
                             &buffer[..at]
                         };
 
-                        #[cfg(debug_assertions)]
                         debug_assert!(self.size_of_url() == url.len());
 
                         let href = bun_url::href_from_string(&BunString::from_bytes(url));
@@ -1044,7 +978,6 @@ impl Request {
                 }
             }
 
-            #[cfg(debug_assertions)]
             debug_assert!(self.size_of_url() == req_url.len());
             self.url.set(BunString::clone_utf8(&req_url));
         }
@@ -1766,19 +1699,5 @@ impl Request {
             reported_estimated_size: Cell::new(0),
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         }
-    }
-
-    #[inline]
-    pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.headers.get().as_deref()
-    }
-
-    /// Mutable access to the already-materialized headers (does NOT lazily
-    /// create from the underlying uWS request — see `get_fetch_headers_unless_empty`
-    /// for that).
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn get_fetch_headers_mut(&self) -> Option<&mut FetchHeaders> {
-        self.headers_mut().as_deref_mut()
     }
 }

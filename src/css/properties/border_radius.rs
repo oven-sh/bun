@@ -44,21 +44,6 @@ impl BorderRadius {
             && Size2D::eql(&self.bottom_left, &other.bottom_left)
     }
 
-    // Kept as assoc consts for a future shorthand trait/derive to consume.
-    pub const PROPERTY_FIELD_MAP: [(&'static str, &'static str); 4] = [
-        ("top_left", "border-top-left-radius"),
-        ("top_right", "border-top-right-radius"),
-        ("bottom_right", "border-bottom-right-radius"),
-        ("bottom_left", "border-bottom-left-radius"),
-    ];
-
-    pub const VENDOR_PREFIX_MAP: [(&'static str, bool); 4] = [
-        ("top_left", true),
-        ("top_right", true),
-        ("bottom_right", true),
-        ("bottom_left", true),
-    ];
-
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
         let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {

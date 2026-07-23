@@ -1180,3 +1180,72 @@ describe("async context passes through", () => {
     expect(a).toBe("value");
   });
 });
+
+describe("async generators", () => {
+  // WebKit c8b6308aaa69 introduced a cooperative async-generator driver
+  // (InternalMicrotask::AsyncGeneratorDriverResume) as the fast path for
+  // `for await` over a pristine async generator. It must capture and
+  // restore Bun's async context like every other resume-body microtask.
+  test("for await over an async generator preserves the store", async () => {
+    const als = new AsyncLocalStorage();
+    async function* gen() {
+      yield 1;
+      yield 2;
+      yield 3;
+    }
+    const seen: unknown[] = [];
+    await als.run("STORE_A", async () => {
+      for await (const x of gen()) {
+        seen.push([x, als.getStore()]);
+      }
+      seen.push(["done", als.getStore()]);
+    });
+    expect(seen).toEqual([
+      [1, "STORE_A"],
+      [2, "STORE_A"],
+      [3, "STORE_A"],
+      ["done", "STORE_A"],
+    ]);
+  });
+
+  test("for await body sees its own store, not an interleaved one", async () => {
+    const als = new AsyncLocalStorage();
+    async function* gen() {
+      yield 1;
+      yield 2;
+    }
+    const seen: unknown[] = [];
+    await Promise.all([
+      als.run("A", async () => {
+        for await (const x of gen()) seen.push(["A-loop", x, als.getStore()]);
+      }),
+      als.run("B", async () => {
+        for await (const x of gen()) seen.push(["B-loop", x, als.getStore()]);
+      }),
+    ]);
+    for (const [tag, , store] of seen) {
+      expect(store).toBe(tag === "A-loop" ? "A" : "B");
+    }
+    expect(seen.length).toBe(4);
+  });
+
+  test("thrown from async generator preserves the store in the catch", async () => {
+    const als = new AsyncLocalStorage();
+    async function* gen() {
+      yield 1;
+      throw new Error("boom");
+    }
+    let caughtStore: unknown;
+    await als.run("STORE_X", async () => {
+      try {
+        for await (const _ of gen()) {
+          expect(als.getStore()).toBe("STORE_X");
+        }
+      } catch (e) {
+        expect((e as Error).message).toBe("boom");
+        caughtStore = als.getStore();
+      }
+    });
+    expect(caughtStore).toBe("STORE_X");
+  });
+});

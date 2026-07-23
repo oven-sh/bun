@@ -107,6 +107,33 @@ fn split_entity_tags(list: &[u8]) -> EntityTagSplit<'_> {
     }
 }
 
+/// RFC 9110 §13.1.1: evaluate `If-Match` using the strong comparison
+/// (§8.8.3.2: both not weak and opaque-tags byte-equal). `*` is true for any
+/// current representation. Returns `true` when the condition holds (continue);
+/// `false` means respond 412.
+pub fn if_match(
+    // Stored `ETag` header, `None` when the representation has none.
+    etag: Option<&[u8]>,
+    // `If-Match` header
+    if_match: &[u8],
+) -> bool {
+    if strings::trim(if_match, b" \t") == b"*" {
+        return true;
+    }
+    let Some(etag) = etag else { return false };
+    let ours = parse(etag);
+    if ours.is_weak {
+        return false;
+    }
+    for tag_str in split_entity_tags(if_match) {
+        let parsed = parse(tag_str);
+        if !parsed.is_weak && parsed.tag == ours.tag {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn if_none_match(
     // "ETag" header
     etag: &[u8],

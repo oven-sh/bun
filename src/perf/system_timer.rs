@@ -46,13 +46,6 @@ impl Timer {
         u64::try_from(self.started.elapsed().as_nanos()).expect("int cast")
     }
 
-    pub fn lap(&mut self) -> u64 {
-        let now = std::time::Instant::now();
-        let ns = u64::try_from(now.duration_since(self.started).as_nanos()).expect("int cast");
-        self.started = now;
-        ns
-    }
-
     pub fn reset(&mut self) {
         self.started = std::time::Instant::now();
     }

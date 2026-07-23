@@ -3089,6 +3089,20 @@ impl BlobExt for Blob {
                     self.detach();
                     return Err(global.throw_out_of_memory());
                 }
+                // arrayBuffer()/bytes() must copy the bytes (WHATWG). The transfer
+                // below aliases the store's bytes, observable once the store is
+                // shared — Response.clone() bumps the store refcount, so mutating
+                // the clone's buffer would mutate the original (oven-sh/bun#22885).
+                // Only transfer when this blob uniquely owns the store; else copy.
+                if let Some(store) = self.store() {
+                    if !store.has_one_ref() {
+                        // SAFETY: `buf` is the store-backed view, read-only here;
+                        // the other owner keeps the store (and `buf`) alive.
+                        return jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe {
+                            &*buf
+                        });
+                    }
+                }
                 // Move the existing +1 out. Cloning then `transfer()` would leak a ref.
                 let store = self.take_store().expect("transfer with null store");
                 // SAFETY: see `Share` arm. After `take()` the store ref is moved

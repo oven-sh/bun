@@ -511,7 +511,7 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
 });
 
-test("run(): an uncaught exception during a pending body fails that test instead of hanging", async () => {
+test.concurrent("run(): an uncaught exception during a pending body fails that test instead of hanging", async () => {
   using dir = tempDir("node-test-uncaught-body", {
     "fixture.test.mjs": `
       import test from 'node:test';
@@ -549,7 +549,7 @@ test("run(): an uncaught exception during a pending body fails that test instead
   expect(fails).toContainEqual({ name: "pending body uncaught", failureType: "uncaughtException" });
 }, 30_000);
 
-test("run(): a user test writing the run-event marker cannot error the run stream", async () => {
+test.concurrent("run(): a user test writing the run-event marker cannot error the run stream", async () => {
   using dir = tempDir("node-test-marker-inject", {
     "fixture.test.mjs": `
       import test from 'node:test';
@@ -586,7 +586,7 @@ test("run(): a user test writing the run-event marker cannot error the run strea
   });
 }, 30_000);
 
-test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned grandchildren", async () => {
+test.concurrent("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned grandchildren", async () => {
   using dir = tempDir("node-test-env-leak", {
     "inner.test.js": `
       process.on("uncaughtException", () => {});
@@ -629,7 +629,7 @@ test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned g
   expect(counts.passed).toBeGreaterThanOrEqual(1);
 }, 30_000);
 
-test.each([
+test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)(
@@ -687,7 +687,7 @@ test.each([
   30_000,
 );
 
-test.each([
+test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)(
@@ -746,7 +746,7 @@ test.each([
   30_000,
 );
 
-test("run(): verdict numbering, file ordinals, causes, and summary keys match node", async () => {
+test.concurrent("run(): verdict numbering, file ordinals, causes, and summary keys match node", async () => {
   // Every expected value below is the verbatim output of the same driver under
   // real node v26.3.0: nesting-0 pass/fail verdicts renumber cumulatively
   // across files while test:complete keeps per-file numbers, file completions
@@ -818,7 +818,7 @@ test("run(): verdict numbering, file ordinals, causes, and summary keys match no
   });
 }, 30_000);
 
-test.each([
+test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)(
@@ -877,7 +877,7 @@ test.each([
   30_000,
 );
 
-test.each([
+test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)(
@@ -921,7 +921,7 @@ test.each([
   30_000,
 );
 
-test("junit reporter escapes attribute quotes exactly like node", async () => {
+test.concurrent("junit reporter escapes attribute quotes exactly like node", async () => {
   using dir = tempDir("node-test-junit-escape", {
     "q.test.mjs": `
       import { test } from 'node:test';
@@ -941,7 +941,7 @@ test("junit reporter escapes attribute quotes exactly like node", async () => {
   expect(stdout).toContain('name="line1&#10;line2 &amp;quot;q&amp;quot; &amp; &lt;angle>"');
 }, 30_000);
 
-test.each([
+test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
 ] as const)(
@@ -995,7 +995,7 @@ test.each([
   30_000,
 );
 
-test("run({isolation:'none'}): a failed import and later files share one verdict counter", async () => {
+test.concurrent("run({isolation:'none'}): a failed import and later files share one verdict counter", async () => {
   // node numbers every nesting-0 verdict from one cumulative counter, so a
   // file that fails to load takes 1 and the next file's test takes 2.
   using dir = tempDir("node-test-inprocess-numbering", {
@@ -1031,7 +1031,7 @@ test("run({isolation:'none'}): a failed import and later files share one verdict
   ]);
 }, 30_000);
 
-test("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
+test.concurrent("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
   using dir = tempDir("node-test-suite-duration", {
     "f.test.mjs": `
       import { describe, it } from 'node:test';
@@ -1065,7 +1065,7 @@ test("run({isolation:'none'}): a suite's duration spans all of its children", as
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test("run({isolation:'none'}): .only inside describe.only narrows to the inner test", async () => {
+test.concurrent("run({isolation:'none'}): .only inside describe.only narrows to the inner test", async () => {
   // node's rule: an only suite runs all its tests unless it has only-marked
   // descendants, in which case only those run.
   using dir = tempDir("node-test-nested-only", {
@@ -1103,7 +1103,7 @@ test("run({isolation:'none'}): .only inside describe.only narrows to the inner t
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {
+test.concurrent.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {
   // exec_as_if_node's eval branch must merge positionals into passthrough so
   // the eval driver sees the file in process.argv; without that it silently
   // falls back to default-glob discovery in cwd.

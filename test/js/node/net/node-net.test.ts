@@ -1608,55 +1608,96 @@ it("onread: `false` from a callback holding the `true` sentinel still pauses unt
   }
 });
 
-it("onread: a callback that throws mid-chunk destroys the socket instead of leaving a byte gap", async () => {
-  // Node has no catch here (the throw is an uncaughtException). bun fails the
-  // socket closed: without that, the undelivered rest of the thrown-on chunk
-  // ("efghijkl") is dropped and the NEXT write is delivered after a silent gap.
-  const calls: string[] = [];
-  const errored = Promise.withResolvers<Error>();
-  // 12 bytes through a 4-byte buffer; the connection stays open, and the
-  // server answers any client byte with a second write.
-  const server = createServer(c => {
-    c.on("data", () => c.write("XYZ"));
-    c.write(Buffer.from("abcdefghijkl"));
-  });
-  let client: Socket | undefined;
-  try {
-    const listening = Promise.withResolvers<void>();
-    server.once("error", listening.reject);
+// node lets a throwing onread callback escape as an uncaught exception:
+// onStreamRead calls the user callback bare, so the process dies rather than
+// the socket being failed closed.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
+it("onread: a callback that throws is an uncaught exception", async () => {
+  // 12 bytes through a 4-byte buffer; the callback throws on the first slice.
+  const fixture = /* js */ `
+    const net = require("net");
+    const server = net.createServer(c => c.write(Buffer.from("abcdefghijkl")));
     server.listen(0, "127.0.0.1", () => {
-      server.off("error", listening.reject);
-      listening.resolve();
-    });
-    await listening.promise;
-    client = createConnection({
-      port: (server.address() as import("node:net").AddressInfo).port,
-      host: "127.0.0.1",
-      onread: {
-        buffer: Buffer.alloc(4),
-        callback(n: number, buf: Buffer) {
-          calls.push(buf.toString("latin1", 0, n));
-          if (calls.length === 1) throw new Error("boom");
-          return true;
+      const calls = [];
+      const client = net.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n, buf) {
+            calls.push(buf.toString("latin1", 0, n));
+            console.log("calls:" + calls.join(","));
+            throw new Error("onread-boom");
+          },
         },
-      },
+      });
+      client.on("error", () => console.log("socket-error"));
     });
-    client.on("error", e => {
-      errored.resolve(e as Error);
-      // A destroyed (fail-closed) socket cannot solicit the second write.
-      if (!client!.destroyed) client!.write("ping");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("onread-boom");
+  const lines = stdout.split("\n").filter(Boolean);
+  // The throw reaches the uncaught-exception path, not the socket 'error'
+  // handler. Node exits after the first slice; bun reports each throw and
+  // delivers the remaining slices (it does not exit mid-tick on an unhandled
+  // uncaughtException), so whichever slices appear must be the contiguous
+  // prefix of the stream with no gap and no 'socket-error'.
+  expect(lines[0]).toBe("calls:abcd");
+  expect(lines).not.toContain("socket-error");
+  expect(["calls:abcd", "calls:abcd,efgh", "calls:abcd,efgh,ijkl"]).toEqual(expect.arrayContaining(lines));
+  expect(exitCode).not.toBe(0);
+});
+
+// Node bounds each kernel read to the onread buffer's size, so a throw that is
+// swallowed by a process.on('uncaughtException') handler loses no bytes (the
+// next slice is a separate onStreamRead call). Bun slices one larger native
+// read in JS, so the catch is per-slice to preserve that.
+it("onread: a swallowed throw does not drop the rest of the current native read", async () => {
+  const fixture = /* js */ `
+    process.on("uncaughtException", e => console.log("uncaught:" + e.message));
+    const net = require("net");
+    const server = net.createServer(c => c.write(Buffer.from("abcdefghijkl")));
+    server.listen(0, "127.0.0.1", () => {
+      const calls = [];
+      let first = true;
+      const client = net.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n, buf) {
+            calls.push(buf.toString("latin1", 0, n));
+            if (first) { first = false; throw new Error("onread-boom"); }
+            if (calls.length === 3) {
+              console.log("calls:" + calls.join(","));
+              client.destroy(); server.close();
+            }
+            return true;
+          },
+        },
+      });
+      client.on("error", () => console.log("socket-error"));
+      setTimeout(() => { console.log("calls:" + calls.join(",")); process.exit(2); }, 2000).unref();
     });
-    const err = await errored.promise;
-    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
-    expect({ message: err.message, calls, destroyed: client.destroyed }).toEqual({
-      message: "boom",
-      calls: ["abcd"],
-      destroyed: true,
-    });
-  } finally {
-    client?.destroy();
-    server.close();
-  }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The throw was reported, then the remaining slices of the same native
+  // read were delivered with no gap and no socket 'error'.
+  expect(stdout.split("\n").filter(Boolean)).toEqual(["uncaught:onread-boom", "calls:abcd,efgh,ijkl"]);
+  expect(exitCode).toBe(0);
 });
 
 // On Windows the native layer does not report fatal send errors yet (the WSA

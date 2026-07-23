@@ -25,6 +25,14 @@ For worker/subprocess-shaped changes, spawn a subprocess (still `-e`) so worker 
 
 ## Gotchas
 
+- **A `src/js/**` edit can silently not reach the binary.** `bundle-modules`
+  regenerates `build/<cfg>/codegen/InternalModuleRegistryConstants.h`, but the C++
+  TU that embeds it is not always recompiled, so the build succeeds while the
+  binary still runs the OLD JS. Gate on the binary, not the build: ask the binary
+  you just built — `bun bd -e 'console.log(<Class>.toString().includes("<new-id>"))'`
+  (or run `./build/<cfg>/bun` directly). Plain `bun` is the system Bun on $PATH and
+  never has your edit, so it answers about the wrong binary.
+  If false, `touch src/jsc/bindings/InternalModuleRegistry.cpp` and rebuild.
 - **Prefix every `bun bd` with `PATH="$HOME/.cargo/bin:$PATH"`** — Homebrew's `rust`
   formula shadows the pinned nightly, and `bun bd` dies with `the option 'Z' is only
   accepted on the nightly compiler`. `bun bd` re-runs cargo on every invocation, so

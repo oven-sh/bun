@@ -2227,6 +2227,103 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
     })
 }
 
+/// Reverse of [`uv_err_to_e_discriminant`]: map a `bun.sys.E` / `bun_errno::E`
+/// discriminant to the negative `UV_E*` code node reports in `err.errno` on
+/// Windows (`2` → `UV_ENOENT (-4058)`). Same layering rule (no `bun_errno`
+/// dep) and same keep-in-sync note as the forward table above; the arms are
+/// its rows flipped. Unmapped discriminants return `None`.
+#[inline]
+pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
+    Some(match discriminant {
+        1 => UV_EPERM,            // E::PERM
+        2 => UV_ENOENT,           // E::NOENT
+        3 => UV_ESRCH,            // E::SRCH
+        4 => UV_EINTR,            // E::INTR
+        5 => UV_EIO,              // E::IO
+        6 => UV_ENXIO,            // E::NXIO
+        7 => UV_E2BIG,            // E::_2BIG
+        8 => UV_ENOEXEC,          // E::NOEXEC
+        9 => UV_EBADF,            // E::BADF
+        11 => UV_EAGAIN,          // E::AGAIN
+        12 => UV_ENOMEM,          // E::NOMEM
+        13 => UV_EACCES,          // E::ACCES
+        14 => UV_EFAULT,          // E::FAULT
+        16 => UV_EBUSY,           // E::BUSY
+        17 => UV_EEXIST,          // E::EXIST
+        18 => UV_EXDEV,           // E::XDEV
+        19 => UV_ENODEV,          // E::NODEV
+        20 => UV_ENOTDIR,         // E::NOTDIR
+        21 => UV_EISDIR,          // E::ISDIR
+        22 => UV_EINVAL,          // E::INVAL
+        23 => UV_ENFILE,          // E::NFILE
+        24 => UV_EMFILE,          // E::MFILE
+        25 => UV_ENOTTY,          // E::NOTTY
+        137 => UV_EFTYPE,         // E::FTYPE
+        26 => UV_ETXTBSY,         // E::TXTBSY
+        27 => UV_EFBIG,           // E::FBIG
+        28 => UV_ENOSPC,          // E::NOSPC
+        29 => UV_ESPIPE,          // E::SPIPE
+        30 => UV_EROFS,           // E::ROFS
+        31 => UV_EMLINK,          // E::MLINK
+        32 => UV_EPIPE,           // E::PIPE
+        34 => UV_ERANGE,          // E::RANGE
+        36 => UV_ENAMETOOLONG,    // E::NAMETOOLONG
+        38 => UV_ENOSYS,          // E::NOSYS
+        39 => UV_ENOTEMPTY,       // E::NOTEMPTY
+        40 => UV_ELOOP,           // E::LOOP
+        49 => UV_EUNATCH,         // E::UNATCH
+        61 => UV_ENODATA,         // E::NODATA
+        64 => UV_ENONET,          // E::NONET
+        71 => UV_EPROTO,          // E::PROTO
+        75 => UV_EOVERFLOW,       // E::OVERFLOW
+        84 => UV_EILSEQ,          // E::ILSEQ
+        88 => UV_ENOTSOCK,        // E::NOTSOCK
+        89 => UV_EDESTADDRREQ,    // E::DESTADDRREQ
+        90 => UV_EMSGSIZE,        // E::MSGSIZE
+        91 => UV_EPROTOTYPE,      // E::PROTOTYPE
+        92 => UV_ENOPROTOOPT,     // E::NOPROTOOPT
+        93 => UV_EPROTONOSUPPORT, // E::PROTONOSUPPORT
+        94 => UV_ESOCKTNOSUPPORT, // E::SOCKTNOSUPPORT
+        95 => UV_ENOTSUP,         // E::NOTSUP
+        97 => UV_EAFNOSUPPORT,    // E::AFNOSUPPORT
+        98 => UV_EADDRINUSE,      // E::ADDRINUSE
+        99 => UV_EADDRNOTAVAIL,   // E::ADDRNOTAVAIL
+        100 => UV_ENETDOWN,       // E::NETDOWN
+        101 => UV_ENETUNREACH,    // E::NETUNREACH
+        103 => UV_ECONNABORTED,   // E::CONNABORTED
+        104 => UV_ECONNRESET,     // E::CONNRESET
+        105 => UV_ENOBUFS,        // E::NOBUFS
+        106 => UV_EISCONN,        // E::ISCONN
+        107 => UV_ENOTCONN,       // E::NOTCONN
+        108 => UV_ESHUTDOWN,      // E::SHUTDOWN
+        110 => UV_ETIMEDOUT,      // E::TIMEDOUT
+        111 => UV_ECONNREFUSED,   // E::CONNREFUSED
+        112 => UV_EHOSTDOWN,      // E::HOSTDOWN
+        113 => UV_EHOSTUNREACH,   // E::HOSTUNREACH
+        114 => UV_EALREADY,       // E::ALREADY
+        121 => UV_EREMOTEIO,      // E::REMOTEIO
+        125 => UV_ECANCELED,      // E::CANCELED
+        135 => UV_ECHARSET,       // E::CHARSET
+        136 => UV_EOF,            // E::EOF
+        134 => UV_UNKNOWN,        // E::UNKNOWN
+        d if d == (-UV_EAI_ADDRFAMILY) as u16 => UV_EAI_ADDRFAMILY,
+        d if d == (-UV_EAI_AGAIN) as u16 => UV_EAI_AGAIN,
+        d if d == (-UV_EAI_BADFLAGS) as u16 => UV_EAI_BADFLAGS,
+        d if d == (-UV_EAI_BADHINTS) as u16 => UV_EAI_BADHINTS,
+        d if d == (-UV_EAI_CANCELED) as u16 => UV_EAI_CANCELED,
+        d if d == (-UV_EAI_FAIL) as u16 => UV_EAI_FAIL,
+        d if d == (-UV_EAI_FAMILY) as u16 => UV_EAI_FAMILY,
+        d if d == (-UV_EAI_MEMORY) as u16 => UV_EAI_MEMORY,
+        d if d == (-UV_EAI_NODATA) as u16 => UV_EAI_NODATA,
+        d if d == (-UV_EAI_NONAME) as u16 => UV_EAI_NONAME,
+        d if d == (-UV_EAI_OVERFLOW) as u16 => UV_EAI_OVERFLOW,
+        d if d == (-UV_EAI_PROTOCOL) as u16 => UV_EAI_PROTOCOL,
+        d if d == (-UV_EAI_SERVICE) as u16 => UV_EAI_SERVICE,
+        d if d == (-UV_EAI_SOCKTYPE) as u16 => UV_EAI_SOCKTYPE,
+        _ => return None,
+    })
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ReturnCode(pub c_int);

@@ -349,9 +349,16 @@ function makeNodeEntryList(entries) {
   };
 }
 
+// Node's ERR_INTERNAL_ASSERTION constructor appends this automatically; bun's
+// $ERR_INTERNAL_ASSERTION takes the full message, so call sites share it here.
+const kInternalAssertionSuffix =
+  "\nThis is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
+  "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n";
+
 //
 
 export default {
+  kInternalAssertionSuffix,
   NotImplementedError,
   throwNotImplemented,
   hideFromStack,

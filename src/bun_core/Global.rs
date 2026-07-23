@@ -750,7 +750,14 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
-            for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+            for &s in &[
+                libc::SIGSEGV,
+                libc::SIGBUS,
+                libc::SIGILL,
+                libc::SIGFPE,
+                libc::SIGABRT,
+                libc::SIGTRAP,
+            ] {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
         }

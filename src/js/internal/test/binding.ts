@@ -71,7 +71,6 @@ function isInsideNodeModules() {
   return false;
 }
 
-let cachedUvBinding: Record<string, unknown> | undefined;
 
 function internalBinding(name: string) {
   switch (name) {
@@ -85,28 +84,10 @@ function internalBinding(name: string) {
       // The real thing: os/fs/crypto/zlib/trace sections, same object node's
       // internalBinding("constants") exposes (ProcessBindingConstants.cpp).
       return $processBindingConstants;
-    // The full libuv error surface: UV_* codes plus errname()/getErrorMessage(),
-    // all derived from the same native uv_e table node:util's
-    // getSystemErrorMap() reads. Cached: node returns a stable binding object.
-    case "uv": {
-      if (cachedUvBinding === undefined) {
-        const errmap: Map<number, [string, string]> = require("node:util").getSystemErrorMap();
-        const uv: Record<string, unknown> = {};
-        for (const { 0: code, 1: entry } of errmap) {
-          uv["UV_" + entry[0]] = code;
-        }
-        uv.errname = function errname(n: number) {
-          const entry = errmap.get(n);
-          return entry !== undefined ? entry[0] : `Unknown system error ${n}`;
-        };
-        uv.getErrorMessage = function getErrorMessage(n: number) {
-          const entry = errmap.get(n);
-          return entry !== undefined ? entry[1] : `Unknown system error ${n}`;
-        };
-        cachedUvBinding = uv;
-      }
-      return cachedUvBinding;
-    }
+    case "uv":
+      // process.binding("uv") carries libuv's own codes on every platform
+      // (including Windows' synthetic ones), same as node's uv binding.
+      return process.binding("uv");
     // node's credentials binding: without setuid/setgid mismatch handling,
     // safeGetenv degenerates to a plain env read (same as node run normally).
     case "credentials":

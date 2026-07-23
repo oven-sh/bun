@@ -32,10 +32,14 @@ describe("Bun.serve error() returning a streaming Response", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const full = CHUNK_LEN * CHUNKS;
-    // On a pre-fix crash stdout is empty and stderr holds the ASAN report;
-    // showing stderr in that case makes the failure self-explanatory.
+    // The fixture prints one JSON line per case, so a mid-loop crash or hang
+    // leaves the completed cases in stdout and the diff names the first one
+    // that didn't finish; stderr carries the ASAN report on a crash.
     expect({
-      results: stdout === "" ? stderr : JSON.parse(stdout),
+      results: stdout
+        .split("\n")
+        .filter(Boolean)
+        .map(l => JSON.parse(l)),
       stderr,
       exitCode,
       signalCode: proc.signalCode,

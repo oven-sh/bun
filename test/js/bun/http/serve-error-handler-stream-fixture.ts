@@ -117,15 +117,15 @@ const cases = [
   { path: "/iter", close: true },
 ];
 
-const results: { path: string; close: boolean; status: number; len: number; pulls: number }[] = [];
 for (const { path, close } of cases) {
   pulls = 0;
   const headers: Record<string, string> = close ? { Connection: "close" } : {};
   const res = await fetch(`http://127.0.0.1:${server.port}${path}`, { headers });
   const body = await res.text();
-  results.push({ path, close, status: res.status, len: body.length, pulls });
+  // One line per case so a mid-loop crash or hang leaves the completed cases
+  // in stdout and the failure diff names the first one that didn't finish.
+  console.log(JSON.stringify({ path, close, status: res.status, len: body.length, pulls }));
 }
 // Let any orphaned producer (pre-fix) write to the freed socket.
 await Bun.sleep(20);
-process.stdout.write(JSON.stringify(results));
 server.stop(true);

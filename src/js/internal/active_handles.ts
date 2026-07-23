@@ -89,9 +89,6 @@ function getActiveResourcesInfo() {
   // FSReqCallback/FSReqPromise split does not exist here.
   const resources: string[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
-    // Bun's fs callback API wraps the promise API in native code, so node's
-    // FSReqCallback/FSReqPromise split is not recoverable here: every pending
-    // fs request reports as FSReqCallback.
     resources.push("FSReqCallback");
   }
   for (const wrap of pendingRequestWraps) {

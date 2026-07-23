@@ -63,22 +63,34 @@ async function generate(seed: number, outFile: string): Promise<boolean> {
 }
 async function runProgram(program: string, cwd: string, limitMs: number = timeoutMs): Promise<Run> {
   const t0 = Date.now();
+  const outFile = join(cwd, `out-${process.pid}-${Math.random().toString(36).slice(2, 8)}.txt`);
+  const errFile = join(cwd, `err-${process.pid}-${Math.random().toString(36).slice(2, 8)}.txt`);
+  // Write child output to FILES, not pipes: a grandchild that inherits a
+  // pipe end keeps it open after the child exits, and awaiting the pipe
+  // then hangs forever with no process running (0% load, engine stalled).
   const proc = Bun.spawn([bun!, program], {
     cwd,
-    stdout: "pipe",
-    stderr: "pipe",
+    stdout: Bun.file(outFile),
+    stderr: Bun.file(errFile),
     env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", WSF_GEN_STATS: "" },
   });
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try {
-      if (proc.pid) Bun.spawnSync(["taskkill", "/F", "/PID", String(proc.pid), "/T"], { stdout: "ignore", stderr: "ignore" });
-    } catch {}
-  }, limitMs);
-  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-  const exit = await proc.exited.catch(() => null);
-  clearTimeout(timer);
+  const exited = proc.exited.catch(() => null);
+  const timer = new Promise<null>(res =>
+    setTimeout(() => {
+      timedOut = true;
+      try {
+        if (proc.pid) Bun.spawnSync(["taskkill", "/F", "/PID", String(proc.pid), "/T"], { stdout: "ignore", stderr: "ignore" });
+      } catch {}
+      res(null);
+    }, limitMs),
+  );
+  // Always resolves: either the child exits or the timer fires and kills it.
+  const exit = (await Promise.race([exited, timer])) as number | null;
+  // Grace for the killed child to release its output files.
+  if (timedOut) await Promise.race([exited, new Promise(r => setTimeout(r, 1500))]);
+  const stdout = await Bun.file(outFile).text().catch(() => "");
+  const stderr = await Bun.file(errFile).text().catch(() => "");
   return { exit, timedOut, stdout, stderr, ms: Date.now() - t0 };
 }
 

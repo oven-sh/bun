@@ -114,6 +114,7 @@ class InspectorCDPAdapter {
     } catch {
       return;
     }
+    if (parsed === null || typeof parsed !== "object") return;
     const { id, method, params } = parsed;
     if (typeof method !== "string") return;
     try {

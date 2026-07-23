@@ -149,6 +149,13 @@ declare module "bun" {
      * @param topic The topic name.
      * @param data The data to send.
      * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @returns The worst {@link ServerWebSocketSendStatus} across all subscribers:
+     * `0` if the topic has no subscribers or the message was dropped for **at least one** subscriber,
+     * `-1` if backpressure was applied for at least one subscriber,
+     * otherwise the number of bytes sent to each subscriber.
+     * A `0` or `-1` return does **not** mean every subscriber missed the message; other
+     * subscribers may still have received it. Do not retry on `0` unless re-delivery to
+     * healthy subscribers is acceptable.
      * @example
      * ```ts
      * ws.publish("chat", "Hello!");
@@ -164,6 +171,8 @@ declare module "bun" {
      * @param topic The topic name.
      * @param data The data to send.
      * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @returns The worst {@link ServerWebSocketSendStatus} across all subscribers. See
+     * {@link ServerWebSocket.publish} for the exact semantics.
      * @example
      * ```ts
      * ws.publish("chat", "Hello!");
@@ -178,6 +187,8 @@ declare module "bun" {
      * @param topic The topic name.
      * @param data The data to send.
      * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @returns The worst {@link ServerWebSocketSendStatus} across all subscribers. See
+     * {@link ServerWebSocket.publish} for the exact semantics.
      * @example
      * ```ts
      * ws.publish("chat", new TextEncoder().encode("Hello!"));
@@ -1001,7 +1012,13 @@ declare module "bun" {
      * @param data The data to send
      * @param compress Should the data be compressed? Ignored if the client does not support compression.
      *
-     * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent.
+     * @returns The worst {@link ServerWebSocketSendStatus} across all subscribers:
+     * `0` if the topic has no subscribers or the message was dropped for **at least one** subscriber,
+     * `-1` if backpressure was applied for at least one subscriber,
+     * otherwise the number of bytes sent to each subscriber.
+     * A `0` or `-1` return does **not** mean every subscriber missed the message; other
+     * subscribers may still have received it. Do not retry on `0` unless re-delivery to
+     * healthy subscribers is acceptable.
      *
      * @example
      *

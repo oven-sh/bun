@@ -272,6 +272,8 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 - `0` — The message was dropped due to a connection issue
 - `1+` — The number of bytes sent
 
+`.publish(topic, message)` (on both `ServerWebSocket` and the `Server` returned by `Bun.serve`) returns the same values, but the result reflects the **worst** outcome across every subscriber on the topic. If any single subscriber is past `backpressureLimit`, `publish()` returns `0` even though other healthy subscribers still receive the message; if any subscriber has backpressure, it returns `-1`. A return of `0` therefore does not mean "no one received it", so retrying on `0` will re-deliver to healthy subscribers. `publish()` also returns `0` when the topic has no subscribers at all.
+
 ### Timeouts and limits
 
 By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter.
@@ -403,7 +405,7 @@ interface ServerWebSocket {
   close(code?: number, reason?: string): void;
   subscribe(topic: string): void;
   unsubscribe(topic: string): void;
-  publish(topic: string, message: string | ArrayBuffer | Uint8Array): void;
+  publish(topic: string, message: string | ArrayBuffer | Uint8Array, compress?: boolean): number;
   isSubscribed(topic: string): boolean;
   cork(cb: (ws: ServerWebSocket) => void): void;
 }

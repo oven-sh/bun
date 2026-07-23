@@ -584,7 +584,9 @@ interface Server extends Disposable {
 
   /**
    * Publish a message to all WebSocket clients subscribed to a topic.
-   * @returns Bytes sent, 0 if dropped, -1 if backpressure applied
+   * @returns The worst status across subscribers: bytes sent if every subscriber
+   * accepted it, -1 if any subscriber has backpressure, 0 if any subscriber dropped
+   * it (or there were none). Other subscribers may still have received the message.
    */
   publish(
     topic: string,

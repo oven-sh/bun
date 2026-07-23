@@ -103,16 +103,31 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
 
 let urlParseWarned = false;
 
+// Port of node's IsInsideNodeModules (src/node_util.cc): examine the caller
+// frames for a node_modules path segment so url.parse() calls from library
+// code (hosted-git-info et al call it constantly) don't spam application
+// stderr — node only warns for first-party callers. String-stack heuristic:
+// Bun has no frame-inspection API here; the capture is bounded by a
+// temporary stackTraceLimit, and node:url frames can't false-positive (no
+// node_modules in their names).
+function isInsideNodeModules(frameLimit: number): boolean {
+  const prevLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = frameLimit + 2; // + this helper and urlParse
+  const stack = new Error().stack;
+  Error.stackTraceLimit = prevLimit;
+  if (typeof stack !== "string") return false;
+  return stack.includes("/node_modules/") || stack.includes("\\node_modules\\");
+}
+
 function urlParse(
   url: string | URL | typeof Url, // really has unknown type but intellisense is nice
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
-  // Once-per-process, matching node v26.3.0 lib/url.js urlParse. Node
-  // additionally suppresses the warning when the caller sits inside
-  // node_modules (a native stack walk, IsInsideNodeModules in node_util.cc)
-  // — deliberately left out; the latch bounds the divergence to one warning.
-  if (!urlParseWarned) {
+  // Once-per-process and never from library code, matching node v26.3.0
+  // lib/url.js urlParse. The latch stays unset on suppressed calls so a
+  // later first-party caller still gets the warning, like node.
+  if (!urlParseWarned && !isInsideNodeModules(4)) {
     urlParseWarned = true;
     process.emitWarning(
       "`url.parse()` behavior is not standardized and prone to " +

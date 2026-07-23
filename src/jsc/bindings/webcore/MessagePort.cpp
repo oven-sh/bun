@@ -71,12 +71,16 @@ MessagePort::~MessagePort()
         m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
 
-ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
+ExceptionOr<JSC::JSValue> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
     // Own a function-level scope: SerializedScriptValue::create() below leaves a
     // simulated throw on asan/debug that must be consumed before any nested scope.
     auto& vm = state.vm();
     auto warnScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // node: undefined when already closed/transferred or the peer's close has
+    // propagated, true otherwise. Sample at call time; the disentangle/send work
+    // below stays gated on m_isDetached so transfer-list ports are still detached.
+    JSC::JSValue returnValue = (m_isDetached || m_isClosing || m_closeEventDispatched) ? JSC::jsUndefined() : JSC::jsBoolean(true);
     // Reject a bad port in the transfer list before serialization, so the post
     // aborts before any ArrayBuffer in the list is detached (transfer is atomic).
     // Node checks each entry in order: source port first, then detached.
@@ -102,10 +106,10 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         (void)warnScope.exception();
         return messageData.releaseException();
     }
-    RETURN_IF_EXCEPTION(warnScope, {});
+    RETURN_IF_EXCEPTION(warnScope, JSC::jsUndefined());
 
     if (!isEntangled())
-        return {};
+        return returnValue;
 
     Vector<TransferredMessagePort> transferredPorts;
     if (!ports.isEmpty()) {
@@ -136,12 +140,12 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
                 JSC::JSValue::encode(JSC::jsUndefined()));
             CLEAR_IF_EXCEPTION(warnScope);
             close();
-            return {};
+            return returnValue;
         }
     }
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
-    return {};
+    return returnValue;
 }
 
 void MessagePort::start()

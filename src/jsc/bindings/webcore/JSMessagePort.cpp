@@ -254,7 +254,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage1Bod
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto transfer = convertTransferList(*lexicalGlobalObject, argument1.value(), "Optional transferList argument must be an iterable"_s, BadTransferElement::ThrowDataCloneError);
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLAny>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
 }
 
 static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
@@ -286,7 +286,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage2Bod
             RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLAny>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
 }
 
 static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)

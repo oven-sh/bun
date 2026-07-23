@@ -776,7 +776,9 @@ function fakeParentPort() {
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return postMessage.$apply(null, args);
+      postMessage.$apply(null, args);
+      // node's parentPort is a MessagePort, whose postMessage() returns true.
+      return true;
     },
   });
 

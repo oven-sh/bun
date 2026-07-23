@@ -2525,8 +2525,7 @@ pub mod environment_variables {
     #[cfg(not(windows))]
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__Process__initOSEnvOverlay(global_object: &JSGlobalObject) {
-        let vm = global_object.bun_vm().as_mut();
-        let env_map = &mut *vm.transpiler.env_mut().map;
+        let env_map = &global_object.bun_vm().env_loader().map;
         let _guard = ENVIRON_LOCK.lock();
         let mut environ_keys = bun_collections::StringSet::new();
         for &entry in bun_sys::environ() {
@@ -2539,9 +2538,7 @@ pub mod environment_variables {
             }
         }
         let mut overlay = bun_collections::StringSet::new();
-        let mut it = env_map.map.iterator();
-        while let Some(pair) = it.next() {
-            let key: &[u8] = pair.key_ptr;
+        for key in env_map.map.keys() {
             if !environ_keys.contains(key) {
                 bun_core::handle_oom(overlay.insert(key));
             }

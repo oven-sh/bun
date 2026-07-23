@@ -1315,6 +1315,35 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
   }
 }, 30_000);
 
+test("Session.post matches node's return and throw contract", async () => {
+  // Verified on node v26.3.0: post() always returns undefined, and without a
+  // callback a protocol error is silent (callback-only delivery).
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    expect(session.post("Runtime.enable")).toBeUndefined();
+    expect(() => session.post("NodeWorker.enable", { waitForDebuggerOnStart: false })).not.toThrow();
+    const { promise, resolve } = Promise.withResolvers<any>();
+    session.post("NodeWorker.enable", { waitForDebuggerOnStart: false }, err => resolve(err));
+    const err = await promise;
+    expect(err?.code).toBe("ERR_INSPECTOR_COMMAND");
+    expect(session.post("Runtime.disable")).toBeUndefined();
+  } finally {
+    session.disconnect();
+  }
+});
+
+test("pending posts at disconnect settle with node's -32000 error", async () => {
+  const session = new inspector.Session();
+  session.connect();
+  const { promise, resolve } = Promise.withResolvers<any>();
+  session.post("Runtime.evaluate", { expression: "new Promise(() => {})", awaitPromise: true }, err => resolve(err));
+  session.disconnect();
+  const err = await promise;
+  expect(err?.code).toBe("ERR_INSPECTOR_COMMAND");
+  expect(err?.message).toBe("Inspector error -32000: Execution context was destroyed.");
+});
+
 test("Debugger.stepOver from a paused listener re-pauses instead of resuming", async () => {
   // The pause loop's auto-continue must not run when the listener already
   // ended the pause with a step: continueProgram() clears the next-pause

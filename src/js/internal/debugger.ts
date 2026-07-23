@@ -115,7 +115,11 @@ let lazyInspectorCDPAdapter: any;
 // ids from 1, so remote adapters start at 50M to stay disjoint from both.
 let nextRemoteBackendId = 50_000_000;
 function allocateRemoteBackendId() {
-  return nextRemoteBackendId++;
+  const id = nextRemoteBackendId++;
+  // Wrap below the in-process range (inspector.ts counts from 100M) so a
+  // long-lived session can never collide with in-process command ids.
+  if (nextRemoteBackendId >= 100_000_000) nextRemoteBackendId = 50_000_000;
+  return id;
 }
 
 function discardSessionClientMessage() {}

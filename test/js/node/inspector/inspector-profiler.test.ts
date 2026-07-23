@@ -3,6 +3,15 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
 
+// node's Session.post never returns the result synchronously and never throws
+// for a protocol error — replies and errors are callback-only (verified on
+// v26.3.0); promisify for assertions.
+function post(session: inspector.Session, method: string, params?: object): Promise<any> {
+  return new Promise((resolve, reject) =>
+    session.post(method, params, (err, result) => (err ? reject(err) : resolve(result))),
+  );
+}
+
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
 // through node:vm, then takePreciseCoverage.
@@ -182,7 +191,7 @@ describe("node:inspector", () => {
     });
   });
 
-  describe("Profiler", () => {
+  describe("Profiler", async () => {
     let session: inspector.Session;
 
     beforeEach(() => {
@@ -198,33 +207,33 @@ describe("node:inspector", () => {
       }
     });
 
-    test("Profiler.enable succeeds", () => {
-      const result = session.post("Profiler.enable");
+    test("Profiler.enable succeeds", async () => {
+      const result = await post(session, "Profiler.enable");
       expect(result).toEqual({});
     });
 
-    test("Profiler.disable succeeds", () => {
+    test("Profiler.disable succeeds", async () => {
       session.post("Profiler.enable");
-      const result = session.post("Profiler.disable");
+      const result = await post(session, "Profiler.disable");
       expect(result).toEqual({});
     });
 
-    test("Profiler.start without enable throws", () => {
-      expect(() => session.post("Profiler.start")).toThrow("not enabled");
+    test("Profiler.start without enable throws", async () => {
+      await expect(post(session, "Profiler.start")).rejects.toThrow("not enabled");
     });
 
-    test("Profiler.start after enable succeeds", () => {
+    test("Profiler.start after enable succeeds", async () => {
       session.post("Profiler.enable");
-      const result = session.post("Profiler.start");
+      const result = await post(session, "Profiler.start");
       expect(result).toEqual({});
     });
 
-    test("Profiler.stop without start throws", () => {
+    test("Profiler.stop without start throws", async () => {
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.stop")).toThrow("not started");
+      await expect(post(session, "Profiler.stop")).rejects.toThrow("not started");
     });
 
-    test("Profiler.stop returns valid profile", () => {
+    test("Profiler.stop returns valid profile", async () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
 
@@ -234,7 +243,7 @@ describe("node:inspector", () => {
         sum += Math.sqrt(i);
       }
 
-      const result = session.post("Profiler.stop");
+      const result = await post(session, "Profiler.stop");
 
       expect(result).toHaveProperty("profile");
       const profile = result.profile;
@@ -260,13 +269,13 @@ describe("node:inspector", () => {
       expect(rootNode.callFrame).toHaveProperty("columnNumber", -1);
     });
 
-    test("complete enable->start->stop workflow", () => {
+    test("complete enable->start->stop workflow", async () => {
       // Enable profiler
-      const enableResult = session.post("Profiler.enable");
+      const enableResult = await post(session, "Profiler.enable");
       expect(enableResult).toEqual({});
 
       // Start profiling
-      const startResult = session.post("Profiler.start");
+      const startResult = await post(session, "Profiler.start");
       expect(startResult).toEqual({});
 
       // Do some work
@@ -277,15 +286,15 @@ describe("node:inspector", () => {
       fibonacci(20);
 
       // Stop profiling
-      const stopResult = session.post("Profiler.stop");
+      const stopResult = await post(session, "Profiler.stop");
       expect(stopResult).toHaveProperty("profile");
 
       // Disable profiler
-      const disableResult = session.post("Profiler.disable");
+      const disableResult = await post(session, "Profiler.disable");
       expect(disableResult).toEqual({});
     });
 
-    test("samples and timeDeltas have same length", () => {
+    test("samples and timeDeltas have same length", async () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
 
@@ -295,13 +304,13 @@ describe("node:inspector", () => {
         sum += Math.sqrt(i);
       }
 
-      const result = session.post("Profiler.stop");
+      const result = await post(session, "Profiler.stop");
       const profile = result.profile;
 
       expect(profile.samples.length).toBe(profile.timeDeltas.length);
     });
 
-    test("samples reference valid node IDs", () => {
+    test("samples reference valid node IDs", async () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
 
@@ -311,7 +320,7 @@ describe("node:inspector", () => {
         sum += Math.sqrt(i);
       }
 
-      const result = session.post("Profiler.stop");
+      const result = await post(session, "Profiler.stop");
       const profile = result.profile;
 
       const nodeIds = new Set(profile.nodes.map((n: any) => n.id));
@@ -320,48 +329,48 @@ describe("node:inspector", () => {
       }
     });
 
-    test("Profiler.setSamplingInterval works", () => {
+    test("Profiler.setSamplingInterval works", async () => {
       session.post("Profiler.enable");
-      const result = session.post("Profiler.setSamplingInterval", { interval: 500 });
+      const result = await post(session, "Profiler.setSamplingInterval", { interval: 500 });
       expect(result).toEqual({});
     });
 
-    test("Profiler.setSamplingInterval throws if profiler is running", () => {
+    test("Profiler.setSamplingInterval throws if profiler is running", async () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
-      expect(() => session.post("Profiler.setSamplingInterval", { interval: 500 })).toThrow(
+      await expect(post(session, "Profiler.setSamplingInterval", { interval: 500 })).rejects.toThrow(
         "Cannot change sampling interval while profiler is running",
       );
       session.post("Profiler.stop");
     });
 
-    test("Profiler.setSamplingInterval requires positive interval", () => {
+    test("Profiler.setSamplingInterval requires positive interval", async () => {
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.setSamplingInterval", { interval: 0 })).toThrow();
-      expect(() => session.post("Profiler.setSamplingInterval", { interval: -1 })).toThrow();
+      await expect(post(session, "Profiler.setSamplingInterval", { interval: 0 })).rejects.toThrow();
+      await expect(post(session, "Profiler.setSamplingInterval", { interval: -1 })).rejects.toThrow();
     });
 
-    test("double Profiler.start is a no-op", () => {
+    test("double Profiler.start is a no-op", async () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
-      const result = session.post("Profiler.start");
+      const result = await post(session, "Profiler.start");
       expect(result).toEqual({});
       session.post("Profiler.stop");
     });
 
-    test("profiler can be restarted after stop", () => {
+    test("profiler can be restarted after stop", async () => {
       // First run
       session.post("Profiler.enable");
       session.post("Profiler.start");
       let sum = 0;
       for (let i = 0; i < 1000; i++) sum += i;
-      const result1 = session.post("Profiler.stop");
+      const result1 = await post(session, "Profiler.stop");
       expect(result1).toHaveProperty("profile");
 
       // Second run
       session.post("Profiler.start");
       for (let i = 0; i < 1000; i++) sum += i;
-      const result2 = session.post("Profiler.stop");
+      const result2 = await post(session, "Profiler.stop");
       expect(result2).toHaveProperty("profile");
 
       // Both profiles should be valid
@@ -369,7 +378,7 @@ describe("node:inspector", () => {
       expect(result2.profile.nodes.length).toBeGreaterThanOrEqual(1);
     });
 
-    test("disconnect() stops running profiler", () => {
+    test("disconnect() stops running profiler", async () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
       session.disconnect();
@@ -380,13 +389,13 @@ describe("node:inspector", () => {
       session2.post("Profiler.enable");
 
       // This should work without error (profiler is not running)
-      const result = session2.post("Profiler.setSamplingInterval", { interval: 500 });
+      const result = await post(session2, "Profiler.setSamplingInterval", { interval: 500 });
       expect(result).toEqual({});
       session2.disconnect();
     });
   });
 
-  describe("callback API", () => {
+  describe("callback API", async () => {
     test("post() with callback receives result", async () => {
       const session = new inspector.Session();
       session.connect();
@@ -418,7 +427,7 @@ describe("node:inspector", () => {
     });
   });
 
-  describe("unsupported methods", () => {
+  describe("unsupported methods", async () => {
     // Like Node, post() is asynchronous: without a callback it returns
     // undefined and never throws for a backend error; the protocol error is
     // delivered to the callback instead.
@@ -440,40 +449,40 @@ describe("node:inspector", () => {
     });
   });
 
-  describe("precise coverage", () => {
-    test("startPreciseCoverage requires Profiler.enable", () => {
+  describe("precise coverage", async () => {
+    test("startPreciseCoverage requires Profiler.enable", async () => {
       const session = new inspector.Session();
       session.connect();
-      expect(() => session.post("Profiler.startPreciseCoverage")).toThrow("Profiler is not enabled");
-      expect(() => session.post("Profiler.stopPreciseCoverage")).toThrow("Profiler is not enabled");
+      await expect(post(session, "Profiler.startPreciseCoverage")).rejects.toThrow("Profiler is not enabled");
+      await expect(post(session, "Profiler.stopPreciseCoverage")).rejects.toThrow("Profiler is not enabled");
       session.disconnect();
     });
 
-    test("takePreciseCoverage before startPreciseCoverage throws", () => {
+    test("takePreciseCoverage before startPreciseCoverage throws", async () => {
       const session = new inspector.Session();
       session.connect();
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
+      await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow("Precise coverage has not been started.");
       session.disconnect();
     });
 
-    test("Profiler.disable stops precise coverage, like V8", () => {
+    test("Profiler.disable stops precise coverage, like V8", async () => {
       const session = new inspector.Session();
       session.connect();
       session.post("Profiler.enable");
       session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
       session.post("Profiler.disable");
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
+      await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow("Precise coverage has not been started.");
       session.disconnect();
     });
 
     // Unlike V8 (which has always-on invocation counters), JSC has none, so
     // best-effort coverage is empty until startPreciseCoverage has run.
-    test("getBestEffortCoverage returns [] without a prior startPreciseCoverage", () => {
+    test("getBestEffortCoverage returns [] without a prior startPreciseCoverage", async () => {
       const session = new inspector.Session();
       session.connect();
-      const { result } = session.post("Profiler.getBestEffortCoverage");
+      const { result } = await post(session, "Profiler.getBestEffortCoverage");
       expect(result).toEqual([]);
       session.disconnect();
     });
@@ -619,25 +628,25 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
     });
   });
 
-  describe("exports", () => {
-    test("url() returns undefined", () => {
+  describe("exports", async () => {
+    test("url() returns undefined", async () => {
       expect(inspector.url()).toBeUndefined();
     });
 
-    test("console is exported", () => {
+    test("console is exported", async () => {
       expect(inspector.console).toBeObject();
       expect(inspector.console.log).toBe(globalThis.console.log);
     });
 
     // open()/close()/waitForDebugger() behavior is covered in inspector.test.ts;
     // opening a server is process-global state, so it is not exercised here.
-    test("open(), close() and waitForDebugger() are functions", () => {
+    test("open(), close() and waitForDebugger() are functions", async () => {
       expect(inspector.open).toBeInstanceOf(Function);
       expect(inspector.close).toBeInstanceOf(Function);
       expect(inspector.waitForDebugger).toBeInstanceOf(Function);
     });
 
-    test("waitForDebugger() throws when the inspector is not active", () => {
+    test("waitForDebugger() throws when the inspector is not active", async () => {
       expect(() => inspector.waitForDebugger()).toThrow("Inspector is not active");
     });
   });

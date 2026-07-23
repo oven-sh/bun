@@ -354,7 +354,6 @@ function dispatchInProcessBackendMessage(backendMessage: string) {
 function settleInProcessPost(callback, error, value) {
   if (!callback) return;
   if (error === null || error === undefined) callback(null, value);
-  else if (error.closed) callback($ERR_INSPECTOR_CLOSED());
   else callback(makeProtocolError(error), undefined);
 }
 
@@ -1206,11 +1205,12 @@ class Session extends EventEmitter {
       inProcessAdapters.$delete(this.#adapter);
       this.#adapter = undefined;
       // Node's contract: every callback still waiting on a reply is failed
-      // with ERR_INSPECTOR_CLOSED rather than left dangling.
+      // with "Inspector error -32000: Execution context was destroyed."
+      // (ERR_INSPECTOR_COMMAND), like any in-flight command at teardown.
       const pending = this.#pendingResults;
       this.#pendingResults = new Map();
       for (const done of pending.values()) {
-        process.nextTick(done, { code: -32000, closed: true });
+        process.nextTick(done, { code: -32000, message: "Execution context was destroyed." });
       }
       if (inProcessAdapters.size === 0) disconnectInProcessInspector();
     }
@@ -1267,20 +1267,10 @@ class Session extends EventEmitter {
 
     if (callback) {
       queueMicrotask(settleLocalPost.bind(undefined, callback, result));
-    } else {
-      // Sync throw for errors when no callback
-      if (result instanceof Error) {
-        if (result[kCallbackOnlyError]) return;
-        throw result;
-      }
-      if (result !== null && typeof result === "object" && kProtocolError in result) {
-        const protocolError = result[kProtocolError];
-        const error = new Error(protocolError.message);
-        error.code = protocolError.code;
-        throw error;
-      }
-      return result;
     }
+    // Node's post() always returns undefined, and without a callback a
+    // protocol error is neither thrown nor otherwise observable (verified on
+    // v26.3.0 — errors are callback-only).
   }
 
   #handleMethod(method: string, params?: object): any {
@@ -1492,11 +1482,14 @@ class Session extends EventEmitter {
       case "NodeWorker.enable": {
         // Minimal NodeWorker domain stub for test-worker-name only: a session
         // connected from inside a worker reports itself. Main-thread child
-        // enumeration is NOT implemented — return an error there instead of
-        // silent success so callers know.
+        // enumeration is NOT implemented — deliver an error through the
+        // callback so callers know (node succeeds with {} and emits
+        // attachedToWorker per worker; silently faking that would leave
+        // listeners waiting forever). Without a callback this is silent,
+        // like every other protocol error.
         const wt = require("node:worker_threads");
         if (wt.isMainThread) {
-          return new Error("Inspector method NodeWorker.enable is not supported on the main thread yet");
+          return callbackOnlyCommandError("-32000: NodeWorker.enable is not supported on the main thread yet");
         }
         const title = `[worker ${wt.threadId}] ${wt.threadName}`;
         const workerInfo = { workerId: String(wt.threadId), type: "worker", title };

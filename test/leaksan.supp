@@ -126,22 +126,8 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
-# test/regression/issue/30205.test.ts — global_exit's final GC sweep fires
-# NAPI weak finalizers which enqueue Box<NapiFinalizerTask> into the event
-# loop; the loop is already exiting so they never drain.
-leak:napi_internal_enqueue_finalizer
 # test/js/node/inspector/inspector.test.ts — BunInspectorConnection objects are
 # deliberately never freed (cross-thread message queues may still reference
 # them); a node:inspector client that connects and disconnects before exit
 # leaves its connection behind.
 leak:Bun::BunInspectorConnection::create
-# Same class, different frame: per-connection state allocated inside the
-# debug server's corked onOpen during the websocket upgrade (reached only
-# via the inspector's own DebugHTTPServer) stays owned by the deliberately
-# leaked connection above, so LSAN reports it at exit when a client is
-# still attached (376 bytes/conn, asan build 78174).
-leak:DebugHTTPServerPrototype__doUpgrade
-# The debug-build stacks record the allocation head instead: the lazily
-# reified Bun.stderr backing object created inside that same corked upgrade
-# (BunObject.cpp lazyPropCb), retained by the leaked connection at exit.
-leak:BunObject_lazyPropCb_wrap_stderr

@@ -4764,6 +4764,29 @@ declare module "bun" {
     function gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
 
     /**
+     * Defer garbage collection across a latency-sensitive region (for
+     * example, a UI frame render). Eden collections that would have fired
+     * inside the region are postponed until the first allocation after the
+     * matching {@link gcAllow}. Returns the new nesting depth.
+     *
+     * Every `gcDefer()` **must** be paired with a `gcAllow()` — wrap the
+     * region in `try { … } finally { Bun.unsafe.gcAllow() }`. An unbalanced
+     * `gcDefer()` leaves GC deferred indefinitely.
+     *
+     * Calls may nest; the underlying heap deferral is held at exactly one
+     * level regardless of nesting depth.
+     */
+    function gcDefer(): number;
+
+    /**
+     * End a {@link gcDefer} region. Does **not** itself collect — the next
+     * regular allocation slow path handles any deferred pressure. Returns
+     * the new nesting depth (0 when fully unwound). Calling at depth 0 is a
+     * usage bug; it logs a warning and returns 0 without underflowing.
+     */
+    function gcAllow(): number;
+
+    /**
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;

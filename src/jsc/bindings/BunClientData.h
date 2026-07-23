@@ -127,6 +127,17 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Bun.unsafe.gcDefer/gcAllow per-VM state (BunGCDefer.cpp). Lives here
+    // rather than thread_local so a Worker thread reused for a fresh VM
+    // can't inherit a stale bracket from the dead one. Storage holds a
+    // placement-new'd JSC::DeferGCForAWhile (one Heap& member — sizeof/
+    // alignof void*; static_assert in BunGCDefer.cpp). ~JSVMClientData
+    // intentionally does NOT dtor it: at VM teardown the heap is dying
+    // anyway, and the storage is trivially destructible.
+    unsigned gcDeferDepth { 0 };
+    bool gcDeferWarned { false };
+    alignas(void*) std::byte gcDeferStorage[sizeof(void*)];
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

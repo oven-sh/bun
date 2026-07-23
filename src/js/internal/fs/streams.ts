@@ -470,12 +470,13 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this.pos = start;
   }
 
-  // Enable fast path
+  // Enable fast path. `write` lives on the prototype (see writeFast below) so
+  // the instance is not marked as monkey-patched; the fast path is selected at
+  // call time via kWriteStreamFastPath.
   if (fastPath) {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
-    this.write = writeFast as any;
     if (fd != null) {
       // Already-open fd (stdio): skip the async _construct round-trip so the
       // stream is born constructed, like node's stdio streams (net.Socket /
@@ -631,11 +632,20 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
 }
 
-// This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
-const kWriteMonkeyPatchDefense = Symbol("!");
+
+// Lives on WriteStream.prototype so `stream.write === stream.constructor.prototype.write`
+// holds (matching Node). Libraries like pino/sonic-boom use that equality to detect
+// monkey-patching; an own-instance `write` would force them onto a slow unbatched path.
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
-  if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
+  const fileSink = this[kWriteStreamFastPath];
+
+  // No fast path (a regular WriteStream, or one whose sink was torn down): fall
+  // back to the generic Writable.prototype.write so buffering, corking and
+  // backpressure behave exactly as Node.js does.
+  if (!fileSink || fileSink === true) {
+    return writablePrototypeWrite.$call(this, data, encoding, cb);
+  }
 
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
@@ -652,39 +662,29 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     cb = streamNoop;
   }
 
-  const fileSink = this[kWriteStreamFastPath];
-  if (fileSink && fileSink !== true) {
-    const maybePromise = fileSink.write(data);
-    if ($isPromise(maybePromise)) {
-      // Two-arg then(): a throw from the fulfillment handler must not be
-      // mistaken for a write failure.
-      maybePromise.then(
-        () => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        },
-        err => {
-          cb(err);
-          // Node.js onwriteError: callback AND destroy are both invoked; the
-          // callback is additive, not a replacement for the 'error' event.
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
-      );
-      return false; // Indicate backpressure
-    } else {
-      cb(null);
-      return true; // No backpressure
-    }
+  const maybePromise = fileSink.write(data);
+  if ($isPromise(maybePromise)) {
+    // Two-arg then(): a throw from the fulfillment handler must not be
+    // mistaken for a write failure.
+    maybePromise.then(
+      () => {
+        this.emit("drain"); // Emit drain event
+        cb(null);
+      },
+      err => {
+        cb(err);
+        // Node.js onwriteError: callback AND destroy are both invoked; the
+        // callback is additive, not a replacement for the 'error' event.
+        require("internal/streams/destroy").errorOrDestroy(this, err);
+      },
+    );
+    return false; // Indicate backpressure
   } else {
-    const result: any = this._write(data, encoding, cb);
-    if (this.write === writeFast) {
-      this.write = writablePrototypeWrite;
-    } else {
-      this[kWriteMonkeyPatchDefense] = true;
-    }
-    return result;
+    cb(null);
+    return true; // No backpressure
   }
 }
+writeStreamPrototype.write = writeFast;
 
 writeStreamPrototype._writev = function (data, cb) {
   const len = data.length;

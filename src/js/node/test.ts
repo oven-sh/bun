@@ -525,9 +525,13 @@ async function runOneFile(
     } catch {
       continue;
     }
+    // Child stdout is user-controlled: a test body can write the marker plus
+    // well-formed JSON that is not an event. Skip rather than let
+    // republishChildEvent throw and destroy the run stream.
+    if (event?.data == null || typeof event.data !== "object") continue;
     // node's parent swallows each child's root plan and emits one run-level
     // plan at the end (runner.js #skipReporting + Test.postRun).
-    if (event.type === "test:plan" && event.data?.nesting === 0) continue;
+    if (event.type === "test:plan" && event.data.nesting === 0) continue;
     republishChildEvent(event, absolute, reporter, fileCounts);
   }
 

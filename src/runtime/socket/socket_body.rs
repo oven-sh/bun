@@ -1741,8 +1741,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:tls sockets defer the hostname verdict: their JS layer applies
         // `checkServerIdentity` (default or user override) itself.
         let flags = this.flags.get();
-        let reject_unauthorized = success == 1
-            && flags.contains(Flags::REJECT_UNAUTHORIZED)
+        // Deliberately independent of `success`: the inline-reject path
+        // dispatches with success=0 after suppressing the client Finished, and
+        // REJECTED must still be set there or the write-refusal guards are
+        // bypassed for the exact peer the policy is rejecting (a failed
+        // handshake never has a usable transport, so fail closed on every
+        // failure flavor).
+        let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
 

@@ -2417,10 +2417,9 @@ Reo=
             handshake.resolve({
               authorized: socket.authorized,
               error: authorizationError?.message ?? null,
-              // The raw twin accepts the bytes into its queue (node v26.3.0
-              // never refuses raw-side writes) but the rejected connection is
-              // torn down before anything reaches the wire, so `received`
-              // below must stay empty.
+              // The raw twin shares the fd: its writes must refuse too. A
+              // rejecting client's REJECTED flag propagates to the twin so a
+              // MITM that failed verification can never receive plaintext.
               rawWrite: raw.write("must-not-reach-the-peer"),
             });
           },
@@ -2436,11 +2435,7 @@ Reo=
       using _raw = raw;
       using _secure = secure;
 
-      expect(await handshake.promise).toEqual({
-        authorized: false,
-        error: UNTRUSTED_MESSAGE,
-        rawWrite: "must-not-reach-the-peer".length,
-      });
+      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, rawWrite: -1 });
       await closed.promise;
       expect(received).toEqual([]);
     });
@@ -2508,7 +2503,7 @@ Reo=
       expect(received).toEqual([]);
     });
 
-    it("never delivers writes issued from the handshake callback of a rejected connection", async () => {
+    it("refuses writes issued from the handshake callback of a rejected connection", async () => {
       const serverReceived: string[] = [];
       const handshake = Promise.withResolvers<number>();
       const closed = Promise.withResolvers<void>();
@@ -2535,9 +2530,9 @@ Reo=
         socket: {
           open() {},
           handshake(socket) {
-            // node v26.3.0 accepts writes on the failed socket into the dying
-            // stream without an error sentinel; the bytes never reach the
-            // peer (serverReceived stays empty below).
+            // Fail closed: the rejected peer failed chain verification, so the
+            // write is refused outright (-1) rather than sealed with keys a
+            // malicious server can derive from the ECDHE exchange.
             handshake.resolve(socket.write("token-that-must-never-reach-a-mitm"));
           },
           data() {},
@@ -2555,7 +2550,7 @@ Reo=
           },
         },
       });
-      expect(await handshake.promise).toBe("token-that-must-never-reach-a-mitm".length);
+      expect(await handshake.promise).toBe(-1);
       await closed.promise;
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);

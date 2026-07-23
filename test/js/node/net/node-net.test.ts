@@ -1067,6 +1067,33 @@ describe("net.Server accepted-socket buffering", () => {
     }
   });
 
+  it("keeps a client socket's buffered response available for a late reader after peer FIN", async () => {
+    // The abandoned-socket teardown targets only server-accepted sockets:
+    // an outbound client with no reader yet must keep its buffered response
+    // indefinitely, like node (a late .on('data') still delivers it).
+    const received = Promise.withResolvers<string>();
+    const server = createServer(sock => {
+      sock.end("late response");
+    });
+    let client: Socket | undefined;
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      client.on("error", received.reject);
+      // Wait well past the teardown's setImmediate window before reading.
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
+      expect(client.destroyed).toBe(false);
+      client.on("data", chunk => received.resolve(chunk.toString()));
+      expect(await received.promise).toBe("late response");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
   it("delivers bytes to a 'data' listener attached via setImmediate from the connection handler", async () => {
     // The abandoned-socket teardown at EOF is deferred so a nextTick /
     // microtask / setImmediate attach still counts as engaging the reader.

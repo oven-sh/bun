@@ -49,11 +49,14 @@ using WorkQueue = Bun::PhonyWorkQueue;
 
 struct JsonWebKey;
 
+template<typename> class ExceptionOr;
+
 class BufferSource;
 class CryptoKey;
 class DeferredPromise;
 
 enum class CryptoAlgorithmIdentifier : uint8_t;
+enum class CryptoKeyType : uint8_t;
 enum class CryptoKeyUsage;
 
 class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto>, public CanMakeWeakPtr<SubtleCrypto> {
@@ -76,6 +79,8 @@ public:
     void deriveKey(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& baseKey, AlgorithmIdentifier&& derivedKeyType, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
     void deriveBits(JSC::JSGlobalObject&, AlgorithmIdentifier&&, CryptoKey& baseKey, std::optional<unsigned> length, Ref<DeferredPromise>&&);
     void importKey(JSC::JSGlobalObject&, KeyFormat, KeyDataVariant&&, AlgorithmIdentifier&&, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
+    // Synchronous variant used by node:crypto KeyObject.prototype.toCryptoKey.
+    static ExceptionOr<Ref<CryptoKey>> importKeySync(JSC::JSGlobalObject&, CryptoKeyType sourceType, KeyFormat, Vector<uint8_t>&&, AlgorithmIdentifier&&, bool extractable, JSC::JSValue keyUsages);
     void exportKey(KeyFormat, CryptoKey&, Ref<DeferredPromise>&&);
     void wrapKey(JSC::JSGlobalObject&, KeyFormat, CryptoKey&, CryptoKey& wrappingKey, AlgorithmIdentifier&& wrapAlgorithm, Ref<DeferredPromise>&&);
     void unwrapKey(JSC::JSGlobalObject&, KeyFormat, BufferSource&& wrappedKey, CryptoKey& unwrappingKey, AlgorithmIdentifier&& unwrapAlgorithm, AlgorithmIdentifier&& unwrappedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);

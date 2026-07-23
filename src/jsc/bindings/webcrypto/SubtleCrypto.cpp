@@ -53,6 +53,9 @@
 #include "JSRsaKeyGenParams.h"
 #include "JSRsaOaepParams.h"
 #include "JSRsaPssParams.h"
+#include "JSCryptoKeyUsage.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertEnumeration.h"
 #include <JavaScriptCore/JSONObject.h>
 
 namespace WebCore {
@@ -513,38 +516,32 @@ static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&
 }
 
 // Maybe we want more specific error messages?
-static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
+static ASCIILiteral defaultCryptoErrorMessage(ExceptionCode ec)
 {
-    if (!msg.isEmpty()) {
-        passedPromise->reject(ec, msg);
-        return;
-    }
     switch (ec) {
     case NotSupportedError:
-        passedPromise->reject(ec, "The algorithm is not supported"_s);
-        return;
+        return "The algorithm is not supported"_s;
     case SyntaxError:
-        passedPromise->reject(ec, "A required parameter was missing or out-of-range"_s);
-        return;
+        return "A required parameter was missing or out-of-range"_s;
     case InvalidStateError:
-        passedPromise->reject(ec, "The requested operation is not valid for the current state of the provided key"_s);
-        return;
+        return "The requested operation is not valid for the current state of the provided key"_s;
     case InvalidAccessError:
-        passedPromise->reject(ec, "The requested operation is not valid for the provided key"_s);
-        return;
+        return "The requested operation is not valid for the provided key"_s;
     case UnknownError:
-        passedPromise->reject(ec, "The operation failed for an unknown transient reason (e.g. out of memory)"_s);
-        return;
+        return "The operation failed for an unknown transient reason (e.g. out of memory)"_s;
     case DataError:
-        passedPromise->reject(ec, "Data provided to an operation does not meet requirements"_s);
-        return;
+        return "Data provided to an operation does not meet requirements"_s;
     case OperationError:
-        passedPromise->reject(ec, "The operation failed for an operation-specific reason"_s);
-        return;
+        return "The operation failed for an operation-specific reason"_s;
     default:
-        break;
+        ASSERT_NOT_REACHED();
+        return ""_s;
     }
-    ASSERT_NOT_REACHED();
+}
+
+static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
+{
+    passedPromise->reject(ec, msg.isEmpty() ? String(defaultCryptoErrorMessage(ec)) : msg);
 }
 
 static void normalizeJsonWebKey(JsonWebKey& webKey)
@@ -1107,6 +1104,73 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-importKey
     // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
     RELEASE_AND_RETURN(scope, algorithm->importKey(format, WTF::move(keyData), *params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
+}
+
+// Keep in sync with the secret-key cases in normalizeCryptoAlgorithmParameters (Operations::ImportKey).
+static bool isSecretKeyAlgorithm(CryptoAlgorithmIdentifier identifier)
+{
+    switch (identifier) {
+    case CryptoAlgorithmIdentifier::HMAC:
+    case CryptoAlgorithmIdentifier::AES_CTR:
+    case CryptoAlgorithmIdentifier::AES_CBC:
+    case CryptoAlgorithmIdentifier::AES_GCM:
+    case CryptoAlgorithmIdentifier::AES_CFB:
+    case CryptoAlgorithmIdentifier::AES_KW:
+    case CryptoAlgorithmIdentifier::HKDF:
+    case CryptoAlgorithmIdentifier::PBKDF2:
+        return true;
+    default:
+        return false;
+    }
+}
+
+ExceptionOr<Ref<CryptoKey>> SubtleCrypto::importKeySync(JSGlobalObject& state, CryptoKeyType sourceType, KeyFormat format, Vector<uint8_t>&& keyData, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, JSValue keyUsagesValue)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::ImportKey);
+    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+    if (paramsOrException.hasException())
+        return paramsOrException.releaseException();
+    auto params = paramsOrException.releaseReturnValue();
+
+    auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(state, keyUsagesValue);
+    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+
+    // Node dispatches secret vs. asymmetric algorithms separately, so a category
+    // mismatch is NotSupportedError before any usage/key-data validation runs.
+    if (isSecretKeyAlgorithm(params->identifier) != (sourceType == CryptoKeyType::Secret))
+        return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
+
+    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
+    auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
+
+    RefPtr<CryptoKey> result;
+    std::optional<Exception> exception;
+    auto callback = [&result](CryptoKey& key) {
+        result = &key;
+    };
+    auto exceptionCallback = [&exception](ExceptionCode ec, const String& msg) {
+        exception = Exception { ec, msg.isEmpty() ? String(defaultCryptoErrorMessage(ec)) : msg };
+    };
+
+    KeyData data = WTF::move(keyData);
+    algorithm->importKey(format, WTF::move(data), *params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
+    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+
+    if (exception)
+        return WTF::move(*exception);
+    if (!result)
+        return Exception { OperationError, defaultCryptoErrorMessage(OperationError) };
+
+    if ((result->type() == CryptoKeyType::Private || result->type() == CryptoKeyType::Secret) && !result->usagesBitmap()) {
+        return Exception { SyntaxError,
+            result->type() == CryptoKeyType::Private
+                ? "Usages cannot be empty when importing a private key."_s
+                : "Usages cannot be empty when importing a secret key."_s };
+    }
+
+    return result.releaseNonNull();
 }
 
 void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromise>&& promise)

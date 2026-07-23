@@ -4,6 +4,7 @@ import { describe, expect, it, test } from "bun:test";
 import {
   createCipheriv,
   createDecipheriv,
+  createHmac,
   createPrivateKey,
   createPublicKey,
   createSecretKey,
@@ -1800,3 +1801,249 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+describe("KeyObject.prototype.toCryptoKey", () => {
+  const { subtle } = globalThis.crypto;
+
+  test("method exists on all key types", () => {
+    const secret = createSecretKey(Buffer.alloc(32));
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    expect(typeof secret.toCryptoKey).toBe("function");
+    expect(typeof publicKey.toCryptoKey).toBe("function");
+    expect(typeof privateKey.toCryptoKey).toBe("function");
+    expect(secret.toCryptoKey.length).toBe(3);
+  });
+
+  test("prototype placement matches Node", () => {
+    const secret = createSecretKey(Buffer.alloc(32));
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    // SecretKeyObject.prototype and AsymmetricKeyObject.prototype each own a copy;
+    // KeyObject.prototype does not.
+    expect(Object.hasOwn(Object.getPrototypeOf(secret), "toCryptoKey")).toBe(true);
+    expect(Object.hasOwn(Object.getPrototypeOf(publicKey), "toCryptoKey")).toBe(false);
+    expect(Object.hasOwn(KeyObject.prototype, "toCryptoKey")).toBe(false);
+    expect(publicKey.toCryptoKey).toBe(privateKey.toCryptoKey);
+    expect(secret.toCryptoKey).not.toBe(publicKey.toCryptoKey);
+  });
+
+  describe("secret keys", () => {
+    test("HMAC", () => {
+      const secret = createSecretKey(Buffer.alloc(32, 1));
+      const key = secret.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign", "verify"]);
+      expect(key).toBeInstanceOf(CryptoKey);
+      expect({
+        type: key.type,
+        name: key.algorithm.name,
+        length: (key.algorithm as any).length,
+        hash: (key.algorithm as any).hash.name,
+        extractable: key.extractable,
+        usages: key.usages,
+      }).toEqual({
+        type: "secret",
+        name: "HMAC",
+        length: 256,
+        hash: "SHA-256",
+        extractable: true,
+        usages: ["sign", "verify"],
+      });
+      expect(secret.equals(KeyObject.from(key))).toBe(true);
+    });
+
+    test.each([
+      ["AES-CBC", 16, 128, ["encrypt", "decrypt"]],
+      ["AES-CTR", 24, 192, ["encrypt", "decrypt"]],
+      ["AES-GCM", 32, 256, ["encrypt", "decrypt"]],
+      ["AES-KW", 32, 256, ["wrapKey", "unwrapKey"]],
+    ] as const)("%s (%d bytes)", (name, bytes, bits, usages) => {
+      const secret = createSecretKey(Buffer.alloc(bytes, 1));
+      const key = secret.toCryptoKey(name, true, usages as any);
+      expect({
+        type: key.type,
+        name: key.algorithm.name,
+        length: (key.algorithm as any).length,
+        extractable: key.extractable,
+      }).toEqual({ type: "secret", name, length: bits, extractable: true });
+      expect(secret.equals(KeyObject.from(key))).toBe(true);
+    });
+
+    test.each(["HKDF", "PBKDF2"] as const)("%s", name => {
+      const secret = createSecretKey(Buffer.alloc(32, 1));
+      const key = secret.toCryptoKey(name, false, ["deriveBits", "deriveKey"]);
+      expect({ type: key.type, name: key.algorithm.name, extractable: key.extractable }).toEqual({
+        type: "secret",
+        name,
+        extractable: false,
+      });
+    });
+
+    test("produces a working HMAC key", async () => {
+      const secret = createSecretKey(Buffer.alloc(32, 7));
+      const key = secret.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const data = new TextEncoder().encode("hello");
+      const sig = Buffer.from(await subtle.sign("HMAC", key, data));
+      const expected = createHmac("sha256", secret).update(data).digest();
+      expect(sig.equals(expected)).toBe(true);
+    });
+
+    test("extractable=false", () => {
+      const secret = createSecretKey(Buffer.alloc(32));
+      const key = secret.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+      expect(key.extractable).toBe(false);
+    });
+  });
+
+  describe("asymmetric keys", () => {
+    test("RSA", () => {
+      const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+      const priv = privateKey.toCryptoKey({ name: "RSA-PSS", hash: "SHA-256" }, true, ["sign"]);
+      expect({
+        type: priv.type,
+        name: priv.algorithm.name,
+        modulusLength: (priv.algorithm as any).modulusLength,
+        hash: (priv.algorithm as any).hash.name,
+      }).toEqual({ type: "private", name: "RSA-PSS", modulusLength: 2048, hash: "SHA-256" });
+      expect(privateKey.equals(KeyObject.from(priv))).toBe(true);
+
+      const pub = publicKey.toCryptoKey({ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["verify"]);
+      expect({ type: pub.type, name: pub.algorithm.name }).toEqual({ type: "public", name: "RSASSA-PKCS1-v1_5" });
+      expect(publicKey.equals(KeyObject.from(pub))).toBe(true);
+    });
+
+    test("EC", () => {
+      const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+      const priv = privateKey.toCryptoKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
+      expect({
+        type: priv.type,
+        name: priv.algorithm.name,
+        namedCurve: (priv.algorithm as any).namedCurve,
+      }).toEqual({ type: "private", name: "ECDSA", namedCurve: "P-256" });
+      expect(privateKey.equals(KeyObject.from(priv))).toBe(true);
+
+      const pub = publicKey.toCryptoKey({ name: "ECDH", namedCurve: "P-256" }, true, []);
+      expect({ type: pub.type, name: pub.algorithm.name }).toEqual({ type: "public", name: "ECDH" });
+    });
+
+    test("Ed25519", async () => {
+      const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+      const priv = privateKey.toCryptoKey("Ed25519", true, ["sign"]);
+      const pub = publicKey.toCryptoKey("Ed25519", true, ["verify"]);
+      expect({ privType: priv.type, pubType: pub.type, name: priv.algorithm.name }).toEqual({
+        privType: "private",
+        pubType: "public",
+        name: "Ed25519",
+      });
+      const data = new TextEncoder().encode("hello");
+      const sig = await subtle.sign("Ed25519", priv, data);
+      expect(await subtle.verify("Ed25519", pub, sig, data)).toBe(true);
+      expect(privateKey.equals(KeyObject.from(priv))).toBe(true);
+    });
+
+    test("X25519", () => {
+      const { publicKey, privateKey } = generateKeyPairSync("x25519");
+      const priv = privateKey.toCryptoKey("X25519", true, ["deriveBits"]);
+      expect({ type: priv.type, name: priv.algorithm.name }).toEqual({ type: "private", name: "X25519" });
+      // Public X25519 keys may have empty usages.
+      const pub = publicKey.toCryptoKey("X25519", true, []);
+      expect({ type: pub.type, usages: pub.usages }).toEqual({ type: "public", usages: [] });
+    });
+  });
+
+  describe("errors", () => {
+    const secret = createSecretKey(Buffer.alloc(32));
+    const { publicKey: ecPub, privateKey: ecPriv } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const { publicKey: edPub } = generateKeyPairSync("ed25519");
+
+    test("unrecognized algorithm", () => {
+      expect(() => secret.toCryptoKey("NotAnAlgorithm", true, ["sign"])).toThrow(
+        expect.objectContaining({ name: "NotSupportedError" }),
+      );
+    });
+
+    test("unrecognized algorithm takes precedence over invalid usage", () => {
+      // Algorithm normalization runs before keyUsages conversion.
+      expect(() => secret.toCryptoKey("NotAnAlgorithm", true, ["bogus-usage" as any])).toThrow(
+        expect.objectContaining({ name: "NotSupportedError" }),
+      );
+    });
+
+    test("invalid usage takes precedence over key type category mismatch", () => {
+      // keyUsages conversion runs before the secret/asymmetric category switch.
+      expect(() => secret.toCryptoKey("Ed25519", true, ["bogus-usage" as any])).toThrow(TypeError);
+    });
+
+    test("error message matches subtle.importKey for the same input", async () => {
+      const fn = () => createSecretKey(Buffer.alloc(20)).toCryptoKey("AES-GCM", true, ["encrypt"]);
+      const asyncErr = await subtle.importKey("raw", Buffer.alloc(20), "AES-GCM", true, ["encrypt"]).then(
+        () => null,
+        e => e,
+      );
+      expect(fn).toThrow(expect.objectContaining({ name: asyncErr.name, message: asyncErr.message }));
+    });
+
+    test("empty usages for secret key", () => {
+      expect(() => secret.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, [])).toThrow(
+        expect.objectContaining({ name: "SyntaxError" }),
+      );
+    });
+
+    test("empty usages for private key", () => {
+      expect(() => ecPriv.toCryptoKey({ name: "ECDSA", namedCurve: "P-256" }, true, [])).toThrow(
+        expect.objectContaining({ name: "SyntaxError" }),
+      );
+    });
+
+    test("invalid usage for algorithm", () => {
+      expect(() => secret.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["encrypt"])).toThrow(
+        expect.objectContaining({ name: "SyntaxError" }),
+      );
+    });
+
+    test("invalid AES key length", () => {
+      expect(() => createSecretKey(Buffer.alloc(20)).toCryptoKey("AES-GCM", true, ["encrypt"])).toThrow(
+        expect.objectContaining({ name: "DataError" }),
+      );
+    });
+
+    test("HKDF extractable=true", () => {
+      expect(() => secret.toCryptoKey("HKDF", true, ["deriveBits"])).toThrow(
+        expect.objectContaining({ name: "SyntaxError" }),
+      );
+    });
+
+    test("EC named curve mismatch", () => {
+      expect(() => ecPub.toCryptoKey({ name: "ECDSA", namedCurve: "P-384" }, true, ["verify"])).toThrow(
+        expect.objectContaining({ name: "DataError" }),
+      );
+    });
+
+    test("key type mismatch (Ed25519 as X25519)", () => {
+      expect(() => edPub.toCryptoKey("X25519", true, [])).toThrow(expect.objectContaining({ name: "DataError" }));
+    });
+
+    test("key type mismatch (EC as RSA)", () => {
+      expect(() => ecPub.toCryptoKey({ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["verify"])).toThrow(
+        expect.objectContaining({ name: "DataError" }),
+      );
+    });
+
+    // Node dispatches by key type before validating usages or key data, so
+    // every secret<->asymmetric mismatch is NotSupportedError regardless of
+    // whatever else is wrong with the input.
+    test.each([
+      ["secret as Ed25519, valid usage", () => secret.toCryptoKey("Ed25519", true, ["verify"])],
+      ["secret as Ed25519, invalid usage", () => secret.toCryptoKey("Ed25519", true, ["sign"])],
+      [
+        "secret as Ed25519, wrong length",
+        () => createSecretKey(Buffer.alloc(31)).toCryptoKey("Ed25519", true, ["verify"]),
+      ],
+      ["secret as X25519", () => secret.toCryptoKey("X25519", true, [])],
+      ["secret as ECDSA", () => secret.toCryptoKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["verify"])],
+      ["secret as RSA", () => secret.toCryptoKey({ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["verify"])],
+      ["asymmetric as HMAC", () => edPub.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"])],
+      ["asymmetric as AES-GCM", () => edPub.toCryptoKey("AES-GCM", true, ["encrypt"])],
+      ["asymmetric as HKDF", () => ecPriv.toCryptoKey("HKDF", false, ["deriveBits"])],
+    ] as const)("key type category mismatch: %s", (_, fn) => {
+      expect(fn).toThrow(expect.objectContaining({ name: "NotSupportedError" }));
+    });
+  });
+});

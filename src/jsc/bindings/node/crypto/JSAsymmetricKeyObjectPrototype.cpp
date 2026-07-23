@@ -13,12 +13,14 @@ using namespace ncrypto;
 
 JSC_DECLARE_CUSTOM_GETTER(jsAsymmetricKeyObjectPrototype_asymmetricKeyType);
 JSC_DECLARE_CUSTOM_GETTER(jsAsymmetricKeyObjectPrototype_asymmetricKeyDetails);
+JSC_DECLARE_HOST_FUNCTION(jsAsymmetricKeyObjectPrototype_toCryptoKey);
 
 const JSC::ClassInfo JSAsymmetricKeyObjectPrototype::s_info = { "AsymmetricKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAsymmetricKeyObjectPrototype) };
 
 static const JSC::HashTableValue JSAsymmetricKeyObjectPrototypeTableValues[] = {
     { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsAsymmetricKeyObjectPrototype_asymmetricKeyType, 0 } },
     { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsAsymmetricKeyObjectPrototype_asymmetricKeyDetails, 0 } },
+    { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsAsymmetricKeyObjectPrototype_toCryptoKey, 3 } },
 };
 
 void JSAsymmetricKeyObjectPrototype::finishCreation(JSC::VM& vm)
@@ -73,6 +75,23 @@ JSC_DEFINE_CUSTOM_GETTER(jsAsymmetricKeyObjectPrototype_asymmetricKeyDetails, (J
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(keyDetails);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAsymmetricKeyObjectPrototype_toCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    JSKeyObject* keyObject = asymmetricKeyObjectFromThis(globalObject, scope, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(keyObject);
+
+    KeyObject& handle = keyObject->handle();
+    JSValue algorithmValue = callFrame->argument(0);
+    JSValue extractableValue = callFrame->argument(1);
+    JSValue keyUsagesValue = callFrame->argument(2);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(handle.toCryptoKey(globalObject, scope, algorithmValue, extractableValue, keyUsagesValue)));
 }
 
 namespace Bun {

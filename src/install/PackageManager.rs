@@ -1283,6 +1283,9 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
         http::InitError::InvalidCA => {
             Output::err("HTTPThread", "the CA is invalid", ());
         }
+        http::InitError::InvalidCRL => {
+            Output::err("HTTPThread", "the CRL is invalid", ());
+        }
         http::InitError::FailedToOpenSocket => {
             Output::err_generic("failed to start HTTP client thread", ());
         }

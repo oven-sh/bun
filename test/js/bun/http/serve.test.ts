@@ -1305,6 +1305,54 @@ it("reload() of a node:http-backed server keeps the 'connection' event firing", 
   }
 });
 
+// Under --hot the module re-evaluates and listen() runs again against the same
+// native server from the hot map; the 'connection' filter must be registered
+// once for the server's lifetime, not re-appended per reload.
+it("--hot reload of a node:http server fires 'connection' once per socket", async () => {
+  using dir = tempDir("hot-node-http-connection", {
+    "server.mjs": `
+      import { createServer } from "node:http";
+      import { once } from "node:events";
+      import { connect } from "node:net";
+      import { writeFileSync, readFileSync } from "node:fs";
+
+      globalThis.__reloads ??= 0;
+      const n = globalThis.__reloads++;
+
+      let fired = 0;
+      const server = createServer((req, res) => res.end("ok"));
+      server.on("connection", () => fired++);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const s = connect(server.address().port, "127.0.0.1");
+      s.on("error", () => {});
+      await once(s, "connect");
+      s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+      s.resume();
+      await once(s, "close");
+
+      console.log("[reload " + n + "] " + fired);
+      if (n < 3) {
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        process.exit(fired === 1 ? 0 : 1);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "server.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
+  expect(stdout).toBe("[reload 0] 1\n[reload 1] 1\n[reload 2] 1\n[reload 3] 1\n");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
   // The server's kind is fixed when listen() sizes its connections' native
   // per-socket block; a reload that smuggles in the node:http handler used by

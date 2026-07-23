@@ -1187,8 +1187,8 @@ function httpAllowHalfOpenGet(this: Server) {
 
 // Node reads `server.httpAllowHalfOpen` when the peer's FIN arrives (socketOnEnd), so
 // assigning it after listen() has to reach the native listener too. Push the flags
-// alone: setServerCustomOptions() would also re-register the connection filter, which
-// appends rather than replaces and can reallocate the vector uWS is iterating.
+// alone: setServerCustomOptions() would also re-bind the clientError/connection
+// callbacks, which a flag-only update has no reason to touch.
 function httpAllowHalfOpenSet(this: Server, value) {
   const previous = !!this[kHttpAllowHalfOpen];
   this[kHttpAllowHalfOpen] = value;

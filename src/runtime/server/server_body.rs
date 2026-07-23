@@ -3710,6 +3710,14 @@ pub(super) fn server_set_on_connection_(
                 // SAFETY: as_ returned a non-null *mut to a live server.
                 let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
+                    // The uWS filter is registered once per native server: under
+                    // `bun --hot` a node:http module re-eval reaches this point
+                    // again on the same server (hot_map returned the existing
+                    // one), and `filter()` appends, so a second registration
+                    // would fire 'connection' N+1 times per socket. The thunk
+                    // reads `self.on_connection` at call time, so updating the
+                    // slot is enough on subsequent calls.
+                    let first = this.on_connection.is_empty();
                     this.on_connection = callback;
                     super::wrap_handler_slot(
                         &mut this.on_connection,
@@ -3717,25 +3725,29 @@ pub(super) fn server_set_on_connection_(
                         global,
                         <$T>::js_gc_on_connection_set,
                     );
-                    // uws filters fire with `1` when an HTTP connection is opened
-                    // (for TLS, when its handshake completes) and `-1` on close;
-                    // only the open notification is forwarded to JS.
-                    extern "C" fn thunk(
-                        socket: *mut uws_sys::us_socket_t,
-                        opened: i32,
-                        user_data: *mut c_void,
-                    ) {
-                        if opened != 1 {
-                            return;
+                    if first {
+                        // uws filters fire with `1` when an HTTP connection is
+                        // opened (for TLS, when its handshake completes) and
+                        // `-1` on close; only the open notification is
+                        // forwarded to JS.
+                        extern "C" fn thunk(
+                            socket: *mut uws_sys::us_socket_t,
+                            opened: i32,
+                            user_data: *mut c_void,
+                        ) {
+                            if opened != 1 {
+                                return;
+                            }
+                            // SAFETY: user_data is the `*mut Self` registered
+                            // below; socket is a live uWS socket for this
+                            // server's group.
+                            let this = unsafe { &mut *user_data.cast::<$T>() };
+                            this.on_connection_callback(socket.cast::<c_void>());
                         }
-                        // SAFETY: user_data is the `*mut Self` registered below;
-                        // socket is a live uWS socket for this server's group.
-                        let this = unsafe { &mut *user_data.cast::<$T>() };
-                        this.on_connection_callback(socket.cast::<c_void>());
+                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                        bun_opaque::opaque_deref_mut(app)
+                            .filter(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
                     }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app)
-                        .filter(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);
             }

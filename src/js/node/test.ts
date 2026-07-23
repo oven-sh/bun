@@ -3348,7 +3348,8 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
     const files = discoverRunFiles(opts);
-    standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, { verdictNumber: 0 });
+    const numbering = { verdictNumber: 0 };
+    standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, numbering);
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
     callerRoot.started = true;
@@ -3368,9 +3369,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
           await import(file);
         } catch (err) {
           // A file that fails to load is itself a failing test node. Emitted
-          // directly (not through republishChildEvent), so top-level numbering
-          // is taken from the same counter the republish path bumps.
-          const testNumber = ++counts.topLevel;
+          // directly (not through republishChildEvent), so bump both the plan
+          // count and the shared verdict counter the sink numbers from.
+          counts.topLevel++;
+          const testNumber = ++numbering.verdictNumber;
           const error = wrapTestError(err);
           const fileNode = {
             __proto__: null,
@@ -4212,11 +4214,14 @@ function before(arg0: unknown, arg1: unknown) {
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   const { beforeAll } = bunTest();
   function runBeforeAllHook(done: (error?: unknown) => void) {
-    // An ancestor's before() already failed: node cancels the whole subtree
-    // without running nested hooks. Checked at execution time because
+    // The suite's own earlier before() or an ancestor's already failed: node
+    // bails on the first before-hook error (Suite.run) and cancels the whole
+    // subtree without running nested hooks. Checked at execution time because
     // hookSetupFailed is set by onHookFailed after collection.
-    if (runChildReporterEnabled && hasHookFailedAncestorSuite(owner)) {
-      done();
+    if (runChildReporterEnabled && (owner.hookSetupFailed || hasHookFailedAncestorSuite(owner))) {
+      // Settle asynchronously like every other done path: bun:test's native
+      // hook driver is not re-entered synchronously from its own callback.
+      Promise.resolve(undefined).then(done, done);
       return;
     }
     function onHookDone() {
@@ -4264,7 +4269,8 @@ function after(arg0: unknown, arg1: unknown) {
     // too (the suite's OWN after still runs; hasHookFailedAncestorSuite walks
     // from owner.parent).
     if (runChildReporterEnabled && hasHookFailedAncestorSuite(owner)) {
-      done();
+      // Settle asynchronously like every other done path (see runBeforeAllHook).
+      Promise.resolve(undefined).then(done, done);
       return;
     }
     function onHookDone() {

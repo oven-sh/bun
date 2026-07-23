@@ -3499,10 +3499,11 @@ Server.prototype.close = function close(callback) {
   // Deliberate deviation from Node v26.3.0: node enters this branch on bare
   // _usingWorkers and latently hangs when _workers already emptied (child
   // exited), leaving close(cb)/'close' unsettled. Guard on live workers.
-  if (this._usingWorkers && this._workers.length > 0) {
+  const liveWorkers = this._workers.length;
+  if (this._usingWorkers && liveWorkers > 0) {
     // Port of Node v26.3.0 lib/net.js Server.prototype.close (onWorkerClose),
     // with the closure hoisted to a named function.
-    let left = this._workers.length;
+    let left = liveWorkers;
     const self = this;
     function onWorkerClose() {
       if (--left !== 0) return;

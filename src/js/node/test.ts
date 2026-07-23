@@ -434,121 +434,128 @@ async function runOneFile(
     env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
     stdout: "pipe",
     stderr: "pipe",
+    signal: opts.signal,
   });
 
-  let stderrText = "";
-  const drainStderr = (async () => {
+  let drainStderr: Promise<void> | undefined;
+  try {
+    let stderrText = "";
+    drainStderr = (async () => {
+      const decoder = new TextDecoder();
+      let carry = "";
+      for await (const chunk of proc.stderr as any) {
+        const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+        stderrText += text;
+        carry += text;
+        let nl;
+        while ((nl = carry.indexOf("\n")) !== -1) {
+          const line = carry.slice(0, nl);
+          carry = carry.slice(nl + 1);
+          if (line.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: line + "\n" });
+        }
+      }
+      if (carry.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: carry + "\n" });
+    })();
+
+    const handleStdoutLine = (line: string) => {
+      if (line.length === 0) return;
+      // bun:test's own reporter can leave an unterminated line, so the marker is
+      // not always at column 0; take everything from the marker on.
+      const marker = line.indexOf(kRunEventPrefix);
+      if (marker === -1) {
+        reporter.stdout({ __proto__: null, file: absolute, message: line + "\n" });
+        return;
+      }
+      if (marker > 0) {
+        const before = line.slice(0, marker).trimEnd();
+        if (before.length > 0) {
+          reporter.stdout({ __proto__: null, file: absolute, message: before + "\n" });
+        }
+      }
+      let event;
+      try {
+        event = JSON.parse(line.slice(marker + kRunEventPrefix.length));
+      } catch {
+        return;
+      }
+      if (event == null || typeof event.data !== "object" || event.data === null) return;
+      republishChildEvent(event, absolute, reporter, fileCounts);
+    };
+
     const decoder = new TextDecoder();
     let carry = "";
-    for await (const chunk of proc.stderr as any) {
-      const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      stderrText += text;
-      carry += text;
+    for await (const chunk of proc.stdout as any) {
+      carry += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
       let nl;
       while ((nl = carry.indexOf("\n")) !== -1) {
         const line = carry.slice(0, nl);
         carry = carry.slice(nl + 1);
-        if (line.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: line + "\n" });
+        handleStdoutLine(line);
       }
     }
-    if (carry.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: carry + "\n" });
-  })();
+    if (carry.length > 0) handleStdoutLine(carry);
 
-  const handleStdoutLine = (line: string) => {
-    if (line.length === 0) return;
-    // bun:test's own reporter can leave an unterminated line, so the marker is
-    // not always at column 0; take everything from the marker on.
-    const marker = line.indexOf(kRunEventPrefix);
-    if (marker === -1) {
-      reporter.stdout({ __proto__: null, file: absolute, message: line + "\n" });
-      return;
+    await drainStderr;
+    const exitCode = await proc.exited;
+
+    // Two failure shapes: the file died before reporting anything (top-level
+    // throw — node emits a file-level test:fail and no per-file summary), or its
+    // tests failed (covered by the children's events; completes `subtestsFailed`).
+    const fileFailed = exitCode !== 0 && fileCounts.failed === 0;
+    const subtestsFailed = fileCounts.failed > 0;
+    const fileDuration = Date.now() - fileStarted;
+    let error: Error | undefined;
+
+    if (subtestsFailed) {
+      const failed = fileCounts.failed;
+      error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
     }
-    if (marker > 0) {
-      const before = line.slice(0, marker).trimEnd();
-      if (before.length > 0) {
-        reporter.stdout({ __proto__: null, file: absolute, message: before + "\n" });
-      }
+
+    if (!fileFailed) {
+      fileCounts.topLevel++;
+      reporter.summary({
+        __proto__: null,
+        success: fileCounts.failed === 0,
+        counts: fileCounts,
+        duration_ms: fileDuration,
+        file: absolute,
+      });
+    } else {
+      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+      fileCounts.tests++;
+      fileCounts.failed++;
+      fileCounts.topLevel++;
     }
-    let event;
-    try {
-      event = JSON.parse(line.slice(marker + kRunEventPrefix.length));
-    } catch {
-      return;
-    }
-    if (event == null || typeof event.data !== "object" || event.data === null) return;
-    republishChildEvent(event, absolute, reporter, fileCounts);
-  };
 
-  const decoder = new TextDecoder();
-  let carry = "";
-  for await (const chunk of proc.stdout as any) {
-    carry += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-    let nl;
-    while ((nl = carry.indexOf("\n")) !== -1) {
-      const line = carry.slice(0, nl);
-      carry = carry.slice(nl + 1);
-      handleStdoutLine(line);
-    }
-  }
-  if (carry.length > 0) handleStdoutLine(carry);
-
-  await drainStderr;
-  const exitCode = await proc.exited;
-
-  // Two failure shapes: the file died before reporting anything (top-level
-  // throw — node emits a file-level test:fail and no per-file summary), or its
-  // tests failed (covered by the children's events; completes `subtestsFailed`).
-  const fileFailed = exitCode !== 0 && fileCounts.failed === 0;
-  const subtestsFailed = fileCounts.failed > 0;
-  const fileDuration = Date.now() - fileStarted;
-  let error: Error | undefined;
-
-  if (subtestsFailed) {
-    const failed = fileCounts.failed;
-    error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
-  }
-
-  if (!fileFailed) {
-    fileCounts.topLevel++;
-    reporter.summary({
-      __proto__: null,
-      success: fileCounts.failed === 0,
-      counts: fileCounts,
-      duration_ms: fileDuration,
-      file: absolute,
-    });
-  } else {
-    error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
-    fileCounts.tests++;
-    fileCounts.failed++;
-    fileCounts.topLevel++;
-  }
-
-  // node emits the file node's completion before its verdict, and a failed
-  // completion carries the error too.
-  reporter.complete({
-    __proto__: null,
-    ...fileNode,
-    type: undefined,
-    testNumber: 1,
-    details: {
-      __proto__: null,
-      duration_ms: fileDuration,
-      type: "test",
-      passed: !fileFailed && !subtestsFailed,
-      error,
-    },
-  });
-  if (fileFailed) {
-    reporter.fail({
+    // node emits the file node's completion before its verdict, and a failed
+    // completion carries the error too.
+    reporter.complete({
       __proto__: null,
       ...fileNode,
       type: undefined,
       testNumber: 1,
-      details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
+      details: {
+        __proto__: null,
+        duration_ms: fileDuration,
+        type: "test",
+        passed: !fileFailed && !subtestsFailed,
+        error,
+      },
     });
+    if (fileFailed) {
+      reporter.fail({
+        __proto__: null,
+        ...fileNode,
+        type: undefined,
+        testNumber: 1,
+        details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
+      });
+    }
+    addRunCounts(counts, fileCounts);
+  } finally {
+    proc.kill();
+    if (drainStderr !== undefined) await drainStderr.catch(() => {});
   }
-  addRunCounts(counts, fileCounts);
 }
 
 function rebuildError(serialized: any, depth = 0): Error {
@@ -2472,6 +2479,11 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
+    // Under plain bun:test a describe.todo scope already handles its children's
+    // todo verdict (FailBecauseTodoPassed under --todo), so don't override when
+    // the flag was only inherited; under a run() child the suite registers as a
+    // plain describe so bun:test has no todo scope to consult.
+    const todoBefore = node.todoFlag;
     executeTestNode(node, fn).then(
       failure => {
         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
@@ -2479,7 +2491,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         // todo body's failure must reach bun:test's own todo accounting instead.
         if (node.skipped) {
           markCurrentResult(false, done);
-        } else if (node.todoFlag && !declaredTodo) {
+        } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
         } else {
           done(failure);
@@ -2531,8 +2543,9 @@ function addTest(
   const { test } = bunTest();
   const passOptions = bunTestOptions(options);
 
-  // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
-  const effectiveMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  // Node merges .todo()/.skip() into the options and checks skip first, so
+  // test.todo(name, { skip: true }, fn) is a skip.
+  const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
     // Under a run() child, register skip as an ordinary test so its directive
@@ -2649,8 +2662,9 @@ function addSuite(
 
   const { describe } = bunTest();
 
-  // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
-  const effectiveMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  // Node merges .todo()/.skip() into the options and checks skip first, so
+  // describe.todo(name, { skip: true }, fn) is a skip.
+  const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   // Node never invokes a skipped suite's callback (it does run a todo one), so
   // the children are never declared and side effects in the body never happen.

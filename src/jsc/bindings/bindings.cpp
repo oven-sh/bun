@@ -738,6 +738,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c2, c1);
+    RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
@@ -800,57 +801,92 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
-        JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
-        JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
+        JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        o1->getOwnNonIndexPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
-        JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
+        o2->getOwnNonIndexPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
 
-        size_t propertyLength = a1.size();
+        const size_t propertyArrayLength1 = a1.size();
+        const size_t propertyArrayLength2 = a2.size();
         if constexpr (isStrict) {
-            if (propertyLength != a2.size()) {
+            if (propertyArrayLength1 != propertyArrayLength2) {
                 return false;
             }
         }
 
+        UncheckedKeyHashSet<UniquedStringImpl*> a2Names;
+        a2Names.reserveInitialCapacity(propertyArrayLength2);
+        for (size_t p = 0; p < propertyArrayLength2; p++) {
+            a2Names.add(a2[p].impl());
+        }
+
+        auto getOwn = [&](JSObject* obj, const PropertyName& name) -> JSValue {
+            PropertySlot slot(obj, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+            bool has = obj->methodTable()->getOwnPropertySlot(obj, globalObject, name, slot);
+            if (scope.exception()) [[unlikely]]
+                return {};
+            if (!has) return jsUndefined();
+            return slot.getValue(globalObject, name);
+        };
+
+        UncheckedKeyHashSet<UniquedStringImpl*> a1Names;
+        a1Names.reserveInitialCapacity(propertyArrayLength1);
+
         // take a property name from one, try to get it from both
-        for (size_t i = 0; i < propertyLength; i++) {
-            Identifier i1 = a1[i];
+        for (size_t p = 0; p < propertyArrayLength1; p++) {
+            Identifier i1 = a1[p];
+            a1Names.add(i1.impl());
             PropertyName propertyName1 = PropertyName(i1);
 
-            JSValue prop1 = o1->get(globalObject, propertyName1);
+            JSValue prop1 = getOwn(o1, propertyName1);
             RETURN_IF_EXCEPTION(scope, false);
 
-            if (!prop1) [[unlikely]] {
-                return false;
-            }
-
-            JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-
-            if constexpr (!isStrict) {
-                if (prop1.isUndefined() && prop2.isEmpty()) {
-                    continue;
+            if (!a2Names.contains(i1.impl())) {
+                if constexpr (!isStrict) {
+                    if (prop1.isUndefined()) {
+                        continue;
+                    }
                 }
-            }
-
-            if (!prop2) {
                 return false;
             }
+
+            JSValue prop2 = getOwn(o2, propertyName1);
+            RETURN_IF_EXCEPTION(scope, false);
 
             auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, false);
             if (!eql) return false;
         }
 
-        RETURN_IF_EXCEPTION(scope, false);
+        // for enumerable own properties only on the second array, make sure they are undefined
+        for (size_t p = 0; p < propertyArrayLength2; p++) {
+            Identifier i2 = a2[p];
+            if (a1Names.contains(i2.impl())) {
+                continue;
+            }
+
+            if constexpr (isStrict) {
+                return false;
+            }
+
+            JSValue prop2 = getOwn(o2, PropertyName(i2));
+            RETURN_IF_EXCEPTION(scope, false);
+
+            if (!prop2.isUndefined()) {
+                return false;
+            }
+        }
 
         return true;
     }
 
     if constexpr (isStrict) {
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+            return false;
+        }
+        if (o1->getPrototypeDirect().isNull() != o2->getPrototypeDirect().isNull()) {
             return false;
         }
     }
@@ -985,10 +1021,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
+    UncheckedKeyHashSet<UniquedStringImpl*> a1Names;
+    a1Names.reserveInitialCapacity(propertyArrayLength1);
+
     // take a property name from one, try to get it from both
-    size_t i;
-    for (i = 0; i < propertyArrayLength1; i++) {
+    for (size_t i = 0; i < propertyArrayLength1; i++) {
         Identifier i1 = a1[i];
+        a1Names.add(i1.impl());
         PropertyName propertyName1 = PropertyName(i1);
 
         JSValue prop1 = o1->get(globalObject, propertyName1);
@@ -1016,12 +1055,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!eql) return false;
     }
 
-    // for the remaining properties in the other object, make sure they are undefined
-    for (; i < propertyArrayLength2; i++) {
+    // for properties only on the second object, make sure they are undefined
+    for (size_t i = 0; i < propertyArrayLength2; i++) {
         Identifier i2 = a2[i];
-        PropertyName propertyName2 = PropertyName(i2);
+        if (a1Names.contains(i2.impl())) {
+            continue;
+        }
 
-        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
+        JSValue prop2 = o2->getIfPropertyExists(globalObject, PropertyName(i2));
         RETURN_IF_EXCEPTION(scope, false);
 
         if (!prop2.isUndefined()) {
@@ -1290,10 +1331,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
 
+            UncheckedKeyHashSet<UniquedStringImpl*> a1Names;
+            a1Names.reserveInitialCapacity(propertyArrayLength1);
+
             // take a property name from one, try to get it from both
-            size_t i;
-            for (i = 0; i < propertyArrayLength1; i++) {
+            for (size_t i = 0; i < propertyArrayLength1; i++) {
                 Identifier i1 = a1[i];
+                a1Names.add(i1.impl());
                 if (i1 == vm.propertyNames->stack) continue;
                 PropertyName propertyName1 = PropertyName(i1);
 
@@ -1321,9 +1365,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
 
-            // for the remaining properties in the other object, make sure they are undefined
-            for (; i < propertyArrayLength2; i++) {
+            // for properties only on the second error, make sure they are undefined
+            for (size_t i = 0; i < propertyArrayLength2; i++) {
                 Identifier i2 = a2[i];
+                if (a1Names.contains(i2.impl())) continue;
                 if (i2 == vm.propertyNames->stack) continue;
                 PropertyName propertyName2 = PropertyName(i2);
 
@@ -1384,16 +1429,24 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (vector == rightVector) [[unlikely]]
             return true;
 
-        // For Float32Array and Float64Array, when not in strict mode, we need to
-        // handle +0 and -0 as equal, and NaN as not equal to itself.
+        // jest's toEqual compares float elements with Object.is (NaN==NaN, -0!=+0);
+        // node's assert.deepEqual uses ==, which says the opposite for both. The strict
+        // path below memcmps, matching both toStrictEqual and isDeepStrictEqual.
         if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
+            auto elementsEqual = [](double a, double b) -> bool {
+                if constexpr (enableAsymmetricMatchers) {
+                    if (std::isnan(a)) return std::isnan(b);
+                    if (a == 0.0 && b == 0.0) return std::signbit(a) == std::signbit(b);
+                }
+                return a == b;
+            };
             if (c1Type == Float16ArrayType) {
                 auto* leftFloat = static_cast<const WTF::Float16*>(vector);
                 auto* rightFloat = static_cast<const WTF::Float16*>(rightVector);
                 size_t numElements = byteLength / sizeof(WTF::Float16);
 
                 for (size_t i = 0; i < numElements; i++) {
-                    if (leftFloat[i] != rightFloat[i]) {
+                    if (!elementsEqual(static_cast<double>(leftFloat[i]), static_cast<double>(rightFloat[i]))) {
                         return false;
                     }
                 }
@@ -1404,7 +1457,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 size_t numElements = byteLength / sizeof(float);
 
                 for (size_t i = 0; i < numElements; i++) {
-                    if (leftFloat[i] != rightFloat[i]) {
+                    if (!elementsEqual(leftFloat[i], rightFloat[i])) {
                         return false;
                     }
                 }
@@ -1415,7 +1468,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 size_t numElements = byteLength / sizeof(double);
 
                 for (size_t i = 0; i < numElements; i++) {
-                    if (leftDouble[i] != rightDouble[i]) {
+                    if (!elementsEqual(leftDouble[i], rightDouble[i])) {
                         return false;
                     }
                 }
@@ -1434,14 +1487,16 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        JSString* s1 = c1->toStringInline(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSString* s2 = c2->toStringInline(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        // Read the boxed [[StringData]] directly rather than toString(), which
+        // would invoke a user-defined toString/Symbol.toPrimitive.
+        JSString* s1 = uncheckedDowncast<StringObject>(c1)->internalValue();
+        JSString* s2 = uncheckedDowncast<StringObject>(c2)->internalValue();
 
         bool stringsEqual = s1->equal(globalObject, s2);
         RETURN_IF_EXCEPTION(scope, {});
-        return stringsEqual;
+        if (!stringsEqual) return false;
+        // Fall through to check own properties
+        break;
     }
     case JSFunctionType: {
         return false;

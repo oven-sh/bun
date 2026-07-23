@@ -8,7 +8,9 @@
 // importing), every x64 at the nehalem floor (no separate -baseline variant),
 // typed-array constructor ClassInfo kept address-unique under LTO, and the
 // Windows ICU data table filtered + per-item zstd compressed.
-export const WEBKIT_VERSION = "c9296e353e365ecf0de82f273bb0a88a3df465be";
+// oven-sh/WebKit#325: Date.prototype.toString() resolves the parenthesized
+// zone name at the instant via udat_format (no more "GMT+0200 (GMT+03:00)").
+export const WEBKIT_VERSION = "autobuild-preview-pr-325-3bc304fe";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

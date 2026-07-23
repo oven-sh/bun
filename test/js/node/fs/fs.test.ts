@@ -5661,7 +5661,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     ["crypto.pbkdf2", `require("crypto").pbkdf2("pw", "salt", 10, 16, "sha256", () => { throw new Error("boom"); })`],
   ];
 
-  it.each(cases)("%s", async (_name, snippet) => {
+  it.concurrent.each(cases)("%s", async (_name, snippet) => {
     const { stdout, exitCode } = await runScript(`
       process.on("uncaughtException", e => { console.log("UNCAUGHT:" + e.message); process.exit(0); });
       process.on("unhandledRejection", e => { console.log("REJECTED:" + (e && e.message)); process.exit(0); });
@@ -5672,7 +5672,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("keeps a non-throwing callback in the same place in the event loop", async () => {
+  it.concurrent("keeps a non-throwing callback in the same place in the event loop", async () => {
     const { stdout, exitCode } = await runScript(`
       const fs = require("fs");
       const log = [];
@@ -5689,7 +5689,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("is transparent to fs.Dir callbacks", async () => {
+  it.concurrent("is transparent to fs.Dir callbacks", async () => {
     const odir = JSON.stringify(tempDirWithFiles("cb-throw-opendir", { "file.txt": "x" }));
     const { stdout, exitCode } = await runScript(`
       require("fs").opendir(${odir}, (err, dir) => {
@@ -5704,7 +5704,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("keeps a non-callable symlink callback as an ignored handler (Bun divergence: node throws)", async () => {
+  it.concurrent("keeps a non-callable symlink callback as an ignored handler (Bun divergence: node throws)", async () => {
     const { stdout, exitCode } = await runScript(`
       require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
       setTimeout(() => console.log("quiet"), 50);

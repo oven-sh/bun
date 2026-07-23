@@ -167,14 +167,19 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
   if (callback) {
     // Guarded so a throw inside the callback is an uncaughtException, as in node.
     const cb = guardCallback(callback);
-    promise.then(
-      result => cb(null, result),
-      err => cb(err),
-    );
+    promise.then(onPbkdf2Resolved.bind(cb), onPbkdf2Rejected.bind(cb));
     return;
   }
 
   promise.then(() => {});
+}
+
+// Hoisted `.then` handlers for pbkdf2; `this` is the guarded callback.
+function onPbkdf2Resolved(result) {
+  this(null, result);
+}
+function onPbkdf2Rejected(err) {
+  this(err);
 }
 
 crypto_exports.pbkdf2 = pbkdf2;

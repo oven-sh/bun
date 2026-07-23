@@ -120,17 +120,24 @@ fn read_from_blob(
 
 /// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
 /// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
+///
+/// `is_server` selects the default for an unset `rejectUnauthorized`:
+/// servers always default to enforcing, while clients consult
+/// `NODE_TLS_REJECT_UNAUTHORIZED` — the env var never weakens a server,
+/// matching Node.
 pub trait SSLConfigFromJs: Sized {
     fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 }
 
@@ -139,16 +146,18 @@ impl SSLConfigFromJs for SSLConfig {
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let generated = jsc::generated::SSLConfig::from_js(global, value)?;
         // `generated` dropped at scope exit
-        Self::from_generated(vm, global, &generated)
+        Self::from_generated(vm, global, &generated, is_server)
     }
 
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
         // `result` cleanup handled by Drop on error-path `?`
@@ -170,7 +179,7 @@ impl SSLConfigFromJs for SSLConfig {
         result.low_memory_mode = generated.low_memory_mode;
         result.reject_unauthorized = generated
             .reject_unauthorized
-            .unwrap_or_else(|| vm.get_tls_reject_unauthorized())
+            .unwrap_or_else(|| is_server || vm.get_tls_reject_unauthorized())
             as i32;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
@@ -257,9 +266,9 @@ impl SSLConfigFromJs for SSLConfig {
 
 /// The `SSLConfig` for the `tls: true` shorthand: every option at its
 /// documented default, unlike `SSLConfig::zero()`.
-pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
+pub fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConfig {
     let mut cfg = SSLConfig::zero();
-    cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    cfg.reject_unauthorized = (is_server || vm.get_tls_reject_unauthorized()) as i32;
     cfg
 }
 
@@ -432,7 +441,7 @@ pub(crate) extern "C" fn Bun__WebSocket__parseSSLConfig(
     // constructor only runs on the JS thread with an initialized VM.
     let vm = global_this.bun_vm();
     // Use SSLConfig::from_js for clean and safe parsing
-    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
+    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value, false) {
         Ok(c) => c,
         // Exception is already set on globalThis
         Err(_) => return None,

@@ -774,7 +774,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             return Ok(JSValue::ZERO);
                         }
 
-                        match SSLConfig::from_js(vm, global_this, tls) {
+                        match SSLConfig::from_js(vm, global_this, tls, false) {
                             Err(_) => {
                                 return Ok(JSValue::ZERO);
                             }

@@ -224,6 +224,23 @@ describe("bundler", () => {
     keepNames: true,
     target: "bun",
   });
+  itBundled("minify/KeepNamesTSNamespace", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace Foo {
+          export function bar() { return 1; }
+          export class Baz {}
+        }
+        console.log(Foo.bar.name, Foo.Baz.name);
+      `,
+    },
+    run: { stdout: "bar Baz" },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
   itBundled("minify/KeepNamesSkipsStaticNameMember", {
     files: {
       "/entry.js": /* js */ `

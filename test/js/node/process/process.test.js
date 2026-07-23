@@ -243,6 +243,16 @@ it("process.env rejects invalid keys and NUL like node", async () => {
     process.env.NULVAL = "a\\0b";
     out.nulVal = process.env.NULVAL;
 
+    const d = { writable: true, enumerable: true, configurable: true };
+    Object.defineProperty(process.env, "C=D", { value: "v", ...d });
+    out.dpEqStored = "C=D" in process.env;
+    Object.defineProperty(process.env, "DPNULVAL", { value: "a\\0b", ...d });
+    out.dpNulVal = process.env.DPNULVAL;
+    // node throws ERR_INVALID_OBJECT_DEFINE_PROPERTY for accessor descriptors on
+    // process.env; either way an '='-bearing key must never land on the object.
+    try { Object.defineProperty(process.env, "E=F", { get: () => "v", enumerable: true, configurable: true }); } catch {}
+    out.dpAccEqStored = "E=F" in process.env;
+
     const r = spawnSync(process.execPath, ["-e",
       "process.stdout.write(JSON.stringify({A: process.env.A ?? null, NULKEY: process.env.NULKEY ?? null}))"
     ], { encoding: "utf8" });
@@ -267,6 +277,9 @@ it("process.env rejects invalid keys and NUL like node", async () => {
     nulKeyValue: "x",
     leadNulStored: false,
     nulVal: "a",
+    dpEqStored: false,
+    dpNulVal: "a",
+    dpAccEqStored: false,
     child: { A: null, NULKEY: "x" },
     childStatus: 0,
     childErr: null,

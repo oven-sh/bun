@@ -633,6 +633,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
+    if (!propertyName.isSymbol() && uid && !normalizeEnvKey(String(uid)))
+        return true;
     if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
         // The descriptor lands on the Base object, but getOwnPropertySlot reads the
         // store first, so a store entry would shadow it. Move the entry onto Base as
@@ -864,12 +866,19 @@ bool JSProcessEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* global
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
-    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value())
+    if (propertyName.isSymbol() || !uid)
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
 
+    // Key filter runs before the descriptor-shape check so an accessor descriptor
+    // at an invalid key is dropped too (matches the Windows defineProperty trap).
     auto key = normalizeEnvKey(String(uid));
     if (!key)
         return true;
+    Identifier truncated = key->length() == uid->length() ? Identifier() : Identifier::fromString(vm, *key);
+    PropertyName effectiveName = truncated.isNull() ? propertyName : PropertyName(truncated);
+
+    if (!descriptor.isDataDescriptor() || !descriptor.value())
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, effectiveName, descriptor, shouldThrow));
 
     String stringValue = descriptor.value().toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -877,16 +886,19 @@ bool JSProcessEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* global
     PropertyDescriptor newDescriptor = descriptor;
     newDescriptor.setValue(jsString(vm, truncateEnvValueAtNul(stringValue)));
 
-    if (key->length() == uid->length())
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, newDescriptor, shouldThrow));
-
-    Identifier truncated = Identifier::fromString(vm, *key);
-    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, truncated, newDescriptor, shouldThrow));
+    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, effectiveName, newDescriptor, shouldThrow));
 }
 
 bool isEnvironmentVariablesMapObject(const JSC::ClassInfo* classInfo)
 {
     return classInfo == JSProcessEnvMap::info() || classInfo == JSSharedEnvMap::info();
+}
+
+JSC::JSObject* createProcessEnvMapObject(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    return JSProcessEnvMap::create(vm, structure);
 }
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)

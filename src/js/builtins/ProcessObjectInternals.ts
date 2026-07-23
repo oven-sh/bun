@@ -544,6 +544,12 @@ export function windowsEnv(
       if (k.length === 0 || k.indexOf("=") !== -1) return true;
       p = k;
       k = k.toUpperCase();
+      if ("value" in attributes) {
+        let v = String(attributes.value);
+        const valNul = v.indexOf("\0");
+        if (valNul !== -1) v = v.slice(0, valNul);
+        attributes = { ...attributes, value: v };
+      }
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }

@@ -566,7 +566,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                // JSProcessEnvMap is a JSNonFinalObject: putDirectMayBeIndex for an
+                // index-like key routes through method-table defineOwnProperty, which
+                // declares a throw scope; a top scope keeps validation balanced.
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                auto env = Bun::createProcessEnvMapObject(globalObject);
                 size_t i = 0;
                 for (auto k : map) {
                     // They can have environment variables with numbers as keys.

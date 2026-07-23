@@ -13,6 +13,10 @@ namespace Bun {
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
+// Bare JSProcessEnvMap (no OS-env getters, no Windows Proxy wrap): filters keys
+// and stringifies values like Node.js. For worker env: {...} snapshots.
+JSC::JSObject* createProcessEnvMapObject(Zig::GlobalObject* globalObject);
+
 // True for JSProcessEnvMap/JSSharedEnvMap classInfo; both structured-clone like
 // a plain object (Node.js structuredClone(process.env) succeeds).
 bool isEnvironmentVariablesMapObject(const JSC::ClassInfo*);

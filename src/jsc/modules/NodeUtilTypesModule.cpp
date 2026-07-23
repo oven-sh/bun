@@ -177,7 +177,9 @@ static bool partialFloat16SequenceContains(std::span<const uint8_t> actual, std:
         });
 }
 
-enum class ByteSpanResult { Ok, NotABufferLike, Detached };
+enum class ByteSpanResult { Ok,
+    NotABufferLike,
+    Detached };
 
 static ByteSpanResult byteSpanOf(JSC::JSValue value, std::span<const uint8_t>& out, JSC::TypedArrayType& type)
 {

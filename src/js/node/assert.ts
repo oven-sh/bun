@@ -529,8 +529,7 @@ function compareBranch(actual, expected, comparedObjects?) {
     }
     // Compare contents natively, then any own enumerable properties.
     return (
-      partialTypedArrayEquiv(actual, expected) &&
-      withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
+      partialTypedArrayEquiv(actual, expected) && withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
     );
   }
 

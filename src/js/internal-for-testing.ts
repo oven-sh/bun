@@ -240,6 +240,13 @@ export const exposedInternals = {
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
   "internal/freelist": require("internal/freelist"),
   "internal/validators": require("internal/validators"),
+  "internal/fs/utils": {
+    // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
+    // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
+    // the production behavior through these.
+    stringToFlags: $newRustFunction("node_fs_binding.rs", "string_to_flags_for_testing", 1),
+    validateRmOptionsSync: $newRustFunction("node_fs_binding.rs", "rm_options_for_testing", 2),
+  },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };

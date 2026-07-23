@@ -541,8 +541,6 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
-        // `toJS` deleted — lives in bun_semver_jsc (tier-6; deferred to Pass C).
-
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]
         pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {

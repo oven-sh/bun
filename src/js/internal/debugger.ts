@@ -385,7 +385,12 @@ class Debugger {
   #backendClose: () => void;
   #executionContextId: number;
 
-  #createBackend(refEventLoop: boolean, receive: (...messages: string[]) => void, isCDP = false, preventShutdown = false): Backend {
+  #createBackend(
+    refEventLoop: boolean,
+    receive: (...messages: string[]) => void,
+    isCDP = false,
+    preventShutdown = false,
+  ): Backend {
     const backend = this.#backendFactory(this.#executionContextId, refEventLoop, receive, isCDP, preventShutdown);
     return new BackendHandle(backend, this.#backendSend, this.#backendClose);
   }

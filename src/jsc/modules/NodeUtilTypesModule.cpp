@@ -2,7 +2,9 @@
 #include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
 #include "node/crypto/JSKeyObject.h"
+#include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSMapIterator.h>
+#include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/ObjectPrototype.h>
 #include <cmath>
@@ -542,9 +544,10 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return true;
 }
 
-// Expected's items as a subset of actual's; item equality is full strict
-// deep equality (Bun.deepEquals strict), like the JS implementation.
-static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+// Expected's items as a subset of actual's; item equality is the partial
+// comparison itself — node matches object items with subset semantics
+// (Set([{a:1,b:2}]) partially contains Set([{a:1}])).
+static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
     JSC::JSSet* actualSet = uncheckedDowncast<JSC::JSSet>(actual.asCell());
@@ -572,7 +575,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         for (size_t i = 0; i < itemCount; i++) {
             if (usedIndices[i])
                 continue;
-            bool equal = JSC__JSValue__strictDeepEquals(JSValue::encode(gcBuffer.at(itemsStart + i)), JSValue::encode(expectedItem), globalObject);
+            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(itemsStart + i), expectedItem);
             RETURN_IF_EXCEPTION(scope, false);
             if (equal) {
                 usedIndices[i] = true;
@@ -643,13 +646,13 @@ static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBu
 static bool isSpecialValue(JSValue value)
 {
     // `typeof x !== "object"`: primitives, null, and callables are decided
-    // by full strict deep equality, like the JS implementation's isSpecial.
+    // by full strict deep equality. Errors, Dates, and RegExps have their
+    // own arms above; the Error check remains for the one-sided case where
+    // only the non-Error side reaches here.
     if (!value.isObject() || value.isCallable())
         return true;
     JSC::JSCell* cell = value.asCell();
-    const JSC::JSType type = cell->type();
-    return cell->inherits<JSC::ErrorInstance>() || type == JSC::ErrorInstanceType
-        || type == JSC::RegExpObjectType || type == JSC::JSDateType;
+    return cell->inherits<JSC::ErrorInstance>() || cell->type() == JSC::ErrorInstanceType;
 }
 
 static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
@@ -764,7 +767,41 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualType == JSC::JSSetType && expectedType == JSC::JSSetType) {
         if (uncheckedDowncast<JSC::JSSet>(expected.asCell())->size() > uncheckedDowncast<JSC::JSSet>(actual.asCell())->size())
             return false;
-        return setSubset(globalObject, gcBuffer, scope, actual, expected);
+        return setSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    }
+
+    // Dates and RegExps: internal value compared strictly, own enumerable
+    // properties with subset semantics (node's partial mode; a straight
+    // strict comparison would be exact-props and prototype-sensitive, and
+    // the blind fallback below would skip the properties entirely).
+    const bool actualIsDate = actualType == JSC::JSDateType;
+    const bool expectedIsDate = expectedType == JSC::JSDateType;
+    if (actualIsDate || expectedIsDate) {
+        if (!actualIsDate || !expectedIsDate)
+            return false;
+        const double actualTime = uncheckedDowncast<JSC::DateInstance>(actual.asCell())->internalNumber();
+        const double expectedTime = uncheckedDowncast<JSC::DateInstance>(expected.asCell())->internalNumber();
+        if (actualTime != expectedTime && !(std::isnan(actualTime) && std::isnan(expectedTime)))
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
+    const bool actualIsRegExp = actualType == JSC::RegExpObjectType;
+    const bool expectedIsRegExp = expectedType == JSC::RegExpObjectType;
+    if (actualIsRegExp || expectedIsRegExp) {
+        if (!actualIsRegExp || !expectedIsRegExp)
+            return false;
+        auto* actualRegExp = uncheckedDowncast<JSC::RegExpObject>(actual.asCell());
+        auto* expectedRegExp = uncheckedDowncast<JSC::RegExpObject>(expected.asCell());
+        if (actualRegExp->regExp()->pattern() != expectedRegExp->regExp()->pattern()
+            || actualRegExp->regExp()->flags() != expectedRegExp->regExp()->flags())
+            return false;
+        // node also compares lastIndex strictly (comparisons.js isRegExp arm).
+        bool lastIndexEqual = JSC::sameValue(globalObject, actualRegExp->getLastIndex(), expectedRegExp->getLastIndex());
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!lastIndexEqual)
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }
 
     bool actualIsArray = JSC::isArray(globalObject, actual);

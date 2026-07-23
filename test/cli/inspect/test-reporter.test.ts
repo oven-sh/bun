@@ -1,5 +1,6 @@
 import { Subprocess, spawn, write } from "bun";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { debuggerInternals } from "bun:internal-for-testing";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
@@ -310,4 +311,390 @@ afterAll(async () => {
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
   });
+});
+
+// The two describe blocks below replace a prior single regression test that
+// spawned with `--inspect-wait=unix:` and asserted on backpressure-order
+// behavior. That transport routes through Debugger#connectOverSocket, which
+// talks to the backend through a plain `{ write, close }` object whose
+// `write` always returns `true` (see src/js/internal/debugger.ts) -- it
+// never goes anywhere near `webSocketWriter`/`bufferedWriter`, so that test
+// provided zero coverage of the writer-layer fix despite its title. Only
+// `--inspect`'s `ws:`/`ws+unix:` transport (Bun.serve's `#websocket` handler)
+// constructs a `bufferedWriter(webSocketWriter(ws))` client. The blocks below
+// cover the real implementations instead: scripted unit tests for the
+// pacing/ordering/retry logic, plus a real `ws://` connection proving the
+// production wiring delivers events correctly end to end.
+
+// A local mirror of debugger.ts's private `WriteResult` union, purely for
+// typing the scripts fed to `scriptedWriter` below -- there is nothing to
+// import, since builtin modules only expose their single default export
+// (see debugger.ts's `testHooks` and this file's use of it).
+type WriteResult = "success" | "backpressure" | "dropped";
+
+/**
+ * A scripted stand-in for the raw `Writer` that `bufferedWriter()` wraps (in
+ * production, `webSocketWriter(ws)`). `results` is consumed in FIFO order,
+ * one entry per `write()` call. `calls` records every message actually
+ * handed to the underlying writer, in the order it was handed over, so tests
+ * can assert exactly what reached "the wire" and when -- which is precisely
+ * what the ordering bug (a queued message getting overtaken by a later
+ * direct write) would otherwise hide.
+ */
+function scriptedWriter(results: WriteResult[]) {
+  const calls: string[] = [];
+  let next = 0;
+  const close = mock(() => {});
+  return {
+    calls,
+    close,
+    writer: {
+      write: (message: string): WriteResult => {
+        calls.push(message);
+        const result = results[next++];
+        if (result === undefined) {
+          throw new Error(`scriptedWriter: no scripted result for call #${next} ("${message}")`);
+        }
+        return result;
+      },
+      close,
+    },
+  };
+}
+
+describe("writer layer: bufferedWriter / webSocketWriter (unit)", () => {
+  // These drive the REAL implementations from src/js/internal/debugger.ts
+  // (via `bun:internal-for-testing`'s `debuggerInternals`), not a
+  // reimplementation in this file -- a regression in the shipped code is
+  // what makes these fail, not drift between two copies of the same logic.
+  const { webSocketWriter, bufferedWriter } = debuggerInternals;
+
+  describe("webSocketWriter", () => {
+    test("maps ws.sendText()'s tri-state contract to WriteResult", () => {
+      const sendText = mock((_message: string) => 0);
+      const close = mock(() => {});
+      const fakeWs = { sendText, close } as unknown as Parameters<typeof webSocketWriter>[0];
+      const writer = webSocketWriter(fakeWs);
+
+      sendText.mockReturnValueOnce(-1);
+      expect(writer.write("m")).toBe("backpressure");
+
+      sendText.mockReturnValueOnce(0);
+      expect(writer.write("m")).toBe("dropped");
+
+      sendText.mockReturnValueOnce(17);
+      expect(writer.write("m")).toBe("success");
+
+      expect(sendText).toHaveBeenCalledTimes(3);
+
+      writer.close();
+      expect(close).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("bufferedWriter", () => {
+    test("paces (queues) subsequent writes after backpressure, without resending the backpressured message", () => {
+      const { calls, writer } = scriptedWriter(["backpressure", "success"]);
+      const client = bufferedWriter(writer);
+
+      // Queued/paced writes always report "success" to the caller -- the
+      // caller (the debugger's message-fan-out loop) has no retry logic of
+      // its own; bufferedWriter owns delivery from here.
+      expect(client.write("m1")).toBe("success");
+      expect(calls).toEqual(["m1"]); // attempted once
+
+      expect(client.write("m2")).toBe("success");
+      expect(calls).toEqual(["m1"]); // m2 paced behind m1, not sent yet
+
+      client.drain!();
+      // m1 is never resent (it was already accepted by uWS -- resending
+      // would duplicate it on the wire); m2 flushes once, in order.
+      expect(calls).toEqual(["m1", "m2"]);
+    });
+
+    test("requeues a dropped write, and blocks a later write from overtaking it on the wire (ordering fix)", () => {
+      const { calls, writer } = scriptedWriter(["dropped", "success", "success"]);
+      const client = bufferedWriter(writer);
+
+      expect(client.write("m1")).toBe("success");
+      expect(calls).toEqual(["m1"]); // dropped -- queued for retry
+
+      // Regression coverage for the ordering bug: a "dropped" result queues
+      // the message but does not set the `paced` flag. Without also gating
+      // direct writes on `pendingMessages.length > 0`, this write would go
+      // straight to the underlying writer and land on the wire BEFORE m1's
+      // still-queued retry.
+      expect(client.write("m2")).toBe("success");
+      expect(calls).toEqual(["m1"]); // m2 must be queued too, not written directly
+
+      client.drain!();
+      // m1's retry flushes first, then m2 -- m2 can never overtake m1.
+      expect(calls).toEqual(["m1", "m1", "m2"]);
+    });
+
+    test("clears pendingMessages after a fully successful drain (no stale resend)", () => {
+      const { calls, writer } = scriptedWriter(["dropped", "success"]);
+      const client = bufferedWriter(writer);
+
+      client.write("m1");
+      client.drain!();
+      expect(calls).toEqual(["m1", "m1"]);
+
+      // A second drain with nothing pending must not touch the underlying
+      // writer at all -- if pendingMessages weren't cleared after the first
+      // drain, this would resend "m1" a third time.
+      client.drain!();
+      expect(calls).toEqual(["m1", "m1"]);
+    });
+
+    test("drain() preserves order across repeated drops/backpressure partway through the queue", () => {
+      const { calls, writer } = scriptedWriter([
+        "dropped", // a (initial write)
+        "dropped", // a (drain #1)
+        "backpressure", // a (drain #2)
+        "success", // b (drain #3)
+        "success", // c (drain #3)
+      ]);
+      const client = bufferedWriter(writer);
+
+      client.write("a"); // dropped -> queued: [a]
+      client.write("b"); // queued behind a (pendingMessages.length > 0): [a, b]
+      client.write("c"); // queued behind a, b: [a, b, c]
+      expect(calls).toEqual(["a"]);
+
+      client.drain!(); // a: dropped again -> stop, keep [a, b, c] for next drain
+      expect(calls).toEqual(["a", "a"]);
+
+      client.drain!(); // a: backpressure -> pace, keep [b, c] for next drain
+      expect(calls).toEqual(["a", "a", "a"]);
+
+      client.drain!(); // b: success, c: success -> fully flushed, queue cleared
+      expect(calls).toEqual(["a", "a", "a", "b", "c"]);
+
+      client.drain!(); // nothing pending -- no-op
+      expect(calls).toEqual(["a", "a", "a", "b", "c"]);
+    });
+
+    test("close() clears the pending queue and delegates to the underlying writer's close()", () => {
+      const { calls, close, writer } = scriptedWriter(["dropped"]);
+      const client = bufferedWriter(writer);
+
+      client.write("a");
+      expect(calls).toEqual(["a"]);
+
+      client.close();
+      expect(close).toHaveBeenCalledTimes(1);
+
+      // Nothing left to flush -- drain() (if it were ever called on a
+      // closing connection) must not resend "a".
+      client.drain!();
+      expect(calls).toEqual(["a"]);
+    });
+  });
+
+  describe("webSocketWriter + bufferedWriter together", () => {
+    test("end-to-end: a dropped CDP message can never be overtaken by the next one, through the real ws.sendText() mapping", () => {
+      const sendText = mock((_message: string) => 0);
+      sendText.mockReturnValueOnce(0); // DROPPED for "m1"
+      sendText.mockReturnValueOnce(20); // SUCCESS retrying "m1"
+      sendText.mockReturnValueOnce(20); // SUCCESS for "m2"
+      const fakeWs = { sendText, close: mock(() => {}) } as unknown as Parameters<typeof webSocketWriter>[0];
+
+      const client = bufferedWriter(webSocketWriter(fakeWs));
+
+      client.write("m1");
+      client.write("m2");
+      expect(sendText).toHaveBeenCalledTimes(1); // only m1 attempted so far
+      expect(sendText).toHaveBeenNthCalledWith(1, "m1");
+
+      client.drain!();
+      expect(sendText).toHaveBeenCalledTimes(3);
+      expect(sendText).toHaveBeenNthCalledWith(2, "m1");
+      expect(sendText).toHaveBeenNthCalledWith(3, "m2");
+    });
+  });
+});
+
+describe("writer layer: ws:// integration", () => {
+  let proc: Subprocess | undefined;
+  let ws: WebSocket | undefined;
+
+  afterEach(() => {
+    ws?.close();
+    ws = undefined;
+    proc?.kill();
+    proc = undefined;
+  });
+
+  test(
+    "delivers every TestReporter event exactly once, in order, over a real ws:// connection",
+    async () => {
+      // Unlike the unix-socket test above, `--inspect-wait=ws://` serves over
+      // a real Bun.serve WebSocket (Debugger#websocket), which IS backed by
+      // `bufferedWriter(webSocketWriter(ws))` -- this exercises that real
+      // pipeline end to end over an actual socket, rather than the scripted
+      // mocks above.
+      //
+      // This does NOT force genuine backpressure or a genuine drop: the
+      // global `WebSocket` client used here (matching the rest of this
+      // suite's ws:// tests, e.g. test/regression/issue/21654) has no public
+      // API to pause reading the underlying socket the way a raw
+      // `Bun.connect()` client can, so uWS's outbound buffer never has a
+      // reason to back up. Forcing a genuine DROPPED additionally needs
+      // upward of 16MB of unacknowledged backlog -- the debugger's
+      // `#websocket` handler sets no `backpressureLimit`, so uWS falls back
+      // to its 16MB default (see WebSocketServerContext.rs's
+      // `backpressure_limit` default). Neither is a clean, fast, reliable
+      // hook to build a test around, so both scenarios are instead covered
+      // deterministically by the scripted-writer unit tests above; this
+      // test's job is just to prove the real production wiring delivers
+      // every event exactly once, in order, over an actual connection.
+
+      const TEST_COUNT = 200;
+      const testFileLines = [`import { test, expect } from "bun:test";`];
+      for (let i = 0; i < TEST_COUNT; i++) {
+        testFileLines.push(`test("ws order test ${i}", () => { expect(${i}).toBe(${i}); });`);
+      }
+
+      using dir = tempDir("test-reporter-ws-order", {
+        "ws-order.test.ts": testFileLines.join("\n"),
+      });
+
+      proc = spawn({
+        cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "test", "ws-order.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+
+      // Scan complete stderr lines for the inspector URL banner instead of a
+      // fixed sleep -- an observable handshake, not a wall-clock guess.
+      let stderrBuf = "";
+      let stderrLineBuf = "";
+      const { promise: urlPromise, resolve: urlResolve, reject: urlReject } = Promise.withResolvers<URL>();
+      let urlFound = false;
+      (async () => {
+        const decoder = new TextDecoder();
+        for await (const chunk of proc!.stderr as ReadableStream<Uint8Array>) {
+          const text = decoder.decode(chunk);
+          stderrBuf += text;
+          if (urlFound) continue;
+          stderrLineBuf += text;
+          const lines = stderrLineBuf.split("\n");
+          stderrLineBuf = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const u = new URL(trimmed);
+              if (u.protocol === "ws:" || u.protocol === "wss:") {
+                urlFound = true;
+                urlResolve(u);
+                break;
+              }
+            } catch {
+              // Not a URL -- ignore.
+            }
+          }
+        }
+        if (!urlFound) {
+          urlReject(new Error(`Inspector URL not found before child stderr closed: ${JSON.stringify(stderrBuf)}`));
+        }
+      })().catch(err => {
+        if (!urlFound) urlReject(err);
+      });
+
+      const url = await urlPromise;
+      ws = new WebSocket(url);
+      await new Promise<void>((resolve, reject) => {
+        ws!.addEventListener("open", () => resolve(), { once: true });
+        ws!.addEventListener("error", e => reject(new Error("WebSocket error", { cause: e })), { once: true });
+        ws!.addEventListener("close", e => reject(new Error("WebSocket closed", { cause: e })), { once: true });
+      });
+
+      const BARRIER_ID = 1;
+      let barrierSent = false;
+      const foundIds: number[] = [];
+      const endedIds: number[] = [];
+      const { promise: donePromise, resolve: doneResolve, reject: doneReject } = Promise.withResolvers<void>();
+
+      const send = (method: string, params: Record<string, unknown> = {}, id = 0) =>
+        ws!.send(JSON.stringify({ id, method, params }));
+
+      ws.addEventListener("message", ev => {
+        const msg = JSON.parse(String(ev.data));
+        if (msg.method === "TestReporter.found") {
+          foundIds.push(msg.params.id);
+        } else if (msg.method === "TestReporter.end") {
+          endedIds.push(msg.params.id);
+          // Don't resolve directly on the 200th end event -- send a barrier
+          // command and wait for its response instead, so any duplicate
+          // event still queued behind it is observed before we assert.
+          if (endedIds.length === TEST_COUNT && !barrierSent) {
+            barrierSent = true;
+            send("Runtime.enable", {}, BARRIER_ID);
+          }
+        } else if (msg.method === undefined && msg.id === BARRIER_ID) {
+          doneResolve();
+        }
+      });
+      // The child exits as soon as the last test ends, so the socket can
+      // close before the barrier response round-trips. Either signal proves
+      // the full stream was observed: the barrier RESPONSE (nothing else was
+      // queued behind the final end), or socket close/error after the final
+      // end (the stream is definitively over -- every message the child sent,
+      // including any duplicate delivery, is dispatched before the close
+      // event fires). A close/error while events are still missing instead
+      // fails fast with a descriptive error rather than an opaque per-test
+      // timeout. Both are no-ops once donePromise has settled.
+      const onSocketDown = () => {
+        if (endedIds.length >= TEST_COUNT) {
+          doneResolve();
+        } else {
+          doneReject(
+            new Error(`socket closed before barrier response: found=${foundIds.length} ended=${endedIds.length} of ${TEST_COUNT}`),
+          );
+        }
+      };
+      ws.addEventListener("close", onSocketDown);
+      ws.addEventListener("error", onSocketDown);
+
+      send("Inspector.enable");
+      send("TestReporter.enable");
+      send("Inspector.initialized");
+
+      await donePromise;
+
+      // Exactly one `found`/`end` per test -- no message was silently
+      // dropped, and none was duplicated by a resend of an already-accepted
+      // (backpressured) write.
+      expect(foundIds.length).toBe(TEST_COUNT);
+      expect(new Set(foundIds).size).toBe(TEST_COUNT);
+      expect(endedIds.length).toBe(TEST_COUNT);
+      expect(new Set(endedIds).size).toBe(TEST_COUNT);
+
+      // Ids arrive in non-decreasing order: a paced/queued message is never
+      // flushed ahead of a message that was already sent before it.
+      for (let i = 1; i < foundIds.length; i++) {
+        expect(foundIds[i]).toBeGreaterThanOrEqual(foundIds[i - 1]);
+      }
+      for (let i = 1; i < endedIds.length; i++) {
+        expect(endedIds[i]).toBeGreaterThanOrEqual(endedIds[i - 1]);
+      }
+
+      ws.close();
+      ws = undefined;
+
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        // Surface the captured child stderr (the URL-scanning loop above
+        // drains the stream into stderrBuf for the child's whole lifetime)
+        // so a nonzero exit fails with the child's own error output.
+        expect(stderrBuf).toBe("");
+      }
+      expect(exitCode).toBe(0);
+    },
+    30000,
+  );
 });

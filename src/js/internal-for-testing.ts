@@ -477,3 +477,11 @@ export const fetchH3Internals = {
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
+
+// The real bufferedWriter/webSocketWriter implementations from the inspector
+// debugger's writer layer (src/js/internal/debugger.ts), exposed for direct
+// unit testing rather than via a reimplementation that could drift from what
+// actually ships. See that file's `testHooks` property for why this rides on
+// the default export instead of a second named export.
+export const debuggerInternals = (require("internal/debugger") as typeof import("internal/debugger").default)
+  .testHooks;

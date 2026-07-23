@@ -36,7 +36,15 @@ class SocketFramer {
     socket.$write(data);
   }
 
-  onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
+  // `backend` is typed as `Backend | Writer` because callers pass sockets
+  // carrying either shape (the #connectOverSocket/connectToUnixServer paths
+  // use `Backend`, the #websocket path's SocketFramer.send uses `Backend`
+  // too, but the underlying socket.data literal only needs to satisfy
+  // whichever shape the caller declared). onData itself never reads
+  // `socket.data.backend` -- it only frames bytes and calls `this.onMessage`
+  // -- so widening this union costs nothing and lets both call sites
+  // typecheck without an unsound cast.
+  onData(socket: Socket<{ framer: SocketFramer; backend: Backend | Writer }>, data: Buffer): void {
     this.bufferedData = this.bufferedData.length > 0 ? Buffer.concat([this.bufferedData, data]) : data;
 
     let messagesToDeliver: string[] = [];
@@ -96,7 +104,7 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
-export default function (
+function startInspector(
   executionContextId: number,
   url: string,
   createBackend: CreateBackendFn,
@@ -538,31 +546,103 @@ function versionInfo(): unknown {
 
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
   return {
-    write: message => !!ws.sendText(message),
+    write: message => {
+      // ws.sendText() returns a JS number: -1 (BACKPRESSURE), 0 (DROPPED), or
+      // a positive byte count (SUCCESS). Previously this was collapsed with
+      // `!!`, which coerces -1 to `true` -- indistinguishable from success --
+      // so bufferedWriter (below) never reacted to backpressure at all. We
+      // now surface the real tri-state result so bufferedWriter can retry a
+      // genuine drop (0) and pace -- without re-sending -- a message that
+      // merely reported backpressure (-1).
+      //
+      // `result === 0` is ambiguous in the Rust binding itself, not just here:
+      // it means DROPPED, but it is ALSO what a genuinely SUCCESSful send of a
+      // zero-length string returns (send_status_to_js's Success arm returns
+      // `len as f64`, i.e. the byte length actually written -- 0 for an empty
+      // buffer -- see src/runtime/server/ServerWebSocket.rs's send_status_to_js
+      // and send_text). A closed socket also short-circuits to 0 before ever
+      // calling send() (same file, send_text's `is_closed()` guard). Treating
+      // every 0 as "dropped" is safe for CDP traffic specifically because
+      // BunDebugger.cpp's sendMessageToFrontend skips empty messages before
+      // they ever reach this writer (`if (message.length() == 0) return;`,
+      // src/jsc/bindings/BunDebugger.cpp:217-218) -- so an empty-string
+      // "success" can never actually occur here, only genuine drops and
+      // closed-socket sends (which are also correctly queued, harmlessly, for
+      // a connection that is going away).
+      const result = ws.sendText(message);
+      if (result === 0) return "dropped";
+      if (result < 0) return "backpressure";
+      return "success";
+    },
     close: () => ws.close(),
   };
 }
 
 function bufferedWriter(writer: Writer): Writer {
   let draining = false;
+  // Set once a write reports "backpressure" and cleared at the start of the
+  // next drain(). While set, new writes are queued (not attempted) rather
+  // than sent immediately, so we stop adding to the connection's backlog
+  // until it has had a chance to drain. This intentionally does NOT requeue
+  // the message that reported backpressure itself: per webSocketWriter's
+  // contract above, that message was already accepted by uWS, and resending
+  // it would duplicate it on the wire.
+  let paced = false;
   let pendingMessages: string[] = [];
 
   return {
     write: message => {
-      if (draining || !writer.write(message)) {
+      // Gate on pendingMessages.length too, not just `paced`: a "dropped"
+      // result (below) queues the message but does not set `paced`. Without
+      // this check, the very next write() would go straight to `writer.write`
+      // below and could land on the wire before the queued message it was
+      // supposed to follow -- a queued message must never be overtaken by a
+      // later direct write. Once anything is queued, every subsequent write
+      // has to queue behind it to preserve order, regardless of which of the
+      // two states (paced or pendingMessages.length > 0) caused the queuing.
+      if (draining || paced || pendingMessages.length > 0) {
         pendingMessages.push(message);
+        return "success";
       }
-      return true;
+
+      const result = writer.write(message);
+      if (result === "dropped") {
+        pendingMessages.push(message);
+      } else if (result === "backpressure") {
+        paced = true;
+      }
+      return "success";
     },
     drain: () => {
       draining = true;
+      // A new drain cycle gets a fresh chance to write without pacing; if the
+      // flush below hits backpressure again, `paced` is re-set below.
+      paced = false;
       try {
         for (let i = 0; i < pendingMessages.length; i++) {
-          if (!writer.write(pendingMessages[i])) {
+          const result = writer.write(pendingMessages[i]);
+          if (result === "dropped") {
+            // Not sent at all -- keep this message (and everything queued
+            // after it, to preserve order) for the next drain.
             pendingMessages = pendingMessages.slice(i);
             return;
           }
+          if (result === "backpressure") {
+            // This message WAS accepted (see webSocketWriter) -- do not keep
+            // it for retry, just pace subsequent messages until the next
+            // drain.
+            paced = true;
+            pendingMessages = pendingMessages.slice(i + 1);
+            return;
+          }
         }
+        // Every pending message was fully flushed: nothing left to retry.
+        // (Previously this array was never cleared on a fully successful
+        // pass, which would have re-sent already-delivered messages on the
+        // next drain -- a duplicate-send bug of its own, and one that would
+        // trigger far more often now that "backpressure" also routes through
+        // this same queue.)
+        pendingMessages.length = 0;
       } finally {
         draining = false;
       }
@@ -711,8 +791,36 @@ type Connection = {
   backend?: Backend;
 };
 
+/**
+ * Result of a single write attempt, mirroring the three-way contract of
+ * `ServerWebSocket.sendText()` (see `packages/bun-uws/src/WebSocket.h`,
+ * `WebSocket::send()`'s doc comment and `SendStatus` enum):
+ *   - "success"      the message was fully accepted with buffer room to spare.
+ *   - "backpressure" the message WAS accepted into the socket's outbound
+ *                     buffer (it will still be delivered), but the buffer is
+ *                     now running high; callers should pace further writes
+ *                     until the next `drain()` rather than re-send this
+ *                     message -- resending it would duplicate it on the wire,
+ *                     since uWS has already queued it once.
+ *   - "dropped"       the message was NOT sent at all (outbound buffering
+ *                      already exceeds the connection's backpressure limit);
+ *                      this is a genuine loss and must be retried.
+ */
+type WriteResult = "success" | "backpressure" | "dropped";
+
 type Writer = {
-  write: (message: string) => boolean;
+  write: (message: string) => WriteResult;
   drain?: () => void;
   close: () => void;
 };
+
+// Builtin modules under src/js/internal/** support exactly one export --
+// `export default` -- mixing it with named exports fails the builtin
+// bundler's codegen check (see src/js/README.md, "Builtin Modules"). To let
+// `bun:internal-for-testing` unit-test the real bufferedWriter/webSocketWriter
+// implementations (rather than a reimplementation in the test file that could
+// silently drift from what's actually shipped), they ride along as a
+// `testHooks` property on the default export instead of a second export.
+export default Object.assign(startInspector, {
+  testHooks: { webSocketWriter, bufferedWriter },
+});

@@ -434,10 +434,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       });
     }
 
-    const { topLevel } = counts;
-    if (topLevel > 0) {
-      reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: topLevel });
-    }
+    reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
     const durationMs = roundDurationMs(performance.now() - started);
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
@@ -745,6 +742,22 @@ function emitRunChildPlanOnExit() {
 // child streaming to its parent, or standalone mode reporting in-process.
 function runEventsEnabled(): boolean {
   return runChildReporterEnabled || standaloneActive;
+}
+
+// t.diagnostic(): routes through the reporter stream like every other per-test
+// signal; falls back to stdout only under bun:test (no stream to feed).
+function emitContextDiagnostic(node: TestNode, message: unknown) {
+  const text = typeof message === "string" ? message : require("node:util").inspect(message);
+  if (runEventsEnabled()) {
+    emitRunChildEvent("test:diagnostic", {
+      __proto__: null,
+      nesting: nestingOf(node),
+      message: text,
+      level: "info",
+    });
+  } else {
+    console.log(text);
+  }
 }
 
 // node computes durations from hrtime bigints, which carry at most 6 decimal
@@ -2127,7 +2140,7 @@ class TestContext {
   }
 
   diagnostic(message: string) {
-    console.log(message);
+    emitContextDiagnostic(this.#node, message);
   }
 
   plan(count: number, options: { wait?: boolean | number } = kEmptyObject) {
@@ -2278,7 +2291,7 @@ class SuiteContext {
   }
 
   diagnostic(message: string) {
-    console.log(message);
+    emitContextDiagnostic(this.#node, message);
   }
 }
 
@@ -3345,10 +3358,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // file nodes emitted above (root.reportedCount only the former). Emitted
     // directly so it carries no data.file, matching runFiles and the adjacent
     // run-level summary (the sink would stamp the stale activeRunFile on it).
-    const { topLevel } = counts;
-    if (topLevel > 0) {
-      reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: topLevel });
-    }
+    reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
       __proto__: null,
@@ -3419,10 +3429,7 @@ async function runStandalone() {
     counts.failed++;
   } finally {
     const durationMs = roundDurationMs(performance.now() - startedAt);
-    const { reportedCount } = root;
-    if (reportedCount > 0) {
-      standaloneSink!("test:plan", { __proto__: null, nesting: 0, count: reportedCount });
-    }
+    standaloneSink!("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
     emitRunDiagnostics(stream, counts, durationMs);
     stream.emitMessage("test:summary", {
       __proto__: null,

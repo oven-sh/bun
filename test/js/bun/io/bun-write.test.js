@@ -521,6 +521,60 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     );
   }
 
+  describe("Bun.write(BunFile, BunFile) with a missing source", () => {
+    // On Windows the file-to-file copy path retries via an async mkdirp task
+    // when uv_fs_copyfile (or opening the destination on the read/write-loop
+    // fallback) fails with ENOENT. The task used to be freed before the work
+    // pool ran it, crashing the process instead of rejecting.
+    const run = async (dir, body) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `try {
+             ${body}
+             console.log("resolved");
+           } catch (e) {
+             console.log("rejected", e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    };
+
+    it("does not crash when the same BunFile is passed as source and destination", async () => {
+      using dir = tempDir("bun-write-missing-src", {});
+      const p = join(String(dir), "missing");
+      const { stdout, stderr, exitCode } = await run(
+        dir,
+        `const f = Bun.file(${JSON.stringify(p)}); await Bun.write(f, f);`,
+      );
+      // The read/write-loop fallback opens the destination with O_CREAT first,
+      // so a self-copy onto a missing path resolves with 0 bytes there instead
+      // of rejecting.
+      const expected = IS_UV_FS_COPYFILE_DISABLED ? "resolved" : "rejected ENOENT";
+      expect({ stdout, stderr }).toEqual({ stdout: expected, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("rejects with ENOENT for a missing source and a destination whose parent is missing", async () => {
+      using dir = tempDir("bun-write-missing-src", {});
+      const { stdout, stderr, exitCode } = await run(
+        dir,
+        `await Bun.write(
+           Bun.file(${JSON.stringify(join(String(dir), "sub", "dst"))}),
+           Bun.file(${JSON.stringify(join(String(dir), "src"))}),
+         );`,
+      );
+      expect({ stdout, stderr }).toEqual({ stdout: "rejected ENOENT", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("ENOENT", () => {
     const creates = (...opts) => {
       it("creates the directory", async () => {

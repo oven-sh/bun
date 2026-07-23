@@ -1713,13 +1713,12 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.event_loop.ref_concurrently();
-        node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
+        node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
             path,
             ..Default::default()
-        })
-        .schedule();
+        });
     }
 
     fn on_mkdirp_complete(&mut self) {

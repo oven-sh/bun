@@ -3431,7 +3431,6 @@ function Server(options?, connectionListener?) {
   this._handle = null as MaybeListener;
   this._usingWorkers = false;
   this._workers = [];
-  this.workers = [];
   this._unref = false;
   this._listeningId = 1;
 
@@ -3497,7 +3496,10 @@ Server.prototype.close = function close(callback) {
     this._handle = null;
   }
 
-  if (this._usingWorkers) {
+  // Deliberate deviation from Node v26.3.0: node enters this branch on bare
+  // _usingWorkers and latently hangs when _workers already emptied (child
+  // exited), leaving close(cb)/'close' unsettled. Guard on live workers.
+  if (this._usingWorkers && this._workers.length > 0) {
     // Port of Node v26.3.0 lib/net.js Server.prototype.close (onWorkerClose),
     // with the closure hoisted to a named function.
     let left = this._workers.length;
@@ -3560,7 +3562,9 @@ Server.prototype.address = function address() {
 
 Server.prototype.getConnections = function getConnections(callback) {
   if (typeof callback !== "function") return this;
-  if (!this._usingWorkers) {
+  // Same live-workers guard as close() above: with _workers emptied the
+  // polling loop below would never invoke the callback.
+  if (!this._usingWorkers || this._workers.length === 0) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
     //if disconnected will only pass null as well and 0 connected

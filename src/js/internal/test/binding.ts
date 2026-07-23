@@ -71,7 +71,6 @@ function isInsideNodeModules() {
   return false;
 }
 
-
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":

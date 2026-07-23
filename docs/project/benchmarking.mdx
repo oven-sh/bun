@@ -292,10 +292,10 @@ bun --heap-prof --heap-prof-name my-profile.heapprofile script.js
 bun --heap-prof --heap-prof-dir ./profiles script.js
 ```
 
-| Flag                           | Description                                                  |
-| ------------------------------ | ------------------------------------------------------------ |
-| `--heap-prof`                  | Write a `.heapprofile` file on exit                          |
-| `--heap-prof-md`               | Generate a markdown heap profile on exit                     |
-| `--heap-prof-name <filename>`  | Set output filename                                          |
-| `--heap-prof-dir <dir>`        | Set output directory                                         |
+| Flag                           | Description                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--heap-prof`                  | Write a `.heapprofile` file on exit                                                                                                        |
+| `--heap-prof-md`               | Generate a markdown heap profile on exit                                                                                                   |
+| `--heap-prof-name <filename>`  | Set output filename                                                                                                                        |
+| `--heap-prof-dir <dir>`        | Set output directory                                                                                                                       |
 | `--heap-prof-interval <bytes>` | Accepted for Node.js compatibility (the snapshot is taken once at exit; JavaScriptCore has no allocation sampling to apply an interval to) |

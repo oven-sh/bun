@@ -336,7 +336,17 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                if !(arg.len() > 2 && arg[1] != b'-' && push_normalized_short_token(arg, &mut args))
+                // Normalization is scoped to the bun/node entry points, the
+                // surface the worker execArgv round-trip covers; tokens after
+                // `run` keep their verbatim shape (pinned behavior). Node's
+                // whole-token aliases (`-pe`) are substituted before clap
+                // parsing there, so they are not short chains either.
+                let is_node_alias = crate::cli::arguments::NODE_SHORT_ALIASES
+                    .iter()
+                    .any(|(from, _)| *from == arg);
+                if seen_run
+                    || is_node_alias
+                    || !(arg.len() > 2 && arg[1] != b'-' && push_normalized_short_token(arg, &mut args))
                 {
                     args.push(BunString::clone_utf8(arg));
                 }

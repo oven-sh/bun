@@ -657,6 +657,16 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
+template<typename T>
+static bool looseFloatContentsEqual(std::span<const T> a, std::span<const T> b)
+{
+    for (size_t i = 0; i < a.size(); i++) {
+        if (a[i] != b[i])
+            return false;
+    }
+    return true;
+}
+
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes>
@@ -673,20 +683,28 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     if (a1.size() != a2.size()) {
         return false;
     }
-    // Equal counts don't imply equal names; a lookup that walks the prototype
-    // chain would match `a1 = [1, x: 1]` against `a2` inheriting `x` while
-    // owning some other key. Require name-for-name ownership.
-    HashSet<RefPtr<UniquedStringImpl>> a2Names;
-    for (size_t i = 0; i < a2.size(); i++)
-        a2Names.add(a2[i].impl());
+    // Own-property-scoped reads: a plain get() would walk the prototype
+    // chain and match `a1 = [1, x: 1]` against `a2` inheriting `x` while
+    // owning some other key. GetOwnProperty slots enforce name-for-name
+    // ownership and read the value in one lookup.
     for (size_t i = 0; i < a1.size(); i++) {
         JSC::PropertyName propertyName(a1[i]);
-        if (!a2Names.contains(a1[i].impl())) {
+        PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool o2Owns = o2->methodTable()->getOwnPropertySlot(o2, globalObject, propertyName, slot2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!o2Owns) {
             return false;
         }
-        JSValue v1 = o1->get(globalObject, propertyName);
+        JSValue v2 = slot2.getValue(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
-        JSValue v2 = o2->get(globalObject, propertyName);
+        PropertySlot slot1(o1, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool o1Owns = o1->methodTable()->getOwnPropertySlot(o1, globalObject, propertyName, slot1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!o1Owns) {
+            // A getter above removed the property mid-iteration.
+            return false;
+        }
+        JSValue v1 = slot1.getValue(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
         bool eq = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes>(globalObject, v1, v2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1262,21 +1280,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if (byteLength == 0) {
-            if constexpr (checkPrototypes) {
-                // node also compares own enumerable properties of ArrayBuffers.
-                break;
-            }
-            return true;
-        }
-
-        const void* vector = left->data();
-        const void* rightVector = right->data();
-        if (!vector || !rightVector) [[unlikely]] {
-            return false;
-        }
-
-        if (vector != rightVector && memcmp(vector, rightVector, byteLength) != 0)
+        if (!WTF::equalSpans(left->span(), right->span()))
             return false;
 
         if constexpr (checkPrototypes) {
@@ -1305,15 +1309,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (right->byteLength() != byteLength) {
             return false;
         }
-        if (byteLength > 0) {
-            const void* vector = left->vector();
-            const void* rightVector = right->vector();
-            if (!vector || !rightVector) [[unlikely]] {
-                return false;
-            }
-            if (vector != rightVector && memcmp(vector, rightVector, byteLength) != 0)
-                return false;
-        }
+        if (!WTF::equalSpans(std::span { static_cast<const uint8_t*>(left->vector()), byteLength },
+                std::span { static_cast<const uint8_t*>(right->vector()), byteLength }))
+            return false;
         if constexpr (checkPrototypes) {
             break;
         }
@@ -1558,46 +1556,28 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return true;
         }
 
-        // For Float32Array and Float64Array, when not in strict mode, we need to
-        // handle +0 and -0 as equal, and NaN as not equal to itself.
+        // For float arrays, when not in strict mode, IEEE == handles +0/-0
+        // as equal and NaN as not equal to itself. All other dtypes (and
+        // strict mode) compare raw bytes. Every content result funnels into
+        // the single tail below so the node-parity instantiations never skip
+        // the own-property comparison.
+        bool contentsEqual;
         if (!isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
             if (c1Type == Float16ArrayType) {
-                auto* leftFloat = static_cast<const WTF::Float16*>(vector);
-                auto* rightFloat = static_cast<const WTF::Float16*>(rightVector);
-                size_t numElements = byteLength / sizeof(WTF::Float16);
-
-                for (size_t i = 0; i < numElements; i++) {
-                    if (leftFloat[i] != rightFloat[i]) {
-                        return false;
-                    }
-                }
-                return true;
+                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const WTF::Float16*>(vector), byteLength / sizeof(WTF::Float16) },
+                    std::span { static_cast<const WTF::Float16*>(rightVector), byteLength / sizeof(WTF::Float16) });
             } else if (c1Type == Float32ArrayType) {
-                auto* leftFloat = static_cast<const float*>(vector);
-                auto* rightFloat = static_cast<const float*>(rightVector);
-                size_t numElements = byteLength / sizeof(float);
-
-                for (size_t i = 0; i < numElements; i++) {
-                    if (leftFloat[i] != rightFloat[i]) {
-                        return false;
-                    }
-                }
-                return true;
+                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const float*>(vector), byteLength / sizeof(float) },
+                    std::span { static_cast<const float*>(rightVector), byteLength / sizeof(float) });
             } else { // Float64Array
-                auto* leftDouble = static_cast<const double*>(vector);
-                auto* rightDouble = static_cast<const double*>(rightVector);
-                size_t numElements = byteLength / sizeof(double);
-
-                for (size_t i = 0; i < numElements; i++) {
-                    if (leftDouble[i] != rightDouble[i]) {
-                        return false;
-                    }
-                }
-                return true;
+                contentsEqual = looseFloatContentsEqual(std::span { static_cast<const double*>(vector), byteLength / sizeof(double) },
+                    std::span { static_cast<const double*>(rightVector), byteLength / sizeof(double) });
             }
+        } else {
+            contentsEqual = WTF::equalSpans(std::span { static_cast<const uint8_t*>(vector), byteLength },
+                std::span { static_cast<const uint8_t*>(rightVector), byteLength });
         }
-
-        if (memcmp(vector, rightVector, byteLength) != 0) {
+        if (!contentsEqual) {
             return false;
         }
         if constexpr (checkPrototypes) {

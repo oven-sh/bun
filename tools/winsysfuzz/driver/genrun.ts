@@ -156,6 +156,12 @@ async function worker(w: number) {
         const r2 = await runProgram(vprogram, vdir);
         const j2 = judge(r2);
         verified = j2.kind === j.kind && (j.kind !== "crash" || j2.sig === j.sig);
+        if (!verified) {
+          console.log(
+            `   verify#${a}: exit=${r2.exit} timedOut=${r2.timedOut} kind=${j2.kind ?? "none"} sig=${(j2.sig || "-").slice(0, 60)} ` +
+              `out=${JSON.stringify((r2.stdout + r2.stderr).slice(0, 120))}`,
+          );
+        }
       }
     } finally {
       verifying--;

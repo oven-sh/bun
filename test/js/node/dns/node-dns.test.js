@@ -524,7 +524,12 @@ describe("lookup rejects falsy hostnames", () => {
   it("dns.promises.lookup('') rejects instead of throwing", async () => {
     const p = dns_promises.lookup("");
     expect(p).toBeInstanceOf(Promise);
-    expect(await p.then(() => null, e => ({ code: e.code, message: e.message }))).toEqual({
+    expect(
+      await p.then(
+        () => null,
+        e => ({ code: e.code, message: e.message }),
+      ),
+    ).toEqual({
       code: "ERR_INVALID_ARG_VALUE",
       message: "The argument 'hostname' must be a non-empty string. Received ''",
     });

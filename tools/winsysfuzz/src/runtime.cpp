@@ -625,12 +625,13 @@ CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)
       for (uint8_t k = 0; k < nframes_; k++) if (frames_[k] == v) { dup = true; break; }
       if (dup) continue;
       frames_[nframes_++] = v;
-      if (bunFrame_ == 0) {
-        CallTarget ct = CallTargetKind(v);
-        if (ct == CallTarget::Wrapper) bunFrame_ = v;               // proven caller of a wrapper
-        else if (ct == CallTarget::Unknown && p < keyWindow) bunFrame_ = v; // indirect, but live-window
-        // ct == Own: called bun's own code - a stale leftover, never the key
-      }
+      // The KEY is only ever a PROVEN wrapper caller (the rel32 call whose
+      // target lands in kernelbase/ntdll, directly or via bun's import
+      // thunk). Sampling showed indirect/undecidable candidates near SP are
+      // still ~20% allocator leftovers - a smaller true surface beats a
+      // larger one that is one-fifth fabricated. Undecidable calls keep
+      // their honest wrapper (k:/n:) key.
+      if (bunFrame_ == 0 && CallTargetKind(v) == CallTarget::Wrapper) bunFrame_ = v;
     }
   }
 }

@@ -1037,7 +1037,7 @@ it("promises.readFile", async () => {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("ENOENT: no such file or directory, open '/i-dont-exist'");
       expect(e.code).toBe("ENOENT");
-      expect(e.errno).toBe(-2);
+      expect(e.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(e.path).toBe("/i-dont-exist");
     }
   }
@@ -1428,7 +1428,7 @@ it("mkdtempSync() non-exist dir #2568", () => {
   try {
     expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
-    expect(err?.errno).toBe(-2);
+    expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
   }
 });
 
@@ -1436,7 +1436,7 @@ it("mkdtemp() non-exist dir #2568", done => {
   const path = join(tmpdirSync(), "does", "not", "exist");
   mkdtemp(path, (err, folder) => {
     try {
-      expect(err?.errno).toBe(-2);
+      expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(folder).toBeUndefined();
       done();
     } catch (e) {
@@ -2265,6 +2265,11 @@ describe("open flag string validation matches node", () => {
     "xyz",
     "",
     true,
+    // Node has no options-object form for open(): the second argument is always
+    // the flags, so an object is just an invalid flags value. Only `{}` is listed
+    // here because a populated object is rendered multi-line by the native error
+    // inspector, where node (and util.inspect) render it on one line.
+    {},
   ];
 
   it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {
@@ -2304,6 +2309,26 @@ describe("open flag string validation matches node", () => {
       code: "ERR_INVALID_ARG_VALUE",
     });
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("rejects an options object as the flags argument across open, openSync and promises.open", async () => {
+    // Only the code is asserted: a populated object is rendered multi-line by the
+    // native error inspector, where node renders it on one line.
+    using dir = tempDir("fs-flags-object", { "existing.txt": "x" });
+    const file = join(String(dir), "existing.txt");
+    for (const flags of [{}, { flags: "r" }, { flags: "w", mode: 0o666 }]) {
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => openSync(file, flags)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => fs.open(file, flags, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      await expect(promises.open(file, flags)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+    }
+    // The file must be untouched: the old behavior silently opened it.
+    expect(readFileSync(file, "utf8")).toBe("x");
   });
 
   it("readFileSync and writeFileSync reject uppercase flag option", () => {

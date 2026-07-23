@@ -8,6 +8,7 @@ import {
   bunExe,
   expectMaxObjectTypeCount,
   getMaxFD,
+  isLinux,
   isWindows,
   libcPathForDlopen,
   tempDir,
@@ -592,6 +593,64 @@ describe.concurrent("socket", () => {
     await promise;
     expect(socket.authorized).toBe(true);
   });
+  // A server-side upgradeTLS handed only a SecureContext has no parsed tls
+  // options to take requestCert/rejectUnauthorized from, so the per-socket
+  // verify mode has to come from the context. Clearing it there would silently
+  // stop the server from sending a CertificateRequest.
+  it("upgradeTLS with only a secureContext keeps the context's verify mode", async () => {
+    const secureContext = createSecureContext({
+      cert: tls.cert,
+      key: tls.key,
+      ca: tls.cert,
+      requestCert: true,
+      rejectUnauthorized: true,
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.upgradeTLS({
+            tls: true,
+            secureContext: (secureContext as any).context,
+            isServer: true,
+            data: {},
+            socket: {
+              handshake(tlsSocket) {
+                const peer = tlsSocket.getPeerCertificate();
+                resolve(!!peer && Object.keys(peer).length > 0);
+              },
+              data() {},
+              close() {},
+              error(_s, err) {
+                reject(err);
+              },
+            },
+          });
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    try {
+      // The client only sends its certificate if the server asked for one.
+      const client = tlsConnect({
+        port: server.port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        cert: tls.cert,
+        key: tls.key,
+      });
+      client.on("error", () => {});
+      expect(await promise).toBe(true);
+      client.destroy();
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,
@@ -3102,3 +3161,69 @@ Reo=
     });
   });
 });
+
+// Linux-only: uses /proc/self/fd to find and close the connected socket's fd
+// so getsockname()/getpeername() fail with EBADF.
+it.skipIf(!isLinux)(
+  "socket.localPort / socket.remotePort return undefined when the underlying fd is gone",
+  async () => {
+    const script = /* js */ `
+    import { readdirSync, readlinkSync, closeSync } from "node:fs";
+
+    function socketFds() {
+      const out = new Set();
+      for (const e of readdirSync("/proc/self/fd")) {
+        let link = "";
+        try { link = readlinkSync("/proc/self/fd/" + e); } catch {}
+        if (link.startsWith("socket:")) out.add(Number(e));
+      }
+      return out;
+    }
+
+    const opened = Promise.withResolvers();
+    const server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: { open() {}, data() {}, close() {} },
+    });
+
+    const before = socketFds();
+    const client = await Bun.connect({
+      port: server.port,
+      hostname: "127.0.0.1",
+      socket: { open: opened.resolve, data() {}, close() {} },
+    });
+    await opened.promise;
+
+    const after = socketFds();
+    const newFds = [...after].filter(fd => !before.has(fd));
+    if (newFds.length === 0) {
+      console.log(JSON.stringify({ skipped: true }));
+      server.stop(true);
+      process.exit(0);
+    }
+    for (const fd of newFds) closeSync(fd);
+
+    console.log(JSON.stringify({
+      localPort: client.localPort ?? null,
+      remotePort: client.remotePort ?? null,
+    }));
+    server.stop(true);
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const out = JSON.parse(stdout.trim());
+    if (out.skipped) return;
+    expect(out).toEqual({ localPort: null, remotePort: null });
+  },
+);

@@ -456,7 +456,20 @@ while (pass++ < passes) {
       if (!h) continue;
       hits++;
       console.log(`  [${h.outcome}] ${basename(h.file)}  <-  ${h.schedule.join(" ; ")}`);
-      if (knownKeys.has(h.key)) continue;
+      if (knownKeys.has(h.key)) {
+        // A known signature reproduced AGAIN, in-pass: never waste it. Append
+        // the fresh evidence (raw detail, captured stacks, schedule, file) to
+        // a recurrence ledger - the newest reproduction of a known finding is
+        // often the one that finally carries a usable stack.
+        try {
+          appendFileSync(
+            join(queueDir, "wide-recurrence.log"),
+            JSON.stringify({ at: new Date().toISOString(), key: h.key, file: h.file, detail: h.detail, stacks: h.stacks.slice(0, 12), schedule: h.schedule.join(" ; ") }) + "\n",
+          );
+        } catch {}
+        console.log(`  [known signature reproduced - evidence appended] ${basename(h.file)}: ${h.key.slice(0, 60)}`);
+        continue;
+      }
       knownKeys.add(h.key);
       const entry = {
         queuedAt: stamp,

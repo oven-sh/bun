@@ -106,6 +106,18 @@ impl QuietWriterAdapter {
         // the io::Writer is the first field (repr(C)).
         unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<io::Writer>() }
     }
+    /// Take and clear the sticky write error recorded by the adapter's
+    /// `write_all`/`flush` impls. Returns the raw errno (e.g.
+    /// `libc::EPIPE`), or `None` if no error occurred. Used by
+    /// `ConsoleObject` to surface `EPIPE` from `console.*` onto
+    /// `process.stdout`/`stderr` — matches Zig's `backing.err`.
+    #[inline]
+    pub fn take_err(&mut self) -> Option<i32> {
+        match output_sink().quiet_writer_adapter_take_err(self) {
+            0 => None,
+            errno => Some(errno),
+        }
+    }
 }
 
 /// Opaque file handle. Replaces `bun_sys::File` in this crate.

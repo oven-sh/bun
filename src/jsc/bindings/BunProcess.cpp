@@ -4440,6 +4440,82 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
     }
 }
 
+// Called from ConsoleObject.rs when a console.log/console.error write to stdout/stderr fails
+// (e.g. EPIPE when piped to `head`). In Node.js, console.log writes through process.stdout.write()
+// so write errors surface as 'error' events on process.stdout. Bun's console.* uses a separate
+// native writer, so we replicate the observable behavior here: emit the error on the
+// corresponding process.stdout/stderr stream via destroy(err), with a once('error', noop)
+// listener added first (matching Node's createWriteErrorHandler) so a missing user listener
+// doesn't turn into an uncaught exception.
+extern "C" void Bun__ConsoleObject__onStdioWriteError(Zig::GlobalObject* global, int32_t fd, EncodedJSValue encodedError)
+{
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    auto* process = global->processObject();
+    if (!process)
+        return;
+
+    JSValue stream = process->get(global, fd == 2 ? Identifier::fromString(vm, "stderr"_s) : Identifier::fromString(vm, "stdout"_s));
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return;
+    }
+    if (!stream.isObject())
+        return;
+    JSObject* streamObj = stream.getObject();
+    JSValue errorString = jsString(vm, String("error"_s));
+
+    // Only add the noop if no one else is listening for 'error' (same gate as Node's
+    // createWriteErrorHandler and Bun's user-created Console at src/js/builtins/ConsoleObject.ts).
+    bool hasErrorListener = false;
+    JSValue listenerCountFn = streamObj->get(global, Identifier::fromString(vm, "listenerCount"_s));
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
+    else if (listenerCountFn.isCallable()) {
+        auto lcCallData = JSC::getCallData(listenerCountFn);
+        JSC::MarkedArgumentBuffer lcArgs;
+        lcArgs.append(errorString);
+        JSValue count = JSC::call(global, listenerCountFn, lcCallData, stream, lcArgs);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        else if (count.isNumber())
+            hasErrorListener = count.asNumber() > 0;
+    }
+
+    // if (stream.listenerCount('error') === 0) stream.once('error', noop)
+    if (!hasErrorListener) {
+        JSValue onceFn = streamObj->get(global, Identifier::fromString(vm, "once"_s));
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        else if (onceFn.isCallable()) {
+            auto callData = JSC::getCallData(onceFn);
+            JSC::MarkedArgumentBuffer onceArgs;
+            onceArgs.append(errorString);
+            onceArgs.append(JSC::JSFunction::create(vm, global, 0, String(), Process_stubEmptyFunction, JSC::ImplementationVisibility::Public));
+            JSC::call(global, onceFn, callData, stream, onceArgs);
+            if (scope.exception()) [[unlikely]]
+                (void)scope.tryClearException();
+        }
+    }
+
+    // stream.destroy(err) — queues 'error' on nextTick; process.stdout/stderr's overridden
+    // _destroy() calls _undestroy() afterward so the stream remains usable.
+    JSValue destroyFn = streamObj->get(global, Identifier::fromString(vm, "destroy"_s));
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return;
+    }
+    if (!destroyFn.isCallable())
+        return;
+    auto destroyCallData = JSC::getCallData(destroyFn);
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSValue::decode(encodedError));
+    JSC::call(global, destroyFn, destroyCallData, stream, args);
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_stubEmptyFunction                           Function 0

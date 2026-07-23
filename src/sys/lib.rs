@@ -9440,6 +9440,31 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     true
 }
 
+/// Like [`fd_write_all_quiet`] but records the first I/O error's raw errno
+/// into `*sticky` (leaving any earlier error in place). Used by
+/// [`SysQuietWriterAdapter`] so `ConsoleObject` can surface `EPIPE` etc.
+/// onto `process.stdout`/`stderr` after a `console.*` call finishes —
+/// matching Zig's `backing.err` field.
+fn fd_write_all_quiet_sticky(fd: Fd, mut bytes: &[u8], sticky: &mut i32) {
+    while !bytes.is_empty() {
+        match write(fd, bytes) {
+            Ok(0) => {
+                if *sticky == 0 {
+                    *sticky = E::EPIPE as i32;
+                }
+                return;
+            }
+            Ok(n) => bytes = &bytes[n..],
+            Err(e) => {
+                if *sticky == 0 {
+                    *sticky = e.get_errno() as i32;
+                }
+                return;
+            }
+        }
+    }
+}
+
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`
 /// (`[u8; 64]`). First field MUST be `io::Writer` so `new_interface()`'s
 /// pointer-cast is sound. Layout asserted below.
@@ -9450,6 +9475,12 @@ struct SysQuietWriterAdapter {
     buf: *mut u8,
     cap: usize,
     pos: usize,
+    /// Raw errno of the first write error encountered since the last
+    /// `take_err()` (0 = none). Sticky so callers that perform many small
+    /// writes (e.g. `console.log` formatting) can check once after the
+    /// message is done, matching Zig's `backing.err: ?anyerror`. See
+    /// `ConsoleObject::message_with_type_and_level`.
+    err: i32,
 }
 const _: () = {
     assert!(
@@ -9483,18 +9514,24 @@ unsafe fn adapter_write_all(
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.cap == 0 {
-        let _ = fd_write_all_quiet(this.fd, bytes);
+        fd_write_all_quiet_sticky(this.fd, bytes, &mut this.err);
         return Ok(());
     }
     if this.pos + bytes.len() > this.cap {
         // Drain buffered bytes first.
         if this.pos > 0 {
-            let _ = fd_write_all_quiet(this.fd, this.buffered());
+            // `buffered()` borrows `this` immutably and `&mut this.err`
+            // would alias; rebuild the slice from raw parts (disjoint
+            // fields, single-threaded access).
+            // SAFETY: `buf[0..pos]` is initialized (see `buffered()` docs).
+            let buffered: &[u8] =
+                unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
+            fd_write_all_quiet_sticky(this.fd, buffered, &mut this.err);
             this.pos = 0;
         }
         // Large writes bypass the buffer so the next small write still coalesces.
         if bytes.len() >= this.cap {
-            let _ = fd_write_all_quiet(this.fd, bytes);
+            fd_write_all_quiet_sticky(this.fd, bytes, &mut this.err);
             return Ok(());
         }
     }
@@ -9511,7 +9548,9 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<()
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.pos > 0 {
-        let _ = fd_write_all_quiet(this.fd, this.buffered());
+        // SAFETY: disjoint-field borrow; see `adapter_write_all`.
+        let buffered: &[u8] = unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
+        fd_write_all_quiet_sticky(this.fd, buffered, &mut this.err);
         this.pos = 0;
     }
     Ok(())
@@ -9563,11 +9602,19 @@ bun_core::link_impl_OutputSink! {
                 buf,
                 cap: len,
                 pos: 0,
+                err: 0,
             };
             let mut out = bun_core::output::QuietWriterAdapter::uninit();
             // SAFETY: size/align asserted in const block above; out is repr(C) [u8;64].
             core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
             out
+        },
+        quiet_writer_adapter_take_err(a) => {
+            // SAFETY: `a` is the opaque envelope written by `quiet_writer_adapt`
+            // above; the concrete repr is `SysQuietWriterAdapter` (size/align
+            // asserted). `err` is a plain `i32` errno (0 = none).
+            let concrete = (&raw mut *a).cast::<SysQuietWriterAdapter>();
+            core::mem::take(&mut (*concrete).err)
         },
         // QuietWriter itself is unbuffered (buffering lives in the Adapter).
         quiet_writer_flush(_qw) => (),

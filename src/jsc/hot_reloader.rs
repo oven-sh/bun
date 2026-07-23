@@ -713,10 +713,27 @@ where
 
         // The JS thread will emit the kill-signal listeners then execve. If it's
         // stuck in synchronous code it never drains the posted task, so saving
-        // the file would stop restarting the process. Give it a bounded window;
-        // if the reload hasn't begun, force it from here (node's watcher
+        // the file would stop restarting the process. Arm a one-shot detached
+        // timer that forces the reload after a bounded window (node's watcher
         // SIGKILLs an unresponsive child after its kill-signal grace period).
+        // The watcher thread itself returns to its normal blocking read, so the
+        // responsive-JS path behaves exactly as it did without this fallback.
         if RELOAD_IMMEDIATELY {
+            arm_watch_reload_grace_timer();
+        }
+    }
+}
+
+static WATCH_RELOAD_GRACE_ARMED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+fn arm_watch_reload_grace_timer() {
+    if WATCH_RELOAD_GRACE_ARMED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("WatchReloadGrace".into())
+        .spawn(|| {
             const GRACE_MS: u64 = 500;
             const STEP_MS: u64 = 10;
             let mut waited = 0u64;
@@ -727,15 +744,18 @@ where
             }
             if !bun_core::is_process_reload_in_progress_on_another_thread() {
                 Output::flush();
-                flush_changed_paths_for_reload();
                 bun_core::reload_process(
                     CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
                     false,
                 );
                 unreachable!();
             }
-        }
-    }
+            // The JS thread owns the reload; park until execve tears this
+            // thread down (re-arming is pointless, the process is going away).
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        });
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>

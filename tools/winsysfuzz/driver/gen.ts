@@ -354,6 +354,19 @@ function valueFor(tRaw: string, name: string, depth = 0): string {
   }
   const shape = objectFromShape(t, depth);
   if (shape) return shape;
+  // spawn/exec option objects: the Windows-specific process code paths key
+  // off stdio configs, windowsHide, windowsVerbatimArguments, detached,
+  // shell and cwd - generate those shapes explicitly.
+  if (/Spawn|SpawnOptions|ExecOptions|ForkOptions|CommonSpawnOptions/i.test(t) || (/options/.test(n) && /spawn|exec|fork/i.test(t)))
+    return pick([
+      `{ windowsHide: ${V.boolean()}, windowsVerbatimArguments: ${V.boolean()} }`,
+      `{ stdio: [${pick(["\"pipe\"", "\"inherit\"", "\"ignore\"", "0", "\"ipc\""])}, ${pick(["\"pipe\"", "\"inherit\"", "\"ignore\"", "1"])}, ${pick(["\"pipe\"", "\"inherit\"", "\"ignore\"", "2", "\"ipc\""])}] }`,
+      `{ detached: ${V.boolean()}, cwd: ${V.path()} }`,
+      `{ shell: ${chance(0.5) ? V.boolean() : "\"cmd.exe\""}, windowsVerbatimArguments: ${V.boolean()} }`,
+      `{ stdio: "${pick(["pipe", "inherit", "ignore", "overlapped"])}", cwd: ${V.path()}, env: ${chance(0.5) ? "{ ...process.env, WSF_X: \"1\" }" : "{}"} }`,
+      `{ timeout: ${pick(["0", "1", "50", "-1", "2**31"])}, killSignal: ${pick(["\"SIGTERM\"", "\"SIGKILL\"", "9", "\"NOTASIGNAL\""])}, maxBuffer: ${pick(["0", "1", "1024", "-1"])} }`,
+      `{}`,
+    ]);
   if (/Options|Config|Init|Bag|Opts/.test(t)) return chance(0.5) ? `{}` : V.object();
   if (/unknown|any|\bT\b/.test(t)) return V.any();
   return V.any();

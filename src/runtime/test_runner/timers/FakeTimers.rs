@@ -273,20 +273,26 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let args = frame.arguments_as_array::<1>();
     if args.len() > 0 && !args[0].is_undefined() {
         let options_value = args[0];
-        if !options_value.is_object() {
+        // Jest legacy API: jest.useFakeTimers('modern') or jest.useFakeTimers('legacy')
+        // Both are no-ops in modern Jest (only 'modern' implementation exists).
+        // Accept and ignore string arguments for backwards compatibility.
+        if options_value.is_string() {
+            // no-op: fall through to activate with default time
+        } else if !options_value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "useFakeTimers() expects an options object"
             )));
-        }
-        if let Some(now) = options_value.get(global, "now")? {
-            if now.is_number() {
-                js_now = now.as_number();
-            } else if now.is_date() {
-                js_now = now.get_unix_timestamp();
-            } else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a number or Date"
-                )));
+        } else {
+            if let Some(now) = options_value.get(global, "now")? {
+                if now.is_number() {
+                    js_now = now.as_number();
+                } else if now.is_date() {
+                    js_now = now.get_unix_timestamp();
+                } else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'now' must be a number or Date"
+                    )));
+                }
             }
         }
     }

@@ -22,41 +22,34 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Generate root certs and capture output
+      - name: Generate root certs and metadata
         id: generate-certs
         run: |
           cd packages/bun-usockets/
-          OUTPUT=$(bun generate-root-certs.mjs -v)
-          echo "cert_output<<EOF" >> $GITHUB_ENV
-          echo "$OUTPUT" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          CERT_METADATA=$(mktemp)
+          bun generate-root-certs.mjs -v -f "$CERT_METADATA"
+          cat "$CERT_METADATA" >> "$GITHUB_ENV"
 
       - name: Check for changes and stage files
         id: check-changes
         run: |
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "Found changes, staging modified files..."
-            git config --global user.name "github-actions[bot]"
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
             
-            # Get list of modified files and add them
-            git status --porcelain | while read -r status file; do
-              # Remove leading status and whitespace
-              file=$(echo "$file" | sed 's/^.* //')
-              echo "Adding changed file: $file"
-              git add "$file"
-            done
-            
-            echo "changes=true" >> $GITHUB_OUTPUT
+            echo "changes=true" >> "$GITHUB_OUTPUT"
             
             # Store the list of changed files
             CHANGED_FILES=$(git status --porcelain)
-            echo "changed_files<<EOF" >> $GITHUB_ENV
-            echo "$CHANGED_FILES" >> $GITHUB_ENV
-            echo "EOF" >> $GITHUB_ENV
+            CHANGED_FILES_DELIMITER=$(uuidgen)
+            {
+              echo "changed_files<<$CHANGED_FILES_DELIMITER"
+              echo "$CHANGED_FILES"
+              echo "$CHANGED_FILES_DELIMITER"
+            } >> "$GITHUB_ENV"
           else
             echo "No changes detected"
-            echo "changes=false" >> $GITHUB_OUTPUT
+            echo "changes=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Pull Request
@@ -64,20 +57,21 @@ jobs:
         uses: peter-evans/create-pull-request@4e1beaa7521e8b457b572c090b25bd3db56bf1c5 # v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "update(root_certs): Update root certificates $(date +'%Y-%m-%d')"
-          title: "update(root_certs) $(date +'%Y-%m-%d')"
+          commit-message: ${{ env.COMMIT_MSG }}
+          committer: GitHub <noreply@github.com>
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          title: "crypto: update root certificates to NSS ${{ env.NEW_VERSION }}"
           body: |
-            Automated root certificates update
+            ${{ env.COMMIT_MSG }}
 
-            ${{ env.cert_output }}
+            ## Changed files
 
-            ## Changed Files:
-            ```
+            ```text
             ${{ env.changed_files }}
             ```
           branch: certs/update-root-certs
           base: main
           delete-branch: true
-          labels:
-            - "automation"
-            - "root-certs"
+          labels: |
+            automation
+            root-certs

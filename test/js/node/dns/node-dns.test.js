@@ -308,6 +308,28 @@ test("dns.lookup bad (qedjp3f4q4jgjh4d6vaf3fd2hbfhg6upt2bscrfe.com)", () => {
   return promise;
 });
 
+test.each([
+  ["default", undefined],
+  ["{ all: true }", { all: true }],
+])("dns.lookup error callback is invoked with exactly one argument (%s)", (_, options) => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const cb = function (err) {
+    try {
+      expect(arguments.length).toBe(1);
+      expect(err).toBeInstanceOf(Error);
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  };
+  if (options === undefined) {
+    dns.lookup("does-not-exist-zz.invalid", cb);
+  } else {
+    dns.lookup("does-not-exist-zz.invalid", options, cb);
+  }
+  return promise;
+});
+
 test("dns.lookup (example.com) with { all: true } #2675", () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   dns.lookup("example.com", { all: true }, (err, address, family) => {

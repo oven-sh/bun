@@ -4804,15 +4804,25 @@ impl VirtualMachine {
                 // SAFETY: `ctx.writer` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };
-                vm.print_errorlike_object(
-                    next_value,
-                    None,
-                    exception_list,
-                    formatter,
-                    writer,
-                    ctx.allow_ansi_color,
-                    ctx.allow_side_effects,
-                );
+                formatter.depth = formatter.depth.saturating_add(1);
+                if formatter.depth > formatter.max_depth {
+                    let _ = if ctx.allow_ansi_color {
+                        writer.write_all(bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", true).as_bytes())
+                    } else {
+                        writer.write_all(bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", false).as_bytes())
+                    };
+                } else {
+                    vm.print_errorlike_object(
+                        next_value,
+                        None,
+                        exception_list,
+                        formatter,
+                        writer,
+                        ctx.allow_ansi_color,
+                        ctx.allow_side_effects,
+                    );
+                }
+                formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
                 formatter: std::ptr::from_mut(formatter),
@@ -5964,7 +5974,9 @@ impl VirtualMachine {
                     let prev_format_buffer_as_text = formatter.format_buffer_as_text;
                     formatter.depth += 1;
                     formatter.format_buffer_as_text = true;
-                    formatter.max_depth = 1;
+                    // One level of this property's contents, relative to where
+                    // we are now (cause-chain recursion bumps `depth`).
+                    formatter.max_depth = formatter.depth;
                     formatter.quote_strings = true;
                     formatter.disable_inspect_custom = true;
                     // Hand-rolled drop guard restores the formatter state.

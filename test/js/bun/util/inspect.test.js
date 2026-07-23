@@ -846,6 +846,10 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       let e = new Error("leaf");
       for (let i = 0; i < 1000; i++) e = new Error("retry " + i, { cause: e });
       console.log(e);
+
+      let ag = new Error("leaf");
+      for (let i = 0; i < 1000; i++) ag = new AggregateError([ag], "L" + i);
+      console.log(ag);
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
@@ -877,5 +881,35 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     const full = Bun.inspect(e, { depth: Infinity });
     expect(full).toContain("error: leaf");
     expect(full).not.toContain("[Error ...]");
+  });
+
+  it("object/array properties on a cause error still expand one level", () => {
+    const inner = new Error("inner");
+    inner.info = { code: "E_FOO", detail: "bar" };
+    inner.tags = ["a", "b"];
+    const out = Bun.inspect(new Error("outer", { cause: inner }));
+    expect(out).toContain('code: "E_FOO"');
+    expect(out).toContain('detail: "bar"');
+    expect(out).toContain('"a"');
+    expect(out).toContain('"b"');
+    expect(out).not.toContain("info: [Object ...]");
+    expect(out).not.toContain("tags: [Array ...]");
+  });
+
+  it("nested AggregateError recursion truncates at max_depth", () => {
+    let e = new Error("leaf");
+    for (let i = 0; i < 10; i++) e = new AggregateError([e], "L" + i);
+    const out = Bun.inspect(e, { depth: 2 });
+    expect(out).toContain("[Error ...]");
+    expect(out).not.toContain("error: leaf");
+
+    const full = Bun.inspect(e, { depth: Infinity });
+    expect(full).toContain("error: leaf");
+
+    // Common flat case is unchanged.
+    const flat = Bun.inspect(new AggregateError([new Error("a"), new Error("b")], "agg"));
+    expect(flat).toContain("error: a");
+    expect(flat).toContain("error: b");
+    expect(flat).not.toContain("[Error ...]");
   });
 });

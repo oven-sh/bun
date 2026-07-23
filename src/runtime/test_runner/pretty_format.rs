@@ -125,6 +125,13 @@ pub struct FormatOptions {
     pub add_newline: bool,
     pub flush: bool,
     pub quote_strings: bool,
+    /// When non-zero, non-integer doubles are rounded to this many significant
+    /// figures before serialization — the same rounding as
+    /// `Number.prototype.toPrecision`, with trailing zeros trimmed — so snapshot
+    /// output stays stable across CPU architectures. 0 = use the default
+    /// shortest round-trip representation. Set from
+    /// `[test] snapshotFloatPrecision` in bunfig; must be in 1..=100.
+    pub float_significant_digits: u32,
 }
 
 impl JestPrettyFormat {
@@ -144,6 +151,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.float_significant_digits = options.float_significant_digits;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -190,6 +198,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.float_significant_digits = options.float_significant_digits;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -313,6 +322,8 @@ pub struct Formatter<'a> {
     pub global_this: &'a JSGlobalObject,
     pub indent: u32,
     pub quote_strings: bool,
+    /// Mirror of `FormatOptions::float_significant_digits`; 0 = disabled.
+    pub float_significant_digits: u32,
     pub failed: bool,
     pub estimated_line_length: usize,
     pub always_newline_scope: bool,
@@ -327,6 +338,7 @@ impl<'a> Formatter<'a> {
             global_this: global,
             indent: 0,
             quote_strings: false,
+            float_significant_digits: 0,
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
@@ -1343,8 +1355,21 @@ impl<'a> Formatter<'a> {
                     } else {
                         // WTF::dtoa drops the sign bit on -0; preserve it.
                         let mut dtoa_buf = [0u8; 124];
-                        let dtoa =
-                            bun_fmt::FormatDouble::dtoa_with_negative_zero(&mut dtoa_buf, num);
+                        // Only non-integer doubles opt into precision rounding:
+                        // integer-valued doubles (e.g. 1e21, or integers beyond
+                        // the int32 range) must keep every digit rather than be
+                        // rounded into scientific notation.
+                        let dtoa = if self.float_significant_digits != 0 && num.fract() != 0.0 {
+                            // Stable across CPU architectures; uses `toPrecision`
+                            // rounding with trailing zeros trimmed.
+                            bun_fmt::FormatDouble::to_fixed_precision_with_negative_zero(
+                                &mut dtoa_buf,
+                                num,
+                                self.float_significant_digits,
+                            )
+                        } else {
+                            bun_fmt::FormatDouble::dtoa_with_negative_zero(&mut dtoa_buf, num)
+                        };
                         self.add_for_new_line(dtoa.len());
                         writer.write_all(
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>").as_bytes(),

@@ -210,6 +210,21 @@ Same as the top-level `smol` field, but only applies to `bun test`.
 smol = true
 ```
 
+### `test.snapshotFloatPrecision`
+
+Rounds non-integer numbers to a fixed number of significant figures when serializing snapshots — the same rounding as `Number.prototype.toPrecision`, with trailing zeros trimmed. This keeps snapshots stable across CPU architectures, which can otherwise format the same floating-point result with a slightly different final digit. Accepts an integer from `1` to `100`; unset (the default) keeps the full-precision shortest round-trip representation.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+
+# round floats to 15 significant figures in snapshots
+snapshotFloatPrecision = 15
+```
+
+For example, with `snapshotFloatPrecision = 15`, `expect(Math.sin(1)).toMatchSnapshot()` serializes `0.841470984807897` instead of `0.8414709848078965`.
+
+Only non-integer numbers are rounded — integer-valued numbers (including large integers beyond the safe-integer range) keep all of their digits rather than being rounded into scientific notation. Numbers already embedded inside strings (e.g. `"rgba(200.123, 1, 1, 1)"`) are also left as-is.
+
 ### `test.coverage`
 
 Enables coverage reporting. Default `false`. Use `--coverage` to override.

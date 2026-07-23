@@ -443,6 +443,13 @@ pub struct TestOptions {
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
+
+    /// `[test] snapshotFloatPrecision`: round non-integer doubles to this many
+    /// significant figures when serializing snapshots — the same rounding as
+    /// `Number.prototype.toPrecision`, with trailing zeros trimmed — so
+    /// snapshots stay stable across CPU architectures. 0 = disabled (shortest
+    /// round-trip). Valid range 1..=100.
+    pub snapshot_float_precision: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -506,6 +513,7 @@ impl Default for TestOptions {
             shard: None,
             reporters: Reporters::default(),
             reporter_outfile: None,
+            snapshot_float_precision: 0,
         }
     }
 }

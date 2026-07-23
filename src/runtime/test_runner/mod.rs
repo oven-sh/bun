@@ -260,11 +260,19 @@ pub mod expect {
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
+            // `[test] snapshotFloatPrecision`: when set, round non-integer doubles
+            // to this many significant figures so snapshots are stable across CPU
+            // architectures. 0 (default / outside the test runner) keeps the
+            // shortest round-trip representation.
+            let float_significant_digits = super::jest::Jest::runner()
+                .map(|runner| runner.test_options.snapshot_float_precision)
+                .unwrap_or(0);
             let fmt_options = FormatOptions {
                 enable_colors: false,
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                float_significant_digits,
             };
             JestPrettyFormat::format(
                 MessageLevel::Debug,

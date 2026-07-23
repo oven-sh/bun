@@ -31,9 +31,6 @@ impl<'a> ReaderContext for StackReader<'a> {
     fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
         StackReader::read(&self, count)
     }
-    fn read_z(self) -> Result<Data, AnyMySQLError> {
-        StackReader::read_z(&self)
-    }
     fn set_offset_from_start(self, offset: usize) {
         StackReader::set_offset_from_start(&self, offset)
     }

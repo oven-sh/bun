@@ -9099,3 +9099,92 @@ registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}
     expect(await exited).not.toBe(0);
   }
 });
+
+describe("registry/token env var priority", () => {
+  // BUN_CONFIG_* takes precedence over NPM_CONFIG_*, which takes precedence
+  // over npm_config_*. An empty value falls through to the next candidate.
+  async function installAndCaptureAuth(extraEnv: Record<string, string>) {
+    const received: (string | null)[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received.push(req.headers.get("authorization"));
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\n`),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, ...extraEnv },
+    });
+    await Promise.all([stdout.text(), stderr.text(), exited]);
+    return received;
+  }
+
+  test("BUN_CONFIG_TOKEN wins over NPM_CONFIG_TOKEN and npm_config_token", async () => {
+    const received = await installAndCaptureAuth({
+      BUN_CONFIG_TOKEN: "from-bun",
+      NPM_CONFIG_TOKEN: "from-npm-upper",
+      npm_config_token: "from-npm-lower",
+    });
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[0]).toBe("Bearer from-bun");
+  });
+
+  test("NPM_CONFIG_TOKEN wins over npm_config_token when BUN_CONFIG_TOKEN is empty", async () => {
+    const received = await installAndCaptureAuth({
+      BUN_CONFIG_TOKEN: "",
+      NPM_CONFIG_TOKEN: "from-npm-upper",
+      npm_config_token: "from-npm-lower",
+    });
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[0]).toBe("Bearer from-npm-upper");
+  });
+
+  test("BUN_CONFIG_REGISTRY wins over NPM_CONFIG_REGISTRY", async () => {
+    const hits = { preferred: 0, other: 0 };
+    await using preferred = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.preferred++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+    await using other = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.other++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), `[install]\ncache = false\n`),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_CONFIG_REGISTRY: `http://localhost:${preferred.port}/`,
+        NPM_CONFIG_REGISTRY: `http://localhost:${other.port}/`,
+        npm_config_registry: `http://localhost:${other.port}/`,
+      },
+    });
+    await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(hits).toEqual({ preferred: 1, other: 0 });
+  });
+});

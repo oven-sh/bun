@@ -576,43 +576,38 @@ impl Options {
         };
 
         // technically, npm_config is case in-sensitive
-        // load_registry:
         {
             const REGISTRY_KEYS: [&[u8]; 3] = [
                 b"BUN_CONFIG_REGISTRY",
                 b"NPM_CONFIG_REGISTRY",
                 b"npm_config_registry",
             ];
-            let mut did_set = false;
 
-            // was `inline for`; homogeneous elements → plain for.
             for registry_key in REGISTRY_KEYS {
-                if !did_set {
-                    if let Some(registry_) = env.get(registry_key) {
-                        if !registry_.is_empty()
-                            && (registry_.starts_with(b"https://")
-                                || registry_.starts_with(b"http://"))
+                if let Some(registry_) = env.get(registry_key) {
+                    if !registry_.is_empty()
+                        && (registry_.starts_with(b"https://")
+                            || registry_.starts_with(b"http://"))
+                    {
+                        let prev_scope = self.scope.clone();
+                        let prev_url = prev_scope.url.url();
+                        let new_url = bun_url::URL::parse(registry_);
+                        let token = if bun_core::without_trailing_slash(new_url.host)
+                            == bun_core::without_trailing_slash(prev_url.host)
+                            && (new_url.is_https() || !prev_url.is_https())
                         {
-                            let prev_scope = self.scope.clone();
-                            let prev_url = prev_scope.url.url();
-                            let new_url = bun_url::URL::parse(registry_);
-                            let token = if bun_core::without_trailing_slash(new_url.host)
-                                == bun_core::without_trailing_slash(prev_url.host)
-                                && (new_url.is_https() || !prev_url.is_https())
-                            {
-                                prev_scope.token
-                            } else {
-                                Box::default()
-                            };
-                            // Default (empty strings) is the zero value for Api::NpmRegistry.
-                            let api_registry = Api::NpmRegistry {
-                                url: registry_.into(),
-                                token,
-                                ..Default::default()
-                            };
-                            self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                            did_set = true;
-                        }
+                            prev_scope.token
+                        } else {
+                            Box::default()
+                        };
+                        // Default (empty strings) is the zero value for Api::NpmRegistry.
+                        let api_registry = Api::NpmRegistry {
+                            url: registry_.into(),
+                            token,
+                            ..Default::default()
+                        };
+                        self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                        break;
                     }
                 }
             }
@@ -624,18 +619,12 @@ impl Options {
                 b"NPM_CONFIG_TOKEN",
                 b"npm_config_token",
             ];
-            let mut did_set = false;
 
-            // was `inline for`; homogeneous elements → plain for.
-            for registry_key in TOKEN_KEYS {
-                if !did_set {
-                    if let Some(registry_) = env.get(registry_key) {
-                        if !registry_.is_empty() {
-                            self.scope.token = registry_.into();
-                            did_set = true;
-                            // stage1 bug: break inside inline is broken
-                            // break :load_registry;
-                        }
+            for token_key in TOKEN_KEYS {
+                if let Some(token) = env.get(token_key) {
+                    if !token.is_empty() {
+                        self.scope.token = token.into();
+                        break;
                     }
                 }
             }

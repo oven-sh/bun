@@ -59,12 +59,3 @@ impl Default for XxHash64Streaming {
         Self::new(0)
     }
 }
-
-pub struct XxHash3;
-
-impl XxHash3 {
-    #[inline]
-    pub fn hash(seed: u64, input: &[u8]) -> u64 {
-        bun_highway::xxhash3_64(seed, input)
-    }
-}

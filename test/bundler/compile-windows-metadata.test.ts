@@ -1,28 +1,44 @@
 import { describe, expect, test } from "bun:test";
-import { execSync } from "child_process";
-import { promises as fs } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// Helper to ensure executable cleanup
-function cleanup(outfile: string) {
-  return {
-    [Symbol.asyncDispose]: async () => {
-      try {
-        await fs.rm(outfile, { force: true });
-      } catch {}
-    },
-  };
-}
-
-// Drain stdout/stderr and assert the build succeeded. These tests run
-// concurrently and spawn many `bun build --compile` processes from the same
-// cwd; asserting on the combined object means a flake shows the real stderr
-// instead of just "Expected: 0, Received: 1".
+// Drain stdout/stderr and assert the build succeeded. Asserting on the combined
+// object means a flake shows the real stderr instead of just "Expected: 0, Received: 1".
 async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return { stdout, stderr, exitCode };
+}
+
+// Read all VersionInfo fields in a single PowerShell invocation (spawning
+// powershell is ~0.5-1s on CI). `-NoProfile` avoids loading profile scripts.
+async function readVersionInfo(outfile: string) {
+  const fields = [
+    "ProductName",
+    "CompanyName",
+    "FileDescription",
+    "LegalCopyright",
+    "ProductVersion",
+    "FileVersion",
+    "OriginalFilename",
+  ];
+  await using proc = Bun.spawn({
+    cmd: [
+      "powershell",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `(Get-Item -LiteralPath '${outfile.replaceAll("'", "''")}').VersionInfo | ` +
+        `Select-Object ${fields.join(",")} | ConvertTo-Json -Compress`,
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const info = JSON.parse(stdout) as Record<string, string | null>;
+  for (const k of fields) info[k] ??= "";
+  return info as Record<string, string>;
 }
 
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
@@ -33,7 +49,6 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       });
 
       const outfile = join(String(dir), "app-with-metadata.exe");
-      await using _cleanup = cleanup(outfile);
 
       await using proc = Bun.spawn({
         cmd: [
@@ -61,27 +76,17 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      // Verify executable was created
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
-
-      // Verify metadata using PowerShell
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("My Application");
-      expect(getMetadata("CompanyName")).toBe("Test Company Inc");
-      expect(getMetadata("FileDescription")).toBe("A test application with metadata");
-      expect(getMetadata("LegalCopyright")).toBe("Copyright © 2024 Test Company Inc");
-      expect(getMetadata("ProductVersion")).toBe("1.2.3.4");
-      expect(getMetadata("FileVersion")).toBe("1.2.3.4");
+      // OriginalFilename must be cleared (not "bun.exe") even with every
+      // metadata field set; this is the "Original Filename removal" coverage.
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "My Application",
+        CompanyName: "Test Company Inc",
+        FileDescription: "A test application with metadata",
+        LegalCopyright: "Copyright © 2024 Test Company Inc",
+        ProductVersion: "1.2.3.4",
+        FileVersion: "1.2.3.4",
+        OriginalFilename: "",
+      });
     });
 
     test("partial metadata flags", async () => {
@@ -90,7 +95,6 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       });
 
       const outfile = join(String(dir), "app-partial.exe");
-      await using _cleanup = cleanup(outfile);
 
       await using proc = Bun.spawn({
         cmd: [
@@ -112,19 +116,13 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("Simple App");
-      expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
-      expect(getMetadata("FileVersion")).toBe("2.0.0.0");
+      // OriginalFilename must also be cleared with only a subset of flags.
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "Simple App",
+        ProductVersion: "2.0.0.0",
+        FileVersion: "2.0.0.0",
+        OriginalFilename: "",
+      });
     });
 
     test("windows flags without --compile should error", async () => {
@@ -139,10 +137,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).not.toBe(0);
       expect(stderr).toContain("--windows-title requires --compile");
+      expect(exitCode).not.toBe(0);
     });
 
     test("windows flags with non-Windows target should error", async () => {
@@ -166,11 +164,11 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).not.toBe(0);
       // Windows flags require a Windows compile target
       expect(stderr.toLowerCase()).toContain("windows compile target");
+      expect(exitCode).not.toBe(0);
     });
   });
 
@@ -200,26 +198,14 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(result.outputs.length).toBe(1);
 
       const outfile = result.outputs[0].path;
-      await using _cleanup = cleanup(outfile);
-
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
-
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("API App");
-      expect(getMetadata("CompanyName")).toBe("API Company");
-      expect(getMetadata("FileDescription")).toBe("Built with Bun.build API");
-      expect(getMetadata("LegalCopyright")).toBe("© 2024 API Company");
-      expect(getMetadata("ProductVersion")).toBe("3.0.0.0");
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "API App",
+        CompanyName: "API Company",
+        FileDescription: "Built with Bun.build API",
+        LegalCopyright: "© 2024 API Company",
+        ProductVersion: "3.0.0.0",
+        OriginalFilename: "",
+      });
     });
 
     test("partial metadata via Bun.build()", async () => {
@@ -243,20 +229,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(result.success).toBe(true);
 
       const outfile = result.outputs[0].path;
-      await using _cleanup = cleanup(outfile);
-
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("Partial App");
-      expect(getMetadata("ProductVersion")).toBe("1.0.0.0");
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "Partial App",
+        ProductVersion: "1.0.0.0",
+      });
     });
 
     test("relative outdir with compile", async () => {
@@ -320,11 +296,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const version = execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.ProductVersion"`, {
-        encoding: "utf8",
-      }).trim();
-
-      expect(version).toBe(expected);
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductVersion: expected,
+        FileVersion: expected,
+      });
     });
 
     test.each([
@@ -354,108 +329,9 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("InvalidVersionFormat");
       expect(exitCode).not.toBe(0);
-    });
-  });
-
-  describe("Original Filename removal", () => {
-    test("Original Filename field should be empty", async () => {
-      using dir = tempDir("windows-original-filename", {
-        "app.js": `console.log("Original filename test");`,
-      });
-
-      const outfile = join(String(dir), "test-original.exe");
-      await using _cleanup = cleanup(outfile);
-
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          join(String(dir), "app.js"),
-          "--outfile",
-          outfile,
-          "--windows-title",
-          "Test Application",
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      await expectBuildOk(proc);
-
-      // Check that Original Filename is empty (not "bun.exe")
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      const originalFilename = getMetadata("OriginalFilename");
-      expect(originalFilename).toBe("");
-      expect(originalFilename).not.toBe("bun.exe");
-    });
-
-    test("Original Filename should be empty even with all metadata set", async () => {
-      using dir = tempDir("windows-original-filename-full", {
-        "app.js": `console.log("Full metadata test");`,
-      });
-
-      const outfile = join(String(dir), "full-metadata.exe");
-      await using _cleanup = cleanup(outfile);
-
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          join(String(dir), "app.js"),
-          "--outfile",
-          outfile,
-          "--windows-title",
-          "Complete App",
-          "--windows-publisher",
-          "Test Publisher",
-          "--windows-version",
-          "5.4.3.2",
-          "--windows-description",
-          "Application with full metadata",
-          "--windows-copyright",
-          "© 2024 Test",
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      await expectBuildOk(proc);
-
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      // Verify all custom metadata is set correctly
-      expect(getMetadata("ProductName")).toBe("Complete App");
-      expect(getMetadata("CompanyName")).toBe("Test Publisher");
-      expect(getMetadata("FileDescription")).toBe("Application with full metadata");
-      expect(getMetadata("ProductVersion")).toBe("5.4.3.2");
-
-      // But Original Filename should still be empty
-      const originalFilename = getMetadata("OriginalFilename");
-      expect(originalFilename).toBe("");
-      expect(originalFilename).not.toBe("bun.exe");
     });
   });
 
@@ -488,8 +364,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: longString,
+        FileDescription: longString,
+      });
     });
 
     test("special characters in metadata", async () => {
@@ -523,21 +401,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
-
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toContain("App");
-      expect(getMetadata("CompanyName")).toContain("Company & Co.");
+      const info = await readVersionInfo(outfile);
+      expect(info.ProductName).toContain("App");
+      expect(info.CompanyName).toBe("Company & Co.");
+      expect(info.LegalCopyright).toContain("<Company>");
     });
 
     test("unicode in metadata", async () => {
@@ -571,8 +438,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "アプリケーション",
+        CompanyName: "会社名",
+      });
     });
 
     test("empty strings in metadata", async () => {
@@ -581,7 +450,6 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       });
 
       const outfile = join(String(dir), "empty.exe");
-      await using _cleanup = cleanup(outfile);
 
       // Empty strings should be treated as not provided
       await using proc = Bun.spawn({
@@ -638,21 +506,10 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       await expectBuildOk(proc);
 
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
-
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("Hidden Console App");
-      expect(getMetadata("ProductVersion")).toBe("1.0.0.0");
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "Hidden Console App",
+        ProductVersion: "1.0.0.0",
+      });
     });
 
     test("metadata with --windows-icon", async () => {
@@ -709,26 +566,12 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await expectBuildOk(proc);
 
-      // Icon might fail but metadata should still work
-      const exists = await Bun.file(outfile).exists();
-      expect(exists).toBe(true);
-
-      const getMetadata = (field: string) => {
-        try {
-          return execSync(`powershell -Command "(Get-ItemProperty '${outfile}').VersionInfo.${field}"`, {
-            encoding: "utf8",
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-
-      expect(getMetadata("ProductName")).toBe("App with Icon");
-      expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
+      expect(await readVersionInfo(outfile)).toMatchObject({
+        ProductName: "App with Icon",
+        ProductVersion: "2.0.0.0",
+      });
     });
   });
 });
-
-// Test for non-Windows platforms

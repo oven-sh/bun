@@ -6,7 +6,7 @@
 // POSIX only: Windows already routes JS->OS through SetEnvironmentVariableW
 // and has no libc `environ` contract to test against via bun:ffi.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, libcPathForDlopen } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, libcPathForDlopen } from "harness";
 
 const canDlopenLibc = isLinux || isMacOS;
 
@@ -157,8 +157,10 @@ describe.skipIf(!canDlopenLibc)("process.env <-> libc environ on the main thread
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { deltaMB } = JSON.parse(stdout);
-    const threshold = isASAN || isDebug ? 40 : 20;
-    expect(deltaMB).toBeLessThan(threshold);
+    // A leak is 20000 x 4KB StringImpls = 80MB+ regardless of build type;
+    // the fixed path's transient allocation overhead is ~20-25MB on release
+    // (mimalloc retains freed pages) and similar on debug/ASAN.
+    expect(deltaMB).toBeLessThan(40);
     expect(exitCode).toBe(0);
   });
 });

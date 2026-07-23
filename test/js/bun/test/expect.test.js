@@ -6,6 +6,8 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect.test.js`
  */
 
+import assert from "node:assert";
+import { isDeepStrictEqual } from "node:util";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -677,7 +679,100 @@ describe("expect()", () => {
         expect(p1).toStrictEqual(p2);
       }
     });
+
+    test("toStrictEqual treats Proxy as transparent", () => {
+      // https://github.com/oven-sh/bun/issues/9103
+      {
+        const t = { a: 1 };
+        expect(new Proxy(t, {})).toStrictEqual(t);
+        expect(t).toStrictEqual(new Proxy(t, {}));
+        expect(new Proxy(t, {})).toStrictEqual({ a: 1 });
+        expect({ a: 1 }).toStrictEqual(new Proxy(t, {}));
+        expect(Bun.deepEquals(new Proxy(t, {}), t, true)).toBe(true);
+        expect(Bun.deepEquals(t, new Proxy(t, {}), true)).toBe(true);
+
+        expect(new Proxy({ a: 1 }, {})).not.toStrictEqual({ a: 2 });
+        expect(new Proxy({ a: 1 }, {})).not.toStrictEqual({ a: 1, b: 2 });
+        expect(new Proxy({ a: 1, b: 2 }, {})).not.toStrictEqual({ a: 1 });
+      }
+      {
+        // arrays
+        const arr = [1, 2, 3];
+        expect(new Proxy(arr, {})).toStrictEqual([1, 2, 3]);
+        expect([1, 2, 3]).toStrictEqual(new Proxy(arr, {}));
+        expect(new Proxy(arr, {})).not.toStrictEqual([1, 2, 4]);
+        expect(new Proxy(arr, {})).not.toStrictEqual([1, 2]);
+        expect(new Proxy(arr, {})).not.toStrictEqual({ 0: 1, 1: 2, 2: 3 });
+
+        // A trailing hole changes length but not the own-enumerable property
+        // set, and a Proxy skips the array fast path that compares lengths.
+        const sparse = [1, 2, 3];
+        sparse.length = 4;
+        expect(new Proxy([1, 2, 3], {})).not.toStrictEqual(sparse);
+        expect(new Proxy(sparse, {})).not.toStrictEqual([1, 2, 3]);
+        expect(new Proxy([1, 2, 3], {})).not.toStrictEqual(new Proxy(sparse, {}));
+        expect(new Proxy(sparse, {})).toStrictEqual(sparse);
+      }
+      {
+        // class instances: proxy over instance equals another instance,
+        // but not a plain object with the same shape
+        class Foo {
+          constructor() {
+            this.a = 1;
+          }
+        }
+        const f = new Foo();
+        expect(new Proxy(f, {})).toStrictEqual(new Foo());
+        expect(new Foo()).toStrictEqual(new Proxy(f, {}));
+        expect(new Proxy(f, {})).not.toStrictEqual({ a: 1 });
+        expect({ a: 1 }).not.toStrictEqual(new Proxy(f, {}));
+
+        // two proxies over different-class targets must not pass the strict type gate
+        expect(new Proxy({ a: 1 }, {})).not.toStrictEqual(new Proxy(new Foo(), {}));
+        expect(new Proxy(new Foo(), {})).not.toStrictEqual(new Proxy({ a: 1 }, {}));
+        expect(Bun.deepEquals(new Proxy({ a: 1 }, {}), new Proxy(f, {}), true)).toBe(false);
+      }
+      {
+        // nested
+        expect({ x: new Proxy({ a: 1 }, {}) }).toStrictEqual({ x: { a: 1 } });
+        expect({ x: { a: 1 } }).toStrictEqual({ x: new Proxy({ a: 1 }, {}) });
+      }
+      {
+        // proxy of proxy
+        const t = { a: 1 };
+        expect(new Proxy(new Proxy(t, {}), {})).toStrictEqual({ a: 1 });
+      }
+      {
+        // node:util and node:assert route through the same path
+        const t = { a: 1 };
+        expect(isDeepStrictEqual(new Proxy(t, {}), t)).toBe(true);
+        expect(isDeepStrictEqual(new Proxy(t, {}), { a: 2 })).toBe(false);
+        assert.deepStrictEqual(new Proxy(t, {}), { a: 1 });
+      }
+      {
+        // get trap is honored for values
+        const p = new Proxy({ a: 1 }, { get: () => 99 });
+        expect(p).not.toStrictEqual({ a: 1 });
+        expect(p).toStrictEqual(new Proxy({ a: 0 }, { get: () => 99 }));
+      }
+      {
+        // revoked proxy comparison should throw, not crash
+        const { proxy, revoke } = Proxy.revocable({ a: 1 }, {});
+        revoke();
+        expect(() => Bun.deepEquals(proxy, { a: 1 }, true)).toThrow(TypeError);
+      }
+    });
   }
+
+  test("toMatchObject treats a Proxy over an array as an array", () => {
+    // https://github.com/oven-sh/bun/issues/9103
+    expect(new Proxy([{ a: 1 }], {})).toMatchObject([{ a: 1 }]);
+    expect([{ a: 1 }]).toMatchObject(new Proxy([{ a: 1 }], {}));
+    expect(new Proxy([1, 2, 3], {})).toMatchObject([1, 2, 3]);
+    expect(new Proxy([1, 2], {})).not.toMatchObject([1, 2, 3]);
+    expect(new Proxy([1, 2, 3], {})).not.toMatchObject([1, 2]);
+    expect({ x: new Proxy([{ a: 1 }], {}) }).toMatchObject({ x: [{ a: 1 }] });
+  });
 
   test("deepEquals works with sets/maps/dates/strings", () => {
     const f = Symbol.for("foo");
@@ -1172,28 +1267,32 @@ describe("expect()", () => {
   // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
   // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
+    // https://github.com/oven-sh/bun/issues/14250. Distinct array keys take the
+    // JSSetIterator/JSMapIterator linear fallback (quadratic in N); 20 x 500
+    // exercises that fallback thousands of times inside the debug+ASAN budget.
+    const N = 20;
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < N; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];
       arr4[i] = [i, [i]];
     }
 
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 500; i++) {
       let outerSet = new Set(arr1);
       let innerSet = new Set(arr2);
-      Bun.deepEquals(outerSet, innerSet);
+      expect(Bun.deepEquals(outerSet, innerSet)).toBe(true);
     }
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 250; i++) {
       let outerMap = new Map(arr3);
       let innerMap = new Map(arr4);
-      Bun.deepEquals(outerMap, innerMap);
+      expect(Bun.deepEquals(outerMap, innerMap)).toBe(true);
     }
   }, 480_000);
 

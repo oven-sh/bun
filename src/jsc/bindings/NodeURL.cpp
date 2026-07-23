@@ -59,11 +59,79 @@ static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& i
     return String(std::span { buffer.begin(), static_cast<size_t>(length) });
 }
 
+// Unicode 16.0 revised the UTS #46 IdnaMappingTable: U+180E MONGOLIAN VOWEL
+// SEPARATOR and the deprecated format characters U+206A..U+206F changed from
+// disallowed to ignored, U+04C0 and U+2183 gained lowercase mappings, and
+// five CJK compatibility ideographs got their corrected (non-NFC) mappings.
+// Node v26 follows Unicode 16 through ada::idna (the ICU path was removed in
+// nodejs/node#55156), while the ICU bundled with WebKit (75.1, Unicode 15.1
+// data) predates all of these. Apply the delta before any IDNA processing so
+// every node:url surface matches node (WPT url/resources/toascii.json cases
+// 66/74/81/82/83 pin this).
+static String applyUnicode16IDNADelta(const String& input)
+{
+    if (input.is8Bit())
+        return input;
+
+    StringView view { input };
+    bool needsDelta = false;
+    for (size_t i = 0; i < view.length(); i++) {
+        char16_t u = view[i];
+        // 0xD87E is the shared lead surrogate of the five CJK sources.
+        if (u == 0x04C0 || u == 0x180E || (u >= 0x206A && u <= 0x206F) || u == 0x2183 || u == 0xD87E) {
+            needsDelta = true;
+            break;
+        }
+    }
+    if (!needsDelta)
+        return input;
+
+    StringBuilder builder;
+    for (char32_t codePoint : view.codePoints()) {
+        switch (codePoint) {
+        case 0x180E:
+        case 0x206A:
+        case 0x206B:
+        case 0x206C:
+        case 0x206D:
+        case 0x206E:
+        case 0x206F:
+            break; // disallowed -> ignored
+        case 0x04C0:
+            builder.append(static_cast<char32_t>(0x04CF));
+            break;
+        case 0x2183:
+            builder.append(static_cast<char32_t>(0x2184));
+            break;
+        case 0x2F868:
+            builder.append(static_cast<char32_t>(0x36FC));
+            break;
+        case 0x2F874:
+            builder.append(static_cast<char32_t>(0x5F33));
+            break;
+        case 0x2F91F:
+            builder.append(static_cast<char32_t>(0x243AB));
+            break;
+        case 0x2F95F:
+            builder.append(static_cast<char32_t>(0x7AEE));
+            break;
+        case 0x2F9BF:
+            builder.append(static_cast<char32_t>(0x45D7));
+            break;
+        default:
+            builder.append(codePoint);
+            break;
+        }
+    }
+    return builder.toString();
+}
+
 // Port of Node's icu-based ToASCII (removed in nodejs/node#55156):
 // https://github.com/nodejs/node/blob/9f5000e0f2a2^/src/node_i18n.cc — filter
 // the CheckHyphens/VerifyDnsLength error classes, fail otherwise unless lenient.
-static String icuToASCII(const String& input, IDNAMode mode)
+static String icuToASCII(const String& rawInput, IDNAMode mode)
 {
+    auto input = applyUnicode16IDNADelta(rawInput);
     // Fast path: an all-ASCII domain with no punycode labels only needs
     // lowercasing (hyphen and label-length errors are filtered anyway).
     if (input.containsOnlyASCII()) {
@@ -92,8 +160,9 @@ static String icuToASCII(const String& input, IDNAMode mode)
 
 // Port of Node's icu-based ToUnicode (removed in nodejs/node#55156): UTS #46
 // ToUnicode always produces output, so info.errors is deliberately ignored.
-static String icuToUnicode(const String& input)
+static String icuToUnicode(const String& rawInput)
 {
+    auto input = applyUnicode16IDNADelta(rawInput);
     UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
     return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
@@ -112,8 +181,11 @@ bool hasValidPunycodeHost(WTF::StringView host)
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input
 // through a WHATWG URL host parse (ada's url.set_hostname on a "ws://x"
 // base). Returns a null String when host parsing fails.
-static String parseDomainAsHost(const String& domain)
+static String parseDomainAsHost(const String& rawDomain)
 {
+    // WebKit's URLParser shares the bundled ICU, so the same delta is
+    // needed before the host parse (see applyUnicode16IDNADelta).
+    String domain = applyUnicode16IDNADelta(rawDomain);
     // The hostname setter's basic-URL parse stops at the first path, query,
     // fragment, or backslash (special scheme) terminator.
     StringView view { domain };

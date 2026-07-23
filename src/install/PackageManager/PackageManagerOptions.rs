@@ -522,6 +522,13 @@ impl Options {
                 }
             }
 
+            if config.dry_run.unwrap_or(false) {
+                self.do_.set(Do::INSTALL_PACKAGES, false);
+                self.dry_run = true;
+                self.do_.set(Do::WRITE_PACKAGE_JSON, false);
+                self.do_.set(Do::SAVE_LOCKFILE, false);
+            }
+
             if let Some(save_text_lockfile) = config.save_text_lockfile {
                 self.save_text_lockfile = Some(save_text_lockfile);
             }

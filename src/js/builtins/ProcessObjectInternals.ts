@@ -530,11 +530,17 @@ export function windowsEnv(
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      const isNewKey = !(k in internalEnv) && !envMapList.includes(p);
+      // The define can throw (JSProcessEnvMap rejects partial data
+      // descriptors), so it runs before the bookkeeping: a rejected define
+      // must not leave a phantom key in envMapList, and the OS env var is
+      // synced to the value the define actually installed.
+      const r = $Object.$defineProperty(internalEnv, k, attributes);
+      if (isNewKey) {
         envMapList.push(p);
       }
       editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      return r;
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {

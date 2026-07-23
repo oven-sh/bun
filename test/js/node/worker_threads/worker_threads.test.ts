@@ -473,6 +473,30 @@ describe("execArgv option", async () => {
     }
   });
 
+  it("chains boolean short flags like bun's CLI parser", async () => {
+    // bun_clap parses -br<path> as -b then -r<path>, so the round-tripped
+    // token must chain the same way and still honor the -r preload.
+    using dir = tempDir("worker-execargv-chain", { "preload-c.js": "globalThis.__chained = 'C';" });
+    const w = new Worker("require('worker_threads').parentPort.postMessage(globalThis.__chained);", {
+      eval: true,
+      execArgv: [`-br${join(String(dir), "preload-c.js")}`],
+    });
+    const [got] = await once(w, "message");
+    expect(got).toBe("C");
+    // An unknown chained short, and `=` on a non-value short, invalidate the
+    // whole token, as in bun_clap.
+    for (const bad of ["-bz", "-b=x"]) {
+      let err: any;
+      try {
+        new Worker("1", { eval: true, execArgv: [bad] });
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+      expect(err?.message).toBe(`Initiated Worker with invalid execArgv flags: ${bad}`);
+    }
+  });
+
   it("--require in execArgv runs before the worker entry", async () => {
     using dir = tempDir("worker-execargv-require", { "preload-a.js": "console.log('A');" });
     const w = new Worker("console.log('B');", {

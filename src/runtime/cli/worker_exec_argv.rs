@@ -242,22 +242,13 @@ fn normalized(name: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// Split a token into (name, value): `--x=v` → (`--x`, `Some(v)`).
-/// A short flag may glue its value with or without `=` (`-r./a.js`,
-/// `-r=./a.js` → (`-r`, `./a.js`)), matching `bun_clap`'s short-flag
-/// parsing — `create_exec_argv` pushes such tokens verbatim into
-/// `process.execArgv`, so the round-trip must split them the same way.
+/// Split a long token into (name, value): `--x=v` → (`--x`, `Some(v)`).
+/// Short tokens are parsed by the chaining loop in `scan_exec_argv`.
 fn split_token(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
     if tok.starts_with(b"--") {
         if let Some(pos) = tok.iter().position(|&b| b == b'=') {
             return (&tok[..pos], Some(&tok[pos + 1..]));
         }
-        return (tok, None);
-    }
-    if tok.len() > 2 && tok.starts_with(b"-") {
-        let rest = &tok[2..];
-        let rest = if rest[0] == b'=' { &rest[1..] } else { rest };
-        return (&tok[..2], Some(rest));
     }
     (tok, None)
 }
@@ -285,6 +276,29 @@ impl ScanOutcome {
     }
 }
 
+/// Record one accepted flag's honored per-worker effect (if any).
+fn record_honored(out: &mut ScanOutcome, saw_no_addons: &mut bool, key: &[u8], value: Option<Vec<u8>>) {
+    match key {
+        b"--no-addons" => *saw_no_addons = true,
+        b"--use-system-ca" => out.honored.use_system_ca = Some(true),
+        b"--no-use-system-ca" => out.honored.use_system_ca = Some(false),
+        b"--expose-gc" => out.honored.expose_gc = true,
+        b"--cpu-prof" => out.honored.cpu_prof = true,
+        b"--cpu-prof-interval" => {
+            out.honored.cpu_prof_interval = value
+                .as_deref()
+                .and_then(|v| std::str::from_utf8(v).ok())
+                .and_then(|s| s.parse().ok());
+        }
+        b"--require" | b"--preload" | b"-r" | b"--import" => {
+            if let Some(v) = value {
+                out.honored.preloads.push(v.into_boxed_slice());
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Scan an execArgv token list with node's worker rules: stop at `--`/`-`/the
 /// first positional; classify each flag; collect the honored per-worker
 /// options along the way.
@@ -298,6 +312,69 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
         i += 1;
         if tok == b"--" || tok == b"-" || !tok.starts_with(b"-") {
             break;
+        }
+        if tok[1] != b'-' {
+            // Short-flag token: mirror `bun_clap::streaming::chainging` —
+            // each char is a short flag; `Values::None` chains to the next
+            // char; a value-taking short consumes the glued remainder (with
+            // or without `=`) or the next token; an optional-value short
+            // drops any glued remainder; an unknown char or a `=` on a
+            // non-value short invalidates the whole token.
+            let mut j = 1usize;
+            while j < tok.len() {
+                let short = [b'-', tok[j]];
+                let Some(spec) = map.get(&short[..]) else {
+                    out.invalid.push(tok.to_vec());
+                    break;
+                };
+                let next = j + 1;
+                let next_is_eql = next < tok.len() && tok[next] == b'=';
+                if next_is_eql && spec.value == ValueMode::None {
+                    out.invalid.push(tok.to_vec());
+                    break;
+                }
+                if spec.policy == Policy::Reject {
+                    out.invalid.push(short.to_vec());
+                    match spec.value {
+                        ValueMode::None => {
+                            j = next;
+                            continue;
+                        }
+                        // The rejected flag still owns its value (glued, or
+                        // the next token by arity).
+                        ValueMode::Required if next >= tok.len() && i < tokens.len() => i += 1,
+                        _ => {}
+                    }
+                    break;
+                }
+                let value: Option<Vec<u8>> = match spec.value {
+                    ValueMode::None | ValueMode::Optional => None,
+                    ValueMode::Required => {
+                        if next >= tok.len() {
+                            if i < tokens.len() {
+                                let v = tokens[i].as_ref().to_vec();
+                                i += 1;
+                                Some(v)
+                            } else {
+                                let mut err = short.to_vec();
+                                err.extend_from_slice(b" requires an argument");
+                                out.errors.push(err);
+                                break;
+                            }
+                        } else if next_is_eql {
+                            Some(tok[next + 1..].to_vec())
+                        } else {
+                            Some(tok[next..].to_vec())
+                        }
+                    }
+                };
+                record_honored(&mut out, &mut saw_no_addons, &short, value);
+                if spec.value != ValueMode::None {
+                    break;
+                }
+                j = next;
+            }
+            continue;
         }
         let (name, eq_value) = split_token(tok);
         let key = normalized(name);
@@ -333,26 +410,7 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
             },
             _ => eq_value.map(<[u8]>::to_vec),
         };
-        // ── honored per-worker options ──
-        match &key[..] {
-            b"--no-addons" => saw_no_addons = true,
-            b"--use-system-ca" => out.honored.use_system_ca = Some(true),
-            b"--no-use-system-ca" => out.honored.use_system_ca = Some(false),
-            b"--expose-gc" => out.honored.expose_gc = true,
-            b"--cpu-prof" => out.honored.cpu_prof = true,
-            b"--cpu-prof-interval" => {
-                out.honored.cpu_prof_interval = value
-                    .as_deref()
-                    .and_then(|v| std::str::from_utf8(v).ok())
-                    .and_then(|s| s.parse().ok());
-            }
-            b"--require" | b"--preload" | b"-r" | b"--import" => {
-                if let Some(v) = value {
-                    out.honored.preloads.push(v.into_boxed_slice());
-                }
-            }
-            _ => {}
-        }
+        record_honored(&mut out, &mut saw_no_addons, &key, value);
     }
     // An explicit execArgv resets to fresh defaults (node_worker.cc), so
     // allow_addons is always set: `--no-addons` wins, else the default true.

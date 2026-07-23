@@ -6,6 +6,28 @@ import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
+it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom key", () => {
+  const key = "BUN_TEST_PHANTOM_DEFINE";
+  expect(key in process.env).toBe(false);
+  // Partial data descriptors are rejected (ERR_INVALID_OBJECT_DEFINE_PROPERTY);
+  // the windowsEnv proxy must not record the key before the define runs.
+  expect(() => Object.defineProperty(process.env, key, { value: "42" })).toThrow();
+  expect(Reflect.ownKeys(process.env)).not.toContain(key);
+  expect(Bun.inspect(process.env)).not.toContain(key);
+  try {
+    Object.defineProperty(process.env, key, {
+      value: "42",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(process.env[key]).toBe("42");
+    expect(Reflect.ownKeys(process.env)).toContain(key);
+  } finally {
+    delete process.env[key];
+  }
+});
+
 /**
  * Helper function to run inline fixture code and return stdout and exit code
  */

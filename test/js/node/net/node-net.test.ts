@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import dgram from "node:dgram";
 import { once } from "node:events";
 import fs from "node:fs";
-import os from "node:os";
 import {
   BlockList,
   connect,
@@ -19,6 +18,7 @@ import {
   Socket,
   Stream,
 } from "node:net";
+import os from "node:os";
 import { join } from "node:path";
 
 const socket_domain = tmpdirSync();

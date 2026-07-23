@@ -377,8 +377,12 @@ test("process.dlopen inside a resolver auto-install frame does not trip CURRENT_
   using dir = tempDir("crash-handler-dlopen-nested-action", {
     "package.json": JSON.stringify({ name: "box", version: "0.0.0" }),
     "index.ts": `
+      const { crash_handler } = require("bun:internal-for-testing");
       Promise.resolve().then(() => {
+        const before = crash_handler.getCurrentAction();
         try { process.dlopen({ exports: {} }, "/nonexistent-addon.node"); } catch {}
+        const after = crash_handler.getCurrentAction();
+        console.log(JSON.stringify({ before, after }));
       });
       try {
         import.meta.resolve("some-package-that-is-not-installed-xyz", import.meta.url);
@@ -404,6 +408,13 @@ test("process.dlopen inside a resolver auto-install frame does not trip CURRENT_
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("survived");
+  const lines = stdout.trim().split("\n");
+  expect(lines).toHaveLength(2);
+  // The microtask runs inside the resolver's auto-install tick: it must observe
+  // Action::Resolver both before the nested dlopen installs Action::Dlopen and
+  // after the dlopen clear restores it. `after` being undefined would mean the
+  // clear path reverted to `set(None)` and clobbered the enclosing action.
+  expect(JSON.parse(lines[0])).toEqual({ before: "resolver", after: "resolver" });
+  expect(lines[1]).toBe("survived");
   expect(exitCode).toBe(0);
 });

@@ -500,6 +500,7 @@ async function runOneFile(
     env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
     stdout: "pipe",
     stderr: "pipe",
+    signal: opts.signal,
   });
   state.childProc = proc;
   state.fileNode = fileNode;
@@ -514,107 +515,114 @@ async function runOneFile(
   }
   const drainStderr = drainStderrText();
 
-  const stdout = await new Response(proc.stdout).text();
-  for (const line of stdout.split("\n")) {
-    if (line.length === 0) continue;
-    // bun:test's own reporter can leave an unterminated line, so the marker is
-    // not always at column 0; take everything from the marker on.
-    const marker = line.indexOf(kRunEventPrefix);
-    if (marker === -1) {
-      reporter.emitMessage("test:stdout", { __proto__: null, file: absolute, message: line + "\n" });
-      continue;
-    }
-    if (marker > 0) {
-      const before = line.slice(0, marker).trimEnd();
-      if (before.length > 0) {
-        reporter.emitMessage("test:stdout", { __proto__: null, file: absolute, message: before + "\n" });
+  try {
+    const stdout = await new Response(proc.stdout).text();
+    for (const line of stdout.split("\n")) {
+      if (line.length === 0) continue;
+      // bun:test's own reporter can leave an unterminated line, so the marker is
+      // not always at column 0; take everything from the marker on.
+      const marker = line.indexOf(kRunEventPrefix);
+      if (marker === -1) {
+        reporter.emitMessage("test:stdout", { __proto__: null, file: absolute, message: line + "\n" });
+        continue;
       }
+      if (marker > 0) {
+        const before = line.slice(0, marker).trimEnd();
+        if (before.length > 0) {
+          reporter.emitMessage("test:stdout", { __proto__: null, file: absolute, message: before + "\n" });
+        }
+      }
+      let event;
+      try {
+        event = JSON.parse(line.slice(marker + kRunEventPrefix.length));
+      } catch {
+        continue;
+      }
+      // Child stdout is user-controlled: a test body can write the marker plus
+      // well-formed JSON that is not an event. Skip rather than let
+      // republishChildEvent throw and destroy the run stream.
+      if (event?.data == null || typeof event.data !== "object") continue;
+      // node's parent swallows each child's root plan and emits one run-level
+      // plan at the end (runner.js #skipReporting + Test.postRun).
+      if (event.type === "test:plan" && event.data.nesting === 0) continue;
+      republishChildEvent(event, absolute, reporter, fileCounts, state);
     }
-    let event;
-    try {
-      event = JSON.parse(line.slice(marker + kRunEventPrefix.length));
-    } catch {
-      continue;
+
+    await drainStderr;
+    const exitCode = await proc.exited;
+    state.childProc = null;
+    if (state.interrupted) {
+      // The interrupted file's verdict is replaced by runFiles' test:interrupted
+      // report; suppress the synthesized failure and per-file summary so their
+      // fileCounts bumps are not merged without a matching event.
+      addRunCounts(counts, fileCounts);
+      return;
     }
-    // Child stdout is user-controlled: a test body can write the marker plus
-    // well-formed JSON that is not an event. Skip rather than let
-    // republishChildEvent throw and destroy the run stream.
-    if (event?.data == null || typeof event.data !== "object") continue;
-    // node's parent swallows each child's root plan and emits one run-level
-    // plan at the end (runner.js #skipReporting + Test.postRun).
-    if (event.type === "test:plan" && event.data.nesting === 0) continue;
-    republishChildEvent(event, absolute, reporter, fileCounts, state);
-  }
+    state.fileNode = null;
 
-  await drainStderr;
-  const exitCode = await proc.exited;
-  state.childProc = null;
-  if (state.interrupted) {
-    // The interrupted file's verdict is replaced by runFiles' test:interrupted
-    // report; suppress the synthesized failure and per-file summary so their
-    // fileCounts bumps are not merged without a matching event.
-    addRunCounts(counts, fileCounts);
-    return;
-  }
-  state.fileNode = null;
+    // Two failure shapes: the file died before reporting anything (top-level
+    // throw — node emits a file-level test:fail and no per-file summary), or its
+    // tests failed (covered by the children's events; completes `subtestsFailed`).
+    const fileSucceeded = runSucceeded(fileCounts);
+    const fileFailed = exitCode !== 0 && fileSucceeded;
+    const subtestsFailed = !fileSucceeded;
+    const fileDuration = roundDurationMs(performance.now() - fileStarted);
+    let error: Error | undefined;
 
-  // Two failure shapes: the file died before reporting anything (top-level
-  // throw — node emits a file-level test:fail and no per-file summary), or its
-  // tests failed (covered by the children's events; completes `subtestsFailed`).
-  const fileSucceeded = runSucceeded(fileCounts);
-  const fileFailed = exitCode !== 0 && fileSucceeded;
-  const subtestsFailed = !fileSucceeded;
-  const fileDuration = roundDurationMs(performance.now() - fileStarted);
-  let error: Error | undefined;
+    if (subtestsFailed) {
+      const n = fileCounts.failed + fileCounts.cancelled + fileCounts.failedSuites;
+      error = makeTestFailure(`${n} subtest${n === 1 ? "" : "s"} failed`, "subtestsFailed");
+    }
 
-  if (subtestsFailed) {
-    const n = fileCounts.failed + fileCounts.cancelled + fileCounts.failedSuites;
-    error = makeTestFailure(`${n} subtest${n === 1 ? "" : "s"} failed`, "subtestsFailed");
-  }
+    if (!fileFailed) {
+      reporter.emitMessage("test:summary", {
+        __proto__: null,
+        success: fileSucceeded,
+        counts: publicRunCounts(fileCounts),
+        duration_ms: fileDuration,
+        file: absolute,
+      });
+    } else {
+      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+      fileCounts.tests++;
+      fileCounts.failed++;
+      fileCounts.topLevel++;
+    }
 
-  if (!fileFailed) {
-    reporter.emitMessage("test:summary", {
-      __proto__: null,
-      success: fileSucceeded,
-      counts: publicRunCounts(fileCounts),
-      duration_ms: fileDuration,
-      file: absolute,
-    });
-  } else {
-    error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
-    fileCounts.tests++;
-    fileCounts.failed++;
-    fileCounts.topLevel++;
-  }
-
-  // node emits the file node's completion before its verdict, and a failed
-  // completion carries the error too.
-  reporter.emitMessage("test:complete", {
-    __proto__: null,
-    ...fileNode,
-    type: undefined,
-    // node models the file as a top-level test; its completion carries the
-    // file's ordinal in the run, not the file's own top-level count.
-    testNumber: ordinal,
-    details: {
-      __proto__: null,
-      duration_ms: fileDuration,
-      type: "test",
-      passed: !fileFailed && !subtestsFailed,
-      error,
-    },
-  });
-  if (fileFailed) {
-    reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
-    reporter.emitMessage("test:fail", {
+    // node emits the file node's completion before its verdict, and a failed
+    // completion carries the error too.
+    reporter.emitMessage("test:complete", {
       __proto__: null,
       ...fileNode,
       type: undefined,
-      testNumber: ++state.verdictNumber,
-      details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
+      // node models the file as a top-level test; its completion carries the
+      // file's ordinal in the run, not the file's own top-level count.
+      testNumber: ordinal,
+      details: {
+        __proto__: null,
+        duration_ms: fileDuration,
+        type: "test",
+        passed: !fileFailed && !subtestsFailed,
+        error,
+      },
     });
+    if (fileFailed) {
+      reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
+      reporter.emitMessage("test:fail", {
+        __proto__: null,
+        ...fileNode,
+        type: undefined,
+        testNumber: ++state.verdictNumber,
+        details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
+      });
+    }
+    addRunCounts(counts, fileCounts);
+  } finally {
+    // A stream listener that throws into the republish loop must not leak the
+    // child (kill is a no-op once it exits); always settle the stderr drain.
+    proc.kill();
+    await drainStderr.catch(kDefaultFunction);
   }
-  addRunCounts(counts, fileCounts);
 }
 
 function rebuildError(serialized: any, depth = 0): Error {
@@ -3750,15 +3758,18 @@ function currentCollectionParent(): TestNode {
 function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
-  function onTopLevelSettled(failure: unknown, done: (error?: unknown) => void) {
+  function onTopLevelSettled(failure: unknown, todoBefore: boolean, done: (error?: unknown) => void) {
     // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
     // (Node counts these as skip/todo even when the body threw); a declared
     // todo body's failure must reach bun:test's own todo accounting instead.
     if (node.skipped) {
       markCurrentResult(false, done);
-    } else if ((node.todoFlag || hasTodoAncestor(node)) && !declaredTodo) {
-      // Inherited todo too: a failing test inside a todo suite must not
-      // fail the child process (node treats it as todo).
+    } else if ((node.todoFlag || hasTodoAncestor(node)) && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
+      // Under plain bun:test a describe.todo scope already handles its
+      // children's todo verdict (FailBecauseTodoPassed under --todo), so only
+      // override when the todo state flipped at runtime; a run() child
+      // registers suites as plain describes, so bun:test has no todo scope to
+      // consult. Inherited todo still must not fail the child process.
       markCurrentResult(true, done);
     } else {
       done(failure);
@@ -3767,8 +3778,9 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     done(undefined);
   }
   function topLevelRunner(done: (error?: unknown) => void) {
+    const todoBefore = node.todoFlag || hasTodoAncestor(node);
     function onFulfilled(failure: unknown) {
-      onTopLevelSettled(failure, done);
+      onTopLevelSettled(failure, todoBefore, done);
     }
     executeTestNode(node, fn).then(onFulfilled, done);
   }
@@ -3816,11 +3828,11 @@ function addTest(
   node.ownTags = ownTags;
   if (mode === "only") node.onlyFlag = true;
 
-  // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
-  // Execution routing is by truthiness: node runs the body for falsy-but-
-  // defined skip/todo ({ skip: '' }) and only reports the directive.
-  const effectiveMode =
-    (mode === "only" ? undefined : mode) ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  // Node merges .todo()/.skip() into the options and checks skip first, so
+  // test.todo(name, { skip: true }, fn) is a skip. Execution routing is by
+  // truthiness: node runs the body for falsy-but-defined skip/todo
+  // ({ skip: '' }) and only reports the directive.
+  const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (inStandaloneMode()) {
     noteRunChildRegistered(parent);
@@ -3971,11 +3983,11 @@ function addSuite(
   if (mode === "only") suiteNode.onlyFlag = true;
   noteRunChildRegistered(parent);
 
-  // Node checks `skip` before `todo`, so `{ skip: true, todo: true }` is a skip.
-  // Execution routing is by truthiness: node runs the body for falsy-but-
-  // defined skip/todo ({ skip: '' }) and only reports the directive.
-  const effectiveMode =
-    (mode === "only" ? undefined : mode) ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
+  // Node merges .todo()/.skip() into the options and checks skip first, so
+  // describe.todo(name, { skip: true }, fn) is a skip. Execution routing is by
+  // truthiness: node runs the body for falsy-but-defined skip/todo
+  // ({ skip: '' }) and only reports the directive.
+  const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (inStandaloneMode()) {
     if (effectiveMode === "skip") {

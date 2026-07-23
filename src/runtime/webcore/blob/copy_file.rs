@@ -1750,10 +1750,18 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     if let Some(errno) = rc.err_enum_e() {
         // ENOENT from uv_fs_copyfile can mean either the source file or the
         // destination directory is missing. Disambiguate so a missing source
-        // rejects directly instead of entering the mkdirp+retry path.
+        // rejects directly instead of entering the mkdirp+retry path. Only an
+        // ENOENT from the probe counts as "missing"; any other error leaves
+        // the mkdirp+retry path available.
         let source_missing = errno == bun_sys::E::ENOENT
             && match &this.source_file_store.data.as_file().pathlike {
-                PathOrFileDescriptor::Path(p) => !bun_sys::exists(p.slice()),
+                PathOrFileDescriptor::Path(p) => {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    matches!(
+                        bun_sys::access(p.slice_z(&mut buf), 0),
+                        bun_sys::Result::Err(e) if e.get_errno() == bun_sys::E::ENOENT
+                    )
+                }
                 PathOrFileDescriptor::Fd(_) => false,
             };
 

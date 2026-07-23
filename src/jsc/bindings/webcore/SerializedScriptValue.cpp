@@ -1127,6 +1127,40 @@ private:
         return object->inherits<JSSet>();
     }
 
+    // node:worker_threads.markAsUncloneable tags the object with a private-name
+    // property. Node consults the marker from node_messaging.cc's ValueSerializer
+    // delegate, which V8 reaches for JS_OBJECT_TYPE / JS_API_OBJECT_TYPE (plain
+    // objects, class instances, Error, and JS-layer host wrappers like Blob /
+    // File / CryptoKey / KeyObject / X509Certificate / DOMException). V8 built-in
+    // instance types (Array, Map, Set, Date, RegExp, primitive wrappers,
+    // ArrayBuffer/TypedArray, WebAssembly.Module/Memory) are dispatched first and
+    // never see the marker, and MessagePort's native GetTransferMode() ignores
+    // it. Node's v8.serialize and child_process `serialization: "advanced"` use a
+    // different delegate that never reads the marker. Mirror that by gating on
+    // the messaging entry points and calling this from ErrorInstance,
+    // ObjectStartState, and each serializer branch that corresponds to a Node
+    // JSTransferable host type.
+    //
+    // Known divergence: Worker::dispatchErrorWithValue (worker→parent uncaught
+    // error) also passes both gates. Node's equivalent goes through
+    // internal/error_serdes.serializeError(), which builds a fresh property bag
+    // and serializes via v8.DefaultSerializer, so the marker is irrelevant there.
+    // In Bun, a marked Error thrown from a worker degrades to the string
+    // fallback (dispatchErrorWithMessage); gracefully handled but loses the
+    // original constructor and own properties.
+    bool isMarkedUncloneableForMessaging(VM& vm, JSObject* object)
+    {
+        if (m_forStorage != SerializationForStorage::No)
+            return false;
+        if (m_forTransfer != SerializationForCrossProcessTransfer::No)
+            return false;
+        // Fast path: the marker is stored DontEnum, so an object with zero
+        // non-enumerable properties cannot carry it.
+        if (!object->structure()->hasNonEnumerableProperties())
+            return false;
+        return !!object->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName());
+    }
+
     bool checkForDuplicate(JSObject* object)
     {
         // Record object for graph reconstruction
@@ -1634,22 +1668,6 @@ private:
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        // markAsUncloneable: reject a marked object anywhere in the graph (nested terminals
-        // come through dumpIfTerminal directly); ArrayBuffers/views serialize natively. The
-        // marker is a DontEnum JSC private name (node parity), invisible to user JS.
-        // A port in the transfer list is moved rather than cloned, so the marker doesn't
-        // apply to it — node lets `postMessage(port, [port])` through for a marked port.
-        if (value.isObject()) {
-            JSObject* obj = asObject(value);
-            if (!obj->inherits<JSArrayBuffer>() && !obj->inherits<JSArrayBufferView>()
-                && !(obj->inherits<JSMessagePort>() && m_transferredMessagePorts.contains(obj))
-                && obj->structure()->hasNonEnumerableProperties()
-                && obj->getDirect(vm, builtinNames(vm).isUncloneablePrivateName())) {
-                code = SerializationReturnCode::DataCloneError;
-                return true;
-            }
-        }
-
         if (isArray(value))
             return false;
 
@@ -1745,6 +1763,10 @@ private:
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 if (!startObjectInternal(errorInstance)) // handle duplicates
                     return true;
                 auto& vm = m_lexicalGlobalObject->vm();
@@ -1897,6 +1919,10 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 if (m_forStorage == SerializationForStorage::Yes && !key->extractable()) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
@@ -2043,6 +2069,10 @@ private:
             }
 #endif
             if (obj->inherits<JSDOMException>()) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 dumpDOMException(obj, code);
                 return true;
             }
@@ -2063,6 +2093,10 @@ private:
             // write bun types
             auto _cloneable = StructuredCloneableSerialize::fromJS(value);
             if (_cloneable) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
                 auto cloneable = _cloneable.value();
@@ -2082,6 +2116,10 @@ private:
             }
 
             if (auto* x509 = dynamicDowncast<Bun::JSX509Certificate>(obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 if (checkForDuplicate(x509))
                     return true;
                 X509* cert = x509->m_x509.get();
@@ -2108,6 +2146,10 @@ private:
             }
 
             if (auto* keyObject = dynamicDowncast<Bun::JSKeyObject>(obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 if (!startObjectInternal(keyObject)) // handle duplicates
                     return true;
                 write(Bun__KeyObjectTag);
@@ -2802,6 +2844,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (inputObjectStack.size() > maximumFilterRecursion)
                 return SerializationReturnCode::StackOverflowError;
             JSObject* inObject = asObject(inValue);
+            if (isMarkedUncloneableForMessaging(vm, inObject))
+                return SerializationReturnCode::DataCloneError;
             if (!startObject(inObject))
                 break;
             // At this point, all supported objects other than Object

@@ -237,9 +237,44 @@ const V = {
       `Bun.file(P("data.txt")).stream()`,
       `new ReadableStream()`,
     ]),
-  object: () => pick([`{}`, `{ a: 1 }`, `Object.create(null)`, `new Proxy({}, { get() { throw new Error("proxy get"); } })`, `{ get x() { throw new Error("getter"); } }`, `[]`, `[1, "two", { three: 3 }]`, `null`, `undefined`]),
+  object: () => pick([`{}`, `{ a: 1 }`, `Object.create(null)`, `new Proxy({}, { get() { throw new Error("proxy get"); } })`, `{ get x() { throw new Error("getter"); } }`, `[]`, `[1, "two", { three: 3 }]`, `null`, `undefined`, V.reentrant()]),
+  // RE-ENTRANCY / side-effecting coercion - the dominant JS-binding bug
+  // class: a value whose toString/valueOf/getter/Symbol.toPrimitive runs
+  // during the API call and reaches back into the object pool (closing
+  // the receiver, draining a stream, killing a child, mutating a buffer),
+  // so native code observes state changing underneath it.
+  reentrant: () => {
+    const effect = pick([
+      `try { $any("Socket")?.end(); } catch {}`,
+      `try { $any("Server")?.stop(true); } catch {}`,
+      `try { $any("Subprocess")?.kill(); } catch {}`,
+      `try { $any("FileSink")?.end(); } catch {}`,
+      `try { $any("ArrayBufferSink")?.end(); } catch {}`,
+      `try { $any("ReadableStream")?.cancel(); } catch {}`,
+      `try { $any("Blob")?.stream?.().cancel(); } catch {}`,
+      `try { globalThis.gc?.(); } catch {}`,
+      `try { $poolMutate(); } catch {}`,
+    ]);
+    return pick([
+      `{ toString() { ${effect}; return "reentrant"; } }`,
+      `{ valueOf() { ${effect}; return 7; } }`,
+      `{ [Symbol.toPrimitive]() { ${effect}; return "p"; } }`,
+      `{ get length() { ${effect}; return 4; }, get 0() { ${effect}; return 1; } }`,
+      `new Proxy([1, 2, 3], { get(t, k) { ${effect}; return Reflect.get(t, k); } })`,
+      `(() => { ${effect}; return 42; })`,
+    ]);
+  },
+  // Detached / resizable / concurrently-transferred buffers.
+  hostileBuffer: () =>
+    pick([
+      `(() => { const ab = new ArrayBuffer(64); try { structuredClone(ab, { transfer: [ab] }); } catch {} return new Uint8Array(ab); })()`,
+      `new Uint8Array(new ArrayBuffer(8, { maxByteLength: 4096 }))`,
+      `(() => { const ab = new ArrayBuffer(16, { maxByteLength: 64 }); const u = new Uint8Array(ab); try { ab.resize(0); } catch {} return u; })()`,
+      `new Uint8Array(new SharedArrayBuffer(1024))`,
+      `Buffer.allocUnsafe(0).subarray(0, 0)`,
+    ]),
   any: () =>
-    pick([V.string(), V.number(), V.bytes(), V.object(), V.boolean(), `undefined`, `null`, `Symbol("s")`, `10n`, V.fn(), V.path()]),
+    pick([V.reentrant(), V.hostileBuffer(), V.string(), V.number(), V.bytes(), V.object(), V.boolean(), `undefined`, `null`, `Symbol("s")`, `10n`, V.fn(), V.path()]),
 };
 
 // Enumerable string-literal unions ("a" | "b" | "c") from the type text.
@@ -395,6 +430,9 @@ emit(`const BIG = new Uint8Array(256 * 1024).map((_, i) => i % 251);`);
 emit(`writeFileSync(P("data.txt"), "the quick brown fox jumps over the lazy dog\\n".repeat(20));`);
 emit(`writeFileSync(P("big.bin"), BIG); writeFileSync(P("empty.txt"), ""); writeFileSync(P("uni-ë-🐰.txt"), "unicode name");`);
 emit(`const SPAWN = [process.execPath, "-e", "process.stdin.pipe(process.stdout); setTimeout(()=>{}, 200)"];`);
+// re-entrancy helpers: reach back into the pool from inside a coercion hook
+emit(`function $any(kind) { const arr = $poolMap.get(kind); if (!arr || !arr.length) return undefined; return arr[(Math.random() * arr.length) | 0]; }`);
+emit(`function $poolMutate() { for (const arr of $poolMap.values()) { if (arr.length && Math.random() < 0.5) arr.splice((Math.random() * arr.length) | 0, 1); } }`);
 for (const m of NODE_MODS) emit(`const ${m} = require("node:${m}");`);
 emit(`let $n = 0; const $i = () => ++$n;`);
 emit(`const $stats = { ok: 0, threw: 0, kinds: new Set(), calls: 0 };`);

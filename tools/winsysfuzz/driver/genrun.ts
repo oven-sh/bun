@@ -12,8 +12,9 @@
 //     [--statements 40] [--timeout 30] [--work C:\wsfgenrun]
 //     [--queue C:\wsfqueue] [--seed-base N]
 
-import { appendFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { Corpus, Novelty, fingerprintOutput, mutate } from "./corpus";
+import { basename, join } from "node:path";
 import { detectCrash, ensureDir, stamp } from "./lib";
 
 const argv = process.argv.slice(2);
@@ -35,6 +36,17 @@ const queueDir = flag("--queue", "C:\\wsfqueue") as string;
 let seedNext = +(flag("--seed-base", String((Date.now() % 1e9) | 0)) as string);
 ensureDir(workRoot);
 ensureDir(queueDir);
+// --- corpus + novelty (coverage-guided when the target is instrumented) ---
+// The corpus is shared across runs of the same work root (a sibling dir),
+// so it accumulates over restarts.
+const workBase = flag("--work", "C:\\wsfgenrun") as string;
+const corpusDir = workBase + "-corpus";
+const corpus = new Corpus(corpusDir);
+const useCoverage = !!process.env.WSF_COVERAGE;
+const novelty = new Novelty(useCoverage);
+let corpusAdds = 0;
+let mutRuns = 0;
+console.log(`genrun: corpus at ${corpusDir} (${corpus.size} entries), coverage=${useCoverage}`);
 const here = import.meta.dir;
 const genScript = join(here, "gen.ts");
 console.log(`genrun: bun=${bun} jobs=${jobs} timeout=${timeoutMs / 1000}s seed-base=${seedNext}`);
@@ -53,7 +65,7 @@ for (const f of ["triaged.jsonl", "queue.jsonl"]) {
   }
 }
 
-type Run = { exit: number | null; timedOut: boolean; stdout: string; stderr: string; ms: number };
+type Run = { exit: number | null; timedOut: boolean; stdout: string; stderr: string; ms: number; coverageBits?: Uint8Array | null };
 async function generate(seed: number, outFile: string): Promise<boolean> {
   const p = Bun.spawn([process.execPath, genScript, "--seed", String(seed), "--statements", statements, "--out", outFile], {
     stdout: "ignore",
@@ -61,18 +73,52 @@ async function generate(seed: number, outFile: string): Promise<boolean> {
   });
   return (await p.exited) === 0;
 }
-async function runProgram(program: string, cwd: string, limitMs: number = timeoutMs): Promise<Run> {
+
+// --- coverage shared memory (Windows named file mapping) --------------------
+// The instrumented target opens the mapping named in BUN_COVERAGE_SHM and
+// sets one bit per executed edge (CoverageWindows.cpp). Layout matches the
+// Fuzzilli collector: uint32 num_edges, then the edge bitmap.
+const COV_SIZE = 0x200000;
+let covLib: any = null;
+if (process.env.WSF_COVERAGE && process.platform === "win32") {
+  const { dlopen, FFIType, ptr } = await import("bun:ffi");
+  const k32 = dlopen("kernel32.dll", {
+    CreateFileMappingA: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.cstring], returns: FFIType.ptr },
+    MapViewOfFile: { args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.u64], returns: FFIType.ptr },
+  });
+  covLib = { k32: k32.symbols, ptr };
+}
+interface CovShm {
+  name: string;
+  view: Uint8Array;
+}
+function openCovShm(name: string): CovShm | null {
+  if (!covLib) return null;
+  const { toArrayBuffer } = require("bun:ffi");
+  const INVALID = 0xffffffffffffffffn;
+  // PAGE_READWRITE=0x04, INVALID_HANDLE_VALUE-backed (pagefile) section.
+  const h = covLib.k32.CreateFileMappingA(null, null, 0x04, 0, COV_SIZE, Buffer.from(name + "\0"));
+  if (!h) return null;
+  const v = covLib.k32.MapViewOfFile(h, 0x000f001f /* FILE_MAP_ALL_ACCESS */, 0, 0, BigInt(COV_SIZE));
+  if (!v) return null;
+  const view = new Uint8Array(toArrayBuffer(v, 0, COV_SIZE));
+  return { name, view };
+}
+
+async function runProgram(program: string, cwd: string, limitMs: number = timeoutMs, cov: CovShm | null = null): Promise<Run> {
   const t0 = Date.now();
   const outFile = join(cwd, `out-${process.pid}-${Math.random().toString(36).slice(2, 8)}.txt`);
   const errFile = join(cwd, `err-${process.pid}-${Math.random().toString(36).slice(2, 8)}.txt`);
   // Write child output to FILES, not pipes: a grandchild that inherits a
   // pipe end keeps it open after the child exits, and awaiting the pipe
   // then hangs forever with no process running (0% load, engine stalled).
+  if (cov) cov.view.fill(0);
+  const covEnv = cov ? { BUN_COVERAGE_SHM: cov.name } : {};
   const proc = Bun.spawn([bun!, program], {
     cwd,
     stdout: Bun.file(outFile),
     stderr: Bun.file(errFile),
-    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", WSF_GEN_STATS: "" },
+    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", WSF_GEN_STATS: "", ...covEnv },
   });
   let timedOut = false;
   const exited = proc.exited.catch(() => null);
@@ -91,7 +137,9 @@ async function runProgram(program: string, cwd: string, limitMs: number = timeou
   if (timedOut) await Promise.race([exited, new Promise(r => setTimeout(r, 1500))]);
   const stdout = await Bun.file(outFile).text().catch(() => "");
   const stderr = await Bun.file(errFile).text().catch(() => "");
-  return { exit, timedOut, stdout, stderr, ms: Date.now() - t0 };
+  // Snapshot the edge bitmap this run produced (copy: the view is reused).
+  const coverageBits = cov ? cov.view.slice(4) : null;
+  return { exit, timedOut, stdout, stderr, ms: Date.now() - t0, coverageBits };
 }
 
 // A run is a finding if bun CRASHED (its own handler printed a report -
@@ -177,6 +225,7 @@ const waitQuiet = async () => {
 const t0 = Date.now();
 const qfile = join(queueDir, "queue.jsonl");
 async function worker(w: number) {
+  const cov = openCovShm(`wsfcov-${process.pid}-${w}`);
   while (iter < iterations) {
     await waitQuiet();
     const n = ++iter;
@@ -184,22 +233,53 @@ async function worker(w: number) {
     const dir = join(workRoot, `s${seed}`);
     mkdirSync(dir, { recursive: true });
     const program = join(dir, "program.js");
-    if (!(await generate(seed, program))) {
+    // Produce: 80% mutate a corpus entry (Fuzzilli/AFL split) once the
+    // corpus has material, else generate fresh from the API grammar.
+    let parentId = "";
+    if (corpus.size >= 4 && Math.random() < 0.8) {
+      const parent = corpus.pick(Math.random)!;
+      const other = corpus.size > 1 && Math.random() < 0.6 ? corpus.pick(Math.random)! : undefined;
+      const m = mutate(
+        readFileSync(parent.file, "utf8"),
+        other && other.id !== parent.id ? readFileSync(other.file, "utf8") : undefined,
+        Math.random,
+      );
+      if (m) {
+        writeFileSync(program, m.text);
+        parentId = parent.id;
+        mutRuns++;
+      }
+    }
+    if (!parentId && !(await generate(seed, program))) {
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {}
       continue;
     }
-    const r = await runProgram(program, dir);
+    const r = await runProgram(program, dir, timeoutMs, cov);
     runs++;
     const j = judge(r);
     if (!j.kind) {
+      // Novelty admission: a program that produced a never-seen signal
+      // (coverage edges when instrumented, else an output fingerprint)
+      // joins the corpus to be mutated further.
+      const nov = useCoverage && r.coverageBits ? novelty.checkCoverage(r.coverageBits) : novelty.checkFingerprint(fingerprintOutput(r.stderr, r.exit));
+      if (nov > 0 && corpus.size < 20000) {
+        try {
+          corpus.add(`c${seed}`, readFileSync(program, "utf8"));
+          corpusAdds++;
+          if (parentId) {
+            const pe = corpus.entries.find(e => e.id === parentId);
+            if (pe) pe.kept++;
+          }
+        } catch {}
+      }
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {}
       if (runs % 200 === 0) {
         const min = ((Date.now() - t0) / 60000).toFixed(1);
-        console.log(`  -- ${runs} run(s) in ${min}m: ${crashes} crash(es), ${hangs} hang(s)`);
+        console.log(`  -- ${runs} run(s) in ${min}m: ${crashes} crash(es), ${hangs} hang(s) | corpus=${corpus.size} +${corpusAdds} mut=${mutRuns}`);
       }
       continue;
     }

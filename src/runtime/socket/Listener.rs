@@ -762,7 +762,7 @@ impl Listener {
         } else if let Some(ssl_config) = {
             // SAFETY: per-thread VM; valid for program lifetime.
             let vm = VirtualMachine::get().as_mut();
-            SSLConfig::from_js(vm, global, tls)?
+            SSLConfig::from_js(vm, global, tls, true)?
         } {
             // Note: `cfg` cleanup handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;
@@ -821,7 +821,7 @@ impl Listener {
         }
         // SAFETY: per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
-        let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? else {
+        let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? else {
             return Ok(JSValue::UNDEFINED);
         };
         let mut create_err = uws::create_bun_socket_error_t::none;

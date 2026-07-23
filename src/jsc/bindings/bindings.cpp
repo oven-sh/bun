@@ -4693,11 +4693,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     if (sync) {
         vm->clearSourceProviderCaches();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
-        // Queued concurrent-JIT plans root their captured values (e.g. OSR
-        // mustHandleValues), so a gc()-per-tick loop can pin an object for as
-        // long as compilation is starved. Explicit sync GC must not observe
-        // those transient roots — drain the plans first.
-        vm->heap.completeAllJITPlans();
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);

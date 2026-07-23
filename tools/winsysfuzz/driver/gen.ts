@@ -83,7 +83,13 @@ const EXCLUDE_CONTAINER =
 // effects with no runtime coverage value, or ones needing services.
 const EXCLUDE_FN =
   /^(openInEditor|generateHeapSnapshot|build|plugin|serve|connect|listen|udpSocket|gc|shrink|sql|SQL|redis|RedisClient|s3|S3Client|dns|main|argv|env|version|revision|enableANSIColors|resolve|resolveSync|nanoseconds|jest|test|expect|mock|Cookie|CookieMap|password|zstdCompress|zstdDecompress|WebView|randomUUIDv5|secrets)$/;
-const fnCalls = spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name));
+// KNOWN-BROKEN (temporary, reversible when fixed upstream): APIs whose
+// crashes are already reported. Every draw is a landmine that costs a full
+// reduction and masks whatever lies behind it. Bun.write on Windows:
+// (1) self-alias Bun.write(f,f) CopyFileWindows aliasing; (2) any missing/
+// unopenable source -> on_copy_file ENOENT retry loop. Both reported.
+const KNOWN_BROKEN_FN = /^(write)$/;
+const fnCalls = spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name));
 const methodsByKind = new Map<string, Callable[]>();
 for (const c of spec.callables) {
   if (!c.isMethod || EXCLUDE_CONTAINER.test(c.container)) continue;

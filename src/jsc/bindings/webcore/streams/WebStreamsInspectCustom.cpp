@@ -76,6 +76,15 @@ EncodedJSValue customInspectGetters(JSGlobalObject* lexicalGlobalObject, CallFra
 
     if (!thisValue.isObject()) [[unlikely]]
         return JSValue::encode(thisValue);
+
+    // customInspect() checks this too, but hoisting it avoids running the
+    // getters (and caching body/headers/signal wrappers on Response/Request)
+    // when the value is nested beyond options.depth.
+    double depth = callFrame->argument(0).toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (depth < 0)
+        return JSValue::encode(thisValue);
+
     JSObject* thisObject = asObject(thisValue);
 
     JSObject* data = constructEmptyObject(lexicalGlobalObject);

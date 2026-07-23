@@ -592,6 +592,40 @@ test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned g
   expect(counts.passed).toBeGreaterThanOrEqual(1);
 }, 30_000);
 
+test("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
+  using dir = tempDir("node-test-suite-duration", {
+    "f.test.mjs": `
+      import { describe, it } from 'node:test';
+      describe('s', () => {
+        it('a', async () => { await new Promise(r => setTimeout(r, 100)); });
+        it('b', async () => { await new Promise(r => setTimeout(r, 100)); });
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], isolation: 'none' });
+      let suiteDuration = -1;
+      stream.on('test:pass', t => { if (t.name === 's') suiteDuration = t.details.duration_ms; });
+      for await (const _ of stream);
+      console.log(JSON.stringify({ suiteDuration }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { suiteDuration } = JSON.parse(stdout.trim() || "null");
+  // node reports the full span (>=200ms for two 100ms tests); a clock started
+  // at the first child's completion sees only the second test (~100ms).
+  expect(suiteDuration).toBeGreaterThan(180);
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 test("run({isolation:'none'}): .only inside describe.only narrows to the inner test", async () => {
   // node's rule: an only suite runs all its tests unless it has only-marked
   // descendants, in which case only those run.

@@ -2111,6 +2111,8 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
+    safe fn Bun__JSValue__parseInt(global: &JSGlobalObject, value: JSValue) -> f64;
+    safe fn Bun__JSValue__parseFloat(global: &JSGlobalObject, value: JSValue) -> f64;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2232,6 +2234,21 @@ impl JSValue {
     /// `JSValue.toNumber` — full ECMA `ToNumber` (`+value`); may throw.
     pub fn to_number(self, global: &JSGlobalObject) -> JsResult<f64> {
         host_fn::from_js_host_call_generic(global, || Bun__JSValue__toNumber(self, global))
+    }
+
+    /// Call the global `parseInt` on this value (radix unspecified, matching
+    /// `Number.parseInt(value)`). `parseInt` coerces the argument with
+    /// `ToString` first, so an array prints its comma-joined prefix and a
+    /// numeric-prefix string parses its leading digits, matching Node's `%i`.
+    pub fn parse_int(self, global: &JSGlobalObject) -> JsResult<f64> {
+        host_fn::from_js_host_call_generic(global, || Bun__JSValue__parseInt(global, self))
+    }
+
+    /// Call the global `parseFloat` on this value (matching
+    /// `Number.parseFloat(value)`). Coerces with `ToString` first, matching
+    /// Node's `%f`.
+    pub fn parse_float(self, global: &JSGlobalObject) -> JsResult<f64> {
+        host_fn::from_js_host_call_generic(global, || Bun__JSValue__parseFloat(global, self))
     }
 
     /// `JSValue.toPortNumber` — Node `validatePort` semantics:

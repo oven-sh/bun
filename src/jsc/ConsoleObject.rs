@@ -2436,7 +2436,8 @@ pub mod formatter {
     #[derive(Copy, Clone, Eq, PartialEq)]
     enum PercentTag {
         S,      // s
-        I,      // i or d
+        I,      // i
+        D,      // d
         F,      // f
         O,      // o (lowercase)
         UpperO, // O
@@ -2485,7 +2486,8 @@ pub mod formatter {
                             b'f' => PercentTag::F,
                             b'o' => PercentTag::O,
                             b'O' => PercentTag::UpperO,
-                            b'd' | b'i' => PercentTag::I,
+                            b'd' => PercentTag::D,
+                            b'i' => PercentTag::I,
                             b'c' => PercentTag::C,
                             b'j' => PercentTag::J,
                             b'%' => {
@@ -2521,9 +2523,6 @@ pub mod formatter {
                             s.slice()[0]
                         };
 
-                        // https://console.spec.whatwg.org/#formatter
-                        const MAX_BEFORE_E_NOTATION: f64 = 1.0e21;
-                        const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
                                 self.print_as::<ENABLE_ANSI_COLORS>(
@@ -2538,130 +2537,71 @@ pub mod formatter {
                                     estimated_line_length: &mut self.estimated_line_length,
                                 };
                             }
-                            PercentTag::I => {
-                                // 1. If Type(current) is Symbol, let converted be NaN
-                                // 2. Otherwise, let converted be the result of
-                                //    Call(%parseInt%, undefined, current, 10)
-                                let int: i64 = 'brk: {
-                                    // This logic is convoluted because %parseInt%
-                                    // will coerce the argument to a string first.
-                                    // As an optimization, we can check if the
-                                    // argument is a number and skip such coercion.
-                                    if next_value.is_int32() {
-                                        // Already an int, parseInt will parse to itself.
-                                        break 'brk i64::from(next_value.as_int32());
-                                    }
-
-                                    'double_convert: {
-                                        if !(next_value.is_number() || !next_value.is_symbol()) {
-                                            break 'double_convert;
-                                        }
-                                        let mut value = next_value.to_number(global)?;
-
-                                        if !value.is_finite() {
-                                            // for NaN and the string Infinity and
-                                            // -Infinity, parseInt returns NaN
-                                            break 'double_convert;
-                                        }
-
-                                        // simulate parseInt, which converts the
-                                        // argument to a string and then back to a
-                                        // number, without converting it to a string
-                                        if value == 0.0 {
-                                            break 'brk 0;
-                                        }
-
-                                        let sign: i64 = if value < 0.0 { -1 } else { 1 };
-                                        value = value.abs();
-                                        if value >= MAX_BEFORE_E_NOTATION {
-                                            // toString prints 1.000+e0, which parseInt
-                                            // will stop at the '.' or the '+', this
-                                            // gives us a single digit value.
-                                            while value >= 10.0 {
-                                                value /= 10.0;
-                                            }
-                                            break 'brk (value.floor() as i64) * sign;
-                                        } else if value < MIN_BEFORE_E_NOTATION {
-                                            // toString prints 1.000-e0, which parseInt
-                                            // will stop at the '.' or the '-', this
-                                            // gives us a single digit value.
-                                            while value < 1.0 {
-                                                value *= 10.0;
-                                            }
-                                            break 'brk (value.floor() as i64) * sign;
-                                        }
-
-                                        // parsing stops at '.', so this is equal to floor
-                                        break 'brk (value.floor() as i64) * sign;
-                                    }
-
-                                    // for NaN and the string Infinity and -Infinity,
-                                    // parseInt returns NaN
-                                    writer.add_for_new_line("NaN".len());
-                                    writer.print(format_args!("NaN"));
+                            PercentTag::D => {
+                                // %d: 1. bigint -> format as a bigint
+                                //     2. Symbol -> NaN
+                                //     3. otherwise -> Number(current)
+                                if next_value.is_int32() {
+                                    writer.print_int32_format_specifier(next_value.as_int32());
                                     i += 1;
                                     continue 'outer;
-                                };
-
-                                writer.add_for_new_line(if i != 0 {
-                                    bun_core::fmt::digit_count(int)
+                                }
+                                if next_value.is_big_int() {
+                                    print_format_specifier_bigint(&mut writer, next_value, global)?;
+                                    i += 1;
+                                    continue 'outer;
+                                }
+                                let converted = if next_value.is_symbol() {
+                                    f64::NAN
                                 } else {
-                                    1
-                                });
-                                writer.print(format_args!("{int}"));
+                                    next_value.to_number(global)?
+                                };
+                                writer.print_number_format_specifier(converted);
+                            }
+
+                            PercentTag::I => {
+                                // %i: 1. bigint -> format as a bigint
+                                //     2. Symbol -> NaN
+                                //     3. otherwise -> parseInt(current) (coerces
+                                //        the argument to a string first, so an
+                                //        array or numeric-prefix string parses its
+                                //        leading digits the way Node does).
+                                if next_value.is_int32() {
+                                    // Already an int, parseInt parses to itself.
+                                    writer.print_int32_format_specifier(next_value.as_int32());
+                                    i += 1;
+                                    continue 'outer;
+                                }
+                                if next_value.is_big_int() {
+                                    print_format_specifier_bigint(&mut writer, next_value, global)?;
+                                    i += 1;
+                                    continue 'outer;
+                                }
+                                let converted = if next_value.is_symbol() {
+                                    f64::NAN
+                                } else {
+                                    next_value.parse_int(global)?
+                                };
+                                writer.print_number_format_specifier(converted);
                             }
 
                             PercentTag::F => {
-                                // 1. If Type(current) is Symbol, let converted be NaN
-                                // 2. Otherwise, let converted be the result of
-                                //    Call(%parseFloat%, undefined, [current]).
-                                let converted: f64 = 'brk: {
-                                    if next_value.is_int32() {
-                                        let int = next_value.as_int32();
-                                        writer.add_for_new_line(if i != 0 {
-                                            bun_core::fmt::digit_count(int)
-                                        } else {
-                                            1
-                                        });
-                                        writer.print(format_args!("{int}"));
-                                        i += 1;
-                                        continue 'outer;
-                                    }
-                                    if next_value.is_number() {
-                                        break 'brk next_value.as_number();
-                                    }
-                                    if next_value.is_symbol() {
-                                        break 'brk f64::NAN;
-                                    }
-                                    // TODO: this is not perfectly emulating
-                                    // parseFloat, because spec says to convert the
-                                    // value to a string and then parse as a number,
-                                    // but we are just coercing a number.
-                                    break 'brk next_value.to_number(global)?;
-                                };
-
-                                let abs = converted.abs();
-                                if abs < MAX_BEFORE_E_NOTATION && abs >= MIN_BEFORE_E_NOTATION {
-                                    writer.add_for_new_line(bun_core::fmt::count_float(converted));
-                                    writer.print(format_args!("{converted}"));
-                                } else if converted.is_nan() {
-                                    writer.add_for_new_line("NaN".len());
-                                    writer.write_all(b"NaN");
-                                } else if converted.is_infinite() {
-                                    writer.add_for_new_line(
-                                        "Infinity".len() + ((converted < 0.0) as usize),
-                                    );
-                                    if converted < 0.0 {
-                                        writer.write_all(b"-");
-                                    }
-                                    writer.write_all(b"Infinity");
-                                } else {
-                                    let mut buf = [0u8; 124];
-                                    let formatted =
-                                        bun_core::fmt::FormatDouble::dtoa(&mut buf, converted);
-                                    writer.add_for_new_line(formatted.len());
-                                    writer.print(format_args!("{}", bstr::BStr::new(formatted)));
+                                // %f: 1. Symbol -> NaN
+                                //     2. otherwise -> parseFloat(current) (coerces
+                                //        the argument to a string first). bigint is
+                                //        not special-cased: parseFloat(String(x))
+                                //        yields its numeric value, matching Node.
+                                if next_value.is_int32() {
+                                    writer.print_int32_format_specifier(next_value.as_int32());
+                                    i += 1;
+                                    continue 'outer;
                                 }
+                                let converted = if next_value.is_symbol() {
+                                    f64::NAN
+                                } else {
+                                    next_value.parse_float(global)?
+                                };
+                                writer.print_number_format_specifier(converted);
                             }
 
                             PercentTag::O | PercentTag::UpperO => {
@@ -2720,6 +2660,20 @@ pub mod formatter {
             }
             Ok(())
         }
+    }
+
+    /// Print a bigint for a `%d`/`%i` specifier as `<digits>n`, matching Node's
+    /// `formatBigIntNoColor` (no color in the format-specifier path).
+    fn print_format_specifier_bigint(
+        writer: &mut WrappedWriter<'_>,
+        value: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        let zstr = value.get_zig_string(global)?;
+        let digits = zstr.slice();
+        writer.add_for_new_line(digits.len() + 1);
+        writer.print(format_args!("{}n", bstr::BStr::new(digits)));
+        Ok(())
     }
 
     /// Failure-tracking writer wrapper over `&mut dyn bun_io::Write`.
@@ -2790,6 +2744,52 @@ pub mod formatter {
         pub fn print(&mut self, args: core::fmt::Arguments<'_>) {
             if self.ctx.write_fmt(args).is_err() {
                 self.failed = true;
+            }
+        }
+
+        /// Fast path for a `%d`/`%i`/`%f` specifier whose argument is already
+        /// an int32: `Number`/`parseInt`/`parseFloat` all map it to itself, so
+        /// print it directly.
+        pub fn print_int32_format_specifier(&mut self, value: i32) {
+            self.add_for_new_line(bun_core::fmt::digit_count(value));
+            self.print(format_args!("{value}"));
+        }
+
+        /// Format a number produced by a `%d`/`%i`/`%f` specifier, matching
+        /// `String(value)` (NaN, ±Infinity, integers and `e`-notation all
+        /// render as Node does).
+        pub fn print_number_format_specifier(&mut self, value: f64) {
+            // https://console.spec.whatwg.org/#formatter
+            const MAX_BEFORE_E_NOTATION: f64 = 1.0e21;
+            const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
+            let abs = value.abs();
+            if value == 0.0 {
+                // dtoa normalises -0 to "0"; Node prints "-0" for negative zero
+                // (e.g. `%d` of -0), so branch on the sign bit explicitly.
+                if value.is_sign_negative() {
+                    self.add_for_new_line("-0".len());
+                    self.write_all(b"-0");
+                } else {
+                    self.add_for_new_line(1);
+                    self.write_all(b"0");
+                }
+            } else if abs < MAX_BEFORE_E_NOTATION && abs >= MIN_BEFORE_E_NOTATION {
+                self.add_for_new_line(bun_core::fmt::count_float(value));
+                self.print(format_args!("{value}"));
+            } else if value.is_nan() {
+                self.add_for_new_line("NaN".len());
+                self.write_all(b"NaN");
+            } else if value.is_infinite() {
+                self.add_for_new_line("Infinity".len() + ((value < 0.0) as usize));
+                if value < 0.0 {
+                    self.write_all(b"-");
+                }
+                self.write_all(b"Infinity");
+            } else {
+                let mut buf = [0u8; 124];
+                let formatted = bun_core::fmt::FormatDouble::dtoa(&mut buf, value);
+                self.add_for_new_line(formatted.len());
+                self.print(format_args!("{}", bstr::BStr::new(formatted)));
             }
         }
 

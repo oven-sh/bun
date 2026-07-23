@@ -41,8 +41,6 @@ pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY;
 pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
 
 pub type Event = WatchEvent;
-pub type Item = WatchItem;
-pub type ItemList = WatchList;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
 pub type WatchItemIndex = u16;
@@ -105,7 +103,6 @@ pub struct Watcher {
     pub platform: Platform,
 
     pub watchlist: WatchList,
-    pub watched_count: usize,
     pub mutex: Mutex,
 
     // Storing the `top_level_dir` slice directly avoids a forward-decl
@@ -186,7 +183,6 @@ impl Watcher {
         }
 
         let mut this = Box::new(Watcher {
-            watched_count: 0,
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
             cwd: top_level_dir,
@@ -232,7 +228,22 @@ impl Watcher {
                 .spawn(move || unsafe {
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
-                .expect("spawn FileWatcher thread"),
+                .map_err(|e| {
+                    // Windows: raw_os_error() is a Win32 GetLastError() code, so
+                    // route it through the u32 (Win32Error) mapper rather than
+                    // from_errno's i64 discriminant-cast path.
+                    #[cfg(windows)]
+                    let errno = e
+                        .raw_os_error()
+                        .and_then(|c| bun_errno::SystemErrno::init(c as u32))
+                        .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                    #[cfg(not(windows))]
+                    let errno = e
+                        .raw_os_error()
+                        .map(bun_errno::from_errno)
+                        .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                    crate::Error::Sys(errno)
+                })?,
         );
         Ok(())
     }
@@ -474,9 +485,6 @@ impl Watcher {
             )
         };
     }
-
-    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-    pub fn add_file_descriptor_to_kqueue_without_checks(&mut self, _fd: Fd, _watchlist_id: usize) {}
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(
         &mut self,
@@ -749,25 +757,6 @@ impl Watcher {
         self.cwd
     }
 
-    pub fn append_file<const CLONE_FILE_PATH: bool>(
-        &mut self,
-        fd: Fd,
-        file_path: &[u8],
-        hash: HashType,
-        loader: Loader,
-        dir_fd: Fd,
-        package_json: Option<&'static PackageJSON>,
-    ) -> sys::Result<()> {
-        self.append_file_maybe_lock::<CLONE_FILE_PATH, true>(
-            fd,
-            file_path,
-            hash,
-            loader,
-            dir_fd,
-            package_json,
-        )
-    }
-
     pub fn add_directory<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
@@ -904,14 +893,6 @@ impl Watcher {
             }
         }
         None
-    }
-
-    pub fn remove(&mut self, hash: HashType) {
-        self.mutex.lock();
-        if let Some(index) = self.index_of(hash) {
-            self.remove_at_index(WatchItemKind::File, index as WatchItemIndex, hash, &[]);
-        }
-        self.mutex.unlock();
     }
 
     // Const-generic

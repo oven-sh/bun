@@ -1,11 +1,11 @@
+#[cfg(any(target_os = "macos", windows))]
 use core::ffi::c_int;
 #[cfg(windows)]
 use core::ffi::c_void;
-use core::fmt;
 
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
-pub use bun_core::{Fd, FdKind, FdNative, FdOptional as Optional, Stdio, fd};
+pub use bun_core::{Fd, FdKind, FdNative, Stdio, fd};
 /// Platform-native fd integer (`c_int` on POSIX, `HANDLE` on Windows). Alias
 /// for callers that want the `bun.FD.native()` shape.
 pub type RawFd = FdNative;
@@ -15,11 +15,6 @@ pub use bun_core::DecodeWindows;
 use crate as sys;
 
 bun_core::define_scoped_log!(log, SYS, visible);
-
-/// Native fd backing int — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
-pub type FdT = FdNative;
-/// `bun.windows.libuv.uv_file` (c-runtime file descriptor); on POSIX this is also `c_int`.
-pub type UvFile = c_int;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ErrorCase {
@@ -70,7 +65,6 @@ pub trait FdExt: Copy + Sized {
     ) -> sys::Result<Fd>;
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
     fn delete_tree(self, subpath: &[u8]) -> sys::Maybe<()>;
-    fn as_socket_fd(self) -> sys::SocketT;
 }
 
 impl FdExt for Fd {
@@ -284,32 +278,6 @@ impl FdExt for Fd {
         // Non-owning view: `self` is the caller's fd; we must not close it.
         sys::Dir::borrow(&self).delete_tree(subpath)
     }
-
-    #[inline]
-    fn as_socket_fd(self) -> sys::SocketT {
-        #[cfg(windows)]
-        // SAFETY: HANDLE → SOCKET pointer reinterpretation; both are pointer-sized.
-        {
-            self.native() as sys::SocketT
-        }
-        #[cfg(not(windows))]
-        {
-            self.native()
-        }
-    }
-}
-
-/// Close `Optional` if present.
-pub trait FdOptionalExt {
-    fn close(self);
-}
-impl FdOptionalExt for Optional {
-    #[inline]
-    fn close(self) {
-        if let Some(fd) = self.unwrap() {
-            fd.close();
-        }
-    }
 }
 
 // `fromJS` / `fromJSValidated` / `toJS` / `toJSWithoutMakingLibUVOwned` are
@@ -332,158 +300,6 @@ impl FdOptionalExt for Optional {
 //   getFdPath, getFdPathW, getFdPathZ.
 // TODO: move these methods defined in bun.sys.File to bun.sys, then delete
 // bun.sys.File.
-
-// ──────────────────────────────────────────────────────────────────────────
-// HashMapContext — identity hash for Fd keys.
-// ──────────────────────────────────────────────────────────────────────────
-pub struct HashMapContext;
-impl HashMapContext {
-    #[inline]
-    pub fn hash(fd: Fd) -> u64 {
-        // a file descriptor is i32 on linux, u64 on windows
-        // the goal here is to do zero work and widen the 32 bit type to 64
-        #[cfg(not(windows))]
-        {
-            fd.0 as u32 as u64
-        } // @bitCast c_int → u32, then widen
-        #[cfg(windows)]
-        {
-            fd.0
-        }
-    }
-    #[inline]
-    pub fn eql(a: Fd, b: Fd) -> bool {
-        a == b
-    }
-    #[inline]
-    pub fn pre(input: Fd) -> Prehashed {
-        Prehashed {
-            value: Self::hash(input),
-            input,
-        }
-    }
-}
-pub struct Prehashed {
-    pub value: u64,
-    pub input: Fd,
-}
-impl Prehashed {
-    #[inline]
-    pub fn hash(&self, fd: Fd) -> u64 {
-        if fd == self.input {
-            return self.value;
-        }
-        HashMapContext::hash(fd)
-    }
-    #[inline]
-    pub fn eql(&self, a: Fd, b: Fd) -> bool {
-        a == b
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// MovableIfWindowsFd — represents an FD that may be moved into libuv ownership.
-//
-// On Windows we use libuv and often pass file descriptors to functions like
-// `uv_pipe_open`, `uv_tty_init`. But `uv_pipe` and `uv_tty` **take ownership
-// of the file descriptor**. This can easily cause use-after-frees, double
-// closing the FD, etc. So this type represents an FD that could possibly be
-// moved to libuv. On POSIX this is just a wrapper over Fd and does nothing.
-// ──────────────────────────────────────────────────────────────────────────
-pub struct MovableIfWindowsFd {
-    #[cfg(windows)]
-    inner: Option<Fd>,
-    #[cfg(not(windows))]
-    inner: Fd,
-}
-impl MovableIfWindowsFd {
-    #[inline]
-    pub fn init(fd: Fd) -> Self {
-        #[cfg(windows)]
-        {
-            Self { inner: Some(fd) }
-        }
-        #[cfg(not(windows))]
-        {
-            Self { inner: fd }
-        }
-    }
-    #[inline]
-    pub fn get(&self) -> Option<Fd> {
-        #[cfg(windows)]
-        {
-            self.inner
-        }
-        #[cfg(not(windows))]
-        {
-            Some(self.inner)
-        }
-    }
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn get_posix(&self) -> Fd {
-        self.inner
-    }
-    // Windows: `getPosix` is a `@compileError` — not provided.
-
-    pub fn close(&mut self) {
-        #[cfg(not(windows))]
-        {
-            self.inner.close();
-            self.inner = Fd::INVALID;
-        }
-        #[cfg(windows)]
-        {
-            if let Some(fd) = self.inner {
-                fd.close();
-                self.inner = None;
-            }
-        }
-    }
-    #[inline]
-    pub fn is_valid(&self) -> bool {
-        #[cfg(not(windows))]
-        {
-            self.inner.is_valid()
-        }
-        #[cfg(windows)]
-        {
-            self.inner.is_some_and(|fd| fd.is_valid())
-        }
-    }
-    #[inline]
-    pub fn is_owned(&self) -> bool {
-        #[cfg(not(windows))]
-        {
-            true
-        }
-        #[cfg(windows)]
-        {
-            self.inner.is_some()
-        }
-    }
-    /// Takes the FD, leaving `self` in a "moved-from" state. Only on Windows.
-    #[cfg(windows)]
-    pub fn take(&mut self) -> Option<Fd> {
-        self.inner.take()
-    }
-    // POSIX: `take` is a `@compileError` — not provided.
-}
-impl fmt::Display for MovableIfWindowsFd {
-    fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(not(windows))]
-        {
-            write!(w, "{}", self.inner)
-        }
-        #[cfg(windows)]
-        {
-            match self.inner {
-                Some(fd) => write!(w, "{}", fd),
-                None => w.write_str("[moved]"),
-            }
-        }
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Platform helpers (Windows libuv / macOS close_nocancel).

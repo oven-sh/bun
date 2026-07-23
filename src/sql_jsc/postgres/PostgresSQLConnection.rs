@@ -250,10 +250,6 @@ impl PostgresSQLConnection {
     // via `heap::alloc` and freed only when the intrusive refcount hits zero,
     // so `options_buf` — and thus every slice — remains valid for any `&self`.
     //
-    #[inline]
-    pub fn database(&self) -> &[u8] {
-        self.database.slice()
-    }
 
     #[inline]
     pub fn user(&self) -> &[u8] {
@@ -293,10 +289,6 @@ impl PostgresSQLConnection {
             AuthenticationState::Sasl(s) => Some(s),
             _ => None,
         }
-    }
-
-    pub fn on_auto_flush(&self) -> bool {
-        <Self as HasAutoFlush>::on_auto_flush(self.as_ctx_ptr())
     }
 }
 
@@ -477,7 +469,9 @@ impl PostgresSQLConnection {
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
-            true, // is_client
+            true,  // is_client
+            false, // request_cert (server-only)
+            false, // reject_unauthorized (server-only)
             ext_size,
             ext_size,
         ) else {

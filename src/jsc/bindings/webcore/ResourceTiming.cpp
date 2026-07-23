@@ -32,7 +32,6 @@
 #include "PerformanceServerTiming.h"
 // #include "SecurityOrigin.h"
 #include "ResourceLoadTiming.h"
-#include "ServerTimingParser.h"
 #include <wtf/CrossThreadCopier.h>
 
 #include "NetworkLoadMetrics.h"

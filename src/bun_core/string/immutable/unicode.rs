@@ -13,7 +13,6 @@ use crate::string::immutable::CodePoint; // i32
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
-use crate::strings_impl::latin1_to_codepoint_bytes_assume_not_ascii;
 use bun_simdutf_sys::simdutf;
 
 crate::declare_scope!(strings, hidden);
@@ -429,17 +428,6 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
 // `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in
 // `immutable.rs` keeps resolving.
 pub use crate::strings_impl::copy_latin1_into_utf8_stop_on_non_ascii;
-
-pub fn replace_latin1_with_utf8(buf_: &mut [u8]) {
-    let mut latin1: &mut [u8] = buf_;
-    while let Some(i) = first_non_ascii(latin1) {
-        let i = i as usize;
-        let two = latin1_to_codepoint_bytes_assume_not_ascii(latin1[i]);
-        latin1[i..i + 2].copy_from_slice(&two);
-
-        latin1 = &mut latin1[i + 2..];
-    }
-}
 
 pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoResult {
     let buf_total = buf_.len();
@@ -918,14 +906,6 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
             ..Default::default()
         }
     }
-}
-
-/// Alias for the `$crate::w!("...")` macro.
-#[macro_export]
-macro_rules! to_utf16_literal {
-    ($s:literal) => {
-        $crate::w!($s)
-    };
 }
 
 /// `b"..."` for u8, `$crate::w!("...")` for u16.

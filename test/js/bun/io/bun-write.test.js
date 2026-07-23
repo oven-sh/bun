@@ -1,6 +1,17 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleHtml,
+  exampleSite,
+  gcTick,
+  isLinux,
+  isWindows,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
+import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
 let i = 0;
@@ -169,13 +180,9 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
 
     {
-      await Bun.write(
-        Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
-        Bun.file(tmpbase + "fetch.js.out"),
-      );
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(
-        exampleHtml.substring(0, (exampleHtml.length / 2) | 0),
-      );
+      const half = (exampleHtml.length / 2) | 0;
+      await Bun.write(Bun.file(tmpbase + "fetch.js.in"), Bun.file(tmpbase + "fetch.js.out").slice(0, half));
+      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml.substring(0, half));
     }
 
     {
@@ -184,6 +191,206 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await gcTick();
       expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml);
     }
+  });
+
+  // Reading `.size` on a BunFile caches the stat result into the blob. The
+  // copy length must come from the source, never from the destination blob's
+  // cached size, or a smaller pre-existing destination silently truncates
+  // the source to its own old length.
+  it("Bun.file -> Bun.file: a destination with a resolved .size is fully overwritten", async () => {
+    using dir = tempDir("bun-write-resolved-dest", {
+      "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "dst.txt": "old",
+    });
+    const src = join(String(dir), "src.txt");
+    const dstPath = join(String(dir), "dst.txt");
+    const dst = Bun.file(dstPath);
+    expect(dst.size).toBe(3);
+    const ret = await Bun.write(dst, Bun.file(src));
+    expect(await Bun.file(dstPath).text()).toBe("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    expect(ret).toBe(26);
+  });
+
+  describe("Bun.file -> Bun.file with sliced source", () => {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    it("slice(start, end) copies only the window, not the whole file", async () => {
+      using dir = tempDir("bun-write-file-slice-mid", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(5, 10));
+      expect(await Bun.file(dst).text()).toBe("FGHIJ");
+      expect(ret).toBe(5);
+    });
+
+    it("slice(0, end) copies only the leading window", async () => {
+      using dir = tempDir("bun-write-file-slice-head", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(0, 10));
+      expect(await Bun.file(dst).text()).toBe("ABCDEFGHIJ");
+      expect(ret).toBe(10);
+    });
+
+    it("slice(start) copies from start to EOF", async () => {
+      using dir = tempDir("bun-write-file-slice-tail", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(20));
+      expect(await Bun.file(dst).text()).toBe("UVWXYZ");
+      expect(ret).toBe(6);
+    });
+
+    it("slice(start, end past EOF) is clamped to the available bytes", async () => {
+      using dir = tempDir("bun-write-file-slice-past-eof", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      // A file blob is lazy, so slice(5, 100) doesn't know the file is 26 bytes;
+      // the copy must stop at EOF and not zero-extend the destination to 95.
+      const ret = await Bun.write(dst, Bun.file(src).slice(5, 100));
+      expect(await Bun.file(dst).text()).toBe("FGHIJKLMNOPQRSTUVWXYZ");
+      expect(ret).toBe(21);
+    });
+
+    it("slice(0, end past EOF) copies the whole file without padding", async () => {
+      using dir = tempDir("bun-write-file-slice-head-past-eof", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(0, 100));
+      expect(await Bun.file(dst).text()).toBe(alphabet);
+      expect(ret).toBe(26);
+    });
+
+    it("empty slice(0, 0) writes an empty file, not the whole source", async () => {
+      using dir = tempDir("bun-write-file-slice-empty", {
+        "src.txt": alphabet,
+        "dst.txt": "stale pre-existing contents",
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(0, 0));
+      expect(await Bun.file(dst).text()).toBe("");
+      expect(ret).toBe(0);
+    });
+
+    it("unsliced source still copies the whole file", async () => {
+      using dir = tempDir("bun-write-file-slice-whole", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src));
+      expect(await Bun.file(dst).text()).toBe(alphabet);
+      expect(ret).toBe(26);
+    });
+
+    it("sliced source overwrites a larger pre-existing destination", async () => {
+      using dir = tempDir("bun-write-file-slice-exists", {
+        "src.txt": alphabet,
+        "dst.txt": Buffer.alloc(64, "Z").toString(),
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const ret = await Bun.write(dst, Bun.file(src).slice(5, 10));
+      expect(await Bun.file(dst).text()).toBe("FGHIJ");
+      expect(ret).toBe(5);
+    });
+
+    it("sliced source from a file descriptor copies only the window", async () => {
+      using dir = tempDir("bun-write-file-slice-fd", { "src.txt": alphabet });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const fd = fs.openSync(src, "r");
+      try {
+        const ret = await Bun.write(dst, Bun.file(fd).slice(5, 10));
+        expect(await Bun.file(dst).text()).toBe("FGHIJ");
+        expect(ret).toBe(5);
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
+
+    it("large (>1MB) source sliced in the middle copies exactly the window", async () => {
+      using dir = tempDir("bun-write-file-slice-large", {});
+      const src = join(String(dir), "big.bin");
+      const dst = join(String(dir), "big-dst.bin");
+      const size = 2 * 1024 * 1024;
+      const buf = new Uint8Array(size);
+      for (let i = 0; i < size; i++) buf[i] = i % 256;
+      await Bun.write(src, buf);
+      const start = 1024 * 1024 + 7;
+      const end = start + 4096;
+      const ret = await Bun.write(dst, Bun.file(src).slice(start, end));
+      const out = await Bun.file(dst).bytes();
+      expect(out).toEqual(buf.slice(start, end));
+      expect(out.length).toBe(end - start);
+      expect(ret).toBe(end - start);
+    });
+
+    it("large (>1MB) source sliced in the middle copies the window via the read/write loop", async () => {
+      using dir = tempDir("bun-write-file-slice-large-rw", {});
+      const src = join(String(dir), "big.bin");
+      const dst = join(String(dir), "big-dst.bin");
+      const size = 2 * 1024 * 1024;
+      const buf = new Uint8Array(size);
+      for (let i = 0; i < size; i++) buf[i] = i % 256;
+      await Bun.write(src, buf);
+      const start = 1024 * 1024 + 7;
+      const end = start + 4096;
+      // Exercise the positioned read/write loop fallback (and, on Windows, the
+      // CopyFileWindows read/write loop) rather than copy_file_range/fcopyfile.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "./bun-write-slice-fixture.js"), src, dst, String(start), String(end)],
+        env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1", BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE: "1" },
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      // Wait for the fixture to finish writing before reading the destination,
+      // but assert the copied bytes first and the exit code last.
+      const exitCode = await proc.exited;
+      const out = await Bun.file(dst).bytes();
+      expect(out).toEqual(buf.slice(start, end));
+      expect(out.length).toBe(end - start);
+      expect(exitCode).toBe(0);
+    });
+
+    // A pipe/FIFO/socket/char device isn't seekable — lseek returns ESPIPE — so
+    // the slice offset must NOT be applied to one. The copy only seeks/offsets
+    // regular (S_ISREG) sources; every other type is copied without seeking.
+    // Before the fix, a sliced non-seekable source hit ESPIPE from lseek and
+    // aborted the copy.
+    //
+    // (file→file with a non-regular source is a separate, pre-existing "not
+    // supported" path, so the copy may still be rejected there — but it must
+    // never be a *seek* failure, which is the regression this guards against.)
+    //
+    // Linux-only: macOS/FreeBSD copy non-regular sources via an
+    // fcopyfile/read-to-EOF loop that would block on this held-open FIFO, and
+    // mkfifo is POSIX-only anyway.
+    it.skipIf(!isLinux)("sliced source from a non-seekable fd (FIFO) is copied without seeking", async () => {
+      using dir = tempDir("bun-write-file-slice-fifo", {});
+      const fifo = join(String(dir), "src.fifo");
+      const dst = join(String(dir), "dst.txt");
+      mkfifo(fifo);
+      // O_RDWR so opening the FIFO doesn't block on a peer; the fd is a genuine
+      // non-seekable ISFIFO source.
+      const fd = fs.openSync(fifo, fs.constants.O_RDWR);
+      try {
+        fs.writeSync(fd, alphabet);
+        let err;
+        try {
+          await Bun.write(dst, Bun.file(fd).slice(5, 10));
+        } catch (e) {
+          err = e;
+        }
+        // The lseek on a non-seekable fd would fail with ESPIPE; the gate must
+        // prevent that. A pre-existing "non-regular source" rejection is fine;
+        // a *seek* failure is not.
+        if (err) {
+          expect(err.syscall).not.toBe("lseek");
+          expect(err.code).not.toBe("ESPIPE");
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+    });
   });
 
   it("Bun.file", async () => {

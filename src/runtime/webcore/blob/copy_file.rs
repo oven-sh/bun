@@ -59,7 +59,6 @@ pub struct CopyFile<'a> {
     pub system_error: Option<SystemError>,
 
     pub read_len: SizeType,
-    pub read_off: SizeType,
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
@@ -118,7 +117,6 @@ impl<'a> CopyFile<'a> {
             source_fd: Fd::INVALID,
             system_error: None,
             read_len: 0,
-            read_off: 0,
         });
         CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
     }
@@ -311,8 +309,6 @@ impl<'a> CopyFile<'a> {
         &mut self,
     ) -> Result<(), crate::Error> {
         use bun_sys::linux;
-
-        self.read_off += self.offset;
 
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
@@ -553,13 +549,23 @@ impl<'a> CopyFile<'a> {
                     bun_sys::E::EBADF => {
                         let mut total_written: u64 = 0;
 
+                        // For a non-seekable destination (pipe/FIFO) fcopyfile
+                        // bailed before copying; the read/write loop honors a
+                        // finite slice window here (ftruncate can't trim a pipe).
+                        // MAX_SIZE means "whole file" → 0 (read to EOF).
+                        let copy_len = if self.max_length == MAX_SIZE {
+                            0
+                        } else {
+                            self.max_length as usize
+                        };
+
                         // TODO: this should use non-blocking I/O.
                         match node_fs::NodeFS::copy_file_using_read_write_loop(
                             bun_core::ZStr::EMPTY,
                             bun_core::ZStr::EMPTY,
                             self.source_fd,
                             self.destination_fd,
-                            0,
+                            copy_len,
                             &mut total_written,
                         ) {
                             bun_sys::Result::Err(err) => {
@@ -821,6 +827,28 @@ impl<'a> CopyFile<'a> {
                 }
             }
 
+            // A sliced source blob starts at `offset`, but the source fd is at
+            // position 0 (freshly opened, or a user-supplied fd). Every copy
+            // primitive below reads from the fd's current position — the
+            // copy_file_range/sendfile/splice syscalls are called with a null
+            // source offset, fcopyfile reads from the fd position, and the
+            // read/write loop fallback reads from it too. Seek to the slice
+            // start so the destination begins at the right byte rather than the
+            // start of the backing file.
+            //
+            // Only regular files are seekable: a pipe/FIFO/socket/char-device
+            // source returns ESPIPE from lseek (a stream has no "offset"), so
+            // skip the seek there and copy from the current position.
+            if self.offset > 0 && bun_sys::S::ISREG(stat.st_mode as _) {
+                if let bun_sys::Result::Err(err) =
+                    bun_sys::lseek(self.source_fd, self.offset as i64, libc::SEEK_SET)
+                {
+                    self.system_error = Some(err.to_system_error());
+                    self.do_close();
+                    return;
+                }
+            }
+
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Bun.write(Bun.file("a"), Bun.file("b"))
@@ -888,6 +916,9 @@ impl<'a> CopyFile<'a> {
                         )
                     };
                 }
+                if stat.st_size != 0 {
+                    self.read_len = self.max_length;
+                }
 
                 self.do_close();
                 return;
@@ -896,12 +927,21 @@ impl<'a> CopyFile<'a> {
             #[cfg(target_os = "freebsd")]
             {
                 let mut total_written: u64 = 0;
+                // Read exactly the slice window so a non-seekable destination
+                // (pipe/FIFO, where the ftruncate below is a no-op) doesn't
+                // over-copy past the slice end. MAX_SIZE means "whole file" → 0
+                // (read to EOF).
+                let copy_len = if self.max_length == MAX_SIZE {
+                    0
+                } else {
+                    self.max_length as usize
+                };
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,
                     bun_core::ZStr::EMPTY,
                     self.source_fd,
                     self.destination_fd,
-                    0,
+                    copy_len,
                     &mut total_written,
                 ) {
                     bun_sys::Result::Err(err) => {
@@ -993,6 +1033,11 @@ pub struct CopyFileWindows<'a> {
     // likely should be *const jsc::EventLoop.
     pub event_loop: &'a jsc::event_loop::EventLoop,
 
+    /// Byte offset of the source slice window. A sliced source blob
+    /// (`Bun.file(path).slice(start, end)`) copies only `[offset, offset + size)`
+    /// of the backing file, not the whole file.
+    pub offset: SizeType,
+
     pub size: SizeType,
 
     /// Bytes written, stored for use after async chmod completes
@@ -1000,6 +1045,12 @@ pub struct CopyFileWindows<'a> {
 
     /// For mkdirp
     pub err: Option<bun_sys::Error>,
+
+    /// Whether the source is a regular (seekable) file. A pipe/FIFO/socket/
+    /// char-device source can't honor an offset, so positioned reads and the
+    /// finite-size clamp are skipped for it. Defaults to `true` until the source
+    /// is stat'd (a path-backed blob we open is a regular file).
+    pub source_is_seekable: bool,
 
     /// When we are unable to get the original file path, we do a read-write loop that uses libuv.
     pub read_write_loop: ReadWriteLoop,
@@ -1012,6 +1063,9 @@ pub struct ReadWriteLoop {
     pub destination_fd: Fd,
     pub must_close_destination_fd: bool,
     pub written: usize,
+    /// Next byte offset to read from the source fd. Seeded with the slice
+    /// `offset` so positioned `uv_fs_read`s copy the window, not the whole file.
+    pub read_pos: u64,
     pub read_buf: Vec<u8>,
     pub uv_buf: libuv::uv_buf_t,
 }
@@ -1025,6 +1079,7 @@ impl Default for ReadWriteLoop {
             destination_fd: Fd::INVALID,
             must_close_destination_fd: false,
             written: 0,
+            read_pos: 0,
             read_buf: Vec::new(),
             uv_buf: libuv::uv_buf_t {
                 len: 0,
@@ -1050,11 +1105,30 @@ impl<'a> CopyFileWindows<'a> {
         self.read_write_loop.read_buf.clear();
         // reshaped for borrowck — use the full capacity slice.
         let cap = self.read_write_loop.read_buf.capacity();
+        // A finite slice copies only `size` bytes; clamp each read to the bytes
+        // still inside the window so we stop at the slice end rather than EOF.
+        // A zero-length read reports 0 == EOF, which drives the loop to
+        // completion through the existing `on_read` path (keeping the
+        // event-loop ref/unref balanced).
+        let remaining: usize = if self.size == MAX_SIZE {
+            cap
+        } else {
+            cap.min((self.size as usize).saturating_sub(self.read_write_loop.written))
+        };
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
-            len: cap as libuv::ULONG,
+            len: remaining as libuv::ULONG,
             base: self.read_write_loop.read_buf.as_mut_ptr(),
         };
         let source_fd = self.read_write_loop.source_fd;
+        // Positioned read: start at the slice offset (read_pos seeded with it)
+        // so the destination begins at the right byte instead of file start.
+        // Only regular files are seekable — a pipe/FIFO/socket/char device has
+        // no random access, so read from the current position (-1) there.
+        let read_pos = if self.source_is_seekable {
+            i64::try_from(self.read_write_loop.read_pos).expect("int cast")
+        } else {
+            -1
+        };
         let loop_ = self.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
@@ -1072,7 +1146,7 @@ impl<'a> CopyFileWindows<'a> {
                 source_fd.uv(),
                 core::ptr::from_mut(&mut self.read_write_loop.uv_buf),
                 1,
-                -1,
+                read_pos,
                 Some(on_read),
             )
         };
@@ -1155,6 +1229,9 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     let n = usize::try_from(rc.int()).expect("int cast");
     // SAFETY: libuv wrote `n` bytes into the buffer's capacity.
     unsafe { read_buf.set_len(n) };
+    // Advance the positioned-read cursor so the next chunk continues from where
+    // this one ended rather than re-reading the slice start.
+    this.read_write_loop.read_pos += n as u64;
     this.read_write_loop.uv_buf = libuv::uv_buf_t::init(read_buf.as_slice());
 
     if rc.int() == 0 {
@@ -1286,6 +1363,7 @@ impl<'a> CopyFileWindows<'a> {
         source_file_store: StoreRef,
         event_loop: &'a jsc::event_loop::EventLoop,
         mkdirp_if_not_exists: bool,
+        offset_: SizeType,
         size_: SizeType,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -1300,10 +1378,15 @@ impl<'a> CopyFileWindows<'a> {
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
+            offset: offset_,
             size: size_,
             written_bytes: 0,
             err: None,
-            read_write_loop: ReadWriteLoop::default(),
+            source_is_seekable: true,
+            read_write_loop: ReadWriteLoop {
+                read_pos: offset_,
+                ..ReadWriteLoop::default()
+            },
         }));
         // SAFETY: result was just allocated above
         let result_ref = unsafe { &mut *result };
@@ -1357,30 +1440,10 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn prepare_read_write_loop(&mut self) {
-        // Open the destination first, so that if we need to call
-        // mkdirp(), we don't spend extra time opening the file handle for
-        // the source.
-        self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self
-                .destination_file_store
-                .data_mut()
-                .as_file_mut()
-                .pathlike,
-            &mut self.read_write_loop.must_close_destination_fd,
-            false,
-        ) {
-            bun_sys::Result::Ok(fd) => fd,
-            bun_sys::Result::Err(err) => {
-                if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
-                    self.mkdirp();
-                    return;
-                }
-
-                self.throw(err);
-                return;
-            }
-        };
-
+        // Open the source first: the destination open below creates/truncates
+        // (its `WRONLY | CREAT` maps to FILE_OVERWRITE_IF), so opening the
+        // source first means a missing/unreadable source rejects without having
+        // touched the destination — matching POSIX `do_open_file::<Both>`.
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
             &mut self.source_file_store.data_mut().as_file_mut().pathlike,
             &mut self.read_write_loop.must_close_source_fd,
@@ -1393,6 +1456,36 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
+        self.read_write_loop.destination_fd = match Self::prepare_pathlike(
+            &mut self
+                .destination_file_store
+                .data_mut()
+                .as_file_mut()
+                .pathlike,
+            &mut self.read_write_loop.must_close_destination_fd,
+            false,
+        ) {
+            bun_sys::Result::Ok(fd) => fd,
+            bun_sys::Result::Err(err) => {
+                if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
+                    // mkdirp() re-enters copyfile() → prepare_read_write_loop,
+                    // which reopens the source, so release the fd we just took.
+                    self.read_write_loop.close();
+                    self.mkdirp();
+                    return;
+                }
+
+                self.throw(err);
+                return;
+            }
+        };
+
+        // Re-derive seekability and the clamped window from the handle we just
+        // opened, so a path that was swapped after the earlier stat can't make
+        // us issue a positioned read against a now-non-seekable source or
+        // truncate to a stale length.
+        self.prepare_source_window_from_fd(self.read_write_loop.source_fd);
+
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
                 self.throw(err);
@@ -1403,7 +1496,80 @@ impl<'a> CopyFileWindows<'a> {
         }
     }
 
+    /// Stat the source to (1) record whether it's a regular, seekable file and
+    /// (2) clamp a finite slice window (`size != MAX_SIZE`) to the bytes
+    /// actually available, mirroring the POSIX path's `fstat`-based
+    /// `max_length = min(st_size, end).max(offset) - offset`. A file blob is
+    /// lazy (`size == MAX_SIZE` until stat), so `slice(start, end)` can request
+    /// an `end` past EOF; without the clamp the read/write loop would write the
+    /// real bytes but `on_complete` would then extend the destination up to the
+    /// unclamped length with NUL padding (and resolve with it).
+    ///
+    /// A non-regular source (pipe/FIFO/socket/char device) has no size and no
+    /// seekable offset, so neither the clamp nor positioned reads apply to it.
+    fn prepare_source_window(&mut self) {
+        let source = &self.source_file_store.data.as_file();
+        let stat_result = if let PathOrFileDescriptor::Fd(fd) = &source.pathlike {
+            bun_sys::fstat(*fd)
+        } else {
+            let mut path_buf = PathBuffer::uninit();
+            bun_sys::stat(source.pathlike.path().slice_z(&mut path_buf))
+        };
+        if let bun_sys::Result::Ok(stat) = stat_result {
+            self.apply_source_window(&stat);
+        }
+    }
+
+    /// Re-derive the slice window from the already-opened source fd, so the
+    /// metadata the copy uses (seekability, clamped size) describes the object
+    /// actually being copied rather than whatever the pathname resolved to at
+    /// an earlier `stat()`. Used by the read/write loop once it owns the fd.
+    fn prepare_source_window_from_fd(&mut self, fd: Fd) {
+        if let bun_sys::Result::Ok(stat) = bun_sys::fstat(fd) {
+            self.apply_source_window(&stat);
+        }
+    }
+
+    fn apply_source_window(&mut self, stat: &bun_sys::Stat) {
+        self.source_is_seekable = bun_sys::S::ISREG(stat.st_mode as _);
+        if self.source_is_seekable {
+            if self.size != MAX_SIZE {
+                // Windows `uv_stat_t::st_size` is u64, matching `SizeType`.
+                let available: SizeType = stat.st_size.saturating_sub(self.offset);
+                self.size = self.size.min(available);
+            }
+        } else {
+            // A stream has no seekable offset or knowable length; copy it
+            // whole (read to EOF, never truncate) rather than honoring a
+            // slice window that can't be applied.
+            self.size = MAX_SIZE;
+        }
+    }
+
     fn copyfile(&mut self) {
+        // Only the uv_fs_copyfile head-slice path (offset == 0, finite non-zero
+        // size) needs the source stat up front, to clamp the size before it
+        // decides whether to truncate. Skip the blocking stat for a whole-file
+        // copy (offset == 0, size == MAX_SIZE — nothing consumes it), an empty
+        // slice (size == 0 — routed to the read/write loop below), and any
+        // offset > 0 copy (the read/write loop re-derives the window from the
+        // opened fd, so statting here would just be a redundant syscall).
+        if self.offset == 0 && self.size != MAX_SIZE && self.size != 0 {
+            self.prepare_source_window();
+        }
+
+        // uv_fs_copyfile always copies the whole source file; it can't honor a
+        // slice offset, and it can't produce a shorter output than the source.
+        // Route a sliced source (`offset > 0`) or an empty window (`size == 0`,
+        // including a zero-length slice) through the positioned read/write loop
+        // instead: it reads from `read_pos` (seeded with `offset`) and clamps to
+        // `size`, so an empty slice truncates the destination and writes nothing
+        // rather than copying the whole file.
+        if self.offset > 0 || self.size == 0 {
+            self.prepare_read_write_loop();
+            return;
+        }
+
         // This is for making it easier for us to test this code path
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
             .get()
@@ -1780,8 +1946,26 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    let size = this.io_request.statbuf.size();
-    this.on_complete(size as usize);
+    // `uv_fs_copyfile` does not populate `req->statbuf` on every platform (it's
+    // 0 after a Windows `CopyFileW`), so the byte count `Bun.write` resolves with
+    // would be wrong for a whole-file copy. When the size is unbounded
+    // (`self.size == MAX_SIZE`), stat the freshly written destination to get the
+    // real count; for a finite window `on_complete` already reports `self.size`.
+    let mut size = this.io_request.statbuf.size() as usize;
+    if this.size == MAX_SIZE && size == 0 {
+        let destination = &this.destination_file_store.data.as_file();
+        let stat_result = if let PathOrFileDescriptor::Fd(fd) = &destination.pathlike {
+            bun_sys::fstat(*fd)
+        } else {
+            let mut path_buf = PathBuffer::uninit();
+            bun_sys::stat(destination.pathlike.path().slice_z(&mut path_buf))
+        };
+        if let bun_sys::Result::Ok(stat) = stat_result {
+            // Windows `uv_stat_t::st_size` is u64.
+            size = usize::try_from(stat.st_size).expect("int cast");
+        }
+    }
+    this.on_complete(size);
 }
 
 #[cfg(windows)]

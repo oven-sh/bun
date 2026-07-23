@@ -16,7 +16,7 @@
 import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { faultsFor, NEVER_FAULT } from "./faults";
-import { detectCrash, digestStacks, ensureDir, manifest, readTraceDir, replayCoordinate, stamp } from "./lib";
+import { coordKey, detectCrash, digestStacks, ensureDir, manifest, readTraceDir, replayCoordinate, stamp } from "./lib";
 const manifestNames = manifest.map(m => m.name);
 
 const argv = process.argv.slice(2);
@@ -124,7 +124,7 @@ const siteMap = new Map<string, Site>();
       const d = join(maskDir, `startup${i}`);
       await replayCoordinate({ bun: bun!, args, schedule: "", dir: d, timeoutMs, capture: false }).catch(() => null);
       const t = await readTraceDir(d).catch(() => null);
-      for (const r of t?.recs ?? []) if (!r.entryOnly) startupKeys.add(`${manifestNames[r.sys]} ${r.key}`);
+      for (const r of t?.recs ?? []) if (!r.entryOnly) startupKeys.add(`${manifestNames[r.sys]} ${coordKey(r)}`);
       try {
         rmSync(d, { recursive: true, force: true });
       } catch {}
@@ -157,11 +157,12 @@ const siteMap = new Map<string, Site>();
           // 'o:'-keyed calls are another module's own machinery - not bun's
           // boundary; never a fault site (same rule as the sweeper).
           if (r.key.startsWith("o:")) continue;
-          const id = `${sysName} ${r.key}`;
+          const ck = coordKey(r);
+          const id = `${sysName} ${ck}`;
           if (startupKeys.has(id)) continue;
           const s = siteMap.get(id);
           if (s) s.seen++;
-          else siteMap.set(id, { sysName, key: r.key, seen: 1 });
+          else siteMap.set(id, { sysName, key: ck, seen: 1 });
         }
         try {
           rmSync(d, { recursive: true, force: true });

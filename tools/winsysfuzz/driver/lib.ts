@@ -18,6 +18,24 @@ export interface Syscall {
   args: { name: string; type: string; dir: string; opt: boolean }[];
 }
 export const manifest: Syscall[] = await Bun.file(join(here, "generated", "syscalls.gen.json")).json();
+
+// The COORDINATE key for a record. The raw key is the syscall's immediate
+// return address - but for a call bun makes THROUGH a Windows API wrapper
+// that immediate caller sits inside kernelbase/ntdll (k:/n: key), so EVERY
+// read/open/close in the process shared ONE wrapper-internal key, and the
+// startup mask (the runner reads and opens files at startup) removed all of
+// them from the fault surface. Key wrapped calls by the FIRST bun.exe frame
+// behind the wrapper instead ("B:<rva>" - the true program callsite):
+// fs.readFile's ReadFile and the module loader's ReadFile become distinct
+// coordinates, the mask stays exact, and the trunk I/O paths are faultable.
+// The runtime matches a B: rule against that same first-bun-frame.
+export function coordKey(r: { key: string; rvas: string[] }): string {
+  if ((r.key.startsWith("k:") || r.key.startsWith("n:")) && r.rvas.length && r.rvas[0] !== "0") {
+    return "B:" + r.rvas[0];
+  }
+  return r.key;
+}
+
 export const nameOf = (id: number) => manifest[id]?.name ?? `sys#${id}`;
 export const idOf = (name: string) => manifest.findIndex(s => s.name === name);
 

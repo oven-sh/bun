@@ -17,6 +17,7 @@ import { appendFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ALPC_OK, faultsFor, isCurated } from "./faults";
 import {
+  coordKey,
   detectCrash,
   digestStacks,
   ensureDir,
@@ -86,12 +87,13 @@ baseTrace.recs.forEach((r, i) => {
   if (r.entryOnly) return;
   const sysName = nameOf(r.sys);
   if (!faultsFor(sysName)) return; // universal surface: every faultable syscall
-  const id = `${r.sys}:${r.key}`;
+  const ck = coordKey(r); // program callsite (bun frame behind wrappers)
+  const id = `${r.sys}:${ck}`;
   const c = coordMap.get(id);
   if (c) {
     c.hits++;
     c.last = i;
-  } else coordMap.set(id, { sysName, key: r.key, hits: 1, first: i, last: i });
+  } else coordMap.set(id, { sysName, key: ck, hits: 1, first: i, last: i });
 });
 
 // Startup mask: coordinates an EMPTY/init-only program produces are process
@@ -116,7 +118,7 @@ const masked = new Set<string>();
 for (let i = 0; i < MASK_PROGRAMS.length; i++) {
   const m = await runOnce({ bun, args: MASK_PROGRAMS[i], workDir: join(runsDir, `startup-mask${i}`), timeoutMs });
   const t = await readTraceDir(m.dir);
-  for (const r of t?.recs ?? []) if (!r.entryOnly) masked.add(`${r.sys}:${r.key}`);
+  for (const r of t?.recs ?? []) if (!r.entryOnly) masked.add(`${r.sys}:${coordKey(r)}`);
 }
 const allCoords = [...coordMap.entries()];
 // A call issued from INSIDE another module ('o:' key) is that module's own

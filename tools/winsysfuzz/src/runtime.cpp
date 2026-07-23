@@ -597,7 +597,14 @@ bool CallCtx::PreFault() {
   CallKey k = KeyOf(frames_[0]);
   for (int i = start; i < g_ruleEnd[sys_]; i++) {
     Rule& r = g_rules[i];
-    if (!r.anyCallsite && (r.keyTag != k.tag || r.keyRva != k.rva)) continue;
+    if (!r.anyCallsite) {
+      if (r.keyTag == 'B') {
+        // Program-callsite key: the first bun.exe frame behind the wrapper.
+        if (!bunFrame_ || (bunFrame_ - g_bunBase) != r.keyRva) continue;
+      } else if (r.keyTag != k.tag || r.keyRva != k.rva) {
+        continue;
+      }
+    }
     if (r.ioctlCode != 0) {
       int8_t xi = kHooks[sys_].ioctlIndex;
       if (!(sys_ == SYS_NtDeviceIoControlFile && xi >= 0 && xi < argc_ &&

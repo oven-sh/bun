@@ -19,6 +19,7 @@ import { basename, join } from "node:path";
 import { ALPC_OK, DELAY_MS, F, FAULTS, faultsFor, type Fault, type Mode } from "./faults";
 import {
   classifySym,
+  coordKey,
   digestStacks,
   ensureDir,
   keyName,
@@ -191,20 +192,26 @@ interface Coord {
   hits: number;
   repRvas: string[];
 }
-const bunRvaOfKey = (k: string) => (k.startsWith("b:") ? k.slice(2) : null);
+const bunRvaOfKey = (k: string) => (k.startsWith("b:") || k.startsWith("B:") ? k.slice(2) : null);
 const coords = new Map<string, Coord>();
 for (const r of baseTrace.recs) {
   if (r.entryOnly) continue;
   const sysName = nameOf(r.sys);
   if (!faultsFor(sysName)) continue; // universal surface: every faultable syscall
   if (sysFilter && !sysFilter.includes(sysName)) continue;
-  const id = `${r.sys}:${r.key}`;
+  // Coordinate identity is the PROGRAM callsite: a wrapped call (k:/n:
+  // immediate caller) keys on the first bun.exe frame behind the wrapper,
+  // so trunk I/O (ReadFile/CreateFile/CloseHandle from every bun path) is a
+  // distinct, faultable coordinate per bun caller - not one shared
+  // wrapper-internal key that the startup mask always removed.
+  const ck = coordKey(r);
+  const id = `${r.sys}:${ck}`;
   const c = coords.get(id);
   if (c) c.hits++;
   else {
-    const kb = bunRvaOfKey(r.key);
+    const kb = bunRvaOfKey(ck.startsWith("B:") ? "b:" + ck.slice(2) : ck);
     const repRvas = kb ? [kb, ...r.rvas.filter(x => x !== kb)] : r.rvas;
-    coords.set(id, { id, sys: r.sys, sysName, key: r.key, hits: 1, repRvas });
+    coords.set(id, { id, sys: r.sys, sysName, key: ck, hits: 1, repRvas });
   }
 }
 
@@ -235,7 +242,7 @@ const startupMask = new Set<string>();
 for (let i = 0; i < MASK_PROGRAMS.length; i++) {
   const m = await runOnce({ bun, args: MASK_PROGRAMS[i], workDir: join(runsDir, `startup-mask${i}`), timeoutMs });
   const t = await readTraceDir(m.dir);
-  for (const r of t?.recs ?? []) if (!r.entryOnly) startupMask.add(`${r.sys}:${r.key}`);
+  for (const r of t?.recs ?? []) if (!r.entryOnly) startupMask.add(`${r.sys}:${coordKey(r)}`);
 }
 
 const syms = await symbolize(bun, [...coords.values()].flatMap(c => c.repRvas));

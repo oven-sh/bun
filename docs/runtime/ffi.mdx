@@ -313,6 +313,8 @@ setTimeout(() => {
 
 When you're done with a `JSCallback`, call `close()` to free the memory.
 
+The same applies to the library itself: call `close()` on the object returned by `dlopen` when you no longer need it. Once a library has been closed, calling any of its symbols throws a `TypeError`.
+
 ### Experimental thread-safe callbacks
 
 `JSCallback` has experimental support for thread-safe callbacks. You need this if you pass a callback function into a different thread from the one that created it. Enable it with the optional `threadsafe` parameter.

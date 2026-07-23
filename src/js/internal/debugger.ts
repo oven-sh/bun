@@ -137,9 +137,9 @@ export default function (
   isAcceptingConnectionsFor: (executionContextId: number) => boolean,
 ): void {
   // Per context: a waiting worker must not answer for the main thread.
-  const isWaitingForDebugger = () => isWaitingForDebuggerFor(executionContextId);
+  const isWaitingForDebugger = isWaitingForDebuggerFor.bind(undefined, executionContextId);
   // False once the exit handshake has begun; see #fetch.
-  const isAcceptingConnections = () => isAcceptingConnectionsFor(executionContextId);
+  const isAcceptingConnections = isAcceptingConnectionsFor.bind(undefined, executionContextId);
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
@@ -357,14 +357,38 @@ function unescapeUnixSocketUrl(href: string) {
   return href;
 }
 
+class BackendHandle {
+  #backend;
+  #send;
+  #close;
+
+  constructor(backend: unknown, send: (message: string | string[]) => void, close: () => void) {
+    this.#backend = backend;
+    this.#send = send;
+    this.#close = close;
+  }
+
+  write(message: string | string[]) {
+    this.#send.$call(this.#backend, message);
+    return true;
+  }
+
+  close() {
+    this.#close.$call(this.#backend);
+  }
+}
+
 class Debugger {
   #url?: URL;
-  #createBackend: (
-    refEventLoop: boolean,
-    receive: (...messages: string[]) => void,
-    isCDP?: boolean,
-    preventShutdown?: boolean,
-  ) => Backend;
+  #backendFactory: CreateBackendFn;
+  #backendSend: (message: string | string[]) => void;
+  #backendClose: () => void;
+  #executionContextId: number;
+
+  #createBackend(refEventLoop: boolean, receive: (...messages: string[]) => void, isCDP = false, preventShutdown = false): Backend {
+    const backend = this.#backendFactory(this.#executionContextId, refEventLoop, receive, isCDP, preventShutdown);
+    return new BackendHandle(backend, this.#backendSend, this.#backendClose);
+  }
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
@@ -407,16 +431,10 @@ class Debugger {
     this.#enableNodeCDP = enableNodeCDP;
     this.#isWaitingForDebugger = isWaitingForDebugger;
     this.#isAcceptingConnections = isAcceptingConnections;
-    this.#createBackend = (refEventLoop, receive, isCDP = false, preventShutdown = false) => {
-      const backend = createBackend(executionContextId, refEventLoop, receive, isCDP, preventShutdown);
-      return {
-        write: (message: string | string[]) => {
-          send.$call(backend, message);
-          return true;
-        },
-        close: () => close.$call(backend),
-      };
-    };
+    this.#backendFactory = createBackend;
+    this.#backendSend = send;
+    this.#backendClose = close;
+    this.#executionContextId = executionContextId;
 
     if (url.startsWith("unix://")) {
       this.#connectOverSocket({

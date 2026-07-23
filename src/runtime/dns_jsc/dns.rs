@@ -523,6 +523,135 @@ pub(super) fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBa
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// IPv4 literal normalization (inet_aton semantics)
+// ──────────────────────────────────────────────────────────────────────────
+
+pub(super) enum Ipv4Literal {
+    /// Not a numeric IPv4 literal; resolve as a hostname.
+    NotNumeric,
+    /// A valid legacy IPv4 literal, already reduced to canonical octets.
+    Valid([u8; 4]),
+    /// A numeric literal attempt that `inet_aton` rejects.
+    Invalid,
+}
+
+// Parse one `inet_aton` field: `0x`/`0X` = hex, leading `0` = octal, else
+// decimal. A value wider than 32 bits is rejected so later shifting is safe.
+fn parse_ipv4_field(field: &[u8]) -> Option<u64> {
+    if field.is_empty() {
+        return None;
+    }
+    let (radix, digits): (u64, &[u8]) =
+        if field.len() >= 2 && field[0] == b'0' && (field[1] | 0x20) == b'x' {
+            (16, &field[2..])
+        } else if field[0] == b'0' && field.len() > 1 {
+            (8, &field[1..])
+        } else {
+            (10, field)
+        };
+    if digits.is_empty() {
+        // "0x"/"0X" with no trailing digits is not a number to inet_aton; a lone
+        // "0" reaches this via the decimal arm with a non-empty digit sequence.
+        return None;
+    }
+    let mut value: u64 = 0;
+    for &c in digits {
+        let digit = match c {
+            b'0'..=b'9' => (c - b'0') as u64,
+            b'a'..=b'f' => (c - b'a' + 10) as u64,
+            b'A'..=b'F' => (c - b'A' + 10) as u64,
+            _ => return None,
+        };
+        if digit >= radix {
+            return None;
+        }
+        value = value.checked_mul(radix)?.checked_add(digit)?;
+        if value > 0xFFFF_FFFF {
+            return None;
+        }
+    }
+    Some(value)
+}
+
+// A field a backend reads as a number: all decimal digits, or a `0x`/`0X`
+// prefix followed only by hex digits. Hex letters with no `0x` (a `.de`/`.ca`
+// TLD) or junk after `0x` (`0x-server`) are not numeric to any backend.
+fn looks_like_numeric_field(field: &[u8]) -> bool {
+    if field.is_empty() {
+        return false;
+    }
+    if field.len() >= 2 && field[0] == b'0' && (field[1] | 0x20) == b'x' {
+        return field[2..].iter().all(u8::is_ascii_hexdigit);
+    }
+    field.iter().all(u8::is_ascii_digit)
+}
+
+// Parse inet_aton-shaped IPv4 literals to canonical octets so every backend
+// agrees. A numeric literal that fails to parse is rejected (not handed to a
+// backend with a laxer reading); a non-numeric name falls through to DNS.
+pub(super) fn classify_ipv4_literal(name: &[u8]) -> Ipv4Literal {
+    // A name that does not start with a digit is always a hostname.
+    if name.is_empty() || !name[0].is_ascii_digit() {
+        return Ipv4Literal::NotNumeric;
+    }
+
+    // When parsing fails, reject only if every field was a numeric attempt that
+    // a backend could still read as a (different) address; otherwise it is a
+    // hostname and must reach DNS, matching node/glibc.
+    let on_parse_failure = if name.split(|&b| b == b'.').all(looks_like_numeric_field) {
+        Ipv4Literal::Invalid
+    } else {
+        Ipv4Literal::NotNumeric
+    };
+
+    let mut fields = [0u64; 4];
+    let mut count = 0usize;
+    for field in name.split(|&b| b == b'.') {
+        if count == 4 {
+            return on_parse_failure;
+        }
+        match parse_ipv4_field(field) {
+            Some(value) => fields[count] = value,
+            None => return on_parse_failure,
+        }
+        count += 1;
+    }
+
+    // inet_aton packs the trailing field into the bytes the leading fields did
+    // not claim; every leading field must still fit in a single octet.
+    let addr: u32 = match count {
+        1 => match u32::try_from(fields[0]) {
+            Ok(v) => v,
+            Err(_) => return on_parse_failure,
+        },
+        2 => {
+            if fields[0] > 0xFF || fields[1] > 0x00FF_FFFF {
+                return on_parse_failure;
+            }
+            ((fields[0] as u32) << 24) | fields[1] as u32
+        }
+        3 => {
+            if fields[0] > 0xFF || fields[1] > 0xFF || fields[2] > 0xFFFF {
+                return on_parse_failure;
+            }
+            ((fields[0] as u32) << 24) | ((fields[1] as u32) << 16) | fields[2] as u32
+        }
+        4 => {
+            if fields[..4].iter().any(|&f| f > 0xFF) {
+                return on_parse_failure;
+            }
+            ((fields[0] as u32) << 24)
+                | ((fields[1] as u32) << 16)
+                | ((fields[2] as u32) << 8)
+                | fields[3] as u32
+        }
+        _ => return on_parse_failure,
+    };
+
+    Ipv4Literal::Valid(addr.to_be_bytes())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // CacheConfig — packed struct(u16) shared by all request types
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -5233,10 +5362,34 @@ impl Resolver {
         let mut backend = opts.backend;
         let normalized = normalize_dns_name(name, &mut backend);
         opts.backend = backend;
+
+        // Canonicalize legacy IPv4 literals before backend dispatch so every
+        // backend agrees with node/glibc; invalid numeric attempts fail closed.
+        let canonical;
+        let resolved_name: &[u8] = match classify_ipv4_literal(normalized) {
+            Ipv4Literal::Valid(octets) => {
+                canonical = format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]);
+                canonical.as_bytes()
+            }
+            Ipv4Literal::Invalid => {
+                let mut promise = JSPromiseStrong::init(global_this);
+                let promise_value = promise.value();
+                error_to_deferred(
+                    c_ares::Error::ENOTFOUND,
+                    b"getaddrinfo",
+                    Some(name),
+                    &mut promise,
+                )
+                .reject_later(global_this);
+                return Ok(promise_value);
+            }
+            Ipv4Literal::NotNumeric => normalized,
+        };
+
         let query = GetAddrInfo {
             options: opts,
             port,
-            name: normalized.into(),
+            name: resolved_name.into(),
         };
 
         Ok(match opts.backend {

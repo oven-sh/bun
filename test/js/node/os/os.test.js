@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -296,3 +296,85 @@ it("getPriority system error object", () => {
     expect(err.syscall).toBe("uv_os_getpriority");
   }
 });
+
+it("setPriority system error object names uv_os_setpriority", () => {
+  try {
+    os.setPriority(-1, 0);
+    expect.unreachable();
+  } catch (err) {
+    expect(err.name).toBe("SystemError");
+    expect(err.message).toBe("A system error occurred: uv_os_setpriority returned ESRCH (no such process)");
+    expect(err.code).toBe("ERR_SYSTEM_ERROR");
+    expect(err.info).toEqual({
+      errno: isWindows ? -4040 : -3,
+      code: "ESRCH",
+      message: "no such process",
+      syscall: "uv_os_setpriority",
+    });
+    expect(err.errno).toBe(isWindows ? -4040 : -3);
+    expect(err.syscall).toBe("uv_os_setpriority");
+  }
+});
+
+it.skipIf(isWindows || process.getuid?.() === 0)(
+  "setPriority permission error names uv_os_setpriority with matching errno",
+  async () => {
+    // Use a disposable child so we never touch init or our own priority.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "setTimeout(() => {}, 300000)"],
+      env: bunEnv,
+    });
+    let err;
+    try {
+      os.setPriority(proc.pid, -20);
+    } catch (e) {
+      err = e;
+    }
+    // Same-uid target + raising priority without CAP_SYS_NICE -> EACCES.
+    // The EPERM arm needs a different-uid target and is not exercised here.
+    if (err === undefined) {
+      // Runner has CAP_SYS_NICE (seen on Alpine CI); nothing to assert.
+      return;
+    }
+    expect(err.syscall).toBe("uv_os_setpriority");
+    expect(err.info.syscall).toBe("uv_os_setpriority");
+    expect(err.info.code).toBe("EACCES");
+    expect(err.errno).toBe(-os.constants.errno.EACCES);
+    expect(err.info.errno).toBe(-os.constants.errno.EACCES);
+  },
+);
+
+it.if(isPosix && process.getuid?.() === 0)(
+  "setPriority EPERM error names uv_os_setpriority with errno -EPERM",
+  async () => {
+    // Different-uid target: run as nobody and target the root-owned parent.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const os = require("node:os");
+         try { os.setPriority(process.ppid, 0); console.log(JSON.stringify({ ok: true })); }
+         catch (e) { console.log(JSON.stringify({ syscall: e.syscall, errno: e.errno, info: e.info })); }`,
+      ],
+      env: bunEnv,
+      uid: 65534,
+      gid: 65534,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: {
+        syscall: "uv_os_setpriority",
+        errno: -os.constants.errno.EPERM,
+        info: {
+          code: "EPERM",
+          errno: -os.constants.errno.EPERM,
+          message: "operation not permitted",
+          syscall: "uv_os_setpriority",
+        },
+      },
+      exitCode: 0,
+    });
+  },
+);

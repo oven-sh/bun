@@ -126,14 +126,35 @@ async function worker(w: number) {
       }
       continue;
     }
-    // Verify by re-running the SAME program (deterministic replay).
-    const r2 = await runProgram(program, dir);
+    // Verify with a FRESH run identity: the first run's own teardown
+    // (scratch dir removal, server port release) races an immediate
+    // re-run in the same dir. Regenerate the byte-identical program into a
+    // clean subdirectory, let the first process fully exit, then re-run.
+    const vdir = join(dir, "verify");
+    mkdirSync(vdir, { recursive: true });
+    const vprogram = join(vdir, "program.js");
+    await Bun.write(vprogram, await Bun.file(program).text());
+    await Bun.sleep(300);
+    const r2 = await runProgram(vprogram, vdir);
     const j2 = judge(r2);
     const verified = j2.kind === j.kind && (j.kind !== "crash" || j2.sig === j.sig);
     if (j.kind === "crash") crashes++;
     else hangs++;
     console.log(`!! [seed ${seed}] ${j.kind} ${verified ? "VERIFIED" : "unverified"}: ${j.detail.slice(0, 90)}`);
-    if (!verified) continue; // keep the dir for inspection, don't queue
+    if (!verified) {
+      // A seed IS a complete reproducer - never drop a first-run crash.
+      // Ledger it (once per signature) for a later, slower re-check.
+      if (!knownKeys.has("unv:" + j.sig)) {
+        knownKeys.add("unv:" + j.sig);
+        try {
+          appendFileSync(
+            join(queueDir, "gen-unverified.log"),
+            JSON.stringify({ at: new Date().toISOString(), seed, statements, sig: j.sig, detail: j.detail }) + "\n",
+          );
+        } catch {}
+      }
+      continue;
+    }
     if (knownKeys.has(j.sig)) {
       console.log(`   known signature - not re-queued`);
       continue;

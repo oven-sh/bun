@@ -256,7 +256,7 @@ function onAbortedCallback(resolveFn: Function) {
   resolveFn();
 }
 
-function aborted(signal: AbortSignal, resource: object) {
+async function aborted(signal: AbortSignal, resource: object) {
   if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
   }
@@ -266,7 +266,7 @@ function aborted(signal: AbortSignal, resource: object) {
   }
 
   if (signal.aborted) {
-    return Promise.$resolve();
+    return;
   }
 
   const { promise, resolve } = $newPromiseCapability(Promise);

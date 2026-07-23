@@ -313,8 +313,9 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   }
 
   // Options whose semantics we cannot honor yet must fail loudly rather than be
-  // silently ignored. testTagFilters is the deliberate exception: validated for
-  // node's error contract but not yet forwarded, pending the native reporter hook.
+  // silently ignored. testTagFilters and timeout are the deliberate exceptions:
+  // validated for node's error contract but not yet forwarded (node's own
+  // test-runner-filetest-location.js passes timeout).
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
@@ -325,6 +326,7 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
   if (opts.forceExit) throwNotImplemented("run({ forceExit: true })", 5090);
+  if (opts.concurrency != null) throwNotImplemented("run({ concurrency })", 5090);
   if (opts.files == null)
     throwNotImplemented("run() default file discovery", 5090, "Pass { files: [...] } explicitly.");
 
@@ -508,6 +510,10 @@ async function runOneFile(
     const fileFailed = exitCode !== 0 && fileCounts.failed === 0;
     const subtestsFailed = fileCounts.failed > 0;
     const fileDuration = Date.now() - fileStarted;
+    // Node's FileTest.#skipReporting(): no file-level complete/pass/fail when
+    // the child reported at least one test and the only error is subtestsFailed
+    // (or none); here that is `reportedChildren > 0 && !fileFailed`.
+    const reportedChildren = fileCounts.tests + fileCounts.suites;
     let error: Error | undefined;
 
     if (subtestsFailed) {
@@ -515,8 +521,10 @@ async function runOneFile(
       error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
     }
 
-    if (!fileFailed) {
-      fileCounts.topLevel++;
+    fileCounts.topLevel++;
+    if (fileFailed) {
+      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+    } else {
       reporter.summary({
         __proto__: null,
         success: fileCounts.failed === 0,
@@ -524,17 +532,8 @@ async function runOneFile(
         duration_ms: fileDuration,
         file: absolute,
       });
-    } else {
-      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
-      fileCounts.tests++;
-      fileCounts.failed++;
-      fileCounts.topLevel++;
     }
 
-    // Node's FileTest.#skipReporting(): no file-level complete/pass/fail when
-    // the child reported at least one test and the only error is subtestsFailed
-    // (or none); here that is `reportedChildren > 0 && !fileFailed`.
-    const reportedChildren = fileCounts.tests + fileCounts.suites;
     if (reportedChildren === 0 || fileFailed) {
       reporter.complete({
         __proto__: null,
@@ -549,15 +548,15 @@ async function runOneFile(
           error,
         },
       });
-    }
-    if (fileFailed) {
-      reporter.fail({
-        __proto__: null,
-        ...fileNode,
-        type: undefined,
-        testNumber: 1,
-        details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
-      });
+      const details = { __proto__: null, duration_ms: fileDuration, type: "test", error };
+      fileCounts.tests++;
+      if (fileFailed) {
+        fileCounts.failed++;
+        reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
+      } else {
+        fileCounts.passed++;
+        reporter.pass({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
+      }
     }
     addRunCounts(counts, fileCounts);
   } finally {
@@ -2572,7 +2571,7 @@ function addTest(
     // directive it reports. bun:test only runs todo bodies under --todo, so a
     // run() child registers them as ordinary tests and marks the result at the
     // end (what createTopLevelTestRunner already does for a runtime t.todo()).
-    if (runChildReporterEnabled && effectiveMode === "todo" && !node.skipped) {
+    if (runChildReporterEnabled && effectiveMode === "todo") {
       // The test.todo() spelling carries the directive in `mode`, not in the
       // options, so the node has to be marked for the runner to report it.
       node.todoFlag = true;
@@ -2581,10 +2580,6 @@ function addTest(
       else test(name, runner);
       return Promise.resolve(undefined);
     }
-    // A skipped body never runs — in node either — so nothing would report it.
-    // Emit at registration: bun:test collects every test before running any, so
-    // there is no later point that still knows the declaration position.
-    reportDirectiveOnlyNode(node, effectiveMode);
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
     const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;

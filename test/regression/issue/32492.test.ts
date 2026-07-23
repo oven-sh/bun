@@ -24,12 +24,13 @@ test("concurrent bun build does not stall on worker-pool shutdown", async () => 
   const root = String(dir);
 
   const CONCURRENCY = 24;
-  // #32492 was a ~10s stall at pool shutdown when the idle-futex timeout was
-  // 10s. #34009 lowered that timeout to 100ms, so a skipped shutdown wake now
-  // costs at most ~100ms and is indistinguishable from 24-way scheduling noise.
-  // This test therefore acts as a coarse guard (no multi-second shutdown stall)
-  // plus a concurrent-build smoke test. 4 rounds x 24 builds is enough for that
-  // on debug/ASAN; release keeps 16 because it's cheap.
+  // #32492 was a ~10s stall at pool shutdown when the idle-futex first-wait
+  // timeout was 10s. #34009 lowered that timeout to 100ms, after which the
+  // 16-round version of this test no longer distinguishes a reverted
+  // Event::wake fix on current main (verified empirically). This test is now a
+  // coarse guard against multi-second shutdown stalls plus a concurrent-build
+  // smoke test; 4 rounds x 24 builds covers that on debug/ASAN and release
+  // keeps 16 because it's cheap.
   const ROUNDS = isASAN || isDebug ? 4 : 16;
   const STALL_MS = 9000;
 

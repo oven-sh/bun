@@ -3,7 +3,7 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunEnvNoProxy, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -1273,19 +1273,18 @@ for (let credentials of allCredentials) {
             }),
           );
         });
-        it("should error when presign with invalid token", async () => {
+        it("should presign with a session token larger than 2 KB", async () => {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
               let options = { ...s3Options, bucket: S3Bucket };
+              // AWS documents no maximum session token length; Cognito and
+              // role chaining routinely produce multi-KB tokens. This used to
+              // throw ERR_S3_INVALID_SESSION_TOKEN.
               options.sessionToken = Buffer.alloc(4096, "a").toString();
 
-              try {
-                const s3file = fn(randomUUID(), options);
-                await s3file.presign();
-                expect.unreachable();
-              } catch (e: any) {
-                expect(e?.code).toBe("ERR_S3_INVALID_SESSION_TOKEN");
-              }
+              const s3file = fn(randomUUID(), options);
+              const url = await s3file.presign();
+              expect(new URL(url).searchParams.get("X-Amz-Security-Token")).toBe(options.sessionToken);
             }),
           );
         });
@@ -1786,7 +1785,9 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture's S3 requests target an in-process server and must not
+      // be rerouted by ambient proxy configuration on CI hosts.
+      env: bunEnvNoProxy,
       stdout: "pipe",
       stderr: "pipe",
     });

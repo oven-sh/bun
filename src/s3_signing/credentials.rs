@@ -559,7 +559,10 @@ impl S3Credentials {
             };
 
             if sign_query {
-                let mut token_encoded_buffer = [0u8; 2048]; // token is normaly like 600-700 but can be up to 2k
+                // AWS documents no maximum STS session token length (Cognito /
+                // role-chaining tokens routinely exceed 2 KB), and percent-encoding
+                // expands a byte to at most 3, so size each buffer to its input.
+                let mut token_encoded_buffer = vec![0u8; session_token.map_or(0, |t| t.len() * 3)];
                 let mut encoded_session_token: Option<&[u8]> = None;
                 if let Some(token) = session_token {
                     encoded_session_token = Some(
@@ -568,8 +571,8 @@ impl S3Credentials {
                     );
                 }
 
-                // MD5 as base64 (which is required for AWS SigV4) is always 44, when encoded its always 46 (44 + ==)
-                let mut content_md5_encoded_buffer = [0u8; 128];
+                let mut content_md5_encoded_buffer =
+                    vec![0u8; content_md5.as_deref().map_or(0, |v| v.len() * 3)];
                 let mut encoded_content_md5: Option<&[u8]> = None;
                 if let Some(content_md5_value) = content_md5.as_deref() {
                     encoded_content_md5 = Some(
@@ -582,7 +585,8 @@ impl S3Credentials {
                 }
 
                 // Encode response override parameters for presigned URLs
-                let mut content_disposition_encoded_buffer = [0u8; 512];
+                let mut content_disposition_encoded_buffer =
+                    vec![0u8; content_disposition.map_or(0, |v| v.len() * 3)];
                 let mut encoded_content_disposition: Option<&[u8]> = None;
                 if let Some(cd) = content_disposition {
                     encoded_content_disposition = Some(
@@ -591,7 +595,8 @@ impl S3Credentials {
                     );
                 }
 
-                let mut content_type_encoded_buffer = [0u8; 256];
+                let mut content_type_encoded_buffer =
+                    vec![0u8; content_type.map_or(0, |v| v.len() * 3)];
                 let mut encoded_content_type: Option<&[u8]> = None;
                 if let Some(ct) = content_type {
                     encoded_content_type = Some(
@@ -601,7 +606,7 @@ impl S3Credentials {
                 }
 
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
-                let canonical: &[u8] = 'brk_canonical: {
+                let canonical: Vec<u8> = {
                     let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
 
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
@@ -651,24 +656,22 @@ impl S3Credentials {
                         query_string.extend_from_slice(part);
                     }
 
-                    break 'brk_canonical buf_print(
-                        &mut tmp_buffer,
-                        format_args!(
-                            "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
-                            method_name,
-                            BStr::new(normalized_path),
-                            BStr::new(&query_string),
-                            BStr::new(&host),
-                            BStr::new(aws_content_hash)
-                        ),
+                    // The query string carries the (unbounded) encoded session
+                    // token, so the canonical request must live on the heap.
+                    alloc_print!(
+                        "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
+                        method_name,
+                        BStr::new(normalized_path),
+                        BStr::new(&query_string),
+                        BStr::new(&host),
+                        BStr::new(aws_content_hash)
                     )
-                    .map_err(|_| SignError::NoSpaceLeft)?;
                 };
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
+                unsafe { bun_sha_hmac::SHA256::hash(&canonical, &mut sha_digest, boring_engine()) };
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,
@@ -755,7 +758,6 @@ impl S3Credentials {
                 .into_boxed_slice();
             } else {
                 let canonical = CanonicalRequest::format(
-                    &mut tmp_buffer,
                     header_key,
                     method_name.as_bytes(),
                     normalized_path,
@@ -770,13 +772,12 @@ impl S3Credentials {
                     session_token,
                     storage_class,
                     signed_headers,
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
+                );
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
+                unsafe { bun_sha_hmac::SHA256::hash(&canonical, &mut sha_digest, boring_engine()) };
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,
@@ -1361,8 +1362,9 @@ struct CanonicalRequest;
 
 impl CanonicalRequest {
     // Builds the canonical request at runtime with conditional writes; profile if hot.
-    pub(crate) fn format<'b>(
-        buf: &'b mut [u8],
+    // Heap-allocated: several inputs (session token, host, content-disposition)
+    // have no bounded length.
+    pub(crate) fn format(
         key: SignedHeadersKey,
         method: &[u8],
         path: &[u8],
@@ -1377,10 +1379,10 @@ impl CanonicalRequest {
         session_token: Option<&[u8]>,
         storage_class: Option<&[u8]>,
         signed_headers: &[u8],
-    ) -> Result<&'b [u8], core::fmt::Error> {
-        let mut c = bun_core::fmt::SliceCursor::new(buf);
+    ) -> Vec<u8> {
+        let mut c: Vec<u8> = Vec::new();
         macro_rules! w {
-            ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
+            ($($arg:tt)*) => { write!(&mut c, $($arg)*).expect("write to Vec<u8> never fails") };
         }
         // method, path, query
         w!(
@@ -1431,8 +1433,7 @@ impl CanonicalRequest {
         // signed_headers, hash
         w!("\n{}\n{}", BStr::new(signed_headers), BStr::new(hash));
 
-        let len = c.at;
-        Ok(&c.buf[..len])
+        c
     }
 }
 

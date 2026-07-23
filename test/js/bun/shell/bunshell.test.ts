@@ -1666,6 +1666,69 @@ describe("deno_task", () => {
     TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} > /dev/null`
       .quiet()
       .runAsTest("bunception redirect /dev/null");
+
+    describe("stdin from Request/Response", () => {
+      const P = "hello-shell-stdin-0123456789";
+
+      // A Response whose body is a JS-driven ReadableStream cannot be drained
+      // synchronously at redirect setup time. It used to be substituted with an
+      // empty blob, so the command ran on zero bytes and reported success.
+      describe.each([
+        [
+          "ReadableStream start()",
+          () =>
+            new ReadableStream({
+              start(c) {
+                c.enqueue(new TextEncoder().encode(P));
+                c.close();
+              },
+            }),
+        ],
+        [
+          "TransformStream readable",
+          () => {
+            const ts = new TransformStream();
+            const w = ts.writable.getWriter();
+            w.write(new TextEncoder().encode(P));
+            w.close();
+            return ts.readable;
+          },
+        ],
+        [
+          "async generator",
+          () =>
+            (async function* () {
+              yield P;
+            })(),
+        ],
+      ])("Response(%s) as stdin", (_name, body) => {
+        test("rejects instead of delivering zero bytes", async () => {
+          await expect($`cat < ${new Response(body())}`.text()).rejects.toThrow(/body is a ReadableStream/);
+        });
+      });
+
+      test("Response with an already-consumed body rejects", async () => {
+        const res = new Response(P);
+        await res.text();
+        await expect($`cat < ${res}`.text()).rejects.toThrow(/already used/i);
+      });
+
+      test("Response with a string body still works", async () => {
+        const { stdout } = await $`cat < ${new Response(P)}`;
+        expect(stdout.toString()).toBe(P);
+      });
+
+      test("Response with a Blob body still works", async () => {
+        const { stdout } = await $`cat < ${new Response(new Blob([P]))}`;
+        expect(stdout.toString()).toBe(P);
+      });
+
+      test("Request as stdin", async () => {
+        const req = new Request("http://example.com", { method: "POST", body: P });
+        const { stdout } = await $`cat < ${req}`;
+        expect(stdout.toString()).toBe(P);
+      });
+    });
   });
 
   describe("pwd", async () => {

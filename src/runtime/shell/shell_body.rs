@@ -467,7 +467,7 @@ pub fn handle_template_value(
             return Ok(());
         }
 
-        if let Some(_req) = template_value.as_::<crate::webcore::Response>() {
+        if crate::webcore::body::Value::from_request_or_response(template_value).is_some() {
             let idx = out_jsobjs.len();
             marked_argument_buffer.append(template_value);
             out_jsobjs.push(template_value);

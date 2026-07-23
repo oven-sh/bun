@@ -766,20 +766,44 @@ impl Cmd {
                     }
                 } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
                     panic!("TODO SHELL READABLE STREAM");
-                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-                    let req = unsafe { &mut *req };
-                    req.get_body_value().to_blob_if_possible();
+                } else if let Some(body) =
+                    crate::webcore::body::Value::from_request_or_response(jsval)
+                {
+                    // SAFETY: returns a live JSC-owned `*mut Value` borrowed
+                    // from the Request/Response wrapper while `jsval` is rooted.
+                    let body = unsafe { &mut *body };
+                    body.to_blob_if_possible();
+                    match body {
+                        crate::webcore::body::Value::Locked(_) => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "Request/Response body is a ReadableStream, which cannot be \
+                                 redirected in Bun Shell yet. Read it first: \
+                                 $`cmd < ${{await response.bytes()}}`"
+                            )));
+                        }
+                        crate::webcore::body::Value::Used => {
+                            return Err(global
+                                .err(
+                                    crate::jsc::ErrorCode::BODY_ALREADY_USED,
+                                    format_args!("Body already used"),
+                                )
+                                .throw());
+                        }
+                        crate::webcore::body::Value::Error(err) => {
+                            return Err(global.throw_value(err.to_js(global)));
+                        }
+                        _ => {}
+                    }
                     if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.use_as_any_blob();
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
                     }
                     if flags.stdout() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.use_as_any_blob();
                         stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
                     }
                     if flags.stderr() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.use_as_any_blob();
                         stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
                     }
                 } else {

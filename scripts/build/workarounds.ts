@@ -66,25 +66,6 @@ export interface Workaround {
 
 export const workarounds: Workaround[] = [
   {
-    id: "asan-dyld-shim",
-    issue: "https://github.com/llvm/llvm-project/issues/182943",
-    description:
-      "macOS 26.4 Dyld.framework reimplemented dyld_shared_cache_iterate_text in Swift; " +
-      "the _Block_copy allocation deadlocks ASAN init re-entrantly",
-    applies: cfg => cfg.darwin && cfg.asan,
-    expectedToBeFixed: cfg => {
-      // Fix merged to LLVM main. Backport to release/22.x is
-      // https://github.com/llvm/llvm-project/pull/188913 — lower this
-      // threshold to the exact 22.1.x once it lands. Apple clang is
-      // already excluded: resolveLlvmToolchain only accepts Homebrew
-      // llvm (LLVM_VERSION_RANGE is >=21 <23), so cfg.clangVersion is
-      // always LLVM clang's version here.
-      const FIXED_IN_LLVM = "22.1.4";
-      return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
-    },
-    cleanup: `Delete scripts/build/shims/asan-dyld-shim.c, scripts/build/shims.ts, the emitShims() calls in bun.ts, registerShimRules in rules.ts, and this entry.`,
-  },
-  {
     id: "rustc-no-regular-lto-summary",
     issue:
       "https://github.com/rust-lang/rust/issues/ (none filed yet — rustc has no equivalent of clang's shouldEmitRegularLTOSummary())",
@@ -107,27 +88,6 @@ export const workarounds: Workaround[] = [
       `Delete scripts/build/rust-lto-fix-cli.ts, the rust_lto_fix rule and rustLtoLinkInputs() in ` +
       `rust.ts, unwrap its call sites in bun.ts, drop "llvm-tools" from rust-toolchain.toml's ` +
       `components, and delete this entry.`,
-  },
-  {
-    id: "rust-lld-for-crosslang-lto",
-    issue: "https://rustc-dev-guide.rust-lang.org/backend/updating-llvm.html",
-    description:
-      "rustc's bundled LLVM is newer than clang's, so clang's ld.lld can't read " +
-      "-Clinker-plugin-lto bitcode (forward-compatible only). Link with rust-lld instead " +
-      "(and compress ELF debug sections post-link via llvm-objcopy, since rust-lld lacks zlib).",
-    applies: cfg => cfg.crossLangLto && cfg.rustLlvmVersion !== undefined && cfg.clangVersion !== undefined,
-    expectedToBeFixed: cfg => {
-      // Obsolete once clang's LLVM major catches up to (or passes) rustc's —
-      // at that point clang's own ld.lld reads rustc's bitcode and the
-      // rust-lld swap in resolveConfig() never fires.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
-    },
-    cleanup:
-      `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
-      `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
-      `and this entry.`,
   },
   {
     id: "darwin-cross-cpu-model",
@@ -191,9 +151,9 @@ export const workarounds: Workaround[] = [
     // Only exercised when the rust-lld swap actually fired on a musl link.
     applies: cfg => cfg.linux && cfg.abi === "musl" && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld,
     expectedToBeFixed: cfg => {
-      // Obsolete the same instant the rust-lld swap above is — once clang's
-      // ld.lld (built with zlib) reads rustc's bitcode, we never select
-      // rust-lld and the compressed CRTs are a non-issue.
+      // Obsolete whenever the wantRustLld swap in resolveConfig() is dormant:
+      // once clang's ld.lld (built with zlib) reads rustc's bitcode, we never
+      // select rust-lld and the compressed CRTs are a non-issue.
       const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
       const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
       return clangMajor >= rustMajor;

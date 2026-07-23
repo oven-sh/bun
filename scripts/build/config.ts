@@ -830,10 +830,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // LLVM, so it reads both rustc's bitcode (same version) and clang's
   // (older, hence readable). Swap it in as `ld` for the whole build —
   // it's a stock lld, just newer, so non-LTO objects and nested cmake
-  // deps link the same as before.
-  //
-  // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
-  // branch self-obsoletes once clang's LLVM catches up to rustc's.
+  // deps link the same as before. Dormant while clang's LLVM major
+  // matches rustc's (the `rustLlvmMajor > clangMajor` gate).
   let ld = toolchain.ld;
   const clangMajor = majorOf(toolchain.clangVersion);
   const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
@@ -1131,12 +1129,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);
       if (toolchain.ld64Lld === undefined) {
         throw new BuildError("Cross-compiling for macOS requires ld64.lld (lld's Mach-O port)", {
-          hint: "Install lld for the same LLVM version as clang: apt install lld-21 (or equivalent).",
+          hint: "Install lld for the same LLVM version as clang: apt install lld-22 (or equivalent).",
         });
       }
       if (toolchain.llvmStrip === undefined) {
         throw new BuildError("Cross-compiling for macOS requires llvm-strip (GNU strip can't read Mach-O)", {
-          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+          hint: "Install llvm for the same version as clang: apt install llvm-22 (or equivalent).",
         });
       }
       if (toolchain.clangResourceDir === undefined) {
@@ -1146,7 +1144,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       }
       if (toolchain.dsymutil === undefined) {
         throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
-          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+          hint: "Install llvm for the same version as clang: apt install llvm-22 (or equivalent).",
         });
       }
       // The Mach-O flavor of whichever lld the rest of the config picked.

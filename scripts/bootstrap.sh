@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 41
+# Version: 42
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1174,7 +1174,7 @@ is_ci_build_host() {
 }
 
 llvm_version_exact() {
-	print "21.1.8"
+	print "22.1.8"
 }
 
 llvm_version() {
@@ -1194,6 +1194,12 @@ install_llvm() {
 
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		# apt.llvm.org stopped publishing focal arm64 binaries for the 22
+		# release (binary-arm64 has only the Architecture:all packages); no CI
+		# lane runs bootstrap.sh on focal arm64, so fail clearly here.
+		if [ "$arch" = "aarch64" ] && [ "$release" = "20.04" ]; then
+			error "apt.llvm.org has no focal arm64 packages for LLVM $(llvm_version). Use a newer Ubuntu (22.04+) on arm64."
+		fi
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
@@ -1206,12 +1212,16 @@ install_llvm() {
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
+		# alpine 3.24 ships clang22/llvm22/lld22 at 22.1.3; edge has 22.1.8.
+		# Tag the edge main repo so only the llvm packages come from there
+		# (musl is the same version in both, so edge's binaries run on 3.24).
+		append_file /etc/apk/repositories "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main"
 		install_packages \
-			"llvm$(llvm_version)" \
-			"clang$(llvm_version)" \
-			"scudo-malloc" \
-			"lld$(llvm_version)" \
-			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
+			"llvm$(llvm_version)@edge" \
+			"clang$(llvm_version)@edge" \
+			"lld$(llvm_version)@edge" \
+			"llvm$(llvm_version)-dev@edge" \
+			"scudo-malloc"
 		;;
 	esac
 }
@@ -1265,7 +1275,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="21"
+	llvm_v="22"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"
@@ -1545,7 +1555,7 @@ install_linux_glibc_sysroot() {
 
 alpine_sysroot_version() {
 	# Keep in sync with the alpine release testPlatforms runs on.
-	print "3.23"
+	print "3.24"
 }
 
 install_linux_musl_sysroot() {

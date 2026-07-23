@@ -37,7 +37,7 @@ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config py
 ```
 
 ```bash Fedora
-sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+sudo dnf install clang22 llvm22 lld22 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash openSUSE Tumbleweed
@@ -96,17 +96,17 @@ The build scripts detect and use `ccache` automatically if it's available. Check
 
 ## Install LLVM
 
-Bun requires LLVM 21.1.8 (`clang` is part of LLVM). The build system enforces this version: a mismatched version causes memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 22.1.8 (`clang` is part of LLVM). The build system enforces this version: a mismatched version causes memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 <CodeGroup>
 
 ```bash macOS (Homebrew)
-brew install llvm@21
+brew install llvm@22
 ```
 
 ```bash Ubuntu/Debian
 # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
+wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 22 all
 ```
 
 ```bash Arch
@@ -118,17 +118,17 @@ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash openSUSE Tumbleweed
-sudo zypper install clang21 lld21 llvm21
+sudo zypper install clang22 lld22 llvm22
 ```
 
 </CodeGroup>
 
-If none of these work, install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
+If none of these work, install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8).
 
-Make sure Clang/LLVM 21 is in your path:
+Make sure Clang/LLVM 22 is in your path:
 
 ```bash
-which clang-21
+which clang-22
 ```
 
 If not, add it manually:
@@ -137,13 +137,13 @@ If not, add it manually:
 
 ```bash macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
-export PATH="$(brew --prefix llvm@21)/bin:$PATH"
+# use path+="$(brew --prefix llvm@22)/bin" if you are using zsh
+export PATH="$(brew --prefix llvm@22)/bin:$PATH"
 ```
 
 ```bash Arch
 # use fish_add_path if you're using fish
-export PATH="$PATH:/usr/lib/llvm21/bin"
+export PATH="$PATH:/usr/lib/llvm22/bin"
 ```
 
 </CodeGroup>
@@ -322,7 +322,7 @@ The issue may also surface when first running `bun run build`, with Clang unable
 ```txt
 The C++ compiler
 
-  "/usr/bin/clang++-21"
+  "/usr/bin/clang++-22"
 
 is not able to compile a simple test program.
 ```

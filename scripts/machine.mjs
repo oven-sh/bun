@@ -16,7 +16,7 @@ import {
   escapePowershell,
   getBootstrapVersion,
   getBranch,
-  getBuildNumber,
+  getBranchImageSuffix,
   getGithubApiUrl,
   getGithubUrl,
   getSecret,
@@ -1171,13 +1171,13 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
 
   // Image naming must match getImageName() in ci.mjs:
   //   [publish images] / normal CI: "windows-x64-2019-v13"
-  //   [build images]:               "windows-x64-2019-build-37194"
+  //   [build images]:               "windows-x64-2019-branch-my-pr-name"
   const imageKey = arch === "aarch64" ? "windows-aarch64-11" : "windows-x64-2019";
   const imageDefName =
     command === "publish-image"
       ? `${imageKey}-v${getBootstrapVersion(os)}`
       : ci
-        ? `${imageKey}-build-${getBuildNumber()}`
+        ? `${imageKey}-${getBranchImageSuffix()}`
         : `${imageKey}-build-draft-${Date.now()}`;
   const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
   console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
@@ -1693,7 +1693,7 @@ async function main() {
       if (command === "publish-image") {
         suffix = `v${getBootstrapVersion(os)}`;
       } else if (isCI) {
-        suffix = `build-${getBuildNumber()}`;
+        suffix = getBranchImageSuffix();
       } else {
         suffix = `draft-${Date.now()}`;
       }

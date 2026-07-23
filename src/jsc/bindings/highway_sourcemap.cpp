@@ -34,6 +34,12 @@
 //   Muła, "SIMD base64 decoding"  http://0x80.pl/notesen/2016-01-17-sse-base64-decoding.html
 //   Lemire & Boytsov, "Masked VByte"  https://arxiv.org/abs/1503.07387
 
+// BitsFromMask needs a fixed-width vector; Highway only provides it for the
+// fixed-size SVE_256/SVE2_128 variants, not scalable SVE/SVE2. clang >= 22
+// stops marking scalable SVE as HWY_BROKEN, so disable it here explicitly.
+#undef HWY_DISABLED_TARGETS
+#define HWY_DISABLED_TARGETS (HWY_SVE | HWY_SVE2)
+
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_sourcemap.cpp"
 #include <hwy/foreach_target.h> // Must come before highway.h

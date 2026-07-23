@@ -12,7 +12,7 @@ const abortingJsNativeApiTests = ["test_finalizer/test_fatal_finalize.js"];
 // Must match the npm_config_target passed to node-gyp below (without the leading "v").
 const NODE_HEADERS_VERSION = "26.3.0";
 
-const linuxClang = !isMusl ? "/usr/lib/llvm-21/bin/clang" : "/usr/lib/llvm21/bin/clang";
+const linuxClang = !isMusl ? "/usr/lib/llvm-22/bin/clang" : "/usr/lib/llvm22/bin/clang";
 
 interface GypTarget {
   target_name: string;

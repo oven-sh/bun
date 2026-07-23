@@ -29,8 +29,8 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang",
     cxx: "/fake/llvm/bin/clang++",
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "22.1.8",
+    clangResourceDir: "/fake/llvm/lib/clang/22",
     ar: "/fake/llvm/bin/llvm-ar",
     ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
@@ -226,7 +226,13 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const linux = { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" } as const;
     const withRustLld = resolveConfig(
       { ...linux, lto: true },
-      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld }),
+      mockToolchain({
+        ld64Lld: undefined,
+        llvmStrip: undefined,
+        dsymutil: undefined,
+        rustLld,
+        rustLlvmVersion: "23.1.0",
+      }),
     );
     expect(withRustLld.ld).toBe(rustLld);
     expect(computeFlags(withRustLld).ldflags).not.toContain("-Wl,--compress-debug-sections=zlib");

@@ -256,10 +256,10 @@ struct NSWindow : Ref {
     {
         NSWindow win(msgCls<id>(hostCls, s_alloc));
         win.m_id = win.msg<id>(s_initWithContentRect_styleMask_backing_defer,
-            CGRectMake(0, 0, w, h),
-            (unsigned long)0 /* NSWindowStyleMaskBorderless */,
-            (unsigned long)2 /* NSBackingStoreBuffered */,
-            (signed char)0 /* defer: NO */);
+                               CGRectMake(0, 0, w, h),
+                               (unsigned long)0 /* NSWindowStyleMaskBorderless */,
+                               (unsigned long)2 /* NSBackingStoreBuffered */,
+                               (signed char)0 /* defer: NO */);
         win.msg<void>(s_setReleasedWhenClosed, (signed char)0);
         win.msg<void>(s_setAlphaValue, (double)0.0);
         win.msg<void>(s_setIgnoresMouseEvents, (signed char)1);
@@ -319,7 +319,7 @@ struct NSImage : Ref {
     id cgImage() const
     {
         return msg<id>(s_CGImageForProposedRect_context_hints,
-            (void *)nullptr, (id) nullptr, (id) nullptr);
+                       (void *)nullptr, (id) nullptr, (id) nullptr);
     }
 };
 
@@ -361,7 +361,7 @@ struct NSProcessInfo : Ref {
         // Leak the assertion — process-lifetime. The return is autoreleased;
         // retain so ARPool pop doesn't release and end the activity.
         id assertion = info.msg<id>(s_beginActivityWithOptions_reason, opts,
-            NSString::fromWTF("Bun WebView host"_s).m_id);
+                                    NSString::fromWTF("Bun WebView host"_s).m_id);
         Ref(assertion).msg<id>(s_retain);
     }
 };
@@ -420,14 +420,14 @@ struct NSEvent : Ref {
     // Autoreleased. AppKit retains the event across sendEvent:/keyDown: so
     // the pool drain in the caller is sufficient.
     static NSEvent mouseEvent(unsigned long type, double x, double y,
-        unsigned long modifierFlags, double timestamp, long windowNumber,
-        long clickCount)
+                              unsigned long modifierFlags, double timestamp, long windowNumber,
+                              long clickCount)
     {
         return msgCls<id>(cls, s_mouseEventWithType,
-            type, CGPointMake(x, y), modifierFlags, timestamp,
-            windowNumber, (id) nullptr /* context */,
-            (long)0 /* eventNumber */, clickCount,
-            (float)1.0 /* pressure */);
+                          type, CGPointMake(x, y), modifierFlags, timestamp,
+                          windowNumber, (id) nullptr /* context */,
+                          (long)0 /* eventNumber */, clickCount,
+                          (float)1.0 /* pressure */);
     }
 
     // Autoreleased. For text input, keyCode=0 + the character; WebContent
@@ -435,14 +435,14 @@ struct NSEvent : Ref {
     // keyCode is the HID usage and characters is the corresponding control
     // character (\r, \t, \x1b, etc.).
     static NSEvent keyEvent(unsigned long type, unsigned long modifierFlags,
-        double timestamp, long windowNumber, NSString characters,
-        NSString charactersIgnoringModifiers, unsigned short keyCode)
+                            double timestamp, long windowNumber, NSString characters,
+                            NSString charactersIgnoringModifiers, unsigned short keyCode)
     {
         return msgCls<id>(cls, s_keyEventWithType,
-            type, CGPointMake(0, 0), modifierFlags, timestamp,
-            windowNumber, (id) nullptr /* context */,
-            characters.m_id, charactersIgnoringModifiers.m_id,
-            (signed char)0 /* isARepeat */, keyCode);
+                          type, CGPointMake(0, 0), modifierFlags, timestamp,
+                          windowNumber, (id) nullptr /* context */,
+                          characters.m_id, charactersIgnoringModifiers.m_id,
+                          (signed char)0 /* isARepeat */, keyCode);
     }
 
     // Autoreleased. Deltas are pixels; positive dy scrolls viewport DOWN
@@ -546,7 +546,7 @@ struct WKUserScript : Ref {
     {
         WKUserScript s(msgCls<id>(cls, s_alloc));
         s.m_id = s.msg<id>(s_initWithSource_injectionTime_forMainFrameOnly,
-            source.m_id, (long)0, (signed char)0);
+                           source.m_id, (long)0, (signed char)0);
         return s;
     }
 };

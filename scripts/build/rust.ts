@@ -578,7 +578,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // LLVM bitcode is forward-compatible (newer reads older), so this works
     // when the linker's LLVM ≥ rustc's bundled LLVM. resolveConfig() swaps
     // `cfg.ld` to rustc's bundled rust-lld when rustc's LLVM major is ahead
-    // of clang's — see workarounds.ts "rust-lld-for-crosslang-lto".
+    // of clang's (see the wantRustLld swap in config.ts).
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit

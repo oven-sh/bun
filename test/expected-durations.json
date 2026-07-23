@@ -11,7 +11,7 @@
     "lanes": {
       "default": "linux-x64-debian-13-test-bun",
       "asan": "linux-x64-asan-debian-13-test-bun",
-      "musl": "linux-x64-musl-alpine-323-test-bun",
+      "musl": "linux-x64-musl-alpine-324-test-bun",
       "windows": "windows-x64-2019-test-bun"
     }
   },

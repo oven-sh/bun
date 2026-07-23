@@ -33,7 +33,7 @@ winget install "Visual Studio Community 2022" --override "--add Microsoft.Visual
 
 After Visual Studio, you need the following:
 
-- LLVM 21.1.8
+- LLVM 22.1.8
 - Go
 - Rust (via rustup)
 - NASM
@@ -49,15 +49,15 @@ Use [Scoop](https://scoop.sh) to install these remaining tools.
 irm https://get.scoop.sh | iex
 scoop install nodejs-lts go rustup nasm ruby perl ccache
 # scoop seems to be buggy if you install llvm and the rest at the same time
-scoop install llvm@21.1.8
+scoop install llvm@22.1.8
 ```
 
-For Windows ARM64, download LLVM 21.1.8 directly from GitHub releases (first version with ARM64 Windows builds):
+For Windows ARM64, download LLVM 22.1.8 directly from GitHub releases:
 
 ```ps1 ARM64
 # Download and install LLVM for ARM64
-Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-woa64.exe" -OutFile "$env:TEMP\LLVM-21.1.8-woa64.exe"
-Start-Process -FilePath "$env:TEMP\LLVM-21.1.8-woa64.exe" -ArgumentList "/S" -Wait
+Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-woa64.exe" -OutFile "$env:TEMP\LLVM-22.1.8-woa64.exe"
+Start-Process -FilePath "$env:TEMP\LLVM-22.1.8-woa64.exe" -ArgumentList "/S" -Wait
 ```
 
 <Note>

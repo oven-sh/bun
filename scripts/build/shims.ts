@@ -25,8 +25,6 @@ export interface ShimLinkOpts {
   implicitInputs: string[];
 }
 
-const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
-
 /**
  * macOS-from-Linux cross links need a post-link fixup pass over every
  * Mach-O executable they produce (the linked bun-profile/bun-debug AND the
@@ -160,17 +158,6 @@ const MUSL_CRT_OBJECTS = ["Scrt1.o", "crt1.o", "crti.o", "crtn.o"];
 export function registerShimRules(n: Ninja, cfg: Config): void {
   const q = (p: string) => quote(p, false);
 
-  if (cfg.darwin && cfg.asan) {
-    // -install_name @rpath/<name> so dyld resolves it next to the
-    // executable via the -rpath @executable_path we add at link time.
-    // __DATA,__interpose only works from dylibs (not object files linked
-    // into the main binary), hence -dynamiclib.
-    n.rule("shim_dylib", {
-      command: `${q(cfg.cc)} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
-      description: "shim $name",
-    });
-  }
-
   if (needsDarwinCpuModelShim(cfg)) {
     // Plain object compiled for the cross target; $flags carries
     // --target/-isysroot/-mmacosx-version-min from emitShims().
@@ -244,20 +231,6 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       },
     });
     ldflags.push(out);
-    implicitInputs.push(out);
-  }
-
-  if (cfg.darwin && cfg.asan) {
-    // macOS 26.4 ASAN dyld deadlock — see shims/asan-dyld-shim.c.
-    const src = resolve(cfg.cwd, "scripts", "build", "shims", "asan-dyld-shim.c");
-    const out = resolve(cfg.buildDir, ASAN_DYLD_SHIM);
-    n.build({
-      outputs: [out],
-      rule: "shim_dylib",
-      inputs: [src],
-      vars: { name: ASAN_DYLD_SHIM },
-    });
-    ldflags.push(out, "-Wl,-rpath,@executable_path");
     implicitInputs.push(out);
   }
 

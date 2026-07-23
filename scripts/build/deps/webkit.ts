@@ -8,7 +8,7 @@
 // importing), every x64 at the nehalem floor (no separate -baseline variant),
 // typed-array constructor ClassInfo kept address-unique under LTO, and the
 // Windows ICU data table filtered + per-item zstd compressed.
-export const WEBKIT_VERSION = "autobuild-preview-pr-317-d9b06a28";
+export const WEBKIT_VERSION = "autobuild-preview-pr-317-23fb575d";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

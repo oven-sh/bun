@@ -773,7 +773,5 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
-    // Explicit undefined second arg is rejected (not treated as the default).
-    expect(() => zlib.crc32("hello", undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 });

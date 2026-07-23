@@ -490,6 +490,77 @@ it("new Date(..)", () => {
   expect(Bun.inspect(new Date("Invalid Date"))).toBe("Invalid Date");
 });
 
+it("Date ignores own toJSON/toISOString when formatting", () => {
+  // The formatter must read the Date's internal [[DateValue]] and never call
+  // user-provided toJSON/toISOString (which could throw or spoof the output).
+  const iso = "1970-01-01T00:00:00.000Z";
+
+  const a = new Date(0);
+  a.toISOString = () => {
+    throw new Error("iso-boom");
+  };
+  expect(() => Bun.inspect(a)).not.toThrow();
+  expect(Bun.inspect(a)).toBe(iso);
+
+  const b = new Date(0);
+  b.toISOString = 5;
+  expect(() => Bun.inspect(b)).not.toThrow();
+  expect(Bun.inspect(b)).toBe(iso);
+
+  const c = new Date(0);
+  c.toJSON = () => "SPOOFED";
+  expect(Bun.inspect(c)).toBe(iso);
+
+  const d = new Date(0);
+  d.toJSON = () => ({ nested: { fake: 1 } });
+  expect(Bun.inspect(d)).toBe(iso);
+
+  const e = new Date(0);
+  e.toJSON = () => {
+    throw new Error("mid");
+  };
+  expect(() => Bun.inspect(["before", e, "after"])).not.toThrow();
+  expect(Bun.inspect(["before", e, "after"])).toBe(`[ "before", ${iso}, "after" ]`);
+
+  const f = new Date(NaN);
+  f.toJSON = () => "SPOOFED-INVALID";
+  expect(Bun.inspect(f)).toBe("Invalid Date");
+
+  class SubDate extends Date {
+    toJSON() {
+      throw new Error("sub-boom");
+    }
+  }
+  expect(Bun.inspect(new SubDate(0))).toBe(iso);
+});
+
+it("console.log of Date with throwing toJSON does not throw", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const a = new Date(0);
+        a.toISOString = () => { throw new Error("iso-boom"); };
+        console.log(a);
+        const e = new Date(0);
+        e.toJSON = () => { throw new Error("mid"); };
+        console.log(["before", e, "after"]);
+        console.log("DONE");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.replaceAll("\r\n", "\n")).toBe(
+    `1970-01-01T00:00:00.000Z\n[ "before", 1970-01-01T00:00:00.000Z, "after" ]\nDONE\n`,
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });

@@ -4314,29 +4314,18 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let mut str = OwnedString::new(BunString::empty());
 
-            value.json_stringify(self.global_this, self.indent, &mut str)?;
-            writer.add_for_new_line(str.length());
             if js_type == jsc::JSType::JSDate {
-                // in the code for printing dates, it never exceeds this amount
-                let mut iso_string_buf = [0u8; 36];
-                let mut out_buf: &[u8] = {
-                    use std::io::Write as _;
-                    let mut cursor = &mut iso_string_buf[..];
-                    let start_len = cursor.len();
-                    let _ = write!(cursor, "{str}");
-                    let written = start_len - cursor.len();
-                    &iso_string_buf[..written]
-                };
+                // Format from the Date's internal [[DateValue]] so that own/overridden
+                // `toJSON`/`toISOString` properties are never invoked (they could throw
+                // out of console.log or spoof the output). `to_iso_string` reads
+                // `DateInstance::internalNumber()` directly; `None` means NaN.
+                let mut iso_string_buf = [0u8; 64];
+                let out_buf: &[u8] = value
+                    .to_iso_string(self.global_this, &mut iso_string_buf)
+                    .unwrap_or(b"Invalid Date");
 
-                if out_buf == b"null" {
-                    out_buf = b"Invalid Date";
-                } else if out_buf.len() > 2 {
-                    // trim the quotes
-                    out_buf = &out_buf[1..out_buf.len() - 1];
-                }
-
+                writer.add_for_new_line(out_buf.len());
                 writer.print(format_args!(
                     "{}{}{}",
                     pfmt!("<r><magenta>", C),
@@ -4348,6 +4337,11 @@ pub mod formatter {
                 }
                 return Ok(());
             }
+
+            let mut str = OwnedString::new(BunString::empty());
+
+            value.json_stringify(self.global_this, self.indent, &mut str)?;
+            writer.add_for_new_line(str.length());
 
             writer.print(format_args!("{str}"));
             if writer.failed {

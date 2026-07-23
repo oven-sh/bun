@@ -1862,29 +1862,16 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_core::String::empty();
-
-                    value.json_stringify(self.global_this, self.indent, &mut str)?;
-                    self.add_for_new_line(str.length());
                     if js_type == JSType::JSDate {
-                        // in the code for printing dates, it never exceeds this amount
-                        let mut iso_string_buf = [0u8; 36];
-                        let mut out_buf: &[u8] = {
-                            use std::io::Write;
-                            let mut cursor = &mut iso_string_buf[..];
-                            match write!(cursor, "{}", str) {
-                                Ok(()) => {
-                                    let written = 36 - cursor.len();
-                                    &iso_string_buf[..written]
-                                }
-                                Err(_) => b"",
-                            }
-                        };
-                        if out_buf.len() > 2 {
-                            // trim the quotes
-                            out_buf = &out_buf[1..out_buf.len() - 1];
-                        }
+                        // Format from the Date's internal [[DateValue]] so that own/overridden
+                        // `toJSON`/`toISOString` properties are never invoked. `to_iso_string`
+                        // reads `DateInstance::internalNumber()` directly; `None` means NaN.
+                        let mut iso_string_buf = [0u8; 64];
+                        let out_buf: &[u8] = value
+                            .to_iso_string(self.global_this, &mut iso_string_buf)
+                            .unwrap_or(b"Invalid Date");
 
+                        self.add_for_new_line(out_buf.len());
                         writer.print(format_args!(
                             "{}{}{}",
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><magenta>"),
@@ -1893,6 +1880,11 @@ impl<'a> Formatter<'a> {
                         ));
                         return Ok(());
                     }
+
+                    let mut str = bun_core::String::empty();
+
+                    value.json_stringify(self.global_this, self.indent, &mut str)?;
+                    self.add_for_new_line(str.length());
 
                     writer.print(format_args!("{}", str));
                 }

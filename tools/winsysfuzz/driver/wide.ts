@@ -19,6 +19,11 @@ import { faultsFor, NEVER_FAULT } from "./faults";
 import { coordKey, detectCrash, digestStacks, ensureDir, manifest, readTraceDir, replayCoordinate, stamp } from "./lib";
 const manifestNames = manifest.map(m => m.name);
 
+// Never exit silently: log the reason for any death to stdout (the pass
+// log) - an uncaught error, a rejected promise, or an explicit exit code.
+process.on("uncaughtException", e => { console.log(`WIDE-DEATH uncaughtException: ${String(e && (e as Error).stack || e).slice(0, 600)}`); process.exit(1); });
+process.on("unhandledRejection", e => { console.log(`WIDE-DEATH unhandledRejection: ${String(e && (e as Error).stack || e).slice(0, 600)}`); process.exit(1); });
+process.on("exit", code => { if (code !== 0) console.log(`WIDE-DEATH exit code=${code} (no message logged means an explicit exit or external kill)`); });
 const argv = process.argv.slice(2);
 const flag = (n: string, d?: string) => {
   const i = argv.indexOf(n);

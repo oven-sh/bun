@@ -4315,6 +4315,36 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
+        // Inside a standalone executable, a relative `require.resolve()`
+        // should agree with `import.meta.resolve()` (pure path join) instead
+        // of falling through to the resolver's cwd fallback, which can return
+        // an unrelated same-named file from the runtime working directory.
+        // An explicit `{ paths: [...] }` option overrides this and goes
+        // through the resolver so the user's directories are searched.
+        if is_user_require_resolve
+            && jsc_vm.standalone_module_graph.is_some()
+            && jsc_vm.transpiler.resolver.custom_dir_paths.is_none()
+        {
+            let source_slice = normalize_source(source_utf8.slice());
+            let spec = specifier_utf8.slice();
+            if bun_options_types::standalone_path::is_bun_standalone_file_path(source_slice)
+                && (spec.starts_with(b"./")
+                    || spec.starts_with(b"../")
+                    || (cfg!(windows) && (spec.starts_with(b".\\") || spec.starts_with(b"..\\"))))
+            {
+                let source_dir =
+                    bun_resolver::fs::PathName::init(source_slice).dir_with_trailing_slash();
+                let mut buf = bun_paths::path_buffer_pool::get();
+                if let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                    bun_paths::resolve_path::platform::Loose,
+                >(source_dir, &mut buf[..], &[spec])
+                {
+                    *res = ErrorableString::ok(bun_core::String::clone_utf8(joined));
+                    return Ok(());
+                }
+            }
+        }
+
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),

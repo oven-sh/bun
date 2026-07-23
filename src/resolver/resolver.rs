@@ -1323,7 +1323,10 @@ impl<'a> Resolver<'a> {
                 } else if ::bun_options_types::standalone_path::is_bun_standalone_file_path(
                     source_dir,
                 ) {
-                    if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
+                    if import_path.len() > 2
+                        && is_dot_slash(&import_path[0..2])
+                        && source_dir.len() + import_path.len() + 2 < ::bun_paths::MAX_PATH_BYTES
+                    {
                         let buf = bufs!(import_path_for_standalone_module_graph);
                         let joined = bun_paths::join_abs_string_buf(
                             source_dir,

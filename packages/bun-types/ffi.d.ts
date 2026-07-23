@@ -1066,8 +1066,12 @@ declare module "bun:ffi" {
      * use after the memory at `ptr` has been freed.
      */
     ptr: Pointer;
-    byteOffset?: number;
-    byteLength?: number;
+    byteOffset: number;
+
+    /**
+     * Get the `byteLength` of the CString
+     */
+    get byteLength(): number;
 
     /**
      * Get the {@link ptr} as an `ArrayBuffer`

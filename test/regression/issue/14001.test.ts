@@ -1,7 +1,4 @@
-// DOMJIT exception return protocol: an exception thrown from a DOMJIT fast-path
-// wrapper must be visible in the operation's return value so the DFG/FTL
-// post-CallDOM exception check branches correctly and the surrounding try/catch
-// catches it. https://github.com/oven-sh/bun/issues/14001
+// https://github.com/oven-sh/bun/issues/14001
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 

@@ -133,6 +133,7 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
 #if BUN_DEBUG
     ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
     JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
+    OPERATION_RETURN_IF_EXCEPTION(throwScope, result);
     JSValue decoded = JSValue::decode(result);
     if (wrapper->m_${fn}_expectedResultType) {
         if (decoded.isCell() && !decoded.isEmpty()) {

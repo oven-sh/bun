@@ -1179,10 +1179,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   }
 
   if (options.ecdh_curve) {
-    /* Node treats set1_groups_list failure as a clean ERR_CRYPTO_OPERATION_FAILED
-     * without the BoringSSL error-queue decoration, so drain the queue here. */
     if (!SSL_CTX_set1_groups_list(ssl_context, options.ecdh_curve)) {
-      ERR_clear_error();
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE;
       ssl_ctx_build_fail(ssl_context);
       return NULL;

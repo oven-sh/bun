@@ -3710,13 +3710,14 @@ pub(super) fn server_set_on_connection_(
                 // SAFETY: as_ returned a non-null *mut to a live server.
                 let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
-                    // The uWS filter is registered once per native server: under
-                    // `bun --hot` a node:http module re-eval reaches this point
-                    // again on the same server (hot_map returned the existing
-                    // one), and `filter()` appends, so a second registration
-                    // would fire 'connection' N+1 times per socket. The thunk
-                    // reads `self.on_connection` at call time, so updating the
-                    // slot is enough on subsequent calls.
+                    // The uWS filter is registered once per native server.
+                    // Under `bun --hot` a node:http module re-eval reaches
+                    // this point again on the same server (hot_map returned
+                    // the existing one) and `filter()` appends, so without
+                    // this gate `filterHandlers` would grow by one per
+                    // reload. The thunk reads `self.on_connection` at call
+                    // time, so updating the slot is enough on subsequent
+                    // calls.
                     let first = this.on_connection.is_empty();
                     this.on_connection = callback;
                     super::wrap_handler_slot(

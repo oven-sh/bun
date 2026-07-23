@@ -1306,8 +1306,10 @@ it("reload() of a node:http-backed server keeps the 'connection' event firing", 
 });
 
 // Under --hot the module re-evaluates and listen() runs again against the same
-// native server from the hot map; the 'connection' filter must be registered
-// once for the server's lifetime, not re-appended per reload.
+// native server from the hot map, re-invoking Server__setOnConnection. The JS
+// onServerConnection callback dedupes on socketHandle.duplex, so this asserts
+// the user-visible contract (exactly one 'connection' per accept) holds across
+// hot reloads, not the native filter-vector size.
 it("--hot reload of a node:http server fires 'connection' once per socket", async () => {
   using dir = tempDir("hot-node-http-connection", {
     "server.mjs": `

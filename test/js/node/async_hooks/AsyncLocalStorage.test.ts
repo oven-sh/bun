@@ -987,6 +987,9 @@ describe("async context passes through", () => {
   // 'close' listener cannot leave a retained session pinning the store.
   // Subprocess: the listener throws, which the test runner would otherwise
   // claim as its own failure.
+  // 15s on this and the three following subprocess tests: net/_http_server
+  // eagerly load node:diagnostics_channel, which on a loaded debug+ASAN host
+  // pushes the spawned http/http2 handshake past the 5s default.
   test("http2 clears the session frame even if a 'close' listener throws", async () => {
     await using proc = Bun.spawn({
       cmd: [

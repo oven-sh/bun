@@ -769,8 +769,17 @@ void CallCtx::FormatRvas(char* out, size_t cap) const {
   size_t len = 0;
   int emitted = 0;
   out[0] = '\0';
+  // The FIRST emitted rva is the coordinate key the driver uses (B:<rva>)
+  // and it MUST equal the value the runtime's B: matcher compares against:
+  // the proven wrapper caller (bunFrame_). Emit it first, then the other
+  // candidates - never let a scanned leftover lead the list.
+  if (bunFrame_ >= g_txtBase && bunFrame_ < g_txtEnd) {
+    int n = snprintf(out, cap, "%llx", (unsigned long long)(bunFrame_ - g_bunBase));
+    if (n > 0 && (size_t)n < cap) { len = (size_t)n; emitted = 1; }
+  }
   for (int i = 0; i < nframes_ && emitted < 4; i++) {
     uintptr_t ip = frames_[i];
+    if (ip == bunFrame_) continue; // already led the list
     if (ip < g_txtBase || ip >= g_txtEnd) continue; // frame0 may be outside bun
     int n = snprintf(out + len, cap - len, "%s%llx", emitted ? "," : "",
                      (unsigned long long)(ip - g_bunBase));

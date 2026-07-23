@@ -3670,10 +3670,6 @@ where
         }
 
         if needs_content_type
-            // do not insert the content type if it is the fallback value
-            // we may not know the content-type when streaming
-            && (!self.blob.is_detached()
-                || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
             && !content_type
                 .value
                 .iter()
@@ -4539,16 +4535,24 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             }
         }
 
-        if !blob.content_type().is_empty() {
-            bun_http_types::MimeType::by_name(blob.content_type())
-        } else if let Some(content) = bun_http_types::MimeType::sniff(blob.slice()) {
-            content
-        } else if blob.was_string() {
-            bun_http_types::MimeType::TEXT
-            // TODO: should we get the mime type off of the Blob.Store if it exists?
-            // A little wary of doing this right now due to causing some breaking change
-        } else {
-            bun_http_types::MimeType::OTHER
+        // No Content-Type header on the Response. Per Fetch "extract a body",
+        // only a string body and a Blob with a non-empty `type` contribute a
+        // Content-Type; BufferSource and empty-type Blob/File yield none.
+        // Bun.file()/S3 carry their extension-derived mime on the Blob itself.
+        match blob {
+            AnyBlob::WTFStringImpl(_) => bun_http_types::MimeType::TEXT,
+            AnyBlob::InternalBlob(ib) if ib.was_string => bun_http_types::MimeType::TEXT,
+            AnyBlob::Blob(b) => match b.content_type_or_mime_type() {
+                Some(ct) if !ct.is_empty() => bun_http_types::MimeType::by_name(ct),
+                _ => {
+                    needs_content_type = false;
+                    bun_http_types::MimeType::OTHER
+                }
+            },
+            AnyBlob::InternalBlob(_) => {
+                needs_content_type = false;
+                bun_http_types::MimeType::OTHER
+            }
         }
     };
 

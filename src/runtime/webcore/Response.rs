@@ -1083,22 +1083,33 @@ impl Response {
             // handles cleanup on `?`.
 
             if let Some(arg_init) = args.next_eat() {
-                if arg_init.is_undefined_or_null() {
-                    // no-op
-                } else if arg_init.is_number() {
-                    let status =
-                        Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
-                    response.init.with_mut(|i| i.status_code = status);
-                } else if let Some(init) = Init::init(global_this, arg_init)? {
-                    // cleanup is handled by Init's drop glue on `?` below
-                    response.init.set(init);
-
-                    let status = response.init.get().status_code;
-                    if status != 200 {
-                        let status =
-                            Self::validate_redirect_status_code(global_this, i32::from(status))?;
-                        response.init.with_mut(|i| i.status_code = status);
+                if arg_init.is_undefined() {
+                    // WebIDL `optional unsigned short status = 302`: omitted.
+                } else if arg_init.is_object() {
+                    // Bun extension: accept a ResponseInit-like object for
+                    // headers/statusText. `Init::init` defaults status_code to
+                    // 200 when `status` is absent, so derive the redirect
+                    // status from the property directly.
+                    let status = match arg_init.fast_get(global_this, BuiltinName::status)? {
+                        Some(v) => Self::validate_redirect_status_code(
+                            global_this,
+                            v.coerce_to_i32(global_this)?,
+                        )?,
+                        None => 302,
+                    };
+                    if let Some(init) = Init::init(global_this, arg_init)? {
+                        // cleanup is handled by Init's drop glue on `?` below
+                        response.init.set(init);
                     }
+                    response.init.with_mut(|i| i.status_code = status);
+                } else {
+                    // WebIDL `unsigned short status`: ToNumber-convert any
+                    // primitive (string, boolean, null) and range-check.
+                    let status = Self::validate_redirect_status_code(
+                        global_this,
+                        arg_init.coerce_to_i32(global_this)?,
+                    )?;
+                    response.init.with_mut(|i| i.status_code = status);
                 }
             }
 

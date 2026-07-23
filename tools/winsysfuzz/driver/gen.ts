@@ -92,7 +92,7 @@ const KNOWN_BROKEN_FN = /^(write)$/;
 // node module callables ("node:fs" containers): fs.readFileSync(...),
 // child_process.spawn(...). Names that block the process (readline
 // prompts, tty raw mode) or reach the network are excluded by name.
-const EXCLUDE_NODE_FN = /^(fs\.(watch|watchFile|unwatchFile)|child_process\.(exec|execFile)|.*\.(createInterface|clearScreenDown)|tty\..*|dns\.(lookup|resolve.*|reverse)|net\.(connect|createConnection)|http.*\.(get|request)|worker_threads\..*)$/;
+const EXCLUDE_NODE_FN = /^(fs\.(watch|watchFile|unwatchFile|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|rename|renameSync|truncate|truncateSync|chmod|chmodSync|chown|chownSync|utimes|utimesSync|lchown|lchmod|link|linkSync|symlink|symlinkSync|copyFile|copyFileSync|cp|cpSync|mkdtemp|mkdtempSync|writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)|child_process\.(exec|execFile|execSync|execFileSync)|.*\.(createInterface|clearScreenDown)|tty\..*|dns\.(lookup|resolve.*|reverse)|net\.(connect|createConnection)|http.*\.(get|request)|worker_threads\..*|os\.setPriority)$/;
 const nodeFns = spec.callables.filter(c => /^node:/.test(c.container) && !EXCLUDE_NODE_FN.test(c.path));
 const NODE_MODS = [...new Set(nodeFns.map(c => c.container.replace(/^node:/, "")))];
 const fnCalls = [
@@ -313,6 +313,10 @@ function valueFor(tRaw: string, name: string, depth = 0): string {
   const t = tRaw.replace(/\s+/g, " ").trim();
   const n = name.toLowerCase();
   if (depth > 3) return `undefined`;
+  // HARNESS SAFETY: a process id / signal target must never be an arbitrary
+  // integer - a fuzzed process.kill(n) or kill(pid) can hit the driver or
+  // its task wrapper. Only the program's OWN spawned children are targets.
+  if (/^(pid|processid)$/.test(n)) return `($pool("Subprocess")?.pid ?? -1)`;
   // pooled object of a kind we know about
   const k = t.replace(/^Promise<(.+)>$/, "$1").split("|")[0].trim().replace(/<.*>$/, "");
   if (methodsByKind.has(k) && !EXCLUDE_CONTAINER.test(k)) return `$pool(${JSON.stringify(k)})`;

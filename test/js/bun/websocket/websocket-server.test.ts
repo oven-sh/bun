@@ -1562,3 +1562,110 @@ it.each(["server", "client"] as const)(
     await server.stop();
   },
 );
+
+// RFC 6455 §4.2.1 / §4.4: server.upgrade() must refuse a client handshake
+// whose Upgrade token, Sec-WebSocket-Key, or Sec-WebSocket-Version is invalid.
+describe("server.upgrade() validates the opening handshake", () => {
+  let opened = 0;
+  let server: Server;
+  afterEach(() => server?.stop(true));
+
+  const rawHandshake = (headers: string[]) =>
+    new Promise<{ status: number | null; headers: string }>(resolve => {
+      let buf = "";
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        sock.destroy();
+        const head = buf.split("\r\n\r\n", 1)[0] ?? "";
+        const m = head.match(/^HTTP\/1\.[01] (\d+)/);
+        resolve({ status: m ? +m[1] : null, headers: head });
+      };
+      const sock = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
+        sock.write("GET /ws HTTP/1.1\r\nHost: x\r\n" + headers.join("\r\n") + "\r\n\r\n");
+      });
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        if (buf.includes("\r\n\r\n")) done();
+      });
+      sock.on("error", done);
+      sock.on("close", done);
+    });
+
+  const K = "dGhlIHNhbXBsZSBub25jZQ==";
+  const U = "Upgrade: websocket";
+  const C = "Connection: Upgrade";
+  const V = "Sec-WebSocket-Version: 13";
+
+  it("accepts a well-formed request and rejects malformed ones", async () => {
+    opened = 0;
+    server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, srv) {
+        if (srv.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open() {
+          opened++;
+        },
+        message() {},
+      },
+    });
+
+    // A valid handshake still upgrades.
+    expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    // Upgrade token is case-insensitive.
+    expect((await rawHandshake(["Upgrade: WebSocket", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    expect(opened).toBe(2);
+
+    // Upgrade token other than "websocket": not a WebSocket handshake.
+    expect((await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
+
+    // Sec-WebSocket-Key is not valid base64 of 16 bytes.
+    for (const key of [
+      "!!!!!!!!!!!!!!!!!!!!!!==", // non-alphabet bytes
+      "dGhlIHNhbXBsZSBub25jZQ=A", // wrong padding
+      "dGhlIHNhbXBsZSBub25j", // too short
+    ]) {
+      expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${key}`, V])).status).toBe(400);
+    }
+
+    // Sec-WebSocket-Version missing or unsupported: RFC 6455 §4.4 requires
+    // a 4xx with a Sec-WebSocket-Version header naming the supported version.
+    for (const hs of [
+      [U, C, `Sec-WebSocket-Key: ${K}`, "Sec-WebSocket-Version: 8"],
+      [U, C, `Sec-WebSocket-Key: ${K}`],
+    ]) {
+      const { status, headers } = await rawHandshake(hs);
+      expect(status).toBe(426);
+      expect(headers.toLowerCase()).toContain("sec-websocket-version: 13");
+    }
+
+    // None of the rejected handshakes reached open().
+    expect(opened).toBe(2);
+  });
+
+  it("returns false for an invalid handshake even when fetch() is async", async () => {
+    let upgradeResult: boolean | undefined;
+    server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req, srv) {
+        // Force the headers to be materialized on the Request before upgrade().
+        void req.headers.get("host");
+        await Promise.resolve();
+        upgradeResult = srv.upgrade(req);
+        if (upgradeResult) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: { message() {} },
+    });
+
+    const { status } = await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V]);
+    expect(status).toBe(400);
+    expect(upgradeResult).toBe(false);
+  });
+});

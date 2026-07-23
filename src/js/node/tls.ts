@@ -1111,6 +1111,7 @@ function buildSharedCreds(server) {
       allowPartialTrustChain: server.allowPartialTrustChain,
       sessionTimeout: server.sessionTimeout,
       sigalgs: server.sigalgs,
+      ecdhCurve: server.ecdhCurve,
       passphrase: server.passphrase,
       secureProtocol: server.secureProtocol,
       minVersion: server.minVersion,
@@ -1158,6 +1159,7 @@ function Server(options, secureConnectionListener): void {
   this.allowPartialTrustChain = undefined;
   this.sessionTimeout = undefined;
   this.sigalgs = undefined;
+  this.ecdhCurve = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
   // The Server constructor is the only writer of these: node assigns them
@@ -1301,6 +1303,10 @@ function Server(options, secureConnectionListener): void {
       }
       next.sigalgs = sigalgs;
 
+      const ecdhCurve = options.ecdhCurve;
+      if (ecdhCurve !== undefined) validateString(ecdhCurve, "options.ecdhCurve");
+      next.ecdhCurve = ecdhCurve;
+
       let passphrase = options.passphrase;
       if (passphrase && typeof passphrase !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
@@ -1349,6 +1355,7 @@ function Server(options, secureConnectionListener): void {
       this.allowPartialTrustChain = next.allowPartialTrustChain;
       this.sessionTimeout = next.sessionTimeout;
       this.sigalgs = next.sigalgs;
+      this.ecdhCurve = next.ecdhCurve;
       this.passphrase = next.passphrase;
       this.servername = next.servername;
       this.secureOptions = next.secureOptions;
@@ -1394,6 +1401,7 @@ function Server(options, secureConnectionListener): void {
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,
         sigalgs: this.sigalgs,
+        ecdhCurve: this.ecdhCurve,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,

@@ -1178,6 +1178,17 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
   }
 
+  if (options.ecdh_curve) {
+    /* Node treats set1_groups_list failure as a clean ERR_CRYPTO_OPERATION_FAILED
+     * without the BoringSSL error-queue decoration, so drain the queue here. */
+    if (!SSL_CTX_set1_groups_list(ssl_context, options.ecdh_curve)) {
+      ERR_clear_error();
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+  }
+
   /* Surface resumable sessions through the new-session callback the way Node
    * does: for TLS 1.3 the resumable session only exists once the peer's
    * NewSessionTicket arrives, and BoringSSL only exposes it here. NO_INTERNAL

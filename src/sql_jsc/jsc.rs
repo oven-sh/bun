@@ -148,6 +148,12 @@ pub(crate) fn create_bun_socket_error_to_js(
                 format_args!("Failed to parse CRL"),
             )
             .to_js(),
+        E::invalid_ecdh_curve => global
+            .err(
+                ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to set ECDH curve"),
+            )
+            .to_js(),
     }
 }
 

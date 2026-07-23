@@ -457,5 +457,23 @@ describe("util", () => {
       expect(sep(123456.789)).toBe("123_456.789");
       expect(sep(0.1234)).toBe("0.123_4");
     });
+
+    it("leaves exponent-form numbers intact", () => {
+      // The old integer-length split corrupted these: 1e-7 became "0.-7",
+      // -1e-7 lost its sign as "0.e-7", and 1.23456e-7 became "0.234_56e_-7".
+      expect(sep(1e-7)).toBe("1e-7");
+      expect(sep(-1e-7)).toBe("-1e-7");
+      expect(sep(2e-7)).toBe("2e-7");
+      expect(sep(1.23456e-7)).toBe("1.23456e-7");
+      expect(sep(-0.5)).toBe("-0.5");
+      // Integers large enough to stringify in exponent form take the same path.
+      expect(sep(1234567891234567891234)).toBe("1.234567891234568e+21");
+    });
+
+    it("handles non-finite values", () => {
+      expect(sep(NaN)).toBe("NaN");
+      expect(sep(Infinity)).toBe("Infinity");
+      expect(sep(-Infinity)).toBe("-Infinity");
+    });
   });
 });

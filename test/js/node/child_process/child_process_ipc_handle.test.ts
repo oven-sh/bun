@@ -614,7 +614,7 @@ s.listen({ fd: 0 });
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
     expect(stdout).toContain("child alive: true");
     expect(stdout).toContain("response: hello-fd0");
     expect(exitCode).toBe(0);

@@ -65,6 +65,20 @@ fn emit_process_error_event(
     Ok(JSValue::UNDEFINED)
 }
 
+fn is_invalid_handle_type(global_object: &JSGlobalObject, ex: JSValue) -> JsResult<bool> {
+    if !ex.is_object() {
+        return Ok(false);
+    }
+    let Some(code) = ex.get(global_object, "code")? else {
+        return Ok(false);
+    };
+    if !code.is_string() {
+        return Ok(false);
+    }
+    let code_str = code.to_bun_string(global_object)?;
+    Ok(bun_core::OwnedString::new(code_str).eql_comptime(b"ERR_INVALID_HANDLE_TYPE"))
+}
+
 fn do_send_err(
     global_object: &JSGlobalObject,
     callback: JSValue,
@@ -156,10 +170,9 @@ pub(crate) fn do_send(
 
     let original_message = message;
     if !handle.is_undefined_or_null() {
-        // Socket-list owner for serialize(): null means "the process object";
-        // only ChildProcess#send injects "$target" (its own instance), so a
-        // raw Subprocess.send without it gets undefined (no tracking) and a
-        // user-supplied "$target" on the process.send path is ignored.
+        // Socket-list owner for serialize(): null = the process object; only
+        // ChildProcess#send injects "$target", so process.send ignores a user
+        // value and Subprocess.send gets undefined (no tracking).
         let target = match from {
             FromEnum::Process => JSValue::NULL,
             _ => options_
@@ -173,28 +186,13 @@ pub(crate) fn do_send(
             match IPC::ipc_serialize(global_object, message, handle, options_, target) {
                 Ok(v) => v,
                 Err(e) => {
-                    // Never take a pending TerminationException: taking it
-                    // clears the VM's termination request, resuming the
-                    // terminating worker through the user's send callback
-                    // (same class as the receive path's
-                    // clear_exception_except_termination sites).
+                    // Never take a TerminationException: taking it clears the
+                    // VM's termination request and resumes a terminating worker.
                     if matches!(e, bun_jsc::JsError::Terminated) {
                         return Err(e);
                     }
-                    // take_error unwraps the JSC::Exception cell to the value.
                     let ex = global_object.take_error(e);
-                    let mut rethrow = false;
-                    if ex.is_object() {
-                        if let Ok(Some(code)) = ex.get(global_object, "code") {
-                            if code.is_string() {
-                                if let Ok(code_str) = code.to_bun_string(global_object) {
-                                    rethrow = bun_core::OwnedString::new(code_str)
-                                        .eql_comptime(b"ERR_INVALID_HANDLE_TYPE");
-                                }
-                            }
-                        }
-                    }
-                    if rethrow {
+                    if is_invalid_handle_type(global_object, ex)? {
                         return Err(global_object.throw_value(ex));
                     }
                     return do_send_err(global_object, callback, ex, from);

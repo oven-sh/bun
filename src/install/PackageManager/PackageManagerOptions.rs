@@ -586,8 +586,7 @@ impl Options {
             for registry_key in REGISTRY_KEYS {
                 if let Some(registry_) = env.get(registry_key) {
                     if !registry_.is_empty()
-                        && (registry_.starts_with(b"https://")
-                            || registry_.starts_with(b"http://"))
+                        && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                     {
                         let prev_scope = self.scope.clone();
                         let prev_url = prev_scope.url.url();

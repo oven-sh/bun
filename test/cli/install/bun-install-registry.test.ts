@@ -9114,7 +9114,10 @@ describe("registry/token env var priority", () => {
     });
 
     await Promise.all([
-      write(join(packageDir, "bunfig.toml"), `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\n`),
+      write(
+        join(packageDir, "bunfig.toml"),
+        `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\n`,
+      ),
       write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
     ]);
 

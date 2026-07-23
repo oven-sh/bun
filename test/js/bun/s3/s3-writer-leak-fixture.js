@@ -21,14 +21,14 @@ async function writeLargeFile() {
 async function run() {
   {
     // base line
-    await Promise.all(new Array(10).fill(writeLargeFile()));
+    await Promise.all(Array.from({ length: 10 }, () => writeLargeFile()));
     await Bun.sleep(10);
     Bun.gc(true);
   }
   MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
 
   {
-    await Promise.all(new Array(100).fill(writeLargeFile()));
+    await Promise.all(Array.from({ length: 100 }, () => writeLargeFile()));
     Bun.gc(true);
   }
   const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;

@@ -377,6 +377,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
 
     const files = opts.files ?? [];
     for (let i = 0; i < files.length; i++) {
+      if (opts.signal?.aborted) break;
       await runOneFile(files[i], opts, reporter, counts);
     }
 
@@ -456,6 +457,9 @@ async function runOneFile(
       }
       if (carry.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: carry + "\n" });
     })();
+    // Defuse: a throwing test:stderr listener rejects this while the stdout
+    // loop is still suspended on I/O, before the finally's .catch attaches.
+    drainStderr.catch(() => {});
 
     const handleStdoutLine = (line: string) => {
       if (line.length === 0) return;
@@ -527,21 +531,25 @@ async function runOneFile(
       fileCounts.topLevel++;
     }
 
-    // node emits the file node's completion before its verdict, and a failed
-    // completion carries the error too.
-    reporter.complete({
-      __proto__: null,
-      ...fileNode,
-      type: undefined,
-      testNumber: 1,
-      details: {
+    // Node's FileTest.#skipReporting(): no file-level complete/pass/fail when
+    // the child reported at least one test and the only error is subtestsFailed
+    // (or none); here that is `reportedChildren > 0 && !fileFailed`.
+    const reportedChildren = fileCounts.tests + fileCounts.suites;
+    if (reportedChildren === 0 || fileFailed) {
+      reporter.complete({
         __proto__: null,
-        duration_ms: fileDuration,
-        type: "test",
-        passed: !fileFailed && !subtestsFailed,
-        error,
-      },
-    });
+        ...fileNode,
+        type: undefined,
+        testNumber: 1,
+        details: {
+          __proto__: null,
+          duration_ms: fileDuration,
+          type: "test",
+          passed: !fileFailed && !subtestsFailed,
+          error,
+        },
+      });
+    }
     if (fileFailed) {
       reporter.fail({
         __proto__: null,

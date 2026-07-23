@@ -598,7 +598,42 @@ impl BuildCommand {
                     }
                 }
 
-                break 'brk result.output_files.into_vec();
+                let mut output_files = result.output_files.into_vec();
+
+                // When transpiling without bundling (`--no-bundle`) into an output
+                // directory, `transform()` produces buffers but leaves `dest_path`
+                // empty, so the write loop below would write to "". Derive each
+                // destination path from the entry's source path with a `.js`
+                // extension (e.g. `src/a.ts` -> `src/a.js`). The write loop strips
+                // the longest common prefix of these paths before joining onto
+                // `--outdir`, so keeping the source directory layout here mirrors
+                // how the bundler computes output paths. See issue #5206.
+                if !ctx.bundler_options.outdir.is_empty() {
+                    // `root_dir` is the resolved outbase for the entry points
+                    // (computed above, mirrors the bundler). Deriving each
+                    // `dest_path` relative to it keeps the paths relative — the
+                    // write loop asserts they are not absolute — and preserves the
+                    // entry's directory layout under `--outdir`, exactly like the
+                    // bundling code path.
+                    let root_dir = &this_transpiler.options.root_dir;
+                    for output_file in output_files.iter_mut() {
+                        if !output_file.dest_path.is_empty() {
+                            continue;
+                        }
+                        let rel = bun_paths::resolve_path::relative(
+                            root_dir,
+                            output_file.src_path.text,
+                        );
+                        let ext = bun_paths::fs::PathName::find_extname(rel);
+                        let stem = &rel[..rel.len() - ext.len()];
+                        let mut dest = Vec::<u8>::with_capacity(stem.len() + 3);
+                        dest.extend_from_slice(stem);
+                        dest.extend_from_slice(b".js");
+                        output_file.dest_path = dest.into_boxed_slice();
+                    }
+                }
+
+                break 'brk output_files;
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -809,7 +844,20 @@ impl BuildCommand {
             }
             debug_assert_eq!(all_paths.len(), output_files.len());
 
-            let from_path = resolve_path::longest_common_path(&all_paths);
+            let mut from_path = resolve_path::longest_common_path(&all_paths);
+            // `write_to_disk` strips `from_path` off each `dest_path` before joining
+            // onto the output dir. That only makes sense when the dest paths are
+            // absolute and share a real common directory. For `--no-bundle`, the
+            // dest paths are already relative (e.g. `a.js`), and
+            // `longest_common_path` returns `/` for them — `relative("/", "a.js")`
+            // would then resolve against the cwd and produce an absolute path. When
+            // the outputs are relative, there is no prefix to strip, so use ".".
+            if output_files
+                .first()
+                .is_some_and(|f| !bun_paths::is_absolute(&f.dest_path))
+            {
+                from_path = b".";
+            }
 
             let mut size_padding: usize = 0;
 

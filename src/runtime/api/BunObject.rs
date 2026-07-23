@@ -213,15 +213,19 @@ mod static_adapters {
         // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
-        let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
-            return Err(g.throw_invalid_arguments(format_args!(
-                "expected string, buffer, TypedArray, or Blob",
-            )));
-        };
+        // Coerce the output argument first: `StringOrBuffer::from_js` can call a
+        // boxed String's `toString`, which may detach the input's ArrayBuffer.
         let output = if a1.is_undefined_or_null() {
             None
         } else {
             StringOrBuffer::from_js(g, a1)?
+        };
+        // `from_js_no_string_object` never runs user JS, so `output`'s buffer
+        // (captured above) stays valid.
+        let Some(input) = BlobOrStringOrBuffer::from_js_no_string_object(g, a0)? else {
+            return Err(g.throw_invalid_arguments(format_args!(
+                "expected string, buffer, TypedArray, or Blob",
+            )));
         };
         Crypto::SHA512_256::hash_(g, &input, output)
     }
@@ -1500,15 +1504,17 @@ pub(crate) fn index_of_line(
         return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
-
+    // Coerce `offset` before snapshotting the buffer: `coerce_to_int64` can run
+    // `valueOf`/`toString`, which may detach `arguments[0]` (use-after-free).
     let mut offset: usize = 0;
     if arguments.len() > 1 {
         let offset_value = arguments[1].coerce_to_int64(global_this)?;
         offset = offset_value.max(0) as usize;
     }
+
+    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+        return Ok(JSValue::js_number_from_int32(-1));
+    };
 
     let bytes = buffer.byte_slice();
     let mut current_offset = offset;

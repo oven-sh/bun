@@ -94,9 +94,15 @@ impl BlobOrStringOrBuffer {
         value: JSValue,
         allow_file: bool,
         is_async: bool,
+        allow_string_object: bool,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         // Check StringOrBuffer first because it's more common and cheaper.
-        let str = match StringOrBuffer::from_js_maybe_async(global, value, is_async, true)? {
+        let str = match StringOrBuffer::from_js_maybe_async(
+            global,
+            value,
+            is_async,
+            allow_string_object,
+        )? {
             Some(s) => s,
             None => {
                 // `as_class_ref` is the safe shared-borrow downcast (centralised
@@ -134,7 +140,7 @@ impl BlobOrStringOrBuffer {
         value: JSValue,
         allow_file: bool,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, allow_file, false)
+        Self::from_js_maybe_file_maybe_async(global, value, allow_file, false, true)
     }
 
     pub fn from_js(
@@ -144,11 +150,21 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, true)
     }
 
+    /// [`from_js`] with `allow_string_object = false`: boxed `String` inputs are
+    /// rejected, so this never calls user `toString` and is safe to call after
+    /// an earlier argument's ArrayBuffer slice has been captured.
+    pub fn from_js_no_string_object(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
+        Self::from_js_maybe_file_maybe_async(global, value, true, false, false)
+    }
+
     pub fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, true, true)
+        Self::from_js_maybe_file_maybe_async(global, value, true, true, true)
     }
 
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an

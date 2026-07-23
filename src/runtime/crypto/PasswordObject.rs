@@ -912,19 +912,25 @@ pub(crate) fn js_password_object_verify_sync(
         };
     }
 
-    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    // Coerce the hash argument first: `StringOrBuffer::from_js` can call a
+    // boxed String's `toString`, which may detach the password's ArrayBuffer.
+    let Some(hash_) = StringOrBuffer::from_js(global_object, arguments[1])? else {
         return Err(global_object.throw_invalid_argument_type(
             "verify",
-            "password",
+            "hash",
             "string or TypedArray",
         ));
     };
 
-    let Some(hash_) = StringOrBuffer::from_js(global_object, arguments[1])? else {
-        drop(password);
+    // `allow_string_object = false`: the password decode never runs user JS, so
+    // `hash_`'s buffer (captured above) stays valid.
+    let Some(password) =
+        StringOrBuffer::from_js_maybe_async(global_object, arguments[0], false, false)?
+    else {
+        drop(hash_);
         return Err(global_object.throw_invalid_argument_type(
             "verify",
-            "hash",
+            "password",
             "string or TypedArray",
         ));
     };

@@ -367,6 +367,24 @@ describe("randomUUIDv5", () => {
     expect(result).toEqual(uuid.v5("test", uuid.v5.DNS));
   });
 
+  test("name buffer detached by namespace argument's toString", () => {
+    // Detaching the name buffer during namespace coercion must be observed
+    // as length 0, so the result is UUIDv5 of the empty name.
+    const N = 1 << 16;
+    const keep: Uint8Array[] = [];
+    const b = Buffer.from(new ArrayBuffer(N)).fill(0x41);
+    const evilNamespace = Object.assign(new String(dnsNamespace), {
+      toString() {
+        b.buffer.transfer(0);
+        for (let i = 0; i < 8; i++) keep.push(new Uint8Array(N).fill(0x5a));
+        return dnsNamespace;
+      },
+    }) as string;
+    const got = Bun.randomUUIDv5(b, evilNamespace);
+    expect(b.byteLength).toBe(0);
+    expect(got).toBe(Bun.randomUUIDv5(new Uint8Array(0), dnsNamespace));
+  });
+
   test("consistent across multiple calls", () => {
     const results: string[] = [];
     for (let i = 0; i < 100; i++) {

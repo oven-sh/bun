@@ -424,3 +424,22 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
 });
+
+test("verifySync: password buffer detached by hash argument's toString", () => {
+  // Detaching the password buffer during hash coercion must be observed as
+  // length 0, so verification short-circuits to false.
+  const N = 1 << 16;
+  const keep: Uint8Array[] = [];
+  const hashed = password.hashSync(Buffer.alloc(N, 0x5a), "bcrypt");
+  const b = Buffer.from(new ArrayBuffer(N)).fill(0x41);
+  const evilHash = Object.assign(new String(hashed), {
+    toString() {
+      b.buffer.transfer(0);
+      for (let i = 0; i < 8; i++) keep.push(new Uint8Array(N).fill(0x5a));
+      return hashed;
+    },
+  }) as string;
+  const got = password.verifySync(b, evilHash);
+  expect(b.byteLength).toBe(0);
+  expect(got).toBe(false);
+});

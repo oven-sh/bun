@@ -2840,29 +2840,18 @@ impl GitHandler {
         );
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
-            let git_commands: [&[&[u8]]; 3] = [
-                &[git, b"init", b"--quiet"],
-                &[git, b"add", destination, b"--ignore-errors"],
-                &[
-                    git,
-                    b"commit",
-                    b"-am",
-                    b"Initial commit (via bun create)",
-                    b"--quiet",
-                ],
-            ];
 
             if VERBOSE {
                 bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
             }
 
-            for command in git_commands {
-                let _ = spawn_sync::spawn(&spawn_sync::Options {
-                    argv: command.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+            let spawn_git = |argv: &[&[u8]], stderr: spawn_sync::SyncStdio| -> crate::Result<bool> {
+                let result = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                     cwd: Box::from(destination),
                     stdin: spawn_sync::SyncStdio::Inherit,
-                    stdout: spawn_sync::SyncStdio::Inherit,
-                    stderr: spawn_sync::SyncStdio::Inherit,
+                    stdout: stderr,
+                    stderr,
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
                         loop_: win_loop,
@@ -2872,12 +2861,54 @@ impl GitHandler {
                     windows: (),
                     ..Default::default()
                 })?;
+                Ok(matches!(result, Ok(r) if r.is_ok()))
+            };
+
+            // `git commit` refuses to run without a resolvable committer identity
+            // and prints a multi-line "Please tell me who you are" banner to
+            // stderr. Probe for it and supply a placeholder when missing so a
+            // fresh machine without `~/.gitconfig` still gets a clean initial
+            // commit instead of that banner.
+            let has_identity = spawn_git(
+                &[git, b"var", b"GIT_COMMITTER_IDENT"],
+                spawn_sync::SyncStdio::Ignore,
+            )?;
+
+            let mut commit: Vec<&[u8]> = Vec::with_capacity(10);
+            commit.push(git);
+            if !has_identity {
+                commit.extend_from_slice(&[
+                    b"-c",
+                    b"user.name=bun",
+                    b"-c",
+                    b"user.email=bun-create@localhost",
+                ]);
+            }
+            commit.extend_from_slice(&[
+                b"commit",
+                b"-am",
+                b"Initial commit (via bun create)",
+                b"--quiet",
+            ]);
+
+            let git_commands: [&[&[u8]]; 3] = [
+                &[git, b"init", b"--quiet"],
+                &[git, b"add", destination, b"--ignore-errors"],
+                &commit,
+            ];
+
+            let mut ok = true;
+            for command in git_commands {
+                if !spawn_git(command, spawn_sync::SyncStdio::Inherit)? {
+                    ok = false;
+                    break;
+                }
             }
 
             bun_core::pretty_error!("\n");
             Output::print_start_end(git_start, bun_core::time::nano_timestamp());
             bun_core::pretty_error!(" <d>git<r>\n");
-            return Ok(true);
+            return Ok(ok);
         }
 
         Ok(false)

@@ -209,6 +209,52 @@ it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () =
   expect(proc.resourceUsage!.contextSwitches.voluntary).toBeLessThan(2000);
 });
 
+// On a machine with no ~/.gitconfig (fresh CI agent, new dev box) `git commit`
+// prints the multi-line "Please tell me who you are" banner and exits 128,
+// leaving the new repo with no initial commit. `bun create` now probes
+// `git var GIT_COMMITTER_IDENT` and supplies a placeholder identity when that
+// probe fails.
+it("creates the initial git commit even when git has no user identity configured", async () => {
+  using dir = tempDir("create-no-git-identity", {
+    "home/.keep": "",
+    "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0" }),
+    "bun-create/tmpl/index.js": "// hi\n",
+  });
+
+  const stripped = Object.fromEntries(
+    Object.entries(env).filter(([k]) => !k.startsWith("GIT_") && k !== "EMAIL" && k !== "XDG_CONFIG_HOME"),
+  );
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", join(String(dir), "dest"), "--no-install"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...stripped,
+      HOME: join(String(dir), "home"),
+      USERPROFILE: join(String(dir), "home"),
+      GIT_CONFIG_NOSYSTEM: "1",
+      BUN_CREATE_DIR: join(String(dir), "bun-create"),
+    },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).not.toContain("Please tell me who you are");
+  expect(err).not.toContain("unable to auto-detect email address");
+  expect(err).not.toContain("fatal:");
+  expect(out).toContain("Created tmpl project successfully");
+  expect(exitCode).toBe(0);
+
+  const log = spawnSync({
+    cmd: ["git", "-C", join(String(dir), "dest"), "log", "-1", "--format=%an <%ae> %s"],
+    env,
+  });
+  expect(log.stdout.toString().trim()).toBe("bun <bun-create@localhost> Initial commit (via bun create)");
+  expect(log.exitCode).toBe(0);
+});
+
 it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";

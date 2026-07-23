@@ -11,10 +11,13 @@ use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
     package_manager_options::LogLevel, setup_global_dir,
 };
-use bun_install::{DependencyID, PackageID, PackageManager, migration};
+use bun_install::{DependencyID, PackageID, PackageManager, Resolution, migration};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
+
+use bun_ast::{E, Expr, Loc};
+use bun_js_printer as JSPrinter;
 
 use crate::cli::Command;
 use crate::cli::pm_pkg_command::PmPkgCommand;
@@ -155,9 +158,10 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
-  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
+  <b><green>bun<r> <blue>list<r>                    list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>└<r> <cyan>--json<r>                    output in JSON format\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
@@ -499,6 +503,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Output::flush();
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
+
+            if pm.options.json_output {
+                let show_all = strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]);
+                if strings::left_has_any_in_right(args, &[b"--trusted"]) {
+                    bun_core::warn!("--trusted is not supported with --json and will be ignored");
+                }
+                print_ls_json(lockfile, pm, show_all)?;
+                Global::exit(0);
+            }
+
             let mut iterator =
                 tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
 
@@ -722,6 +736,250 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         }
     }
+}
+
+fn print_ls_json(
+    lockfile: &Lockfile,
+    pm: &PackageManager,
+    show_all: bool,
+) -> Result<(), crate::Error> {
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let slice = lockfile.packages.slice();
+    let resolutions = slice.items_resolution();
+    let pkg_dependencies = slice.items_dependencies();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let resolutions_buf = lockfile.buffers.resolutions.as_slice();
+
+    let mut cwd_buf = PathBuffer::uninit();
+    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf[..]) {
+        Ok(len) => &cwd_buf[..len],
+        Err(_) => {
+            bun_core::pretty_errorln!("<r><red>error<r>: Could not get current working directory",);
+            Global::exit(1);
+        }
+    };
+
+    // `E::String` stores its bytes by reference, so keys and values must
+    // outlive the AST through printing — dupe into the process-lifetime arena.
+    let bump = crate::cli::cli_arena();
+
+    let mut root_name: &[u8] = &pm.root_package_json_name_at_time_of_init;
+    let mut root_version: &[u8] = b"";
+    'from_package_json: {
+        if !pm.root_dir.has_comptime_query(b"package.json") {
+            break 'from_package_json;
+        }
+        let fd = pm.root_dir.fd;
+        if !fd.is_valid() {
+            break 'from_package_json;
+        }
+        let contents = match bun_sys::File::read_from(fd, b"package.json") {
+            Ok(s) => s,
+            Err(_) => break 'from_package_json,
+        };
+        let parse_bump = bun_alloc::Arena::new();
+        let contents: &[u8] = parse_bump.alloc_slice_copy(&contents);
+        let source = &bun_ast::Source::init_path_string(b"package.json", contents);
+        let mut parse_log = bun_ast::Log::init();
+        let Ok(json) = bun_parsers::json::parse_utf8(source, &mut parse_log, &parse_bump) else {
+            break 'from_package_json;
+        };
+        if let Some(name) = json.get_string_cloned(&parse_bump, b"name").ok().flatten() {
+            if !name.is_empty() {
+                root_name = crate::cli::cli_dupe(name);
+            }
+        }
+        if let Some(version) = json.get_string_cloned(&parse_bump, b"version").ok().flatten() {
+            root_version = crate::cli::cli_dupe(version);
+        }
+    }
+
+    let mut root_obj = E::Object::default();
+    if !root_name.is_empty() {
+        root_obj.put(
+            bump,
+            b"name",
+            Expr::init(E::String::init(crate::cli::cli_dupe(root_name)), Loc::EMPTY),
+        )?;
+    }
+    if !root_version.is_empty() {
+        root_obj.put(
+            bump,
+            b"version",
+            Expr::init(E::String::init(root_version), Loc::EMPTY),
+        )?;
+    }
+    root_obj.put(
+        bump,
+        b"path",
+        Expr::init(E::String::init(crate::cli::cli_dupe(cwd)), Loc::EMPTY),
+    )?;
+
+    let mut prod_deps = E::Object::default();
+    let mut dev_deps = E::Object::default();
+    let mut optional_deps = E::Object::default();
+    let mut peer_deps = E::Object::default();
+    let mut transitive_deps = E::Object::default();
+
+    // Track direct dependency IDs so transitive deps can skip them below.
+    let mut direct_dep_ids: std::collections::HashSet<DependencyID> = std::collections::HashSet::new();
+
+    let by_name = ByName {
+        dependencies,
+        buf: string_bytes,
+    };
+
+    // Map each installed dependency edge to the node_modules folder it actually
+    // lives in, so `path` reflects the real (possibly nested) install location
+    // rather than assuming everything is hoisted to `<cwd>/node_modules`.
+    let mut dep_folders: std::collections::HashMap<DependencyID, &[u8]> = std::collections::HashMap::new();
+    {
+        let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
+        while let Some(node_modules) = iterator.next(None) {
+            // `relative_path` is only valid until the next `next()`, so dupe it
+            // into the process-lifetime arena before storing.
+            let folder_rel = crate::cli::cli_dupe(node_modules.relative_path.as_bytes());
+            for &dep_id in node_modules.dependencies {
+                dep_folders.insert(dep_id, folder_rel);
+            }
+        }
+    }
+
+    // Direct deps first.
+    let root_deps = pkg_dependencies[0];
+    let mut sorted_direct: Vec<DependencyID> = Vec::with_capacity(root_deps.len as usize);
+    for i in 0..root_deps.len {
+        sorted_direct.push((root_deps.off + i) as DependencyID);
+    }
+    sorted_direct.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+    for &dependency_id in &sorted_direct {
+        let package_id = resolutions_buf[dependency_id as usize];
+        if package_id as usize >= lockfile.packages.len() {
+            continue;
+        }
+        direct_dep_ids.insert(dependency_id);
+
+        let dep = &dependencies[dependency_id as usize];
+        let folder_rel = dep_folders.get(&dependency_id).copied().unwrap_or(b"node_modules");
+        let dep_expr =
+            build_dep_info(dep, &resolutions[package_id as usize], string_bytes, cwd, folder_rel)?;
+        let name = crate::cli::cli_dupe(dep.name.slice(string_bytes));
+
+        if dep.behavior.is_dev() {
+            dev_deps.put(bump, name, dep_expr)?;
+        } else if dep.behavior.is_peer() {
+            peer_deps.put(bump, name, dep_expr)?;
+        } else if dep.behavior.is_optional() {
+            optional_deps.put(bump, name, dep_expr)?;
+        } else {
+            prod_deps.put(bump, name, dep_expr)?;
+        }
+    }
+
+    // Transitive deps (only with --all). Sourced from the same tree walk that
+    // produced `dep_folders`, so every edge carries its real install path.
+    if show_all {
+        let mut sorted_transitive: Vec<DependencyID> = dep_folders
+            .keys()
+            .copied()
+            .filter(|id| !direct_dep_ids.contains(id))
+            .collect();
+        sorted_transitive.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+        for &dependency_id in &sorted_transitive {
+            let package_id = resolutions_buf[dependency_id as usize];
+            if package_id as usize >= lockfile.packages.len() {
+                continue;
+            }
+            let dep = &dependencies[dependency_id as usize];
+            let folder_rel = dep_folders.get(&dependency_id).copied().unwrap_or(b"node_modules");
+            let dep_expr =
+                build_dep_info(dep, &resolutions[package_id as usize], string_bytes, cwd, folder_rel)?;
+            let name = crate::cli::cli_dupe(dep.name.slice(string_bytes));
+            transitive_deps.put(bump, name, dep_expr)?;
+        }
+    }
+
+    // Always emit the four direct-dependency buckets so the JSON schema is
+    // stable for consumers, even when a bucket is empty.
+    root_obj.put(bump, b"dependencies", Expr::init(prod_deps, Loc::EMPTY))?;
+    root_obj.put(bump, b"devDependencies", Expr::init(dev_deps, Loc::EMPTY))?;
+    root_obj.put(bump, b"optionalDependencies", Expr::init(optional_deps, Loc::EMPTY))?;
+    root_obj.put(bump, b"peerDependencies", Expr::init(peer_deps, Loc::EMPTY))?;
+    // transitiveDependencies is only meaningful with --all; omit it otherwise
+    // rather than emit an empty object that implies there are none.
+    if show_all {
+        root_obj.put(bump, b"transitiveDependencies", Expr::init(transitive_deps, Loc::EMPTY))?;
+    }
+
+    let root_expr = Expr::init(root_obj, Loc::EMPTY);
+    let source = &bun_ast::Source::init_empty_file(b"ls.json");
+
+    let mut buffer_writer = JSPrinter::BufferWriter::init();
+    buffer_writer.append_newline = true;
+    let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
+    JSPrinter::print_json(
+        &mut printer,
+        root_expr,
+        source,
+        JSPrinter::PrintJsonOptions {
+            mangled_props: None,
+            ..Default::default()
+        },
+    )?;
+
+    Output::print(format_args!(
+        "{}",
+        bstr::BStr::new(printer.ctx.get_written())
+    ));
+    Output::flush();
+    Ok(())
+}
+
+// ==== Format ====
+// {
+//   from: "package-name",
+//   version: "1.2.3",
+//   path: "path/to/the/package/in/node_modules"
+// }
+fn build_dep_info(
+    dep: &Dependency,
+    resolution: &Resolution,
+    string_bytes: &[u8],
+    cwd: &[u8],
+    folder_rel: &[u8],
+) -> Result<Expr, crate::Error> {
+    let bump = crate::cli::cli_arena();
+    let mut dep_info = E::Object::default();
+
+    let name = dep.name.slice(string_bytes);
+
+    dep_info.put(
+        bump,
+        b"from",
+        Expr::init(E::String::init(crate::cli::cli_dupe(name)), Loc::EMPTY),
+    )?;
+
+    let version = {
+        let mut v = Vec::new();
+        let _ = write!(&mut v, "{}", resolution.fmt(string_bytes, PathSep::Auto));
+        crate::cli::cli_dupe(&v)
+    };
+    dep_info.put(
+        bump,
+        b"version",
+        Expr::init(E::String::init(version), Loc::EMPTY),
+    )?;
+
+    let path = Path::resolve_path::join::<Path::platform::Auto>(&[cwd, folder_rel, name]);
+    dep_info.put(
+        bump,
+        b"path",
+        Expr::init(E::String::init(crate::cli::cli_dupe(path)), Loc::EMPTY),
+    )?;
+
+    Ok(Expr::init(dep_info, Loc::EMPTY))
 }
 
 fn print_node_modules_folder_structure(

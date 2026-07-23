@@ -831,6 +831,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
+                        // `lower_class` may rewrite/hoist static members, so decide this first.
+                        let has_custom_static_name =
+                            Self::class_has_custom_static_name(&class.class);
+
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
                         // (variable declarations) before the class statement.
@@ -867,7 +871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
 
-                        if !Self::class_has_custom_static_name(&class.class) {
+                        if !has_custom_static_name {
                             let keep_name: &[u8] = match class.class.class_name {
                                 Some(n) if !n.ref_.is_empty() => p.load_name_from_ref(n.ref_),
                                 _ => js_ast::ClauseItem::DEFAULT_ALIAS,
@@ -943,6 +947,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("infallible: in namespace");
             stmts.reserve(3);
             stmts.push(*stmt);
+            if let Some(keep) = p.keep_stmt_symbol_name(stmt.loc, name_ref, original_name) {
+                stmts.push(keep);
+            }
             let func_name = data.func.name.expect("infallible: name checked");
             stmts.push(Stmt::assign(
                 p.new_expr(
@@ -1083,6 +1090,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             data.is_export = false;
         }
 
+        // `lower_class` may rewrite/hoist static members, so decide this first.
+        let has_custom_static_name = Self::class_has_custom_static_name(&data.class);
+
         // Lower class field syntax for browsers that don't support it
         let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
@@ -1090,7 +1100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
             if let Some(name) = data.class.class_name {
-                if !Self::class_has_custom_static_name(&data.class) {
+                if !has_custom_static_name {
                     let original_name = p.symbols[name.ref_.inner_index() as usize]
                         .original_name
                         .slice();

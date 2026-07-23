@@ -127,6 +127,65 @@ pub(crate) fn install_hoisted_packages(
         },
     );
 
+    // Every folder name the lockfile can legitimately place at the root
+    // `node_modules`, so stale entries on disk can be pruned once the
+    // directory is opened below: the root package's declared dependency
+    // aliases (all behaviors, so `--production`/`--omit` never turn a
+    // reinstall into a delete) unioned with the unfiltered root tree (the
+    // hoisted transitives that belong there; the pre-`filter()` snapshot is
+    // read back through `_restore_buffers`, so `--filter` cannot shrink it).
+    // Built after the restore guard is armed so a fallible step cannot
+    // return with the original buffers dropped.
+    //
+    // `None` (no prune) for:
+    // - global installs: the global `node_modules` is also the `bun link`
+    //   registry, whose entries are bare symlinks recorded in no manifest
+    //   and must survive `bun add -g`.
+    // - the security scanner's narrowed pre-install pass; the full install
+    //   that follows performs the prune.
+    let expected_root_entries: Option<StringHashMap<()>> = 'expected: {
+        if this.options.global || packages_to_install.is_some() || this.lockfile.packages.is_empty()
+        {
+            break 'expected None;
+        }
+        let deps = this.lockfile.buffers.dependencies.as_slice();
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        let (original_trees, original_tree_dep_ids) = &*_restore_buffers;
+        // A lockfile with no dependencies at all has zero trees; that is a
+        // legitimate state (the last dependency was just removed) in which
+        // nothing belongs at the root, not a reason to skip the prune.
+        let root_tree_dep_ids: &[DependencyID] = if original_trees.is_empty() {
+            &[]
+        } else {
+            original_trees[0].dependencies.get(original_tree_dep_ids)
+        };
+        let root_pkg_deps = this.lockfile.packages.slice().items_dependencies()[0];
+        let mut set = StringHashMap::<()>::with_capacity(
+            root_tree_dep_ids.len() + root_pkg_deps.len as usize,
+        );
+        // An incomplete kept set would delete entries the lockfile still
+        // places at the root, so insertion failures must not be ignored.
+        let mut keep = |dep_id: DependencyID| -> Result<(), bun_alloc::AllocError> {
+            if let Some(dep) = deps.get(dep_id as usize) {
+                let alias = dep.name.slice(string_buf);
+                if !alias.is_empty() {
+                    set.put(alias, ())?;
+                }
+            }
+            Ok(())
+        };
+        for &dep_id in root_tree_dep_ids {
+            keep(dep_id)?;
+        }
+        for dep_id in root_pkg_deps.begin()..root_pkg_deps.end() {
+            keep(dep_id)?;
+        }
+        // `bun patch` materializes the patched package at the root even when
+        // no tree places it there; its folder must survive reinstalls.
+        package_install::extend_expected_with_patched_packages(&mut set, &this.lockfile)?;
+        break 'expected Some(set);
+    };
+
     let mut download_node: ProgressNode;
     let mut install_node: ProgressNode = ProgressNode::default();
     let mut scripts_node: ProgressNode;
@@ -214,6 +273,24 @@ pub(crate) fn install_hoisted_packages(
             }
         }
     };
+
+    // Remove entries the cleaned lockfile no longer places at the root, so a
+    // dependency dropped from `package.json` is also removed from disk by
+    // `bun install`.
+    if !new_node_modules {
+        if let Some(expected) = expected_root_entries.as_ref() {
+            // `keep_symlinks`: a root symlink here is a workspace link, a
+            // `file:` folder dependency, or an unsaved `bun link <pkg>`
+            // registration; the last is recorded in no manifest and must
+            // survive `bun install`.
+            package_install::prune_extraneous_node_modules(
+                expected,
+                node_modules_folder.fd(),
+                this.options.bin_path.as_bytes(),
+                true,
+            );
+        }
+    }
 
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;

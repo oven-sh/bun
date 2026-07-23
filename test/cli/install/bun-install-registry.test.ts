@@ -9099,3 +9099,416 @@ registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}
     expect(await exited).not.toBe(0);
   }
 });
+
+// A dependency removed from package.json must also be removed from
+// node_modules on the next `bun install`, not just from the lockfile.
+// Otherwise `require("<removed>")` keeps working on machines that had it
+// installed and breaks on fresh clones / CI.
+for (const linker of ["hoisted", "isolated"] as const) {
+  describe(`prunes stale node_modules entries (${linker})`, () => {
+    test("removing a direct dependency removes it from node_modules", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+      expect(await exists(join(packageDir, "node_modules", "a-dep", "package.json"))).toBe(true);
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain('"a-dep"');
+
+      // drop a-dep from package.json and reinstall
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+      const { out } = await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      const lock = await file(join(packageDir, "bun.lock")).text();
+      expect(lock).not.toContain('"a-dep"');
+      expect(lock).toContain('"no-deps"');
+
+      // node_modules must reflect the lockfile: the surviving dep stays, the
+      // removed one is gone. Use a dot-prefix filter so .cache/.bun don't fail
+      // the assertion across linkers.
+      const entries = (await readdirSorted(join(packageDir, "node_modules"))).filter(e => !e.startsWith("."));
+      expect(entries).toEqual(["no-deps"]);
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.0.0",
+      });
+      expect(out).toContain("1 package removed");
+    });
+
+    test("removing a scoped dependency removes it and cleans up the empty @scope dir", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "@types/no-deps": "1.0.0",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "@types", "no-deps", "package.json"))).toBe(true);
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      const entries = (await readdirSorted(join(packageDir, "node_modules"))).filter(e => !e.startsWith("."));
+      expect(entries).toEqual(["no-deps"]);
+      expect(await exists(join(packageDir, "node_modules", "@types", "no-deps"))).toBe(false);
+      // empty scope directory should be cleaned up too
+      expect(await exists(join(packageDir, "node_modules", "@types"))).toBe(false);
+    });
+
+    test("removing a dependency with a transitive dep removes both", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "a-dep": "1.0.1",
+            "one-dep": "1.0.0",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "one-dep", "package.json"))).toBe(true);
+      // one-dep's transitive dep no-deps@1.0.1 is hoisted to the root
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(linker === "hoisted");
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      const entries = (await readdirSorted(join(packageDir, "node_modules"))).filter(e => !e.startsWith("."));
+      expect(entries).toEqual(["a-dep"]);
+      expect(await exists(join(packageDir, "node_modules", "one-dep"))).toBe(false);
+      expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(false);
+    });
+
+    test("does not remove unrelated user directories or dotfiles", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+
+      // user-created entries that must survive a prune
+      await write(join(packageDir, "node_modules", ".cache", "something"), "keep");
+      await write(join(packageDir, "node_modules", ".keep-me"), "keep");
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+      expect(await exists(join(packageDir, "node_modules", ".cache", "something"))).toBe(true);
+      expect(await exists(join(packageDir, "node_modules", ".keep-me"))).toBe(true);
+    });
+
+    test("removing the last dependency removes it from node_modules", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: {} }));
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      expect((await readdirSorted(join(packageDir, "node_modules"))).filter(e => !e.startsWith("."))).toEqual([]);
+      expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(false);
+    });
+
+    test("a file: folder dependency survives the prune", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await mkdir(join(packageDir, "local-pkg"));
+      await write(
+        join(packageDir, "local-pkg", "package.json"),
+        JSON.stringify({ name: "local-pkg", version: "1.0.0" }),
+      );
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "local-pkg": "file:./local-pkg",
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "local-pkg", "package.json"))).toBe(true);
+
+      // drop a-dep so a prune actually runs; the folder dep must survive it
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "local-pkg": "file:./local-pkg" } }));
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
+      expect(await exists(join(packageDir, "node_modules", "local-pkg", "package.json"))).toBe(true);
+    });
+
+    test("a dependency demoted to transitive-only leaves the root under the isolated linker", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      // `one-dep` depends on `no-deps@1.0.1`, so after `no-deps` stops being a
+      // direct dependency it is still reachable through `one-dep`.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "one-dep": "1.0.0",
+            "no-deps": "1.0.1",
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "one-dep": "1.0.0" } }));
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      // `a-dep` left the graph entirely: gone on both linkers.
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
+      // `no-deps` is still in the graph as `one-dep`'s transitive. The hoisted
+      // linker legitimately places it at the root; the isolated linker only
+      // places direct dependencies there, so its root symlink must be removed
+      // or `require("no-deps")` keeps working with no declared dependency.
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(linker === "hoisted");
+    });
+
+    test("removing a dependency removes its dangling .bin link", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "what-bin": "1.0.0",
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      const binEntries = async () => {
+        try {
+          return (await readdirSorted(join(packageDir, "node_modules", ".bin"))).filter(e => e.startsWith("what-bin"));
+        } catch (err: any) {
+          // only a missing .bin directory counts as "no bin entries"
+          if (err?.code === "ENOENT") return [];
+          throw err;
+        }
+      };
+      expect(await exists(join(packageDir, "node_modules", "what-bin", "package.json"))).toBe(true);
+      expect((await binEntries()).length).toBeGreaterThan(0);
+
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "a-dep": "1.0.1" } }));
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      expect(await exists(join(packageDir, "node_modules", "what-bin"))).toBe(false);
+      if (!isWindows) {
+        // On Windows `.bin` holds `.exe`/`.bunx` shim files rather than
+        // symlinks, which the dangling-symlink sweep (shared with `bun rm`)
+        // does not cover.
+        expect(await binEntries()).toEqual([]);
+      }
+    });
+
+    test("a publicHoistPattern hoist from a filtered-out workspace survives --filter", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true, publicHoistPattern: ["no-deps"] },
+        files: {
+          "package.json": JSON.stringify({ name: "foo", workspaces: ["packages/*"] }),
+          // `one-dep` depends on `no-deps@1.0.1`; the hoist comes from a
+          // workspace's transitive, not from the root's own dependencies.
+          "packages/wsa/package.json": JSON.stringify({
+            name: "wsa",
+            version: "1.0.0",
+            dependencies: { "one-dep": "1.0.0" },
+          }),
+          "packages/wsb/package.json": JSON.stringify({
+            name: "wsb",
+            version: "1.0.0",
+            dependencies: { "a-dep": "1.0.1" },
+          }),
+        },
+      });
+
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+
+      // A filtered install excludes `wsa` (the hoist's origin). The lockfile
+      // still places `no-deps` at the root, so the prune must not delete it.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--filter", "wsb"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ exitCode: 0 });
+
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+    });
+  });
+}
+
+// The global install directory doubles as the `bun link` registry: `bun link`
+// records a package as a bare `node_modules/<name>` symlink there without
+// touching the global package.json or lockfile. A global install must never
+// prune it, or every link registration is destroyed by the next `bun add -g`.
+test("a bun link registration survives a global install", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true },
+    files: {
+      "linked-pkg/package.json": JSON.stringify({ name: "my-linked-pkg", version: "1.0.0" }),
+    },
+  });
+
+  const bunInstallDir = join(packageDir, "global-home");
+  const globalEnv = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    BUN_CONFIG_REGISTRY: registry.registryUrl(),
+  };
+  const globalNodeModules = join(bunInstallDir, "install", "global", "node_modules");
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "link"],
+      cwd: join(packageDir, "linked-pkg"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ exitCode: 0 });
+  }
+  expect(await exists(join(globalNodeModules, "my-linked-pkg", "package.json"))).toBe(true);
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "add", "--global", "no-deps@1.0.0"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ exitCode: 0 });
+  }
+
+  expect(await exists(join(globalNodeModules, "no-deps", "package.json"))).toBe(true);
+  // The link registration must not have been pruned by the global install.
+  expect(await exists(join(globalNodeModules, "my-linked-pkg", "package.json"))).toBe(true);
+});
+
+// `bun link <pkg>` in a consumer is `--no-save` by default: it creates
+// `node_modules/<pkg>` as a symlink without writing package.json or bun.lock.
+// The prune must not remove it on the next `bun install`, even while pruning a
+// genuinely removed dependency in the same pass.
+test("an unsaved bun link in a consumer survives bun install", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true },
+    files: {
+      "linked-src/package.json": JSON.stringify({ name: "my-linked-pkg", version: "1.0.0" }),
+    },
+  });
+  const globalEnv = { ...env, BUN_INSTALL: join(packageDir, "global-home") };
+  const run = async (cmd: string[], cwd: string) => {
+    await using proc = Bun.spawn({ cmd, cwd, stdout: "pipe", stderr: "pipe", env: globalEnv });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ cmd, stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ cmd, exitCode: 0 });
+  };
+
+  await run([bunExe(), "link"], join(packageDir, "linked-src"));
+
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }));
+  await run([bunExe(), "install"], packageDir);
+  await run([bunExe(), "link", "my-linked-pkg"], packageDir);
+  expect(await exists(join(packageDir, "node_modules", "my-linked-pkg", "package.json"))).toBe(true);
+  // unsaved by default: neither manifest records the link
+  expect(await file(packageJson).text()).not.toContain("my-linked-pkg");
+  expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("my-linked-pkg");
+
+  // drop a-dep so the prune actually runs; the link must survive it
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
+  await run([bunExe(), "install"], packageDir);
+
+  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
+  expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+  expect(await exists(join(packageDir, "node_modules", "my-linked-pkg", "package.json"))).toBe(true);
+});

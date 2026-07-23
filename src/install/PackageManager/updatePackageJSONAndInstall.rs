@@ -693,38 +693,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             // This could be slow if there are a lot of symlinks
             match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
                 Ok(node_modules_bin) => {
-                    // `defer node_modules_bin.close()` — explicit close below (Fd is Copy, no Drop).
-                    let mut iter = bun_sys::iterate_dir(node_modules_bin);
-                    'iterator: loop {
-                        let Ok(Some(entry)) = iter.next() else { break };
-                        match entry.kind {
-                            bun_sys::EntryKind::SymLink => {
-                                // any symlinks which we are unable to open are assumed to be dangling
-                                // note that using access won't work here, because access doesn't resolve symlinks
-                                let name = entry.name.slice_u8();
-                                node_modules_buf[..name.len()].copy_from_slice(name);
-                                node_modules_buf[name.len()] = 0;
-                                let buf: &ZStr = ZStr::from_buf(&node_modules_buf, name.len());
-
-                                match bun_sys::File::openat(
-                                    node_modules_bin,
-                                    buf,
-                                    bun_sys::O::RDONLY,
-                                    0,
-                                ) {
-                                    Ok(file) => {
-                                        let _ = file.close();
-                                    }
-                                    Err(_) => {
-                                        let _ = bun_sys::unlinkat(node_modules_bin, buf);
-                                        continue 'iterator;
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let _ = bun_sys::close(node_modules_bin);
+                    crate::package_install::prune_dangling_bin_links(node_modules_bin);
                 }
                 Err(err) => {
                     if err.get_errno() != bun_sys::E::ENOENT {

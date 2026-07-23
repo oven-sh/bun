@@ -3621,8 +3621,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     describe("add trusted, delete, then add again", async () => {
-      // when we change bun install to delete dependencies from node_modules
-      // for both cases, we need to update this test
+      // `bun install` prunes node_modules entries removed from the lockfile,
+      // so a dependency deleted from package.json by hand (withRm: false) is
+      // removed from disk the same way `bun rm` (withRm: true) removes it.
       for (const withRm of [true, false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
           using ctx = await setupTest();
@@ -3746,7 +3747,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expected = [expect.stringContaining("bun install v1."), ...expected];
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(expected);
           expect(await exited).toBe(0);
-          expect(await exists(join(packageDir, "node_modules", "uses-what-bin"))).toBe(!withRm);
+          // pruned from node_modules on both paths now that the lockfile
+          // no longer reaches it
+          expect(await exists(join(packageDir, "node_modules", "uses-what-bin"))).toBe(false);
 
           // add again, bun pm untrusted should report it as untrusted
 
@@ -3775,18 +3778,19 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await stdout.text();
-          expected = withRm
-            ? [
-                "",
-                expect.stringContaining("+ uses-what-bin@1.0.0"),
-                "",
-                "1 package installed",
-                "",
-                "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-                "",
-              ]
-            : ["", expect.stringContaining("Checked 3 installs across 4 packages (no changes)"), ""];
-          expected = [expect.stringContaining("bun install v1."), ...expected];
+          // The prune removed node_modules/uses-what-bin and its hoisted
+          // transitive dependency what-bin on both paths, so re-adding it
+          // always performs a fresh, untrusted install of both.
+          expected = [
+            expect.stringContaining("bun install v1."),
+            "",
+            expect.stringContaining("+ uses-what-bin@1.0.0"),
+            "",
+            "2 packages installed",
+            "",
+            "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+            "",
+          ];
           expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual(expected);
 
           ({ stdout, stderr, exited } = spawn({

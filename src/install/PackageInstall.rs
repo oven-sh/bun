@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use bun_collections::{ArrayHashMap, DynamicBitSet};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
@@ -14,6 +14,7 @@ use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 use bun_threading::{ThreadPool, WaitGroup};
 
+use crate::lockfile::package::PackageColumns as _;
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
@@ -2507,6 +2508,258 @@ impl<'a> PackageInstall<'a> {
         // TODO: linux io_uring
         self.install_with_copyfile(destination_dir)
     }
+}
+
+/// Remove top-level entries from an already-open root `node_modules`
+/// directory whose names are not in `expected`. Scoped packages are handled
+/// by descending one level into `@scope/` and removing the empty scope
+/// directory if nothing remains. Dot-prefixed entries (`.bin`, `.bun`,
+/// `.cache`, …) are never touched. Finishes with a sweep of `bin_path` that
+/// unlinks any `.bin` entry left dangling by a deleted package.
+///
+/// Called by both the hoisted and isolated install paths after
+/// `Lockfile::clean_with_logger` has rebuilt the lockfile, so a dependency
+/// removed from `package.json` is also removed from disk on the next
+/// `bun install` instead of remaining importable until the user deletes
+/// `node_modules` by hand.
+///
+/// Each linker builds `expected` as "every folder name the lockfile can
+/// legitimately place at the root", independent of install flags: the root
+/// package's declared dependency aliases (all behaviors, so `--production`
+/// or `--omit` never turn a reinstall into a delete) unioned with the
+/// linker's own root placements (the hoisted root tree, or every lockfile
+/// alias matching `publicHoistPattern` for the isolated store).
+///
+/// `keep_symlinks` is set by the hoisted linker: its extraneous entries are
+/// always real extracted directories, while a root symlink there is a
+/// workspace link, a `file:` folder dependency, or a `bun link <pkg>`
+/// registration. The last of those is recorded in no manifest (`bun link` is
+/// `--no-save` by default), so it can never be in `expected` and must not be
+/// deleted. The isolated linker's own root entries are symlinks into
+/// `node_modules/.bun`, so it cannot skip them.
+///
+/// The prune is best effort: a stale directory the filesystem refuses to
+/// delete (locked, read-only) is left behind rather than failing the
+/// install, matching the uninstall paths elsewhere in this file.
+pub(crate) fn prune_extraneous_node_modules(
+    expected: &StringHashMap<()>,
+    node_modules: Fd,
+    bin_path: &[u8],
+    keep_symlinks: bool,
+) {
+    let dir = Dir::borrow(&node_modules);
+
+    // Snapshot the listing before deleting anything. `delete_tree` mutates
+    // the directory, and on some filesystems a readdir refill after a delete
+    // can re-surface entries; iterating an owned list sidesteps that.
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut iter = sys::iterate_dir(node_modules);
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() || name[0] == b'.' {
+            continue;
+        }
+        if entry_is_symlink(node_modules, &entry) {
+            // A `@scope` symlink is never descended into: `delete_tree` on a
+            // symlink unlinks the link itself without following it, but the
+            // scope walk below opens through the link and could delete the
+            // contents of a directory outside `node_modules`.
+            if keep_symlinks || name[0] == b'@' {
+                continue;
+            }
+        }
+        names.push(name.to_vec());
+    }
+
+    let mut removed_any = false;
+    for name in &names {
+        if name[0] == b'@' {
+            removed_any |= prune_extraneous_scope(node_modules, name, expected, keep_symlinks);
+            continue;
+        }
+        if expected.contains_key(name.as_slice()) {
+            continue;
+        }
+        if dir.delete_tree(name).is_ok() {
+            removed_any = true;
+        }
+    }
+
+    // A deleted package's `.bin` symlink now dangles; sweep it so scripts get
+    // "command not found" instead of an ENOENT on the link target.
+    if removed_any {
+        if let Ok(bin_dir) = sys::open_dir_for_iteration(Fd::cwd(), bin_path) {
+            prune_dangling_bin_links(bin_dir);
+        }
+    }
+}
+
+/// Insert the alias of every package with a `patchedDependencies` entry into
+/// `expected`. `bun patch` materializes the package being patched at the root
+/// `node_modules/<name>` (under the isolated linker, as a symlink into the
+/// store) even when no tree places it there, so the prune must treat those
+/// names as expected or `bun patch --commit` removes the folder it just told
+/// the user about. Matches packages to patches the same way the installer
+/// does: by the hash of `name@version`.
+pub(crate) fn extend_expected_with_patched_packages(
+    expected: &mut StringHashMap<()>,
+    lockfile: &Lockfile,
+) -> Result<(), bun_alloc::AllocError> {
+    if lockfile.patched_dependencies.count() == 0 {
+        return Ok(());
+    }
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let pkgs = lockfile.packages.slice();
+    let names = pkgs.items_name();
+    let resolutions = pkgs.items_resolution();
+    let mut name_and_version: Vec<u8> = Vec::new();
+    for i in 0..pkgs.len() {
+        name_and_version.clear();
+        use std::io::Write;
+        write!(
+            &mut name_and_version,
+            "{}@{}",
+            bstr::BStr::new(names[i].slice(string_buf)),
+            resolutions[i].fmt(string_buf, bun_core::fmt::PathSep::Posix),
+        )
+        .expect("writing to a Vec cannot fail");
+        let name_and_version_hash = bun_semver::string::Builder::string_hash(&name_and_version);
+        if lockfile
+            .patched_dependencies
+            .get(&name_and_version_hash)
+            .is_some()
+        {
+            expected.put(names[i].slice(string_buf), ())?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a directory entry is a symlink. `readdir` leaves `d_type` unset on
+/// some filesystems (NFS, FUSE, bind mounts), so `Unknown` is resolved with an
+/// `lstat` rather than treated as "not a symlink": misclassifying a symlink
+/// here would delete a `bun link` registration.
+#[cfg(not(windows))]
+fn entry_is_symlink(dir: Fd, entry: &sys::dir_iterator::IteratorResult) -> bool {
+    match entry.kind {
+        EntryKind::SymLink => true,
+        EntryKind::Unknown => matches!(
+            sys::lstatat(dir, entry.name.as_zstr()),
+            Ok(st) if sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink
+        ),
+        _ => false,
+    }
+}
+/// Windows directory iteration always reports accurate kinds.
+#[cfg(windows)]
+fn entry_is_symlink(_dir: Fd, entry: &sys::dir_iterator::IteratorResult) -> bool {
+    matches!(entry.kind, EntryKind::SymLink)
+}
+
+/// Unlink every dangling symlink in the already-open `.bin` directory and
+/// close `bin_dir`. Shared by the install-time prune above and the
+/// `bun remove` cleanup in `updatePackageJSONAndInstall.rs`.
+pub(crate) fn prune_dangling_bin_links(bin_dir: Fd) {
+    let mut name_buf = PathBuffer::uninit();
+    let mut iter = sys::iterate_dir(bin_dir);
+    loop {
+        let Ok(Some(entry)) = iter.next() else { break };
+        if !entry_is_symlink(bin_dir, &entry) {
+            continue;
+        }
+        // A symlink whose target no longer exists cannot be opened.
+        // `access` would not work here because it does not resolve
+        // symlinks. Only a missing target makes a link dangling;
+        // other open failures (EACCES, EMFILE, transient I/O) can
+        // happen to a perfectly good shim and must not delete it.
+        let name = entry.name.slice_u8();
+        name_buf[..name.len()].copy_from_slice(name);
+        name_buf[name.len()] = 0;
+        let buf: &ZStr = ZStr::from_buf(&name_buf, name.len());
+
+        match sys::File::openat(bin_dir, buf, sys::O::RDONLY, 0) {
+            Ok(file) => {
+                let _ = file.close();
+            }
+            Err(err) if err.get_errno() == sys::E::ENOENT || err.get_errno() == sys::E::ENOTDIR => {
+                let _ = sys::unlinkat(bin_dir, buf);
+            }
+            Err(_) => {}
+        }
+    }
+    let _ = sys::close(bin_dir);
+}
+
+/// Returns `true` if anything was deleted.
+fn prune_extraneous_scope(
+    parent: Fd,
+    scope: &[u8],
+    expected: &StringHashMap<()>,
+    keep_symlinks: bool,
+) -> bool {
+    let scope_fd = match sys::open_dir_for_iteration(parent, scope) {
+        Ok(fd) => fd,
+        Err(_) => return false,
+    };
+    let scope_dir = Dir::from_fd(scope_fd);
+
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut has_remaining = false;
+    let mut iter = sys::iterate_dir(scope_dir.fd());
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return false,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() {
+            continue;
+        }
+        if name[0] == b'.' || (keep_symlinks && entry_is_symlink(scope_dir.fd(), &entry)) {
+            has_remaining = true;
+            continue;
+        }
+        names.push(name.to_vec());
+    }
+
+    let mut removed_any = false;
+    for name in &names {
+        let mut full = Vec::with_capacity(scope.len() + 1 + name.len());
+        full.extend_from_slice(scope);
+        full.push(b'/');
+        full.extend_from_slice(name);
+
+        if expected.contains_key(full.as_slice()) {
+            has_remaining = true;
+            continue;
+        }
+
+        if scope_dir.delete_tree(name).is_ok() {
+            removed_any = true;
+        } else {
+            has_remaining = true;
+        }
+    }
+
+    // `scope_dir` owns the fd and must be dropped before removing the
+    // directory it points at (Windows cannot remove a dir with open handles).
+    drop(scope_dir);
+
+    if !has_remaining {
+        let mut buf = Vec::with_capacity(scope.len() + 1);
+        buf.extend_from_slice(scope);
+        buf.push(0);
+        let z = ZStr::from_buf(&buf, scope.len());
+        let _ = sys::rmdirat(parent, z);
+    }
+
+    removed_any
 }
 
 type Walker = walker_skippable::Walker;

@@ -1971,6 +1971,70 @@ pub(crate) fn install_isolated_packages(
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
 
+        // Remove root `node_modules` entries the cleaned lockfile no longer
+        // places there, so a dependency dropped from `package.json` is also
+        // removed from disk by `bun install`. The kept set is everything the
+        // isolated linker can legitimately place at the root, independent of
+        // install flags: the root package's declared dependency aliases (all
+        // behaviors, so `--production`/`--omit` never turn a reinstall into a
+        // delete) unioned with every lockfile alias that matches
+        // `publicHoistPattern` (a superset of the hoists any one install
+        // performs; the store's own root entry cannot be used here because it
+        // is narrowed by `--filter`). A dependency that became transitive
+        // only is in neither set and is pruned, so the root symlink for it
+        // stops being importable.
+        //
+        // Skipped for global installs (the global `node_modules` is also the
+        // `bun link` registry, whose entries are recorded in no manifest) and
+        // for the security scanner's narrowed pre-install pass; the full
+        // install that follows performs it.
+        if !is_new_bun_modules
+            && !manager.options.global
+            && packages_to_install.is_none()
+            && !lockfile_ro.packages.is_empty()
+        {
+            let root_pkg_deps = pkgs.items_dependencies()[0];
+            let deps = lockfile_ro.buffers.dependencies.as_slice();
+            // An incomplete kept set would delete entries the lockfile still
+            // places at the root, so insertion failures must not be ignored.
+            let mut expected =
+                bun_collections::StringHashMap::<()>::with_capacity(root_pkg_deps.len as usize);
+            for dep_id in root_pkg_deps.begin()..root_pkg_deps.end() {
+                let alias = deps[dep_id as usize].name.slice(string_buf);
+                if !alias.is_empty() {
+                    expected.put(alias, ())?;
+                }
+            }
+            if let Some(public_hoist_pattern) = &manager.options.public_hoist_pattern {
+                for dep in deps {
+                    let alias = dep.name.slice(string_buf);
+                    if !alias.is_empty() && public_hoist_pattern.is_match(alias) {
+                        expected.put(alias, ())?;
+                    }
+                }
+            }
+            // `bun patch` materializes the patched package as a root symlink
+            // into the store even when it is not a root dependency; it must
+            // survive reinstalls.
+            crate::package_install::extend_expected_with_patched_packages(
+                &mut expected,
+                lockfile_ro,
+            )?;
+            if let Ok(fd) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") {
+                // `keep_symlinks: false`: the isolated linker's own root
+                // entries are symlinks into `node_modules/.bun`, so they must
+                // be prunable.
+                crate::package_install::prune_extraneous_node_modules(
+                    &expected,
+                    fd,
+                    manager.options.bin_path.as_bytes(),
+                    false,
+                );
+                use bun_sys::FdExt as _;
+                fd.close();
+            }
+        }
+
         let mut seen_entry_ids: HashMap<store::entry::Id, ()> = HashMap::default();
         seen_entry_ids.reserve(store.entries.len());
 

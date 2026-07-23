@@ -314,10 +314,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       entrypoints: [tmpFile],
       define,
       target: "bun",
-      // keepNames is intentionally off: it now emits __name() calls whose
-      // runtime helper lives outside the $$capture_start$$/$$capture_end$$
-      // window and so is undefined inside the captured function body.
-      minify: { syntax: true, whitespace: false },
+      minify: { syntax: true, whitespace: false, keepNames: true },
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {
@@ -330,12 +327,18 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
+    // keepNames emits its `var __name = ...` helper outside the capture window;
+    // re-inject it inside when the captured body references it.
+    const usesKeepNames = /\b__name\(/.test(captured);
     const finalReplacement =
       (fn.directives.sloppy
         ? captured
         : captured.replace(
             /function\s*\(.*?\)\s*{/,
             '$&"use strict";' +
+              (usesKeepNames
+                ? 'var __name=(t,n)=>(Object.defineProperty(t,"name",{value:n,configurable:!0}),t);'
+                : "") +
               (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
               (usesAssert ? createAssertClientJS(fn.name) : ""),
           )

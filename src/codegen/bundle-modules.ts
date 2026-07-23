@@ -204,9 +204,7 @@ const config_cli = [
   process.execPath,
   "build",
   ...bundledEntryPoints,
-  // --keep-names is intentionally off: it now emits __name() calls whose
-  // runtime helper is not available inside the builtin module wrapper.
-  ...(debug ? [] : ["--minify-syntax"]),
+  ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
   "--root",
   TMP_DIR,
   "--target",

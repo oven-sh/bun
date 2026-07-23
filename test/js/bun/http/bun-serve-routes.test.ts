@@ -1060,35 +1060,31 @@ describe("many routes", () => {
   // This asserts registration scales linearly in N. A perf outlier, hence the
   // explicit per-test timeout: before the fix the 2400-route build alone took
   // several seconds under ASAN.
-  test(
-    "route registration time scales linearly with route count",
-    async () => {
-      function timeBuild(n: number) {
-        const routes = buildFlatTable(n);
-        const t0 = performance.now();
-        const srv = Bun.serve({ port: 0, routes });
-        const dt = performance.now() - t0;
-        srv.stop(true);
-        return dt;
-      }
+  test("route registration time scales linearly with route count", async () => {
+    function timeBuild(n: number) {
+      const routes = buildFlatTable(n);
+      const t0 = performance.now();
+      const srv = Bun.serve({ port: 0, routes });
+      const dt = performance.now() - t0;
+      srv.stop(true);
+      return dt;
+    }
 
-      // Warm up JIT + allocator so the small sample is not dominated by
-      // first-call overhead.
-      timeBuild(300);
-      timeBuild(300);
+    // Warm up JIT + allocator so the small sample is not dominated by
+    // first-call overhead.
+    timeBuild(300);
+    timeBuild(300);
 
-      // Best of three for the small sample to cut scheduling jitter; the ratio
-      // is what matters, not the absolute times.
-      const small = Math.min(timeBuild(300), timeBuild(300), timeBuild(300));
-      const large = timeBuild(2400);
-      const ratio = large / small;
+    // Best of three for the small sample to cut scheduling jitter; the ratio
+    // is what matters, not the absolute times.
+    const small = Math.min(timeBuild(300), timeBuild(300), timeBuild(300));
+    const large = timeBuild(2400);
+    const ratio = large / small;
 
-      // 8x the routes. Linear ~= 8x; the old O(N^2) path measured 50-80x here.
-      // Printed alongside the assertion so a failure shows the raw timings.
-      expect({ small, large, ratio, linear: ratio < 24 }).toMatchObject({ linear: true });
-    },
-    30_000,
-  );
+    // 8x the routes. Linear ~= 8x; the old O(N^2) path measured 50-80x here.
+    // Printed alongside the assertion so a failure shows the raw timings.
+    expect({ small, large, ratio, linear: ratio < 24 }).toMatchObject({ linear: true });
+  }, 30_000);
 
   test("routes to the right handler in a large flat table", async () => {
     const n = 1200;

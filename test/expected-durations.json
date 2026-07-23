@@ -6309,12 +6309,6 @@
     "musl": 7875,
     "windows": 36877
   },
-  "js/node/process/dlopen-non-object-exports.test.ts": {
-    "default": 6146,
-    "asan": 7631,
-    "musl": 9478,
-    "windows": 32080
-  },
   "js/node/process/process-args.test.js": {
     "default": 1455,
     "asan": 12277,

@@ -580,8 +580,9 @@ describe("readFile/writeFile accept AbortSignal-shaped objects", () => {
     const dir = tempDirWithFiles("fs-duck-signal-watch-aborted", { "f.txt": "hello" });
     const aborted = { aborted: true, reason: new Error("stop"), addEventListener() {}, removeEventListener() {} };
     const w = fs.watch(dir, { signal: aborted });
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve, reject } = Promise.withResolvers();
     w.on("close", resolve);
+    w.on("error", reject);
     await promise;
   });
 
@@ -608,24 +609,21 @@ describe("readFile/writeFile accept AbortSignal-shaped objects", () => {
         cause: reason,
       });
     }
+    expect(fs.existsSync(join(dir, "o.txt"))).toBe(false);
   });
 
-  test("callback readFile/writeFile with a pre-aborted signal-shaped object", async () => {
+  test("callback readFile/writeFile/appendFile with a pre-aborted signal-shaped object", async () => {
     const dir = tempDirWithFiles("fs-duck-signal-preaborted-cb", { "f.txt": "hello" });
     const reason = new Error("stop");
     const aborted = { aborted: true, reason, addEventListener() {}, removeEventListener() {} };
+    const expected = { name: "AbortError", code: "ABORT_ERR", cause: reason };
     const readErr = await new Promise(resolve => fs.readFile(join(dir, "f.txt"), { signal: aborted }, resolve));
-    expect({ name: readErr?.name, code: readErr?.code, cause: readErr?.cause }).toEqual({
-      name: "AbortError",
-      code: "ABORT_ERR",
-      cause: reason,
-    });
+    expect({ name: readErr?.name, code: readErr?.code, cause: readErr?.cause }).toEqual(expected);
     const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve));
-    expect({ name: writeErr?.name, code: writeErr?.code, cause: writeErr?.cause }).toEqual({
-      name: "AbortError",
-      code: "ABORT_ERR",
-      cause: reason,
-    });
+    expect({ name: writeErr?.name, code: writeErr?.code, cause: writeErr?.cause }).toEqual(expected);
+    const appendErr = await new Promise(resolve => fs.appendFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve));
+    expect({ name: appendErr?.name, code: appendErr?.code, cause: appendErr?.cause }).toEqual(expected);
+    expect(fs.existsSync(join(dir, "o.txt"))).toBe(false);
   });
 
   test("values that fail node's shape check still throw ERR_INVALID_ARG_TYPE", async () => {

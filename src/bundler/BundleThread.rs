@@ -57,6 +57,12 @@ pub struct BundleThread<C: Node> {
 /// The trait accessors keep the generic `BundleThread<C>`
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
 pub trait CompletionStruct: Node + Send + 'static {
+    /// Whether the JS context that scheduled this build is still alive. When
+    /// `false` the bundle thread skips the build, since
+    /// `complete_on_bundle_thread` would discard the result anyway.
+    fn is_owner_alive(&self) -> bool {
+        true
+    }
     /// `bump` is the per-build mimalloc heap that backs `transpiler`, so the
     /// two share lifetime `'a` (option fields like `optimize_imports: &'a
     /// StringSet` borrow from `bump`).
@@ -74,9 +80,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `FileMap` layout stays in T6.
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
     /// Returns a §Dispatch handle (erased owner + `&'static` vtable) the impl
-    /// provides, so the bundler can read `result == .err` /
-    /// `jsc_event_loop.enqueueTaskConcurrent` without naming the concrete
-    /// struct.
+    /// provides, so the bundler can read `result == .err` / post plugin tasks
+    /// to the JS event loop without naming the concrete struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
     /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
@@ -221,6 +226,15 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
                 // until complete_on_bundle_thread() signals completion.
                 let completion = unsafe { &mut *completion };
+                if !completion.is_owner_alive() {
+                    // The worker that scheduled this build has begun shutdown;
+                    // skip the build since its result would be dropped anyway.
+                    // `complete_on_bundle_thread` observes the same dead
+                    // context and discards the post.
+                    completion.complete_on_bundle_thread();
+                    has_bundled = true;
+                    continue;
+                }
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };
                 // `panic = "abort"` → a Rust panic on this thread enters the

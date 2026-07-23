@@ -302,6 +302,34 @@ extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObjec
     return context->globalObject();
 }
 
+// Checks under the contexts-map lock whether the context still exists and has
+// not been marked terminating. Used by off-thread work (bundle thread) that
+// borrows worker-owned resources, to skip a queued unit of work whose owning
+// worker has already begun shutdown.
+extern "C" bool ScriptExecutionContext__isAlive(ScriptExecutionContextIdentifier id)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(id);
+    return context && !context->isTerminating();
+}
+
+extern "C" void Bun__EventLoop__enqueueConcurrentTask(JSC::JSGlobalObject*, void* task);
+
+// postTaskTo() for a Rust-allocated ConcurrentTask. Returns true if the task
+// was enqueued (ownership transferred to the target context's concurrent
+// queue); false if the context is gone or terminating, in which case the
+// caller retains ownership. The map lock is held across the enqueue so this
+// serializes with markTerminating() the same way postTaskTo() does.
+extern "C" bool ScriptExecutionContext__postConcurrentTask(ScriptExecutionContextIdentifier id, void* task)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(id);
+    if (!context || context->isTerminating())
+        return false;
+    Bun__EventLoop__enqueueConcurrentTask(context->globalObject(), task);
+    return true;
+}
+
 extern "C" void ScriptExecutionContext__markTerminating(JSC::JSGlobalObject* globalObject)
 {
     if (auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext())

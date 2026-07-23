@@ -99,7 +99,7 @@ public:
         size_t m_currentIndex { 0 };
         Vector<String> m_keys;
         uint64_t m_updateCounter { 0 };
-        size_t m_cookieIndex { 0 };
+        size_t m_setCookieKeyIndex { 0 };
         bool m_lowerCaseKeys { true };
     };
     Iterator createIterator(bool lowerCaseKeys = true)

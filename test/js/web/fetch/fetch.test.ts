@@ -565,11 +565,11 @@ describe("Headers", () => {
     ]);
     const actual = [...headers];
     expect(actual).toEqual([
-      ["x-bun", "abc, def"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
+      ["x-bun", "abc, def"],
     ]);
-    expect([...headers.values()]).toEqual(["abc, def", "foo=bar", "bar=baz"]);
+    expect([...headers.values()]).toEqual(["foo=bar", "bar=baz", "abc, def"]);
   });
 
   it("Set-Cookies toJSON", () => {
@@ -594,12 +594,11 @@ describe("Headers", () => {
     headers.append("x-bun", "bar");
     const actual = [...headers];
 
-    // we do not preserve the order
-    // which is kind of bad
+    // entries are sorted by name, not insertion order
     expect(actual).toEqual([
-      ["x-bun", "foo, bar"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
+      ["x-bun", "foo, bar"],
     ]);
   });
 
@@ -1375,12 +1374,32 @@ describe("Response", () => {
       expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
     });
+
+    // https://fetch.spec.whatwg.org/#dom-response-redirect
+    it("has a null body", async () => {
+      const response = Response.redirect("https://example.com/");
+      expect(response.body).toBeNull();
+      expect(response.bodyUsed).toBe(false);
+      expect(await response.text()).toBe("");
+      // a null body is never disturbed
+      expect(response.bodyUsed).toBe(false);
+    });
   });
   describe("Response.error", () => {
     it("works", () => {
       expect(Response.error().type).toBe("error");
       expect(Response.error().ok).toBe(false);
       expect(Response.error().status).toBe(0);
+    });
+
+    // https://fetch.spec.whatwg.org/#dom-response-error
+    it("has a null body", async () => {
+      const response = Response.error();
+      expect(response.body).toBeNull();
+      expect(response.bodyUsed).toBe(false);
+      expect(await response.text()).toBe("");
+      // a null body is never disturbed
+      expect(response.bodyUsed).toBe(false);
     });
   });
   it("clone", async () => {

@@ -519,6 +519,89 @@ describe("Headers", () => {
       ]);
     });
   });
+  // https://fetch.spec.whatwg.org/#concept-header-list-sort-and-combine
+  describe("sort and combine", () => {
+    test("set-cookie entries are not combined and stay at their sorted position", () => {
+      const headers = new Headers();
+      headers.append("zz", "1");
+      headers.append("aa", "2");
+      headers.append("Set-Cookie", "s=1");
+      headers.append("set-cookie", "s=2");
+      headers.append("mm", "3");
+
+      const expected = [
+        ["aa", "2"],
+        ["mm", "3"],
+        ["set-cookie", "s=1"],
+        ["set-cookie", "s=2"],
+        ["zz", "1"],
+      ];
+      expect([...headers]).toEqual(expected);
+      expect([...headers.entries()]).toEqual(expected);
+      expect([...headers.keys()]).toEqual(expected.map(([key]) => key));
+      expect([...headers.values()]).toEqual(expected.map(([, value]) => value));
+
+      const seen: [string, string][] = [];
+      headers.forEach((value, key) => seen.push([key, value]));
+      expect(seen).toEqual(expected);
+    });
+
+    test("set-cookie is sorted among names, duplicates of other names are combined", () => {
+      const headers = new Headers([
+        ["set-d", "4"],
+        ["Set-Cookie", "a=1"],
+        ["set-b", "2"],
+        ["set-cookie2", "legacy"],
+        ["set-b", "3"],
+        ["Set-Cookie", "b=2"],
+      ]);
+      expect([...headers]).toEqual([
+        ["set-b", "2, 3"],
+        ["set-cookie", "a=1"],
+        ["set-cookie", "b=2"],
+        ["set-cookie2", "legacy"],
+        ["set-d", "4"],
+      ]);
+    });
+
+    test("set-cookie can be the first, last, or only entry", () => {
+      expect([
+        ...new Headers([
+          ["zz", "1"],
+          ["set-cookie", "a=1"],
+          ["set-cookie", "b=2"],
+        ]).keys(),
+      ]).toEqual(["set-cookie", "set-cookie", "zz"]);
+      expect([
+        ...new Headers([
+          ["aa", "1"],
+          ["set-cookie", "a=1"],
+        ]).keys(),
+      ]).toEqual(["aa", "set-cookie"]);
+      expect([
+        ...new Headers([
+          ["set-cookie", "a=1"],
+          ["set-cookie", "b=2"],
+        ]),
+      ]).toEqual([
+        ["set-cookie", "a=1"],
+        ["set-cookie", "b=2"],
+      ]);
+    });
+
+    test("iteration order is updated after mutation", () => {
+      const headers = new Headers([
+        ["zz", "1"],
+        ["set-cookie", "a=1"],
+      ]);
+      expect([...headers.keys()]).toEqual(["set-cookie", "zz"]);
+      headers.append("aa", "2");
+      headers.append("set-cookie", "b=2");
+      expect([...headers.keys()]).toEqual(["aa", "set-cookie", "set-cookie", "zz"]);
+      headers.delete("set-cookie");
+      expect([...headers.keys()]).toEqual(["aa", "zz"]);
+    });
+  });
   describe("Bun.inspect()", () => {
     const it = "toJSON" in new Headers() ? test : test.skip;
     it("can convert to json when empty", () => {

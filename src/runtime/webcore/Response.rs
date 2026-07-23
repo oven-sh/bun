@@ -1069,7 +1069,8 @@ impl Response {
                     status_code: 302,
                     ..Default::default()
                 }),
-                body: JsCell::new(Body::new(BodyValue::Empty)),
+                // https://fetch.spec.whatwg.org/#dom-response-redirect: body is null.
+                body: JsCell::new(Body::new(BodyValue::Null)),
                 ..Default::default()
             };
 
@@ -1130,7 +1131,8 @@ impl Response {
                 status_code: 0,
                 ..Default::default()
             }),
-            body: JsCell::new(Body::new(BodyValue::Empty)),
+            // https://fetch.spec.whatwg.org/#dom-response-error: body is null.
+            body: JsCell::new(Body::new(BodyValue::Null)),
             ..Default::default()
         }));
 

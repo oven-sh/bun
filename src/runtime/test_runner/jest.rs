@@ -424,14 +424,16 @@ pub mod Jest {
         let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
         let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, Default::default());
         let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
+        let require_mock_fn = jsc::JSFunction::create(global_object, "requireMock", JSMock__jsRequireMock, 1, Default::default());
         module.put(global_object, b"mock", mock_fn);
         mock_fn.put(global_object, b"module", mock_module_fn);
         mock_fn.put(global_object, b"restore", restore_all_mocks);
         mock_fn.put(global_object, b"clearAllMocks", clear_all_mocks);
 
-        let jest = JSValue::create_empty_object(global_object, 9 + fake_timers::TIMER_FNS_COUNT);
+        let jest = JSValue::create_empty_object(global_object, 10 + fake_timers::TIMER_FNS_COUNT);
         jest.put(global_object, b"fn", mock_fn);
         jest.put(global_object, b"mock", mock_module_fn);
+        jest.put(global_object, b"requireMock", require_mock_fn);
         jest.put(global_object, b"spyOn", spy_on);
         jest.put(global_object, b"restoreAllMocks", restore_all_mocks);
         jest.put(global_object, b"clearAllMocks", clear_all_mocks);
@@ -444,9 +446,10 @@ pub mod Jest {
         module.put(global_object, b"spyOn", spy_on);
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
 
-        let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
+        let vi = JSValue::create_empty_object(global_object, 7 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
         vi.put(global_object, b"mock", mock_module_fn);
+        vi.put(global_object, b"requireMock", require_mock_fn);
         vi.put(global_object, b"spyOn", spy_on);
         vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
         vi.put(global_object, b"resetAllMocks", reset_all_mocks);
@@ -462,6 +465,7 @@ pub mod Jest {
     bun_jsc::jsc_abi_extern! {
         pub(crate) fn JSMock__jsMockFn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsModuleMock(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsRequireMock(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsNow(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsSetSystemTime(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsRestoreAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;

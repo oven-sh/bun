@@ -4399,6 +4399,26 @@ describe("Buffer.copyBytesFrom", () => {
     const buf = Buffer.copyBytesFrom(view);
     expect([...buf]).toEqual([8, 9, 10, 11, 12, 13, 14, 15]);
   });
+
+  it("rejects DataView with ERR_INVALID_ARG_TYPE", () => {
+    const ab = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]).buffer;
+    for (const args of [
+      [new DataView(ab)],
+      [new DataView(ab), 1, 3],
+      [new DataView(ab, 2, 4)],
+    ]) {
+      expect(() => Buffer.copyBytesFrom(...args)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('"view" argument must be an instance of TypedArray'),
+        }),
+      );
+    }
+
+    // control: Uint8Array still works
+    expect(Buffer.copyBytesFrom(new Uint8Array(ab), 1, 3).toString("hex")).toBe("020304");
+  });
 });
 
 describe("Buffer.prototype.toString binary-to-text encodings", () => {

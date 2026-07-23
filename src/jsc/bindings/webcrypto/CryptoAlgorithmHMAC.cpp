@@ -170,22 +170,37 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
             exceptionCallback(DataError, "Invalid keyData"_s);
             return;
         }
+        // Node validates use/key_ops/ext before alg and the decoded key
+        // (verified against v26.3.0: a bad "use" wins over a bad "alg",
+        // a bad key, or a length mismatch).
+        if (usages && !jwk.use.isNull() && jwk.use != "sig"_s) {
+            exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
+            return;
+        }
+        if (jwk.key_ops && ((jwk.usages & usages) != usages)) {
+            exceptionCallback(DataError, "Key operations and usage mismatch"_s);
+            return;
+        }
+        if (jwk.ext && !jwk.ext.value() && extractable) {
+            exceptionCallback(DataError, "JWK \"ext\" Parameter and extractable mismatch"_s);
+            return;
+        }
         if (!jwk.alg.isNull() && !checkAlgCallback(hmacParameters.hashIdentifier, jwk.alg)) {
             exceptionCallback(DataError, "JWK \"alg\" does not match the requested algorithm"_s);
             return;
         }
-        // Node checks the decoded key's length for every format.
-        if (auto keyBytes = base64URLDecode(jwk.k)) {
-            if (keyBytes->isEmpty()) {
-                exceptionCallback(DataError, "Zero-length key is not supported"_s);
-                return;
-            }
-            if (hmacParameters.length && *hmacParameters.length != keyBytes->size() * 8) {
-                exceptionCallback(DataError, "Invalid key length"_s);
-                return;
-            }
+        // Node checks the decoded key's length for every format; its lenient
+        // base64url decode turns invalid input into an empty key.
+        auto keyBytes = base64URLDecode(jwk.k);
+        if (!keyBytes || keyBytes->isEmpty()) {
+            exceptionCallback(DataError, "Zero-length key is not supported"_s);
+            return;
         }
-        result = CryptoKeyHMAC::importJwk(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(jwk), extractable, usages, WTF::move(checkAlgCallback));
+        if (hmacParameters.length && *hmacParameters.length != keyBytes->size() * 8) {
+            exceptionCallback(DataError, "Invalid key length"_s);
+            return;
+        }
+        result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(*keyBytes), extractable, usages);
         break;
     }
     default:

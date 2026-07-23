@@ -111,27 +111,6 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importRaw(size_t lengthBits, CryptoAlgorith
     return adoptRef(new CryptoKeyHMAC(WTF::move(keyData), hash, extractable, usages));
 }
 
-RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorithmIdentifier hash, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, CheckAlgCallback&& callback)
-{
-    if (keyData.kty != "oct"_s)
-        return nullptr;
-    if (keyData.k.isNull())
-        return nullptr;
-    auto octetSequence = base64URLDecode(keyData.k);
-    if (!octetSequence)
-        return nullptr;
-    if (!callback(hash, keyData.alg))
-        return nullptr;
-    if (usages && !keyData.use.isNull() && keyData.use != "sig"_s)
-        return nullptr;
-    if (keyData.key_ops && ((keyData.usages & usages) != usages))
-        return nullptr;
-    if (keyData.ext && !keyData.ext.value() && extractable)
-        return nullptr;
-
-    return CryptoKeyHMAC::importRaw(lengthBits, hash, WTF::move(*octetSequence), extractable, usages);
-}
-
 JsonWebKey CryptoKeyHMAC::exportJwk() const
 {
 

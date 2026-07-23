@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { createSecretKey } from "node:crypto";
 
 // This is consistent with what Node.js does, probably for polyfills to continue to work.
 it("crypto.subtle setter should not throw", () => {
@@ -134,9 +135,8 @@ describe("Web Crypto", () => {
       expect(err.name).toBe("DataError");
     });
 
-    // Previously this promise never settled: the error from JsonWebKey
-    // dictionary conversion escaped as an uncaught exception and the
-    // DeferredPromise was left in m_pendingPromises forever.
+    // With kty optional, a foreign object converts into an (empty-ish) JWK and
+    // rejects from the import algorithm itself.
     it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ foo: "bar" })));
       const err = await crypto.subtle
@@ -147,6 +147,23 @@ describe("Web Crypto", () => {
         );
       expect(err).toBeInstanceOf(DOMException);
       expect(err.name).toBe("DataError");
+    });
+
+    // Previously this promise never settled: the error thrown during
+    // JsonWebKey dictionary conversion (here an invalid key_ops enum entry)
+    // escaped as an uncaught exception and the DeferredPromise was left in
+    // m_pendingPromises forever. kty is optional now, so an invalid enum is
+    // what still reaches the conversion-exception branch.
+    it("settles when JsonWebKey dictionary conversion itself throws", async () => {
+      const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ key_ops: ["bogus"] })));
+      const err = await crypto.subtle
+        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.message).toBe("value must be enumeration (string)");
     });
 
     it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {
@@ -162,10 +179,13 @@ describe("Web Crypto", () => {
         const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
           "encrypt", "decrypt", "wrapKey", "unwrapKey",
         ]);
+        // key_ops with an invalid enum entry throws during dictionary
+        // conversion, which is the leaky branch this fixture guards (a
+        // merely-unusable JWK now converts fine and rejects downstream).
         const wrapped = await crypto.subtle.encrypt(
           { name: "AES-GCM", iv },
           key,
-          new TextEncoder().encode(JSON.stringify({ foo: "bar" })),
+          new TextEncoder().encode(JSON.stringify({ key_ops: ["bogus"] })),
         );
         async function once() {
           await crypto.subtle
@@ -336,6 +356,28 @@ describe("Ed25519", () => {
 });
 
 describe("ChaCha20-Poly1305 and AKP review fixes", () => {
+  it("HMAC JWK import reports Node's member-check messages in Node's order", async () => {
+    const k = Buffer.alloc(32, 1).toString("base64url");
+    const alg = { name: "HMAC", hash: "SHA-256" };
+    const cases: [Record<string, unknown>, string][] = [
+      [{ kty: "oct", k, use: "enc" }, 'Invalid JWK "use" Parameter'],
+      [{ kty: "oct", k, key_ops: ["verify"] }, "Key operations and usage mismatch"],
+      [{ kty: "oct", k, ext: false }, 'JWK "ext" Parameter and extractable mismatch'],
+      [{ kty: "oct", k: "!!!" }, "Zero-length key is not supported"],
+      // use precedes alg, the decoded key, and the length check in node.
+      [{ kty: "oct", k, use: "enc", alg: "HS384" }, 'Invalid JWK "use" Parameter'],
+      [{ kty: "oct", k: "!!!", use: "enc" }, 'Invalid JWK "use" Parameter'],
+    ];
+    for (const [jwk, message] of cases) {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, ["sign"]).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({ name: "DataError", message });
+    }
+  });
+
   it("importKey with a plain object for a buffer format rejects with Node's ERR_INVALID_ARG_TYPE", async () => {
     for (const format of ["raw", "raw-secret"] as const) {
       let err: any;
@@ -375,7 +417,6 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   it("toCryptoKey rejects AES-CFB with Node's NotSupportedError", async () => {
     // Node v26.3.0 has no AES-CFB in webcrypto; Bun's subtle.importKey
     // accepts it as an extension but the node:crypto API matches node.
-    const { createSecretKey } = await import("node:crypto");
     const ko = createSecretKey(Buffer.alloc(16));
     let err: any;
     try {

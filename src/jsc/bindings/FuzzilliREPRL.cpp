@@ -1,4 +1,4 @@
-#ifdef FUZZILLI_ENABLED
+#if defined(FUZZILLI_ENABLED) && !defined(_WIN32)
 #include "JavaScriptCore/CallFrame.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSGlobalObject.h"

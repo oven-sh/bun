@@ -273,8 +273,10 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
     return getWebKitBytecodeCacheVersion();
 }
 
-// Declare fuzzilli function registration from FuzzilliREPRL.cpp
-#ifdef FUZZILLI_ENABLED
+// Declare fuzzilli function registration from FuzzilliREPRL.cpp (the
+// REPRL protocol is POSIX-only; Windows coverage builds use
+// CoverageWindows.cpp and observe the target externally).
+#if defined(FUZZILLI_ENABLED) && !defined(_WIN32)
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
@@ -533,7 +535,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
-#ifdef FUZZILLI_ENABLED
+#if defined(FUZZILLI_ENABLED) && !defined(_WIN32)
     Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
 #endif
 

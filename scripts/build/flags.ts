@@ -826,8 +826,11 @@ export const linkerFlags: Flag[] = [
     desc: "Link UBSan runtime (release-asan)",
   },
   {
+    // Unix links the sanitizer-coverage runtime; on Windows the two
+    // trace-pc-guard callbacks are provided by CoverageWindows.cpp, so
+    // nothing extra is linked.
     flag: "-fsanitize-coverage=trace-pc-guard",
-    when: c => c.fuzzilli,
+    when: c => c.fuzzilli && c.unix,
     desc: "Link fuzzilli coverage runtime",
   },
 

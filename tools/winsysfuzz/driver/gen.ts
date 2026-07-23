@@ -278,7 +278,10 @@ function argList(c: Callable): string {
   // Any BunFile source - inline OR pooled (a pooled BunFile may name a
   // hostile/missing/ADS path built earlier in the program) - is redrawn
   // from files the preamble created; the missing-source family is reported.
-  if (c.path === "Bun.write" && args.length >= 2 && /Bun\.file\(|\$pool2?\("BunFile"\)/.test(args[1])) {
+  // ...and never a reserved device / non-file source (COM1, AUX, PhysicalDrive,
+  // UNC, ADS, relative-drive): every unopenable-source shape lands in the same
+  // reported uv_fs_copyfile ENOENT/retry site.
+  if (c.path === "Bun.write" && args.length >= 2 && (/Bun\.file\(|\$pool2?\("BunFile"\)/.test(args[1]) || /"COM1"|"AUX"|"NUL"|"CON"|PhysicalDrive|ads:|localhost|relative-to-cwd/.test(args[1]))) {
     args[1] = pick([`Bun.file(P("data.txt"))`, `Bun.file(P("big.bin"))`, `Bun.file(P("empty.txt"))`]);
   }
   // Known-reported: Bun.write(x, x) with one pooled object as both

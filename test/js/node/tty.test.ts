@@ -235,6 +235,58 @@ describe("isatty", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // Positive case: under a real terminal (openpty / ConPTY) both probes report
+  // true. Without this, a `FdKind::System => return false` regression would
+  // pass the negative cases above.
+  test("bun_sys::isatty(Fd::std*) agrees with tty.isatty() under a terminal", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { isattyStdioHandles } = require("bun:internal-for-testing");
+          const { isatty } = require("node:tty");
+          const sys = isattyStdioHandles();
+          const uv = { stdin: isatty(0), stdout: isatty(1), stderr: isatty(2) };
+          process.stdout.write("RESULT " + JSON.stringify({ sys, uv }));
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        // Wide enough that ConPTY does not hard-wrap the RESULT line.
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("RESULT ") && output.includes("}}")) done.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([done.promise, eof.promise]);
+    proc.kill();
+    await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
+    const match = stripped.match(/RESULT (\{.*\}\})/);
+    if (!match) {
+      throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
+    }
+    const { sys, uv } = JSON.parse(match[1]);
+    expect(uv).toEqual({ stdin: true, stdout: true, stderr: true });
+    expect(sys).toEqual(uv);
+  });
 });
 
 describe("WriteStream.prototype.getColorDepth", () => {

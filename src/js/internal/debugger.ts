@@ -110,8 +110,10 @@ let lazyInspectorCDPAdapter: any;
 // adapters on this controller or one adapter resolves another's pending
 // request. In-process inspector.Session adapters count from 100_000_000
 // (inspector.ts kFirstInProcessBackendId); every remote adapter shares this
-// counter instead of starting its own at 1.
-let nextRemoteBackendId = 1;
+// counter instead of starting its own at 1. JSC-protocol frontends on the
+// same router (debug.bun.sh, the VSCode extension) send their own command
+// ids from 1, so remote adapters start at 50M to stay disjoint from both.
+let nextRemoteBackendId = 50_000_000;
 function allocateRemoteBackendId() {
   return nextRemoteBackendId++;
 }

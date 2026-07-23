@@ -1300,3 +1300,40 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
     dir[Symbol.dispose]();
   }
 }, 30_000);
+
+test("Debugger.paused from a pause nested inside a post() dispatch reaches listeners before execution continues", async () => {
+  // A debugger statement evaluated via session.post pauses inside the
+  // dispatch; the event must deliver synchronously so the listener can use
+  // the pause (evaluateOnCallFrame) before resuming.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Debugger.enable");
+let sawPausedDuringDispatch = false;
+let evalOnFrame;
+session.on("Debugger.paused", function onPaused(msg) {
+  sawPausedDuringDispatch = true;
+  session.post(
+    "Debugger.evaluateOnCallFrame",
+    { callFrameId: msg.params.callFrames[0].callFrameId, expression: "1+1" },
+    function onEval(err, res) {
+      evalOnFrame = err ? String(err.message) : res?.result?.value;
+    },
+  );
+  session.post("Debugger.resume");
+});
+session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone(err, res) {
+  console.log(JSON.stringify({ sawPausedDuringDispatch, evalOnFrame, result: res?.result?.value }));
+});`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ sawPausedDuringDispatch: true, evalOnFrame: 2, result: 42 });
+  expect(exitCode).toBe(0);
+});

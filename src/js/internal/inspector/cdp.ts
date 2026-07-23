@@ -553,6 +553,7 @@ class InspectorCDPAdapter {
         doNotPauseOnExceptionsAndMuteConsole: params.silent,
         returnByValue: params.returnByValue,
         generatePreview: params.generatePreview,
+        emulateUserGesture: params.userGesture,
         awaitPromise: params.awaitPromise,
       },
       id,
@@ -1258,7 +1259,6 @@ class InspectorCDPAdapter {
         });
         if (url) this.#scriptIdsByUrl.$set(url, params.scriptId);
         if (cdpUrl) this.#scriptIdsByUrl.$set(cdpUrl, params.scriptId);
-        this.#retranslatePreParseBreakpoints(url, cdpUrl, params.scriptId);
         this.#emitToClient("Debugger.scriptParsed", {
           scriptId: params.scriptId,
           url: cdpUrl,
@@ -1273,6 +1273,10 @@ class InspectorCDPAdapter {
           embedderName: cdpUrl,
           scriptLanguage: "JavaScript",
         });
+        // After the scriptParsed emit: the re-set's reply and its
+        // Debugger.breakpointResolved reference this scriptId, and a
+        // synchronous in-process client must learn the script first.
+        this.#retranslatePreParseBreakpoints(url, cdpUrl, params.scriptId);
         return;
       }
 

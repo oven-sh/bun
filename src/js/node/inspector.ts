@@ -1114,12 +1114,13 @@ class Session extends EventEmitter {
     }
   }
 
-  // Client messages produced during a post() dispatch are delivered after
-  // the dispatch unwinds, so a throwing callback can neither be misread by
-  // the adapter as a command failure nor run before post() returns. Messages
-  // produced by the backend on its own (Debugger.paused inside the pause
-  // loop, drained events) are delivered immediately: pause listeners must
-  // observe the pause before execution continues.
+  // Command replies (messages with an id) produced during a post() dispatch
+  // are delivered after the dispatch unwinds, so a throwing callback can
+  // neither be misread by the adapter as a command failure nor run before
+  // post() returns. Events (messages with a method) always deliver
+  // immediately — a Debugger.paused from a pause nested inside a dispatch
+  // must reach listeners before execution continues, and #onClientMessage
+  // already contains listener throws.
   #deliverClientMessage(clientMessage: string) {
     let parsed;
     try {
@@ -1127,7 +1128,7 @@ class Session extends EventEmitter {
     } catch {
       return;
     }
-    if (this.#dispatchingClientCommand) {
+    if (this.#dispatchingClientCommand && parsed?.id !== undefined) {
       queueMicrotask(this.#onClientMessage.bind(this, parsed));
     } else {
       this.#onClientMessage(parsed);

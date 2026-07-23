@@ -1754,6 +1754,33 @@ describe("response framing", () => {
       });
     });
 
+    // A duplicate Content-Length is a hard parse error for llhttp-based
+    // clients (node:http, undici), so node tooling in front of a dev server
+    // would fail on the most common beginner mistake.
+    it("the dev missing-response page is sent with exactly one Content-Length header", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: () => undefined as any });
+      const contentLengthLines = (extraHeaders: string) =>
+        new Promise<string[]>((resolve, reject) => {
+          let raw = "";
+          const s = net.connect(server.port, "127.0.0.1", () => {
+            s.write(`GET / HTTP/1.1\r\nHost: x\r\n${extraHeaders}Connection: close\r\n\r\n`);
+          });
+          s.on("data", d => (raw += d.toString("latin1")));
+          s.on("error", reject);
+          s.on("close", () => {
+            const head = raw.slice(0, raw.indexOf("\r\n\r\n"));
+            resolve(head.split("\r\n").filter(l => /^content-length:/i.test(l)));
+          });
+        });
+      expect({
+        text: await contentLengthLines(""),
+        browser: await contentLengthLines("Sec-Fetch-Dest: document\r\n"),
+      }).toEqual({
+        text: ["Content-Length: 57"],
+        browser: [expect.stringMatching(/^Content-Length: \d+$/)],
+      });
+    });
+
     // The default-500 and dev-error-page paths report the thrown error via
     // on_unhandled_rejection, which would fail an in-process test, so run
     // them (and the keep-alive desync witness) in a subprocess.

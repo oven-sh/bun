@@ -1012,8 +1012,8 @@ where
 
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
-                resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
                 if ctx.method == Method::HEAD {
+                    resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
                     ctx.end_without_body(ctx.should_close_connection());
                 } else {
                     ctx.end(WELCOME_PAGE_HTML_GZ, ctx.should_close_connection());
@@ -1024,9 +1024,9 @@ where
                 b"Welcome to Bun! To get started, return a Response object.";
             resp.write_status(b"200 OK");
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
-            resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
             ctx.flags.set_has_written_status(true);
             if ctx.method == Method::HEAD {
+                resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
                 ctx.end_without_body(ctx.should_close_connection());
             } else {
                 ctx.end(MISSING_CONTENT, ctx.should_close_connection());

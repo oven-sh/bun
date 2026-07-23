@@ -527,7 +527,7 @@ describe("bunshell", () => {
     ])("%s rejects (immutable)", async (_label, expr) => {
       using dir = tempDir("shell-immutable-blob", {});
       const result = await run(expr, String(dir));
-      expect(result).toContain("throw: Cannot redirect stdout/stderr to an immutable blob");
+      expect(result).toBe("throw: Cannot redirect stdout/stderr to an immutable blob. Expected a file");
     });
 
     test.concurrent("Bun.file(fd) writes to the fd", async () => {

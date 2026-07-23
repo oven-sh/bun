@@ -349,7 +349,9 @@ async function worker(w: number) {
         mkdirSync(soloDir, { recursive: true });
         const soloProg = join(soloDir, "program.js");
         await Bun.write(soloProg, await Bun.file(program).text());
-        const solo = await runProgram(soloProg, soloDir);
+        // 2x ceiling: a program that merely straddles the timeout under
+        // load (or finishes just past it) is marginal timing, not a wedge.
+        const solo = await runProgram(soloProg, soloDir, timeoutMs * 2, null);
         if (!solo.timedOut) {
           console.log(`   [seed ${seed}] program completes solo (${(solo.ms / 1000).toFixed(1)}s) - load-induced timeout, discarded`);
           verifying--;

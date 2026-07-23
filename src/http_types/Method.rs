@@ -176,11 +176,11 @@ impl Method {
         !matches!(self, Method::HEAD | Method::TRACE)
     }
 
+    /// RFC 9110: GET/HEAD have no defined body semantics; TRACE "MUST NOT
+    /// send content" (§9.3.8). OPTIONS MAY include content (§9.3.7) so it is
+    /// not excluded here; servers must read it and clients must frame it.
     pub fn has_request_body(self) -> bool {
-        !matches!(
-            self,
-            Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
-        )
+        !matches!(self, Method::GET | Method::HEAD | Method::TRACE)
     }
 
     /// Per RFC 7231 §4.2.2, idempotent methods are safe to retry on

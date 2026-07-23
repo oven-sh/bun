@@ -9,9 +9,8 @@ pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
-// `InternalLoopData::set_parent_event_loop`
-// is reached via the lower-tier `set_parent_raw(tag, ptr)` +
-// `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
+// The parent event loop is wired via the lower-tier `set_parent_raw(tag, ptr)`
+// + `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
 // lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
 // gate-free.
 // ────────────────────────────────────────────────────────────────────────────

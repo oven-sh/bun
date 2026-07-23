@@ -2670,16 +2670,6 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    // PERF: like `print` (no `SourceMapHandler`, `ENABLE_SOURCE_MAP = false`, so
-    // the printer skips every per-token `add_source_mapping` /
-    // `update_generated_line_and_column` and never builds/flushes a VLQ chunk)
-    // but still threads `result.runtime_transpiler_cache` so the transpiled
-    // output is written to the on-disk cache. Used by the runtime module loader
-    // when no inspector is attached: `Bun__remapStackFramePositions` degrades
-    // gracefully (keeps the raw transpiled position) when a path has no entry in
-    // `SavedSourceMap`, so eagerly building a per-module source map nothing will
-    // consume is pure overhead. See jsc_hooks.rs `transpile_source_code_inner`.
-
     fn normalize_entry_point_path(&self, _entry: &[u8]) -> &'static [u8] {
         let fs = self.fs();
         let entry = fs.abs(&[_entry]);

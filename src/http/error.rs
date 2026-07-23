@@ -93,6 +93,8 @@ pub enum Error {
     HTTP3ContentLengthMismatch,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
+    #[error("InvalidCRL")]
+    InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
     #[error(transparent)]
@@ -304,6 +306,7 @@ impl Error {
             Self::HTTP3StreamReset => "HTTP3StreamReset",
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",

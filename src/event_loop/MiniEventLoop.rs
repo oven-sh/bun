@@ -34,14 +34,14 @@ use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 use crate::EventLoopHandle;
 
 // ─── Upward link-time externs (LAYERING) ────────────────────────────────────
-// The bodies live in `bun_runtime` (which
-// owns `webcore::Blob` / `jsc::VirtualMachine`) as `#[no_mangle]` Rust-ABI
-// fns; the linker resolves them. No `AtomicPtr`, no init-order hazard.
+// The bodies live in `bun_runtime` (which owns `webcore::Blob`) as
+// `#[no_mangle]` Rust-ABI fns; the linker resolves them. No `AtomicPtr`, no
+// init-order hazard.
 unsafe extern "Rust" {
     /// Constructs a `webcore::blob::Store` for stdout/stderr/stdin.
     /// Return value is an erased
-    /// `*mut blob::Store` with intrusive refcount = 2; this crate only
-    /// stores/forwards it. Defined in `bun_runtime::webcore::blob`.
+    /// `*mut blob::Store` with intrusive refcount = 2; re-exported for
+    /// `bun_jsc::rare_data`. Defined in `bun_runtime::webcore::blob`.
     /// No caller-side preconditions (by-value args, allocates fresh).
     pub safe fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
 }
@@ -95,7 +95,7 @@ thread_local! {
 /// Returns the thread-local `*mut MiniEventLoop`.
 ///
 /// Returning `&'static mut`
-/// here would let two calls (or `init_global` + `MiniKind::get_vm`) hold
+/// here would let two calls (or `init_global` + any reader of `GLOBAL`) hold
 /// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
 /// callers reborrow `&mut` for the scope they need.
 pub fn init_global(
@@ -115,14 +115,13 @@ pub fn init_global(
     // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
     // holds the only reference for the duration of first-init. The `GLOBAL`
     // thread-local is NOT yet published (set below, after this `&mut` is dropped),
-    // so neither `MiniKind::get_vm()` nor a re-entrant `init_global()` can observe
+    // so no reader of `GLOBAL` nor a re-entrant `init_global()` can observe
     // the pointer while this exclusive borrow is live. The `&mut` is scoped to
     // this function body — NOT `'static` — and ends before we publish/return the
     // raw ptr.
     let global = unsafe { &mut *global_ptr };
 
-    // `InternalLoopData::set_parent_event_loop` (typed) lives in a
-    // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
+    // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
     // tag 2 = mini (`EventLoopHandle` discriminant + 1).
     {
         let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
@@ -168,11 +167,10 @@ pub fn init_global(
     }
 
     // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
-    // above is no longer used — `MiniKind::get_vm()` reads `GLOBAL` without
-    // checking `GLOBAL_INITIALIZED`, so publishing earlier would let a callee
-    // re-derive a `&mut` aliasing `global` (UB). Nothing between the `&mut`
-    // borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini`/`into_tag_ptr`
-    // only copy the pointer value).
+    // above is no longer used — publishing earlier would let a callee that reads
+    // `GLOBAL` re-derive a `&mut` aliasing `global` (UB). Nothing between the
+    // `&mut` borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini` /
+    // `into_tag_ptr` only copy the pointer value).
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr
@@ -202,9 +200,9 @@ impl<'a> MiniEventLoop<'a> {
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
     /// a `&mut`-returning accessor is provided: the loader may be shared via
     /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
-    /// other safe paths (`GlobalMini::create_null_delimited_env_map`,
-    /// `EventLoopHandle::create_null_delimited_env_map`, `interpreter.rs`)
-    /// materialize `&mut DotEnvLoader` from the same allocation via raw deref.
+    /// other safe paths (`EventLoopHandle::create_null_delimited_env_map`,
+    /// `interpreter.rs`) materialize `&mut DotEnvLoader` from the same
+    /// allocation via raw deref.
     /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
     /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers
     /// deref the returned `NonNull` for a tightly-scoped borrow under their
@@ -236,7 +234,7 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    /// Raw-pointer variant of [`file_polls`] for re-entrant callers.
+    /// Raw-pointer `FilePollStore` accessor for re-entrant callers.
     ///
     /// The `mini_ctx` vtable shim (`file_polls`) is reached
     /// via `EventLoopCtx` from inside FilePoll callbacks fired by

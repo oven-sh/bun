@@ -925,6 +925,89 @@ describe("double <-> JSValue conversions", () => {
     });
   });
 
+  // JSVALUE_TO_INT32 must decode double-encoded JSValues: whether a JS number
+  // is int32-tagged or double-encoded is the engine's choice (JIT tier, double
+  // speculation, Math.* provenance), so an int-typed JSCallback return that
+  // truncates the raw encoded bits hands C 0 once the callback tiers up.
+  it("double-encoded JS numbers returned from an int-typed JSCallback reach C as the integer", async () => {
+    using dir = tempDir("bun-ffi-int32-cb-return", {
+      "cb.c": /* c */ `
+        typedef int (*cb_i32)(int);
+        int call_i32(cb_i32 f, int x) { return f(x); }
+        typedef unsigned int (*cb_u32)(int);
+        unsigned int call_u32(cb_u32 f, int x) { return f(x); }
+        typedef signed char (*cb_i8)(int);
+        int call_i8(cb_i8 f, int x) { return (int)f(x); }
+        typedef unsigned short (*cb_u16)(int);
+        int call_u16(cb_u16 f, int x) { return (int)f(x); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "cb.c"),
+          symbols: {
+            call_i32: { args: ["function", "i32"], returns: "i32" },
+            call_u32: { args: ["function", "i32"], returns: "u32" },
+            call_i8: { args: ["function", "i32"], returns: "i32" },
+            call_u16: { args: ["function", "i32"], returns: "i32" },
+          },
+        });
+
+        // +0.5 then -0.5 on a runtime value: integer-valued, but the intermediate
+        // pins a double-represented result regardless of JIT tier or const-folding.
+        const asDouble = x => {
+          const v = x + 0.5;
+          return v - 0.5;
+        };
+        const echoDouble = new JSCallback(asDouble, { args: ["i32"], returns: "i32" });
+        // Plain int32-tagged return must keep working.
+        const echoInt = new JSCallback(x => x, { args: ["i32"], returns: "i32" });
+        const fractional = new JSCallback(() => 5.7, { args: ["i32"], returns: "i32" });
+        const negFractional = new JSCallback(() => -5.7, { args: ["i32"], returns: "i32" });
+        const u32Double = new JSCallback(x => asDouble(x) + 3000000000, { args: ["i32"], returns: "u32" });
+        const i8Double = new JSCallback(asDouble, { args: ["i32"], returns: "i8" });
+        const u16Double = new JSCallback(asDouble, { args: ["i32"], returns: "u16" });
+
+        const results = {
+          echo_double: symbols.call_i32(echoDouble.ptr, 938),
+          echo_int: symbols.call_i32(echoInt.ptr, 938),
+          fractional: symbols.call_i32(fractional.ptr, 0),
+          neg_fractional: symbols.call_i32(negFractional.ptr, 0),
+          u32_double: symbols.call_u32(u32Double.ptr, 0),
+          i8_double: symbols.call_i8(i8Double.ptr, -7),
+          u16_double: symbols.call_u16(u16Double.ptr, 40000),
+        };
+        for (const cb of [echoDouble, echoInt, fractional, negFractional, u32Double, i8Double, u16Double]) cb.close();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        echo_double: 938,
+        echo_int: 938,
+        fractional: 5,
+        neg_fractional: -5,
+        u32_double: 3000000000,
+        i8_double: -7,
+        u16_double: 40000,
+      },
+      exitCode: 0,
+    });
+  });
+
   // napi_create_double and napi_create_date take the double from the addon
   // verbatim, so they are the same boundary. cc()-compiled C resolves napi_*
   // from the host process; that lookup is only exercised on POSIX today (see

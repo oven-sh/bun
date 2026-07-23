@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 async function withServer(fn: (port: number) => Promise<void>) {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, s => s.end());
-  server.listen(0);
+  server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address() as import("net").AddressInfo;
   try {
@@ -220,6 +220,57 @@ test("addCACert on one user-facing context does not affect another with identica
   expect(a.context).not.toBe(b.context);
 });
 
+// The digest-interned cache is deliberately reachable only through internal
+// paths, but if one leaks (Symbol.for constructor, TLSSocket internals) the
+// mutator itself must refuse rather than silently poison every consumer.
+test("addCACert on a digest-interned context throws instead of poisoning the cache", () => {
+  const NativeSecureContext = tls.Server.prototype[Symbol.for("::buntlsnativesecurecontextctor::")];
+  const a = NativeSecureContext.intern({ ca: tlsCerts.cert });
+  const b = NativeSecureContext.intern({ ca: tlsCerts.cert });
+  expect(a).toBe(b);
+  expect(() => a.addCACert(tlsCerts.ca)).toThrow("cannot mutate a shared SecureContext");
+});
+
+// The exported constructor is user-facing too: it must never hand out the
+// digest-interned SSL_CTX, or addCACert on one instance would silently extend
+// the trust store of every context sharing that digest.
+test("new tls.SecureContext() owns its native handle exclusively, like createSecureContext()", () => {
+  const a = new (tls as any).SecureContext({ ca: tlsCerts.cert });
+  const b = new (tls as any).SecureContext({ ca: tlsCerts.cert });
+  // The interned cache would hand both the same native cell.
+  expect(a.context).not.toBe(b.context);
+});
+
+test("addCACert on one exported SecureContext instance does not change what another verifies", async () => {
+  // agent6's chain roots at ca1, which is not in the default roots: a client
+  // using `b` must keep rejecting it after `a` starts trusting ca1 (Node
+  // isolates the contexts and fails this connection closed).
+  const fx = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n), "utf8");
+  const server = tls.createServer({ key: fx("agent6-key.pem"), cert: fx("agent6-cert.pem") }, s => s.end());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as import("net").AddressInfo;
+  const a = new (tls as any).SecureContext({ ca: fx("ca2-cert.pem") });
+  const b = new (tls as any).SecureContext({ ca: fx("ca2-cert.pem") });
+  a.context.addCACert(fx("ca1-cert.pem"));
+  const outcome = Promise.withResolvers<string>();
+  const socket = tls.connect({
+    port,
+    host: "127.0.0.1",
+    secureContext: b,
+    rejectUnauthorized: true,
+    checkServerIdentity: () => undefined,
+  });
+  socket.on("secureConnect", () => outcome.resolve(`secureConnect authorized=${socket.authorized}`));
+  socket.on("error", error => outcome.resolve(`error ${(error as NodeJS.ErrnoException).code}`));
+  try {
+    expect(await outcome.promise).toBe("error UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
 test("setDefaultCACertificates() override applies to plain tls.connect (no explicit ca)", async () => {
   const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f));
   const prev = tls.getCACertificates("default");
@@ -322,4 +373,55 @@ test("setDefaultCACertificates() applies to a server's client-cert verification 
   } finally {
     tls.setDefaultCACertificates(prevCerts);
   }
+});
+
+// `tls.Server.close()` must release the listener's SSL_CTX ref immediately.
+// It used to be dropped only when the GC finalized the Listener, so a `Server`
+// the program still references — or any server at process exit — kept its CTX
+// alive. That is the leak `leak:create_ssl_context_from_bun_options` used to
+// suppress. The listen socket up_refs its own ref in
+// `us_internal_init_listen_socket` and each accepted socket's `SSL_new()` takes
+// another, so releasing at close() cannot dangle.
+test("tls.Server.close() releases the listener's SSL_CTX without waiting for GC", async () => {
+  Bun.gc(true);
+  const before = sslCtxLiveCount();
+
+  // Hold strong references so the GC can never finalize these Listeners; a
+  // distinct `sessionTimeout` per server gives each its own cache entry.
+  const kept: tls.Server[] = [];
+  for (let i = 0; i < 5; i++) {
+    const server = tls.createServer({ ...tlsCerts, sessionTimeout: 100 + i });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    server.close();
+    await once(server, "close");
+    kept.push(server);
+  }
+
+  // No Bun.gc() here on purpose: the point is that close() alone frees them.
+  expect({ leaked: sslCtxLiveCount() - before, servers: kept.length }).toEqual({ leaked: 0, servers: 5 });
+});
+
+// Releasing at close() must not pull the CTX out from under a socket the
+// server already accepted.
+test("a connection accepted before close() keeps working after it", async () => {
+  const server = tls.createServer({ ...tlsCerts }, s => {
+    s.on("error", () => {});
+    s.on("data", d => s.write(d));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as import("net").AddressInfo;
+
+  const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  await once(client, "secureConnect");
+
+  server.close(); // drops the listener's ref while `client` is still live
+  Bun.gc(true);
+
+  client.write("ping");
+  const [echoed] = await once(client, "data");
+  expect(echoed.toString()).toBe("ping");
+  client.destroy();
 });

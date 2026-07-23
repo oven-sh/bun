@@ -29,6 +29,10 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
+class InProcessInspectorChannel;
+static InProcessInspectorChannel& inProcessInspectorChannel();
+static void finishDeferredInProcessDetach(Zig::GlobalObject*);
+
 class BunInspectorConnection;
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
@@ -217,6 +221,10 @@ public:
             // Do not call .disconnect() if we never actually connected.
             if (connection->hasEverConnected) {
                 connection->inspector().disconnect(*connection);
+                // The last remote frontend leaving must complete any detach an
+                // in-process Session deferred while this remote was attached.
+                if (context.isMainThread())
+                    finishDeferredInProcessDetach(static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
             }
 
             if (connection->unrefOnDisconnect) {
@@ -1244,6 +1252,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_drainInProcessInspectorMessages, (JSGlobalOb
     RELEASE_AND_RETURN(scope, takeBufferedInspectorMessages(lexicalGlobalObject, channel));
 }
 
+static void detachInProcessFrontend(Zig::GlobalObject* globalObject, InProcessInspectorChannel& channel)
+{
+    channel.discarding = false;
+    channel.connected = false;
+    globalObject->inspectorController().disconnectFrontend(channel);
+    if (auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger()); debugger && debugger->runWhilePausedCallback == inProcessRunWhilePaused)
+        debugger->runWhilePausedCallback = nullptr;
+}
+
+// Completes a detach that jsFunction_disconnectInProcessInspector deferred
+// because a remote frontend still shared the backend agents.
+static void finishDeferredInProcessDetach(Zig::GlobalObject* globalObject)
+{
+    auto& channel = inProcessInspectorChannel();
+    if (!channel.discarding || !channel.connected)
+        return;
+    if (globalObject->inspectorController().frontendRouter().hasRemoteFrontend())
+        return;
+    detachInProcessFrontend(globalObject, channel);
+}
+
 // A fully-disconnected Session stops receiving messages. The frontend is only
 // detached when no remote debugger shares the backend: detaching a frontend
 // tears down the shared agents, which would gut an attached remote client, so
@@ -1263,10 +1292,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disconnectInProcessInspector, (JSGlobalObjec
         channel.discarding = true;
         return JSValue::encode(jsUndefined());
     }
-    channel.connected = false;
-    globalObject->inspectorController().disconnectFrontend(channel);
-    if (auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger()); debugger && debugger->runWhilePausedCallback == inProcessRunWhilePaused)
-        debugger->runWhilePausedCallback = nullptr;
+    detachInProcessFrontend(globalObject, channel);
     return JSValue::encode(jsUndefined());
 }
 

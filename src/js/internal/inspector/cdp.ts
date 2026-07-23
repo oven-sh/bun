@@ -486,6 +486,16 @@ class InspectorCDPAdapter {
     this.#breakpointIdAliases.$delete(bp.jscId);
     bp.jscId = breakpointId;
     if (breakpointId !== clientBreakpointId) this.#breakpointIdAliases.$set(breakpointId, clientBreakpointId);
+    // The re-set resolves against an already-parsed script, so JSC reports
+    // the location in the response rather than a breakpointResolved event;
+    // forward it under the client's id so its gutter marker turns verified.
+    const location = result.locations?.[0];
+    if (location) {
+      this.#emitToClient("Debugger.breakpointResolved", {
+        breakpointId: clientBreakpointId,
+        location: this.#toOriginalLocation(location),
+      });
+    }
   }
 
   #onEvaluateForAwaitPromise(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {

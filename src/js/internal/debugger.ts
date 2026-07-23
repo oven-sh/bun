@@ -105,6 +105,19 @@ type CreateBackendFn = (
 
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: any;
+// JSC's FrontendRouter broadcasts every backend response to every attached
+// frontend, so backend command ids must be disjoint across ALL remote/CDP
+// adapters on this controller or one adapter resolves another's pending
+// request. In-process inspector.Session adapters count from 100_000_000
+// (inspector.ts kFirstInProcessBackendId); every remote adapter shares this
+// counter instead of starting its own at 1.
+let nextRemoteBackendId = 1;
+function allocateRemoteBackendId() {
+  return nextRemoteBackendId++;
+}
+
+function discardSessionClientMessage() {}
+
 function cdpAdapterConstructor() {
   return (lazyInspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter);
 }
@@ -208,15 +221,21 @@ export default function (
           if (!debug) return;
           if (!sessionAdapter) {
             let adapter: any;
-            sessionBackend = debug.createSessionBackend((...messages: string[]) => {
+            function handleSessionBackendMessages(...messages: string[]) {
               for (const backendMessage of messages) {
                 adapter.handleBackendMessage(backendMessage);
               }
-            });
+            }
+            function writeSessionCommandToBackend(backendMessage: string) {
+              void sessionBackend?.write(backendMessage);
+            }
+            sessionBackend = debug.createSessionBackend(handleSessionBackendMessages);
             adapter = new (cdpAdapterConstructor())(
-              (backendMessage: string) => void sessionBackend?.write(backendMessage),
-              () => {},
+              writeSessionCommandToBackend,
+              discardSessionClientMessage,
               isWaitingForDebugger,
+              undefined,
+              allocateRemoteBackendId,
             );
             sessionAdapter = adapter;
             sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
@@ -705,22 +724,30 @@ class Debugger {
       // alive — Node exits with a debugger attached — so never ref the event
       // loop for these connections (the `true` argument means "do not ref").
       let adapter: any;
+      function deliverToRemoteAdapter(...messages: string[]) {
+        for (const message of messages) {
+          adapter.handleBackendMessage(message);
+        }
+      }
+      function writeToRemoteBackend(message: string) {
+        void backend.write(message);
+      }
+      function writeToRemoteClient(message: string) {
+        void client.write(message);
+      }
       const backend = this.#createBackend(
         true,
-        (...messages: string[]) => {
-          for (const message of messages) {
-            adapter.handleBackendMessage(message);
-          }
-        },
+        deliverToRemoteAdapter,
         true,
         // A remote frontend: exit waits for it to disconnect, as Node does.
         true,
       );
       adapter = new (cdpAdapterConstructor())(
-        (message: string) => void backend.write(message),
-        (message: string) => void client.write(message),
+        writeToRemoteBackend,
+        writeToRemoteClient,
         this.#isWaitingForDebugger,
         this.#disconnectNotify,
+        allocateRemoteBackendId,
       );
 
       data.client = client;

@@ -406,56 +406,53 @@ describe("spawn()", () => {
     });
   });
 
-  it(
-    "stdin write failure (EPIPE) emits 'error' and destroys even with a write callback",
-    async () => {
-      // Child closes its own stdin fd, signals ready on stdout, then stays alive.
-      // On Windows this previously surfaced as EOF instead of EPIPE because
-      // libuv's async pipe write_cb used the read-side translator for
-      // ERROR_BROKEN_PIPE / ERROR_NO_DATA (fixed in oven-sh/libuv#11).
-      const child = spawn(
-        bunExe(),
-        ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
-        { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
-      );
-      try {
-        await new Promise<void>((resolve, reject) => {
-          child.on("error", reject);
-          child.on("exit", () => reject(new Error("child exited before ready")));
-          child.stdout!.once("data", () => resolve());
-        });
-        child.removeAllListeners("error");
-        child.removeAllListeners("exit");
+  it("stdin write failure (EPIPE) emits 'error' and destroys even with a write callback", async () => {
+    // Child closes its own stdin fd, signals ready on stdout, then stays alive.
+    // On Windows this previously surfaced as EOF instead of EPIPE because
+    // libuv's async pipe write_cb used the read-side translator for
+    // ERROR_BROKEN_PIPE / ERROR_NO_DATA (fixed in oven-sh/libuv#11).
+    const child = spawn(
+      bunExe(),
+      ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", () => reject(new Error("child exited before ready")));
+        child.stdout!.once("data", () => resolve());
+      });
+      child.removeAllListeners("error");
+      child.removeAllListeners("exit");
 
-        const errEv = Promise.withResolvers<any>();
-        const cb1 = Promise.withResolvers<any>();
-        child.stdin!.on("error", e => errEv.resolve(e));
-        child.stdin!.write(Buffer.alloc(65536, 0x41), e => cb1.resolve(e));
+      const errEv = Promise.withResolvers<any>();
+      const cb1 = Promise.withResolvers<any>();
+      child.stdin!.on("error", e => errEv.resolve(e));
+      child.stdin!.write(Buffer.alloc(65536, 0x41), e => cb1.resolve(e));
 
-        const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
+      const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
 
-        expect({
-          cb1: cb1Err?.code,
-          errEv: errEvErr?.code,
-          destroyed: child.stdin!.destroyed,
-          writable: child.stdin!.writable,
-        }).toEqual({
-          cb1: "EPIPE",
-          errEv: "EPIPE",
-          destroyed: true,
-          writable: false,
-        });
+      expect({
+        cb1: cb1Err?.code,
+        errEv: errEvErr?.code,
+        destroyed: child.stdin!.destroyed,
+        writable: child.stdin!.writable,
+      }).toEqual({
+        cb1: "EPIPE",
+        errEv: "EPIPE",
+        destroyed: true,
+        writable: false,
+      });
 
-        const cb2 = Promise.withResolvers<any>();
-        const r2 = child.stdin!.write("more-bytes", e => cb2.resolve(e));
-        const cb2Err = await cb2.promise;
+      const cb2 = Promise.withResolvers<any>();
+      const r2 = child.stdin!.write("more-bytes", e => cb2.resolve(e));
+      const cb2Err = await cb2.promise;
 
-        expect({ r2, cb2: cb2Err?.code }).toEqual({ r2: false, cb2: "ERR_STREAM_DESTROYED" });
-      } finally {
-        child.kill("SIGKILL");
-      }
-    },
-  );
+      expect({ r2, cb2: cb2Err?.code }).toEqual({ r2: false, cb2: "ERR_STREAM_DESTROYED" });
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
 });
 
 describe("execFile()", () => {

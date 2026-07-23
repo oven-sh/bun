@@ -285,7 +285,8 @@ const linuxShared: LinuxSharedFields = {
 // FLOATING: Google's current stable Chrome deb (x64 only; no arm64 build).
 const chromeDebUrl = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
 
-const linuxCommonComponents = [
+/** The install head every linux image runs, in order. */
+const linuxInstallComponents = [
   "base-system",
   "ci-user",
   "nodejs",
@@ -299,41 +300,17 @@ const linuxCommonComponents = [
   "docker",
   "tailscale",
   "chromium",
-  "buildkite-agent",
-  "prefetch",
-  "core-dumps",
-  "cleanup",
 ] as const;
 
 /** The CI finalization tail every linux image ends with. Install steps
  * (a browser, a cross toolchain) belong BEFORE it: cleanup empties /tmp
  * (the download scratch) and trims disks for capture, so nothing may
- * install after it. Insert with withInstall(), never by appending. */
+ * install after it. */
 const linuxFinalization = ["buildkite-agent", "prefetch", "core-dumps", "cleanup"] as const;
 
-/** The common list with extra install-time components placed before the
- * finalization tail. */
-function withInstall(...extra: string[]): string[] {
-  const tail = linuxCommonComponents.length - linuxFinalization.length;
-  return [...linuxCommonComponents.slice(0, tail), ...extra, ...linuxCommonComponents.slice(tail)];
-}
-
-/** The build host additionally installs the cross toolchains, before the
- * CI finalization steps (buildkite-agent, prefetch, core-dumps, cleanup). */
-const linuxBuildHostComponents = [
-  "base-system",
-  "ci-user",
-  "nodejs",
-  "bun",
-  "curl-h3",
-  "age",
-  "python-fuse",
-  "cmake",
-  "llvm",
-  "rust",
-  "docker",
-  "tailscale",
-  "chromium",
+/** The cross toolchains the build host installs so it can cross-compile
+ * for every target. */
+const linuxCrossComponents = [
   "cross-binutils",
   "android-ndk",
   "freebsd-sysroot",
@@ -341,12 +318,18 @@ const linuxBuildHostComponents = [
   "musl-sysroot",
   "windows-sysroot",
   "macos-sdk",
-  "buildkite-agent",
-  "prefetch",
-  "core-dumps",
-  "cleanup",
 ] as const;
 
+/** A test image's components: the install head, any extras (a browser),
+ * then the finalization tail — one place decides that cleanup is last. */
+function withInstall(...extra: string[]): string[] {
+  return [...linuxInstallComponents, ...extra, ...linuxFinalization];
+}
+
+const linuxCommonComponents = withInstall();
+
+/** The build host: the install head, the cross toolchains, the tail. */
+const linuxBuildHostComponents = [...linuxInstallComponents, ...linuxCrossComponents, ...linuxFinalization];
 // ---------------------------------------------------------------------------
 // The images
 // ---------------------------------------------------------------------------

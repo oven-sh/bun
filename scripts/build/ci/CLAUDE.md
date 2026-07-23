@@ -26,13 +26,13 @@ number to bump anywhere. Merging _is_ publishing.
   node) that reads `nodejs.version` from `spec.ts`, downloads that exact
   Node.js for the running host (cached in `~/.cache/bun-ci-node`, so it
   fetches once per host), and spawns the real generator
-  `.buildkite/ci.ts` under it — the standing agent\'s own node is never
+  `.buildkite/ci.ts` under it — the standing agent's own node is never
   used. `ci.ts` and the modules it imports need node >= 25 (type
   stripping); the spec pins 26.x, the same node baked onto the images.
   (`.buildkite/generate-pipeline.sh` is the equivalent standalone shim, for
   when this becomes the direct entry point.)
 - The `build-image` queue holds the AWS + Azure credentials `machine.mjs`
-  already uses; `ci.mjs`\'s existence check reads the same secrets there.
+  already uses; `ci.mjs`'s existence check reads the same secrets there.
 - The `aws` CLI on that queue (the AWS existence check shells out to it).
 
 ## The files
@@ -49,7 +49,7 @@ number to bump anywhere. Merging _is_ publishing.
 | `machine/runtime.ts`                             | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report.                                                                                                                                                                                                                                                                                                           |
 | `machine/ops-posix.ts`, `machine/ops-windows.ts` | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command.                                                                                                                                                                                                                          |
 | `machine/components/{linux,windows}/*.ts`        | One file per baked thing, per platform: each owns HOW its thing installs and enumerates its own downloads, reading every fact from the spec entry. A thing on both platforms is two components sharing a name (`linux/nodejs.ts`, `windows/nodejs.ts`).                                                                                                                                           |
-| `machine/components/linux/package-manager.ts`    | apt vs apk, abstracted once (`PackageManager`); an image's bundle imports only its own manager.                                                                                                                                                                                                                                                                                                   |
+| `machine/components/linux/package-manager.ts`    | apt vs apk, abstracted once (`PackageManager`); selected per image by `managerFor()` in `bootstrap.ts` from the entry's `packages.manager` fact, and passed to components on their `LinuxContext`.                                                                                                                                                                                                |
 | `machine/components/registry.ts`                 | name → component per platform, and the derivations that walk an image's `components` list: the ordered install steps and the download bundle, from one input.                                                                                                                                                                                                                                     |
 | `machine/components/paths.ts`                    | Derived locations composed from the spec's root paths; no path is written twice.                                                                                                                                                                                                                                                                                                                  |
 

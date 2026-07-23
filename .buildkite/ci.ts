@@ -4,7 +4,7 @@
  *
  * This is TypeScript run by bare node (type stripping, node >= 25). The
  * Buildkite step invokes .buildkite/ci.mjs, which fetches the spec-pinned
- * Node.js and spawns this file under it — so the CI agent\'s own node
+ * Node.js and spawns this file under it — so the CI agent's own node
  * version never matters.
  */
 
@@ -152,9 +152,9 @@ const buildPlatforms = [
   { os: "darwin", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", distro: "debian", release: "13" },
-  // asan x64 cross-builds from the arm64 host too; if install_cross_compiler_rt()
-  // can't fetch amd64 libclang-rt on arm64, this lane may need an x64 host as
-  // the one exception — see scripts/build/ci/spec.ts (buildHost).
+  // asan x64 cross-builds from the arm64 host too; if the crossBinutils
+  // component can't fetch amd64 libclang-rt on arm64, this lane may need an
+  // x64 host as the one exception — see the build host in the CI image spec.
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },

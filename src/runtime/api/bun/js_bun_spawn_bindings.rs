@@ -1024,12 +1024,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     env_array.push(core::ptr::null());
     argv.push(core::ptr::null());
 
-    if IS_SYNC {
-        for (i, io) in stdio.iter_mut().enumerate() {
-            io.to_sync(i as u32);
-        }
-    }
-
     // If the whole thread is supposed to do absolutely nothing while waiting,
     // we can block the thread which reduces CPU usage.
     //
@@ -1432,6 +1426,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             let _ = err;
             return Err(global_this.throw_out_of_memory());
         }
+    }
+
+    // spawnSync has no writer for a bare `stdin: "pipe"`: end the FileSink now
+    // so the child reads EOF (Node's SyncProcessRunner closes its stdin pipe
+    // after writing `input`). Downgrading to `"ignore"` instead would open NUL
+    // via uv_spawn, which a Windows AppContainer's default device ACL denies.
+    if IS_SYNC && matches!(stdio[0], Stdio::Pipe) {
+        subprocess.stdin.with_mut(|s| s.close());
     }
 
     // event_loop points to the live JSC EventLoop for this thread.

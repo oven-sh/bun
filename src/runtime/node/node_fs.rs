@@ -7674,6 +7674,18 @@ impl NodeFS {
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
+                // XNU fdesc rejects open(/dev/fd/N, O_RDONLY) with EACCES when
+                // N is a socket or pipe whose f_flag is not exactly FREAD, and
+                // F_GETPATH has no vnode to report for a dup'd socket anyway.
+                // Fall back to realpath(3), which lstat-walks like Node and
+                // returns e.g. "/dev/fd/0" for realpath("/dev/stdin").
+                #[cfg(target_os = "macos")]
+                Err(err) if err.get_errno() == E::EACCES => {
+                    return match Syscall::realpath(path, &mut outbuf) {
+                        Ok(buf) => Ok(encode_path_result(buf, args.encoding)),
+                        Err(_) => Err(err.with_path(path)),
+                    };
+                }
                 Err(err) => return Err(err.with_path(path)),
                 Ok(fd_) => fd_,
             };

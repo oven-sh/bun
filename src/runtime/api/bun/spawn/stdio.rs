@@ -201,13 +201,6 @@ impl Stdio {
         }
     }
 
-    pub fn to_sync(&mut self, i: u32) {
-        // Piping an empty stdin doesn't make sense
-        if i == 0 && matches!(self, Self::Pipe) {
-            *self = Self::Ignore;
-        }
-    }
-
     /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
     /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
     /// via `heap::take`) or free it with `close_and_destroy`.

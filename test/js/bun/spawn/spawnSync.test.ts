@@ -61,6 +61,28 @@ describe("spawnSync", () => {
     expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
   });
 
+  // `stdin: "pipe"` must give the child a real pipe, not the null device:
+  // remapping to "ignore" opens NUL on Windows, which an AppContainer's
+  // default device ACL denies. Node's SyncProcessRunner always creates a pipe.
+  it("stdin 'pipe' gives the child a pipe (not the null device) that reads EOF", () => {
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         let n = 0;
+         process.stdin.on("data", d => (n += d.length));
+         process.stdin.on("end", () =>
+           console.log(JSON.stringify({ isChar: fs.fstatSync(0).isCharacterDevice(), n })),
+         );`,
+      ],
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    expect(JSON.parse(stdout.toString())).toEqual({ isChar: false, n: 0 });
+    expect(exitCode).toBe(0);
+  });
+
   describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {
     // Grandchild inherits the pipe and writes after the direct child has exited.
     const sh = (fd: number) => [

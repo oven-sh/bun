@@ -30,15 +30,12 @@ export type PackerTemplateInput = {
   /** Local path of the agent.mjs bundle (uploaded to the VM). */
   agentPath: string;
   azure: {
-    /** The gallery lives in a subscription; a subscription id is a
-     * public resource identifier (present in every Azure resource id),
-     * not a credential. The service-principal SECRET and its auth
-     * siblings (client id, tenant id) are NOT template inputs — they
-     * reach Packer only through the ARM_* environment (machine.ts), so
-     * the rendered template written to disk never contains a secret. */
-    subscriptionId: string;
     /** Where Packer creates its temporary build resources. Kept separate
-     * so its 4-core bake VMs don't contend with CI runners for quota. */
+     * so its 4-core bake VMs don't contend with CI runners for quota.
+     * The service-principal credentials are NOT here: they are Packer
+     * variables (client_id, client_secret, subscription_id, tenant_id)
+     * that machine.ts passes via -var, so this file never holds a
+     * secret — the same guarantee the checked-in HCL templates had. */
     buildResourceGroup: string;
     location: string;
   };
@@ -61,10 +58,16 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
   const nodeFolder = nodejsFolderName(image.nodejs, "windows", image.arch, null);
 
   const source: Record<string, unknown> = {
-    // Credentials are deliberately absent: the azure-arm builder reads
-    // ARM_CLIENT_ID / ARM_CLIENT_SECRET / ARM_SUBSCRIPTION_ID /
-    // ARM_TENANT_ID from the environment, so nothing secret is written
-    // into the template file.
+    // Credentials are Packer VARIABLES (declared sensitive in the
+    // template's `variable` block below) and referenced here, so the
+    // template file on disk holds only "${var.client_secret}" — never
+    // the value. The real values reach packer via -var on the command
+    // line and live only in the packer process, matching how the
+    // checked-in HCL templates on main passed them.
+    client_id: "${var.client_id}",
+    client_secret: "${var.client_secret}",
+    subscription_id: "${var.subscription_id}",
+    tenant_id: "${var.tenant_id}",
     // Source: the FLOATING marketplace base for this image entry.
     os_type: "Windows",
     image_publisher: image.base.publisher,
@@ -95,7 +98,7 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
     // storage — faster provisioning when robobun launches runners from
     // this image, and faster cross-region replication.
     shared_image_gallery_destination: {
-      subscription: azure.subscriptionId,
+      subscription: "${var.subscription_id}",
       resource_group: gallery.resourceGroup,
       gallery_name: gallery.name,
       image_name: imageName,
@@ -129,6 +132,15 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
           version: `= ${packer.azurePluginVersion}`,
         },
       },
+    },
+    // Auth reaches packer as variables, never as literals in this file
+    // (see machine.ts, which passes the values via -var). `sensitive`
+    // also redacts them from packer's own log output.
+    variable: {
+      client_id: { type: "string", sensitive: true },
+      client_secret: { type: "string", sensitive: true },
+      subscription_id: { type: "string", sensitive: true },
+      tenant_id: { type: "string", sensitive: true },
     },
     source: { "azure-arm": { windows: source } },
     build: {

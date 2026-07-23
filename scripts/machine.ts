@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -1230,13 +1231,12 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
     bootstrapDir,
     agentPath,
     azure: {
-      clientId,
-      clientSecret,
-      subscriptionId,
-      tenantId,
-      // Dedicated build RG so Packer's 4-core bake VMs don't contend with
-      // robobun CI runners for the runner quota. (The gallery's own RG is
-      // a spec fact, image.gallery.resourceGroup, read by the template.)
+      // Credentials are NOT template data: the template references them as
+      // sensitive packer variables and machine.ts passes the values via
+      // -var below, so the file written to disk holds no secret. Dedicated
+      // build RG so Packer's 4-core bake VMs don't contend with robobun CI
+      // runners for the runner quota. (The gallery's own RG is a spec fact,
+      // image.gallery.resourceGroup, read by the template.)
       buildResourceGroup: `${resourceGroup}-PACKER`,
       location: image.gallery.location,
     },
@@ -1251,22 +1251,28 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
     await spawnSafe([packerBin, "init", templatePath], { stdio: "inherit" });
 
     console.log(`[packer] Building ${imageName}`);
-    const packerArgs = [packerBin, "build", templatePath];
+    // The service-principal credentials travel as packer -var flags —
+    // process memory only, never written to the template on disk. This is
+    // the mechanism the checked-in HCL templates used.
+    const packerArgs = [
+      packerBin,
+      "build",
+      "-var",
+      `client_id=${clientId}`,
+      "-var",
+      `client_secret=${clientSecret}`,
+      "-var",
+      `subscription_id=${subscriptionId}`,
+      "-var",
+      `tenant_id=${tenantId}`,
+      templatePath,
+    ];
 
     // Packer's azure-arm builder cleans up its temp pkr* resources on
     // SIGINT/SIGTERM, but only if the signal reaches the packer process and
     // it has time to finish the Azure deletes. Spawn directly and forward, or
     // a Buildkite cancel orphans the VM/NIC/IP/disk/vnet/NSG/keyvault stack.
-    const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        ARM_CLIENT_ID: clientId,
-        ARM_CLIENT_SECRET: clientSecret,
-        ARM_SUBSCRIPTION_ID: subscriptionId,
-        ARM_TENANT_ID: tenantId,
-      },
-    });
+    const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), { stdio: "inherit" });
     let cancelled = false;
     const forward = signal => {
       cancelled = true;

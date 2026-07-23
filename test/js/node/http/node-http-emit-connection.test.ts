@@ -125,8 +125,11 @@ test.concurrent("queued pipelined response with Content-Length and write() befor
   // an explicit Content-Length and the body written before end(), 'finish'
   // must wait until the response is assigned the socket and flushed.
   let queuedWritableFinished: boolean | undefined;
+  let queuedSocket: unknown = "unset";
   using ctx = await setup(async (req, res) => {
     if (req.url === "/a") await new Promise(r => setImmediate(r));
+    // A queued response has no socket until assignSocket(), like Node.
+    if (req.url === "/b") queuedSocket = res.socket;
     res.writeHead(200, { "Content-Length": "5" });
     res.write("ok:" + req.url);
     res.end();
@@ -138,6 +141,7 @@ test.concurrent("queued pipelined response with Content-Length and write() befor
   const buf = await ctx.reader.until("ok:/b");
   expect(buf.indexOf("ok:/a")).toBeLessThan(buf.indexOf("ok:/b"));
   expect(queuedWritableFinished).toBe(false);
+  expect(queuedSocket).toBe(null);
 });
 
 test.concurrent("writableNeedDrain and 'drain' track buffered writes on an adopted socket", async () => {
@@ -193,29 +197,53 @@ test.concurrent("'upgrade' hands the adopted socket to the listener", async () =
   await ctx.reader.until("echo:ping");
 });
 
-test.concurrent("upgrade request with a body spanning packets hands off after the body completes", async () => {
+test.concurrent("upgrade request with a body spanning packets hands off at end of headers", async () => {
   using ctx = await setup();
   ctx.httpServer.on("upgrade", async (req, socket, head) => {
     let body = "";
     for await (const chunk of req) body += chunk;
     socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
-    // Like Node, the request body is parsed into req and stays out of the
-    // tunnel byte stream. (Node v26 delivers the first tunnel bytes as the
-    // socket's first 'data' event via its UpgradeStream; here they arrive in
-    // `head` instead. Either way, tunnel bytes = head + data events.)
+    // The body is skipped by the parser (like Node before its UpgradeStream):
+    // req carries no body and every byte after the headers reaches the
+    // listener raw, as bodyHead + 'data' events.
     socket.write("B:" + body + "|H:" + head.toString());
     socket.on("data", d => socket.write("D:" + d));
   });
   ctx.client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: tcp\r\nContent-Length: 5\r\n\r\nhel");
-  // Yield so the server reads the partial body before the rest arrives;
-  // back-to-back writes would coalesce into one 'data' event and skip the
-  // multi-chunk path this test exists for.
-  await new Promise(r => setImmediate(r));
-  // Rest of the request body plus the first tunnel bytes in a second packet.
+  await ctx.reader.until("B:|H:hel");
+  // Rest of the request body plus tunnel bytes flow as raw socket data.
   ctx.client.write("loWORLD");
-  await ctx.reader.until("B:hello|H:WORLD");
+  await ctx.reader.until("D:loWORLD");
   ctx.client.write("ping");
   await ctx.reader.until("D:ping");
+});
+
+test.concurrent("upgrade request with a body larger than the high-water mark does not stall", async () => {
+  const bodySize = 256 * 1024;
+  using ctx = await setup();
+  ctx.httpServer.on("upgrade", (req, socket, head) => {
+    socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+    let received = head.length;
+    let replied = false;
+    const check = () => {
+      if (!replied && received >= bodySize + 4) {
+        replied = true;
+        socket.write("GOT:" + received);
+      }
+    };
+    socket.on("data", d => {
+      received += d.length;
+      check();
+    });
+    check();
+  });
+  ctx.client.write(
+    `GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: tcp\r\nContent-Length: ${bodySize}\r\n\r\n`,
+  );
+  await new Promise(r => setImmediate(r));
+  ctx.client.write(Buffer.alloc(bodySize, "b").toString());
+  ctx.client.write("ping");
+  await ctx.reader.until("GOT:" + (bodySize + 4));
 });
 
 test.concurrent("CONNECT hands the adopted socket to the 'connect' listener with bodyHead", async () => {

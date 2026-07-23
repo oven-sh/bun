@@ -1559,11 +1559,22 @@ function connectionListenerInternal(server, socket) {
   socket.on("end", state.onEnd);
   socket.on("close", state.onClose);
   socket.on("drain", state.onDrain);
+  socket.on("resume", onSocketResume);
   parser.onIncoming = parserOnIncoming.bind(undefined, server, socket, state);
 
   socket.setEncoding = socketSetEncoding;
 
   socket._paused = false;
+}
+
+// Node's onSocketResume also drives the consumed StreamBase handle
+// (readStart); parsing here is always fed by 'data' events, so only the
+// re-pause guard is load-bearing: a user resume() on the adopted duplex must
+// not feed data to a parser paused by the pipelining backpressure gate
+// (execute() on a paused llhttp returns HPE_PAUSED, which would surface as a
+// spurious clientError).
+function onSocketResume() {
+  if (this._paused) this.pause();
 }
 
 function socketSetEncoding() {
@@ -1660,13 +1671,13 @@ function onParserExecuteCommon(server, socket, parser, state, ret, d) {
     prepareError(ret, parser, d);
     socketOnError.$call(socket, ret);
   } else if (incoming?.upgrade && incoming.complete) {
-    // Upgrade or CONNECT. The upgrade verdict sticks at headers-complete, but
-    // the handoff must wait for llhttp to finish the request body (it pauses
-    // with the upgrade flag at message end): freeing the parser mid-body
-    // would leave req without its body and spill the remaining body bytes
-    // into the tunnel stream. Node v26 emits early through an UpgradeStream
-    // wrapper instead; without it, the first tunnel bytes arrive in bodyHead
-    // rather than as the socket's first 'data' event.
+    // Upgrade or CONNECT. parserOnIncoming returned 2 (skip body), so llhttp
+    // fires message-complete at the end of the headers and pauses with the
+    // upgrade flag: any request-body bytes arrive through bodyHead and the
+    // socket's own 'data' events, like Node before its UpgradeStream (which
+    // instead streams the body into req). The complete gate is belt and
+    // suspenders: handing off with the message still open would free the
+    // parser mid-message.
     const req = incoming;
     const bytesParsed = ret;
 
@@ -1678,6 +1689,7 @@ function onParserExecuteCommon(server, socket, parser, state, ret, d) {
     socket.removeListener("drain", state.onDrain);
     socket.removeListener("error", socketOnError);
     socket.removeListener("timeout", socketOnTimeout);
+    socket.removeListener("resume", onSocketResume);
     parser.finish();
     freeParser(parser, req, socket);
 
@@ -1774,7 +1786,13 @@ function parserOnIncoming(server, socket, state, req, keepAlive) {
   if (req.upgrade) {
     req.upgrade = req.method === "CONNECT" || !!server.shouldUpgradeCallback(req);
     if (req.upgrade) {
-      return 0;
+      // 2 = skip body + upgrade: llhttp pauses at the end of the headers and
+      // any request-body bytes reach the 'upgrade'/'connect' listener as raw
+      // tunnel data (bodyHead + 'data' events), like Node before its
+      // UpgradeStream. Returning 0 (v26) would parse the body into req, but
+      // without the UpgradeStream early emit nothing drains req, so a body
+      // larger than the readable high-water mark pauses the socket forever.
+      return 2;
     }
   }
 
@@ -3258,6 +3276,12 @@ Object.defineProperty(ServerResponse.prototype, "socket", {
       // Queued pipelined response: like Node.js, res.socket is null until the
       // response is assigned the socket.
       return null;
+    }
+    if (!this[kHandle] && !this[kDeprecatedReplySymbol]) {
+      // Standalone response (adopted socket or user-constructed): like Node,
+      // res.socket is null until assignSocket() and after detachSocket().
+      // Only the deprecated fetch()-style response keeps the FakeSocket.
+      return this[fakeSocketSymbol] ?? null;
     }
     return (this[fakeSocketSymbol] ??= new FakeSocket(this));
   },

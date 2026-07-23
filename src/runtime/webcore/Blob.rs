@@ -1977,10 +1977,11 @@ impl BlobExt for Blob {
         blob.size.set(len);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
-        // infer the content type if it was not specified
-        if content_type.is_empty()
-            && matches!(self.content_type.get(), BlobContentType::Static(s) if !s.is_empty())
-        {
+        // Inherit the parent's type when the caller did not pass one. The
+        // parent's `content_type` may be `Owned` (e.g. the `text/*` charset
+        // promotion in `Compact::to_mime_type`), so match on emptiness rather
+        // than on the `Static` variant.
+        if content_type.is_empty() && !self.content_type.get().is_empty() {
             blob.content_type.set(self.content_type.get().clone());
         } else {
             blob.content_type.set(content_type);

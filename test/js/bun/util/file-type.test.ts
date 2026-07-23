@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "path";
+
 describe("util file tests", () => {
   test("custom set mime-type respected (#6507)", () => {
     const file = Bun.file("test", {
@@ -49,5 +52,18 @@ describe("util file tests", () => {
     };
     const actual = Object.fromEntries(Object.keys(cases).map(name => [name, Bun.file(name).type]));
     expect(actual).toEqual(cases);
+  });
+
+  test("Bun.file().slice() inherits a text/* charset-promoted type", () => {
+    using dir = tempDir("slice-type", { "a.md": "hello", "a.txt": "hello", "a.png": "x" });
+    expect({
+      md: Bun.file(join(String(dir), "a.md")).slice(0, 3).type,
+      txt: Bun.file(join(String(dir), "a.txt")).slice(0, 3).type,
+      png: Bun.file(join(String(dir), "a.png")).slice(0, 3).type,
+    }).toEqual({
+      md: "text/markdown;charset=utf-8",
+      txt: "text/plain;charset=utf-8",
+      png: "image/png",
+    });
   });
 });

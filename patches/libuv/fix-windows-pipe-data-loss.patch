@@ -1,0 +1,80 @@
+--- a/src/win/pipe.c
++++ b/src/win/pipe.c
+@@ -1991,29 +1991,59 @@ static int uv__pipe_read_data(uv_loop_t* loop,
+     }
+     more = max_bytes < bytes_available;
+   } else {
+-    /* Read into the user buffer.
+-     * Prepare an Event so that we can cancel if it doesn't complete immediately.
+-     */
+-    req = &handle->read_req;
+-    memset(&req->u.io.overlapped, 0, sizeof(req->u.io.overlapped));
+-    req->u.io.overlapped.hEvent = (HANDLE) ((uintptr_t) req->event_handle | 1);
+-    if (ReadFile(handle->handle, buf.base, max_bytes, bytes_read, &req->u.io.overlapped)) {
+-      r = ERROR_SUCCESS;
+-    } else {
++    /* For overlapped pipes, use PeekNamedPipe to confirm data availability
++     * before issuing a read. This avoids two problems:
++     *
++     * 1. Blocking the event loop: if the previous iteration drained the pipe
++     *    and the `more` heuristic triggered another iteration, ReadFile on an
++     *    empty pipe returns ERROR_IO_PENDING. Without CancelIoEx, the blocking
++     *    GetOverlappedResult would stall the event loop until the writer
++     *    produces more data.
++     *
++     * 2. Data loss from CancelIoEx: the upstream code cancels pending reads
++     *    with CancelIoEx, but if the kernel has already begun transferring
++     *    data from the pipe buffer, the cancel discards the in-flight bytes
++     *    (GetOverlappedResult returns ERROR_OPERATION_ABORTED with 0 bytes).
++     *
++     * PeekNamedPipe is safe here because libuv's pipe reads are single-
++     * threaded — there are no concurrent readers that could drain the pipe
++     * between the peek and the read (the race that PR #4470 tried to solve
++     * with CancelIoEx). By only reading confirmed-available bytes, the
++     * overlapped ReadFile either completes synchronously or finishes almost
++     * immediately, and no cancellation is ever needed. */
++    bytes_available = 0;
++    if (!PeekNamedPipe(handle->handle, NULL, 0, NULL, &bytes_available, NULL)) {
+       r = GetLastError();
++    } else if (bytes_available == 0) {
++      /* Pipe buffer is empty. Don't issue a read that would block. */
+       *bytes_read = 0;
+-      if (r == ERROR_IO_PENDING) {
+-        r = CancelIoEx(handle->handle, &req->u.io.overlapped);
+-        assert(r || GetLastError() == ERROR_NOT_FOUND);
+-        if (GetOverlappedResult(handle->handle, &req->u.io.overlapped, bytes_read, TRUE)) {
+-          r = ERROR_SUCCESS;
+-        } else {
+-          r = GetLastError();
+-          *bytes_read = 0;
++      more = 0;
++      handle->read_cb((uv_stream_t*) handle, 0, &buf);
++      return more;
++    } else {
++      if (max_bytes > bytes_available)
++        max_bytes = bytes_available;
++      req = &handle->read_req;
++      memset(&req->u.io.overlapped, 0, sizeof(req->u.io.overlapped));
++      req->u.io.overlapped.hEvent = (HANDLE) ((uintptr_t) req->event_handle | 1);
++      if (ReadFile(handle->handle, buf.base, max_bytes, bytes_read, &req->u.io.overlapped)) {
++        r = ERROR_SUCCESS;
++      } else {
++        r = GetLastError();
++        *bytes_read = 0;
++        if (r == ERROR_IO_PENDING) {
++          /* PeekNamedPipe confirmed data was available, so this should
++           * complete almost immediately. Wait without cancelling. */
++          if (GetOverlappedResult(handle->handle, &req->u.io.overlapped, bytes_read, TRUE)) {
++            r = ERROR_SUCCESS;
++          } else {
++            r = GetLastError();
++            *bytes_read = 0;
++          }
+         }
+       }
++      more = *bytes_read == max_bytes && max_bytes < bytes_available;
+     }
+-    more = *bytes_read == max_bytes;
+   }
+ 
+   /* Call the read callback. */

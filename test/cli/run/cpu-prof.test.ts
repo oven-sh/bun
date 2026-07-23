@@ -125,6 +125,42 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--cpu-prof-name honors an absolute path", async () => {
+    // An absolute --cpu-prof-name must be written verbatim, not resolved
+    // relative to CWD (which stripped the leading separator). The target's
+    // parent directory does not exist yet, so this also covers creating the
+    // parent of an absolute output path.
+    using cwdDir = tempDir("cpu-prof-name-abs-cwd", {
+      "test.js": `
+        function loop() {
+          const end = Date.now() + 100;
+          while (Date.now() < end) {}
+        }
+        loop();
+      `,
+    });
+    using targetDir = tempDir("cpu-prof-name-abs-target", {});
+    const target = join(String(targetDir), "nested", "custom.cpuprofile");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", target, "test.js"],
+      cwd: String(cwdDir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+
+    // The profile must land at the absolute path.
+    expect(Bun.file(target).size).toBeGreaterThan(0);
+
+    // And nothing should have been written anywhere under CWD.
+    const cwdFiles = Array.from(new Bun.Glob("**/*.cpuprofile").scanSync({ cwd: String(cwdDir) }));
+    expect(cwdFiles).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `

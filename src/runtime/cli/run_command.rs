@@ -3030,6 +3030,11 @@ impl RunCommand {
         }
 
         if ctx.positionals.is_empty() {
+            // Node: bare `node` on a TTY starts the REPL. Only in emulation
+            // mode; bun's own `bun` with no args stays the help text.
+            if bun_sys::isatty(bun_core::Fd::stdin()) {
+                return Self::exec_node_repl(ctx);
+            }
             Self::exec_as_if_node_missing_script();
         }
 

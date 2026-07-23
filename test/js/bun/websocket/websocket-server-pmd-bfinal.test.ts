@@ -1,8 +1,10 @@
 // RFC 7692 7.2.3.4: a permessage-deflate sender may end a message with a
 // DEFLATE block whose BFINAL bit is set to 1. A receiver must decode it and,
 // with context takeover, reset its inflater so the next message starts a fresh
-// DEFLATE stream. The dedicated decompressor used to treat Z_STREAM_END as a
-// fatal inflate error and drop the TCP connection.
+// DEFLATE stream. The zlib inflate loop used to treat Z_STREAM_END as a fatal
+// error and drop the TCP connection. That hit the dedicated decompressor at
+// any size, and the shared (default) decompressor once the inflated payload
+// exceeded the 4 KiB libdeflate fast-path output buffer.
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import net from "node:net";
@@ -202,18 +204,30 @@ describe.concurrent.each(modes)("permessage-deflate BFINAL=1 (perMessageDeflate:
     expect(await Promise.race([second, raw.serverClose, raw.closed])).toBe(`message:${other.toString("hex")}`);
     expect(raw.received).toEqual([original.toString("hex"), other.toString("hex")]);
   });
-});
 
-// The zlib inflate loop writes into a 16 KiB scratch buffer per iteration; a
-// BFINAL=1 payload that inflates to more than that must still be reassembled
-// correctly across the chunk boundary.
-it("dedicated: a BFINAL=1 message inflating to more than 16 KiB is delivered intact", async () => {
-  using raw = await connectDeflated({ compress: "dedicated", decompress: "dedicated" });
-  const big = Buffer.alloc(20000, "bfinal-large-chunk-");
-  const compressed = pmdFinal(big);
-  expect(compressed.length).toBeLessThan(0xffff);
-  const msg = raw.nextMessage();
-  raw.socket.write(frame(0x2, compressed, { rsv1: true }));
-  expect(await Promise.race([msg, raw.serverClose, raw.closed])).toBe(`message:${big.toString("hex")}`);
-  expect(raw.received).toEqual([big.toString("hex")]);
+  // The shared decompressor's libdeflate fast path writes into a 4 KiB output
+  // buffer; anything larger falls through to the zlib loop that used to reject
+  // Z_STREAM_END. 4096 fits the fast path exactly, 4097 does not.
+  it.each([4096, 4097])("a BFINAL=1 message inflating to %d bytes is delivered intact", async size => {
+    using raw = await connectDeflated(pmd);
+    const payload = Buffer.alloc(size, "bfinal-fastpath-");
+    const msg = raw.nextMessage();
+    raw.socket.write(frame(0x2, pmdFinal(payload), { rsv1: true }));
+    expect(await Promise.race([msg, raw.serverClose, raw.closed])).toBe(`message:${payload.toString("hex")}`);
+    expect(raw.received).toEqual([payload.toString("hex")]);
+  });
+
+  // The zlib inflate loop writes into a 16 KiB scratch buffer per iteration; a
+  // BFINAL=1 payload that inflates to more than that must still be reassembled
+  // correctly across the chunk boundary.
+  it("a BFINAL=1 message inflating to more than 16 KiB is delivered intact", async () => {
+    using raw = await connectDeflated(pmd);
+    const big = Buffer.alloc(20000, "bfinal-large-chunk-");
+    const compressed = pmdFinal(big);
+    expect(compressed.length).toBeLessThan(0xffff);
+    const msg = raw.nextMessage();
+    raw.socket.write(frame(0x2, compressed, { rsv1: true }));
+    expect(await Promise.race([msg, raw.serverClose, raw.closed])).toBe(`message:${big.toString("hex")}`);
+    expect(raw.received).toEqual([big.toString("hex")]);
+  });
 });

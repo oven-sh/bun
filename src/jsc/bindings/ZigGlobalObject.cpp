@@ -568,7 +568,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
                 // JSProcessEnvMap is a JSNonFinalObject: putDirectMayBeIndex for an
                 // index-like key routes through method-table defineOwnProperty, which
-                // declares a throw scope; a top scope keeps validation balanced.
+                // declares a throw scope; check each iteration to keep exception-scope
+                // validation balanced (the only real throw here is OOM).
                 auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 auto env = Bun::createProcessEnvMapObject(globalObject);
                 size_t i = 0;
@@ -576,6 +577,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    if (scope.exception()) [[unlikely]] {
+                        scope.clearException();
+                        break;
+                    }
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {

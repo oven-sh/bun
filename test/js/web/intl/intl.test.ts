@@ -311,28 +311,46 @@ describe("exhaustive locale sweep (every compressed item)", () => {
 // The IANA timezone table and host-zone display-name cache are filled lazily on
 // first Date / Intl access rather than inside VM::VM, so the first access can
 // race across Workers that each construct their own VM. Exercise that race in a
-// fresh process where nothing has warmed the cache yet: every Worker plus the
-// main thread must observe the same resolved zone, the same supportedValuesOf
-// count, and the same Date.prototype.toString output.
+// fresh process where nothing has warmed the process-wide table yet: every
+// Worker parks on a shared barrier until all eight are ready, then they probe
+// simultaneously. The main thread touches Date / Intl only after collecting the
+// Worker results, so it cannot warm the cache ahead of them.
 test.concurrent("timezone lazy-init is consistent across concurrent Workers", async () => {
   const script = `
+    const N = 8;
+    // gate[0]: count of workers that have reached the barrier.
+    // gate[1]: release flag; workers Atomics.wait on it until main notifies.
+    const gate = new Int32Array(new SharedArrayBuffer(8));
     const probe = () => ({
       zone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
       count: Intl.supportedValuesOf("timeZone").length,
       date: new Date(0).toString(),
     });
-    const body = "postMessage((" + probe.toString() + ")())";
+    const body =
+      "self.onmessage = e => {" +
+      "  const gate = e.data;" +
+      "  Atomics.add(gate, 0, 1);" +
+      "  Atomics.wait(gate, 1, 0);" +
+      "  postMessage((" + probe.toString() + ")());" +
+      "};";
     const url = URL.createObjectURL(new Blob([body]));
-    const workers = Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
+    const threads = [];
+    const results = Array.from({ length: N }, (_, i) => new Promise((resolve, reject) => {
       const w = new Worker(url);
+      threads.push(w);
       w.onmessage = e => { resolve(e.data); w.terminate(); };
       w.onerror = reject;
+      w.postMessage(gate);
     }));
-    const results = [probe(), ...await Promise.all(workers)];
-    for (const r of results)
-      if (r.zone !== results[0].zone || r.count !== results[0].count || r.date !== results[0].date)
-        throw new Error("inconsistent: " + JSON.stringify(r) + " vs " + JSON.stringify(results[0]));
-    console.log(JSON.stringify(results[0]));
+    while (Atomics.load(gate, 0) < N) await Bun.sleep(0);
+    Atomics.store(gate, 1, 1);
+    Atomics.notify(gate, 1);
+    const worker = await Promise.all(results);
+    const main = probe();
+    for (const r of [main, ...worker])
+      if (r.zone !== worker[0].zone || r.count !== worker[0].count || r.date !== worker[0].date)
+        throw new Error("inconsistent: " + JSON.stringify(r) + " vs " + JSON.stringify(worker[0]));
+    console.log(JSON.stringify(worker[0]));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],

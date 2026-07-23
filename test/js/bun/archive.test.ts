@@ -1905,6 +1905,75 @@ describe("Bun.Archive", () => {
       const files = await readArchive.files();
       expect(await files.get("test.txt")!.text()).toBe("test content");
     });
+
+    // Regression test for https://github.com/oven-sh/bun/issues/30234.
+    // `new Bun.Archive({...}, { compress: "gzip" })` + `Bun.write(path, archive)`
+    // used to write the raw uncompressed tarball, ignoring the compress option.
+    test("honors compress: gzip from the Archive constructor (issue #30234)", async () => {
+      const payload = Buffer.alloc(1300, "Hello, World!").toString();
+      const archive = new Bun.Archive({ "hello.txt": payload }, { compress: "gzip" });
+
+      using dir = tempDir("archive-bunwrite-gzip", {});
+      const gzPath = join(String(dir), "out.tar.gz");
+
+      await Bun.write(gzPath, archive);
+
+      // Must be gzip magic bytes, not a raw tar.
+      const bytes = await Bun.file(gzPath).bytes();
+      expect(bytes[0]).toBe(0x1f);
+      expect(bytes[1]).toBe(0x8b);
+
+      // Must match what archive.bytes() / Bun.Archive.write produce from the same archive.
+      const directBytes = await archive.bytes();
+      expect(bytes).toEqual(directBytes);
+
+      // libarchive auto-detects gzip on read, so the round-trip still works.
+      const files = await new Bun.Archive(bytes).files();
+      expect(await files.get("hello.txt")!.text()).toBe(payload);
+    });
+
+    test("gzip compression level is respected when writing via Bun.write", async () => {
+      // Same payload/assertion shape as the sibling archive.blob() level test:
+      // level 12 must compress strictly smaller than level 1, which only holds
+      // if `level` actually threads through the Bun.write path.
+      const payload = Buffer.alloc(50000, "Hello, World!");
+      using dir = tempDir("archive-bunwrite-gzip-level", {});
+
+      const lowPath = join(String(dir), "low.tar.gz");
+      const highPath = join(String(dir), "high.tar.gz");
+
+      await Bun.write(lowPath, new Bun.Archive({ "data.txt": payload }, { compress: "gzip", level: 1 }));
+      await Bun.write(highPath, new Bun.Archive({ "data.txt": payload }, { compress: "gzip", level: 12 }));
+
+      const low = Bun.file(lowPath);
+      const high = Bun.file(highPath);
+
+      // Both files are valid gzip.
+      const lowBytes = await low.bytes();
+      const highBytes = await high.bytes();
+      expect(lowBytes.slice(0, 2)).toEqual(new Uint8Array([0x1f, 0x8b]));
+      expect(highBytes.slice(0, 2)).toEqual(new Uint8Array([0x1f, 0x8b]));
+
+      // Level 12 must produce a strictly smaller file than level 1.
+      expect(high.size).toBeLessThan(low.size);
+    });
+
+    test("writes gzipped archive to a Bun.file() destination", async () => {
+      const archive = new Bun.Archive({ "test.txt": "test content" }, { compress: "gzip" });
+
+      using dir = tempDir("archive-bunwrite-gzip-file", {});
+      const tarPath = join(String(dir), "out.tar.gz");
+      const bunFile = Bun.file(tarPath);
+
+      await Bun.write(bunFile, archive);
+
+      const bytes = await bunFile.bytes();
+      expect(bytes[0]).toBe(0x1f);
+      expect(bytes[1]).toBe(0x8b);
+
+      const files = await new Bun.Archive(bytes).files();
+      expect(await files.get("test.txt")!.text()).toBe("test content");
+    });
   });
 
   describe("TypeScript types", () => {

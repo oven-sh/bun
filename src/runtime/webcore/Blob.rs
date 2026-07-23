@@ -5277,7 +5277,21 @@ pub fn write_file_internal(
 
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
         if let Some(archive) = data.as_class_ref::<Archive>() {
-            break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
+            match archive.gzip_level() {
+                None => break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this),
+                Some(level) => {
+                    // Compress on the thread pool, then resume the write with a
+                    // byte-backed source blob. Move `destination_blob` into the
+                    // task; the empty replacement drops harmlessly here.
+                    return crate::api::archive::start_archive_compress_write_task(
+                        global_this,
+                        archive.store_ref().clone(),
+                        level,
+                        core::mem::replace(&mut destination_blob, Blob::init_empty(global_this)),
+                        &options,
+                    );
+                }
+            }
         }
 
         break 'brk Blob::get::<false, false>(global_this, data)?;

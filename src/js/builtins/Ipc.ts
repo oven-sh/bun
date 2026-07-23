@@ -161,10 +161,11 @@ export function serialize(message, handle, options, target) {
     // Subprocess.send), in which case the socket is sent untracked.
     const owner = target === null ? process : target;
     const server = handle.server;
-    if (owner && server && server._connectionKey !== undefined) {
+    const connectionKey = server ? server._connectionKey : undefined;
+    if (owner && connectionKey !== undefined) {
       // Like node's handleConversion: the server stops counting the sent
       // socket and polls the receiving process instead (socket_list).
-      serialized.key = server._connectionKey;
+      serialized.key = connectionKey;
       const { getSocketList, kChannelSockets } = require("internal/socket_list");
       const firstTime = !owner[kChannelSockets]?.send[serialized.key];
       const socketList = getSocketList("send", owner, serialized.key);
@@ -194,7 +195,8 @@ export function serialize(message, handle, options, target) {
           parser.free();
           handle.parser = null;
         }
-        if (handle._httpMessage) handle._httpMessage.detachSocket(handle);
+        const { _httpMessage } = handle;
+        if (_httpMessage) _httpMessage.detachSocket(handle);
       }
     }
     return [native, serialized];
@@ -242,12 +244,13 @@ export function parseHandle(target, serialized, fd) {
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
-      if (serialized.key) {
+      const { key: serializedKey } = serialized;
+      if (serializedKey) {
         // The sender's net.Server tracks this socket: register it so the
         // NODE_SOCKET_* count/notify-close queries see it (socket_list).
         const { getSocketList, getChannelOwner } = require("internal/socket_list");
         const owner = target === null ? process : getChannelOwner(target);
-        if (owner) getSocketList("got", owner, serialized.key).add({ socket });
+        if (owner) getSocketList("got", owner, serializedKey).add({ socket });
       }
       emit(target, serialized.msg, socket);
       return;

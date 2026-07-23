@@ -1789,7 +1789,12 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
          * exits right after server.close(). The deferred-close contract
          * documented in us_internal_ssl_close only applies to the
          * SSL_shutdown()==0 case where the alert *was* flushed; here it
-         * never went out, so close now. */
+         * never went out, so close now. Deliberate divergence from node,
+         * which parks the alert in its stream write queue (crypto_tls.cc
+         * DoShutdown): replicating that needs a retry hook surviving the
+         * is_shut_down short-circuits, and until one exists dropping the
+         * alert under backpressure is the accepted tradeoff — the peer
+         * still observes the TCP FIN. */
         return 1;
       }
       s->ssl_fatal_error = 1;

@@ -2440,6 +2440,58 @@ Reo=
       expect(received).toEqual([]);
     });
 
+    it("refuses raw-twin writes after a failed (non-policy) handshake", async () => {
+      // rejectUnauthorized: false so the policy-reject path stays out of the
+      // picture: the transport must fail closed purely because the handshake
+      // itself failed (the peer is not speaking TLS), the way node destroys
+      // the underlying socket on a TLS failure.
+      const serverReceived: string[] = [];
+      const failure = Promise.withResolvers<number>();
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.write("this-is-not-a-tls-server\n");
+          },
+          data(_socket, data) {
+            serverReceived.push(data.toString("latin1"));
+          },
+          close() {},
+          error() {},
+        },
+      });
+      using tcp = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      const [raw, secure] = tcp.upgradeTLS({
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake(_socket: Socket, success: boolean) {
+            if (!success) failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          error() {
+            // Protocol failures surface here; the raw twin must already be
+            // fail-closed by the time JS observes the failure.
+            failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          data() {},
+          close() {
+            closed.resolve();
+          },
+        },
+      } as any);
+      using _raw = raw;
+      using _secure = secure;
+
+      expect(await failure.promise).toBe(-1);
+      await closed.promise;
+      expect(serverReceived.join("")).not.toContain("plaintext-after-failed-handshake");
+    });
+
     it("keeps a connection whose server certificate is trusted", async () => {
       using t = await connectTo({ key: SERVER_KEY, cert: SERVER_CRT }, { ca: CA_CRT });
       expect(await t.handshake.promise).toEqual({

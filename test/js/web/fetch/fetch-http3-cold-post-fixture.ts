@@ -94,7 +94,9 @@ for (const { init, want } of shapes) {
           // @ts-ignore
           protocol: "http3",
           tls: { rejectUnauthorized: false },
-          signal: AbortSignal.timeout(60_000),
+          // 2 shapes x 10 s keeps the fixture inside the wrapper's 30 s
+          // budget so a wedged handshake self-reports via exit code.
+          signal: AbortSignal.timeout(10_000),
         } as any).then(r => r.text()),
       ),
     );

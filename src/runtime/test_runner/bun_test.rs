@@ -180,11 +180,7 @@ pub mod js_fns {
                 ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
             )?;
 
-            let has_done_parameter = if let Some(callback) = args.callback {
-                callback.get_length(global_this)? > 0
-            } else {
-                false
-            };
+            let has_done_parameter = args.callback.is_some() && args.callback_length > 0;
 
             let bun_test_root = get_active_test_root(
                 global_this,

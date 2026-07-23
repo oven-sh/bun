@@ -188,11 +188,7 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
         ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
     )?;
 
-    let callback_length: usize = if let Some(callback) = args.callback {
-        callback.get_length(global)? as usize
-    } else {
-        0
-    };
+    let callback_length: usize = args.callback_length as usize;
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
@@ -521,6 +517,10 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
 pub struct ParseArgumentsResult {
     pub description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
+    /// `.length` of the original callback, read before any `AsyncContextFrame`
+    /// wrapping. `callback` may be the wrapper (which has no `.length`), so
+    /// callers must read arity from here, not from `callback.get_length()`.
+    pub callback_length: u64,
     pub options: ParseArgumentsOptions,
 }
 
@@ -665,18 +665,24 @@ pub fn parse_arguments(
     };
     let (description, callback, options) = (items.description, items.callback, items.options);
 
-    let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
-        None
-    } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
-    } else {
-        let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
-        return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
-    };
+    let (result_callback, callback_length): (Option<JSValue>, u64) =
+        if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
+            (None, 0)
+        } else if callback.is_function() {
+            // Read `.length` from the user's function before wrapping it in an
+            // `AsyncContextFrame`: the wrapper has no `.length` and callers
+            // would otherwise misread the arity (done-callback detection).
+            let length = callback.get_length(global)?;
+            (Some(callback.with_async_context_if_needed(global)), length)
+        } else {
+            let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
+            return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
+        };
 
     let mut result = ParseArgumentsResult {
         description: None,
         callback: result_callback,
+        callback_length,
         options: ParseArgumentsOptions::default(),
     };
     // `result` cleanup handled by Drop on early return.

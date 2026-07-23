@@ -150,6 +150,23 @@ test.concurrent("'upgrade' hands the adopted socket to the listener", async () =
   await ctx.reader.until("echo:ping");
 });
 
+test.concurrent("CONNECT hands the adopted socket to the 'connect' listener with bodyHead", async () => {
+  using ctx = await setup();
+  const connectEvent = new Promise<{ method: string | undefined; head: string }>(resolve => {
+    ctx.httpServer.on("connect", (req, socket, head) => {
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      socket.on("data", d => socket.write("tun:" + d));
+      resolve({ method: req.method, head: head.toString() });
+    });
+  });
+  // Tunnel bytes in the same packet as the request head must surface as bodyHead.
+  ctx.client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\nearly");
+  expect(await connectEvent).toEqual({ method: "CONNECT", head: "early" });
+  await ctx.reader.until("200 Connection Established");
+  ctx.client.write("ping");
+  await ctx.reader.until("tun:ping");
+});
+
 test.concurrent("Expect: 100-continue is answered before the body", async () => {
   using ctx = await setup(async (req, res) => {
     let body = "";
@@ -176,6 +193,25 @@ test.concurrent("server sockets accepted natively are unaffected", async () => {
   }
 });
 
-test.concurrent("http._connectionListener is exported", () => {
-  expect(typeof (http as any)._connectionListener).toBe("function");
+test.concurrent("http._connectionListener serves a socket when invoked directly", async () => {
+  // The httpolyglot/spdy pattern: call the exported listener with the server
+  // as `this` instead of emitting 'connection'.
+  const httpServer = http.createServer((req, res) => res.end("direct:" + req.url));
+  const raw = net.createServer(sock => (http as any)._connectionListener.call(httpServer, sock));
+  await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", resolve));
+  const port = (raw.address() as net.AddressInfo).port;
+  const client = net.connect(port, "127.0.0.1");
+  try {
+    const reader = collect(client);
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+    client.write("GET /x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    const buf = await reader.until("direct:/x");
+    expect(buf).toContain("HTTP/1.1 200 OK");
+  } finally {
+    client.destroy();
+    raw.close();
+  }
 });

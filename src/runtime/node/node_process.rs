@@ -346,7 +346,9 @@ mod _impl {
                     .any(|(from, _)| *from == arg);
                 if seen_run
                     || is_node_alias
-                    || !(arg.len() > 2 && arg[1] != b'-' && push_normalized_short_token(arg, &mut args))
+                    || !(arg.len() > 2
+                        && arg[1] != b'-'
+                        && push_normalized_short_token(arg, &mut args))
                 {
                     args.push(BunString::clone_utf8(arg));
                 }

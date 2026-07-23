@@ -174,7 +174,24 @@ async function worker(w: number) {
     }
     if (j.kind === "crash") crashes++;
     else hangs++;
-    if (j.kind === "hang") j.sig = `genrun HANG seed:${seed}`; // per-program hang key
+    if (j.kind === "hang") {
+      j.sig = `genrun HANG seed:${seed}`; // per-program hang key
+      // Load control: a trivial program must exit within the ceiling right
+      // now. If it cannot, the box is starved (not the program hanging) -
+      // discard rather than queue a scheduler artifact.
+      const ctlDir = join(dir, "ctl");
+      mkdirSync(ctlDir, { recursive: true });
+      const ctlProg = join(ctlDir, "ctl.js");
+      await Bun.write(ctlProg, `await Bun.sleep(10); process.exit(0);\n`);
+      const ctl = await runProgram(ctlProg, ctlDir);
+      if (ctl.timedOut || ctl.exit !== 0) {
+        console.log(`   [seed ${seed}] control program failed to exit - box starved, hang discarded`);
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {}
+        continue;
+      }
+    }
     console.log(`!! [seed ${seed}] ${j.kind} ${verified ? "VERIFIED" : "unverified"}: ${j.detail.slice(0, 90)}`);
     if (!verified) {
       // A seed IS a complete reproducer - never drop a first-run crash.

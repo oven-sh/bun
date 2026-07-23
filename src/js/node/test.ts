@@ -4212,10 +4212,10 @@ function before(arg0: unknown, arg1: unknown) {
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
   const { beforeAll } = bunTest();
   function runBeforeAllHook(done: (error?: unknown) => void) {
-    // An ancestor's before() already failed: node cancels the whole subtree
-    // without running nested hooks. Checked at execution time because
-    // hookSetupFailed is set by onHookFailed after collection.
-    if (runChildReporterEnabled && hasHookFailedAncestorSuite(owner)) {
+    // This suite's (or an ancestor's) before() already failed: node cancels
+    // the whole subtree without running later hooks. Checked at execution
+    // time because hookSetupFailed is set by onHookFailed after collection.
+    if (runChildReporterEnabled && (owner.hookSetupFailed || hasHookFailedAncestorSuite(owner))) {
       done();
       return;
     }

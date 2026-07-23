@@ -1664,23 +1664,37 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     }
 }
 
-/// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
+/// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.
 /// When `TestReporter.enable` arrives after test
 /// collection has started, walk the already-discovered scope tree, assign
 /// debugger test IDs, and emit `reportTestFoundWithLocation` for each.
+///
+/// `next_test_id` is the caller's current
+/// `Debugger::next_test_id_for_debugger` counter value, passed by value; the
+/// return is that counter advanced past every ID assigned during this call.
+/// The caller is responsible for writing the return value back into
+/// `next_test_id_for_debugger`. This value-in/value-out shape (rather than a
+/// raw `*mut i32` through the hook) is what lets this path share the ID
+/// counter with the live-collection path in `ScopeFunctions::call` without
+/// colliding: both increment the same logical counter, but only this
+/// function's caller and `ScopeFunctions::call` ever touch the field
+/// directly, and never concurrently (single JS thread).
 ///
 /// # Safety
 /// `agent` is a live C++ `Inspector::TestReporterAgent::Handle*` (just stored
 /// into `debugger.test_reporter_agent.handle` by the caller). Called on the JS
 /// thread.
-unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::TestReporterHandle) {
+unsafe fn retroactively_report_discovered_tests(
+    agent: *mut bun_jsc::debugger::TestReporterHandle,
+    next_test_id: i32,
+) -> i32 {
     use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
     use crate::test_runner::jest::Jest;
     use bun_jsc::debugger::{TestReporterHandle, TestType};
 
-    let Some(runner) = Jest::runner() else { return };
+    let Some(runner) = Jest::runner() else { return next_test_id };
     let Some(active_file) = runner.bun_test_root.active_file.as_ref() else {
-        return;
+        return next_test_id;
     };
     // SAFETY: single-threaded; `active_file` keeps the cell alive for this call.
     let active_file = unsafe { &mut *active_file.as_ptr() };
@@ -1689,7 +1703,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
     // discovered).
     match active_file.phase {
         Phase::Collection | Phase::Execution => {}
-        Phase::Done => return,
+        Phase::Done => return next_test_id,
     }
 
     // Get the file path for source location info.
@@ -1699,8 +1713,12 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
         .text();
     let mut source_url = bun_core::String::init(file_path);
 
-    // Track the maximum ID we assign.
-    let mut max_id: i32 = 0;
+    // Seed from the caller's shared counter (see fn doc) rather than 0, so
+    // IDs assigned here never collide with IDs the live-collection path
+    // (`ScopeFunctions::call`) already handed out for scopes registered
+    // before this call, or will hand out for scopes registered after it
+    // returns.
+    let mut max_id: i32 = next_test_id;
 
     // Recursively report all discovered tests starting from root scope.
     retroactively_report_scope(
@@ -1711,9 +1729,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
         &mut source_url,
     );
 
-    // A debug-only log of `max_id` was dropped here: `scoped_log!` only accepts
-    // an ident, so it can't name the scoped-logger static in `bun_jsc::debugger`.
-    let _ = max_id;
+    return max_id;
 
     fn retroactively_report_scope(
         agent: *mut TestReporterHandle,

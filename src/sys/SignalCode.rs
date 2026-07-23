@@ -71,7 +71,14 @@ impl SignalCode {
             Self::SIGWINCH => Some("Window size change"),
             Self::SIGIO => Some("I/O on asynchronous file descriptor is possible"),
             Self::SIGSYS => Some("Bad system call"),
+            // Platform-only signals (the X-macro in `bun_core` defines a
+            // different name set per platform — see for_each_signal!).
+            #[cfg(not(target_vendor = "apple"))]
             Self::SIGPWR => Some("Power failure"),
+            #[cfg(target_vendor = "apple")]
+            Self::SIGEMT => Some("Emulator trap"),
+            #[cfg(target_vendor = "apple")]
+            Self::SIGINFO => Some("Information request"),
             _ => None,
         }
     }

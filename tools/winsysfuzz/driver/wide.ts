@@ -378,7 +378,13 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
   try {
     for (const f of readdirSync(dir)) if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(join(dir, f), { force: true });
   } catch {}
-  const stacks = rr.hangStacks || rr.crashDump ? digestStacks(rr.hangStacks ?? rr.crashDump ?? "") : [];
+  const crashSig = rr.crashSig ?? (rr.stdout || rr.stderr ? detectCrash(rr.stdout, rr.stderr) : null);
+  // Persist the crash's own backtrace lines (the panic's frames name the
+  // faulting caller - symbolizable later) plus any captured hang stacks.
+  const stacks =
+    rr.hangStacks || rr.crashDump
+      ? digestStacks(rr.hangStacks ?? rr.crashDump ?? "")
+      : (crashSig?.frames ?? []).slice(0, 24);
   const key = outcome === "CRASH" ? `crash: ${detail}` : `wide ${outcome} @ ${basename(file)}: ${detail.slice(0, 80)}`;
   return { file, schedule, outcome, key, detail, stacks };
 }

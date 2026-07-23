@@ -328,7 +328,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
     // keepNames emits its `var __name = ...` helper outside the capture window;
-    // re-inject it inside when the captured body references it.
+    // re-inject a tamper-safe (@Object.@defineProperty) copy inside when the
+    // captured body references it.
     const usesKeepNames = /\b__name\(/.test(captured);
     const finalReplacement =
       (fn.directives.sloppy
@@ -337,7 +338,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
             /function\s*\(.*?\)\s*{/,
             '$&"use strict";' +
               (usesKeepNames
-                ? 'var __name=(t,n)=>(Object.defineProperty(t,"name",{value:n,configurable:!0}),t);'
+                ? 'var __name=(t,n)=>(__intrinsic__Object.__intrinsic__defineProperty(t,"name",{value:n,configurable:!0}),t);'
                 : "") +
               (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
               (usesAssert ? createAssertClientJS(fn.name) : ""),

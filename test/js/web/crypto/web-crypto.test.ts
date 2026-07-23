@@ -556,7 +556,7 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     ]);
     const clone = structuredClone(key);
     expect(clone.extractable).toBe(false);
-    expect(crypto.subtle.exportKey("raw-secret", clone)).rejects.toThrow();
+    await expect(crypto.subtle.exportKey("raw-secret", clone)).rejects.toThrow("key is not extractable");
   });
 
   it.each(["ML-DSA-65", "ML-KEM-768"])("structuredClone round-trips %s key pairs", async alg => {
@@ -626,7 +626,7 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", false, [
       "decrypt",
     ]);
-    expect(
+    await expect(
       crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(12) }, key, new Uint8Array(5)),
     ).rejects.toThrow("The operation failed for an operation-specific reason");
   });

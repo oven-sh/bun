@@ -32,6 +32,7 @@
 // #include "ByteArrayPixelBuffer.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
+#include <openssl/err.h>
 #include "CryptoKeyEC.h"
 #include "CryptoKeyHMAC.h"
 #include "CryptoKeyOKP.h"
@@ -4427,6 +4428,10 @@ private:
             result = CryptoKeyAKP::importPkcs8(algorithm, WTF::move(keyData), extractable, usages, nullptr);
             break;
         }
+        // A corrupt payload leaves the BoringSSL parse error in the queue;
+        // nothing here attaches it as a cause, so clear it.
+        if (!result)
+            ERR_clear_error();
         return !!result;
     }
 

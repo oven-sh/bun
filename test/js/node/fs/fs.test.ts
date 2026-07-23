@@ -5709,6 +5709,9 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     async () => {
       const { stdout, exitCode } = await runScript(`
       require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
+      // Negative assertion with no observable signal: the ignored handler
+      // staying silent has nothing to await, so hold the process open past
+      // the symlink settlement before printing the sentinel.
       setTimeout(() => console.log("quiet"), 50);
     `);
       expect(stdout).toBe("quiet");

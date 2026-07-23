@@ -1555,7 +1555,7 @@ describe("Glob.match", () => {
       expect(new Glob("!f*b").match("foo")).toBeTrue();
       expect(new Glob("!.md").match(".md")).toBeFalse();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
-      // try expect(!match("!**/*.md", "b.md"));
+      expect(new Glob("!**/*.md").match("b.md")).toBeFalse();
       expect(new Glob("!**/*.md").match("c.txt")).toBeTrue();
       expect(new Glob("!*.md").match("a.js")).toBeTrue();
       expect(new Glob("!*.md").match("b.md")).toBeFalse();
@@ -1585,9 +1585,9 @@ describe("Glob.match", () => {
       expect(new Glob("!*.md").match("a.js")).toBeTrue();
       expect(new Glob("!*.md").match("b.txt")).toBeTrue();
       expect(new Glob("!*.md").match("c.md")).toBeFalse();
-      // try expect(!match("!**/a.js", "a/a/a.js"));
-      // try expect(!match("!**/a.js", "a/b/a.js"));
-      // try expect(!match("!**/a.js", "a/c/a.js"));
+      expect(new Glob("!**/a.js").match("a/a/a.js")).toBeFalse();
+      expect(new Glob("!**/a.js").match("a/b/a.js")).toBeFalse();
+      expect(new Glob("!**/a.js").match("a/c/a.js")).toBeFalse();
       expect(new Glob("!**/a.js").match("a/a/b.js")).toBeTrue();
       expect(new Glob("!a/**/a.js").match("a/a/a/a.js")).toBeFalse();
       expect(new Glob("!a/**/a.js").match("b/a/b/a.js")).toBeTrue();
@@ -1595,7 +1595,7 @@ describe("Glob.match", () => {
       expect(new Glob("!**/*.md").match("a/b.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a/b.md")).toBeFalse();
-      // try expect(!match("!**/*.md", "a.md"));
+      expect(new Glob("!**/*.md").match("a.md")).toBeFalse();
       expect(new Glob("**/*.md").match("a/b.js")).toBeFalse();
       expect(new Glob("**/*.md").match("a.js")).toBeFalse();
       expect(new Glob("**/*.md").match("a/b.md")).toBeTrue();
@@ -1603,14 +1603,52 @@ describe("Glob.match", () => {
       expect(new Glob("!**/*.md").match("a/b.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
       expect(new Glob("!**/*.md").match("a/b.md")).toBeFalse();
-      // try expect(!match("!**/*.md", "a.md"));
+      expect(new Glob("!**/*.md").match("a.md")).toBeFalse();
       expect(new Glob("!*.md").match("a/b.js")).toBeTrue();
       expect(new Glob("!*.md").match("a.js")).toBeTrue();
       expect(new Glob("!*.md").match("a/b.md")).toBeTrue();
       expect(new Glob("!*.md").match("a.md")).toBeFalse();
       expect(new Glob("!**/*.md").match("a.js")).toBeTrue();
-      // try expect(!match("!**/*.md", "b.md"));
+      expect(new Glob("!**/*.md").match("b.md")).toBeFalse();
       expect(new Glob("!**/*.md").match("c.txt")).toBeTrue();
+    });
+
+    test("negation with leading globstar", () => {
+      // `!p` must be the exact complement of `p`, including when `p` starts with `**`.
+      expect(new Glob("**/a").match("a")).toBeTrue();
+      expect(new Glob("**/a").match("x/y/a")).toBeTrue();
+      expect(new Glob("!**/a").match("a")).toBeFalse();
+      expect(new Glob("!**/a").match("x/y/a")).toBeFalse();
+      expect(new Glob("!**/a").match("zzz")).toBeTrue();
+      expect(new Glob("!**/a").match("x/y/b")).toBeTrue();
+
+      // trailing globstar
+      expect(new Glob("!**").match("a")).toBeFalse();
+      expect(new Glob("!**").match("a/b/c")).toBeFalse();
+
+      // `!!p` must equal `p` (involution)
+      expect(new Glob("!!**/a").match("a")).toBeTrue();
+      expect(new Glob("!!**/a").match("x/y/a")).toBeTrue();
+      expect(new Glob("!!**/a").match("zzz")).toBeFalse();
+      expect(new Glob("!!!**/a").match("a")).toBeFalse();
+      expect(new Glob("!!!**/a").match("x/y/a")).toBeFalse();
+
+      // canonical negated ignore glob
+      expect(new Glob("**/node_modules/**").match("node_modules/pkg/index.js")).toBeTrue();
+      expect(new Glob("!**/node_modules/**").match("node_modules/pkg/index.js")).toBeFalse();
+      expect(new Glob("!**/node_modules/**").match("a/b/node_modules/pkg/index.js")).toBeFalse();
+      expect(new Glob("!**/node_modules/**").match("src/index.js")).toBeTrue();
+
+      // control: `**` not at pattern start was already correct
+      expect(new Glob("!x/**/a").match("x/a")).toBeFalse();
+      expect(new Glob("!x/**/a").match("x/y/a")).toBeFalse();
+      expect(new Glob("!x/**/a").match("y/a")).toBeTrue();
+
+      // negation combined with braces containing a leading globstar
+      expect(new Glob("!{**/a,**/b}").match("a")).toBeFalse();
+      expect(new Glob("!{**/a,**/b}").match("x/y/a")).toBeFalse();
+      expect(new Glob("!{**/a,**/b}").match("x/y/b")).toBeFalse();
+      expect(new Glob("!{**/a,**/b}").match("x/y/c")).toBeTrue();
     });
 
     test("question_mark", () => {

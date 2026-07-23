@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
-import { once } from "node:events";
+import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -970,5 +970,66 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
     c.stdout!.pause();
     await once(c, "close");
     expect(c.exitCode).toBe(0);
+  });
+});
+
+// When spawn fails (ENOENT, bad cwd, etc.) the ChildProcess emits 'error' and
+// 'close' but never 'exit'. The abort listener on options.signal was only
+// removed on 'exit', so every failed spawn against a shared AbortSignal leaked
+// one listener (and the retained ChildProcess) for the signal's lifetime.
+describe("spawn/execFile({signal}) does not leak abort listeners on spawn failure", () => {
+  const N = 50;
+
+  async function failN(make: (signal: AbortSignal) => ChildProcess) {
+    const ac = new AbortController();
+    setMaxListeners(0, ac.signal);
+    for (let i = 0; i < N; i++) {
+      const child = make(ac.signal);
+      const { promise, resolve } = Promise.withResolvers<void>();
+      child.on("error", () => {});
+      child.on("close", () => resolve());
+      await promise;
+    }
+    return getEventListeners(ac.signal, "abort").length;
+  }
+
+  it.concurrent("spawn ENOENT", async () => {
+    const leaked = await failN(signal => spawn("/nonexistent-binary-xyz", [], { signal }));
+    expect(leaked).toBe(0);
+  });
+
+  it.concurrent("spawn with nonexistent cwd", async () => {
+    const leaked = await failN(signal =>
+      spawn(bunExe(), ["-e", "1"], { signal, cwd: "/nonexistent-dir-xyz", env: bunEnv }),
+    );
+    expect(leaked).toBe(0);
+  });
+
+  it.concurrent("execFile ENOENT", async () => {
+    const leaked = await failN(signal => execFile("/nonexistent-binary-xyz", [], { signal }, () => {}));
+    expect(leaked).toBe(0);
+  });
+
+  it.concurrent("successful spawn (control)", async () => {
+    const ac = new AbortController();
+    setMaxListeners(0, ac.signal);
+    for (let i = 0; i < 5; i++) {
+      const child = spawn(bunExe(), ["-e", "1"], { signal: ac.signal, env: bunEnv, stdio: "ignore" });
+      await once(child, "close");
+    }
+    expect(getEventListeners(ac.signal, "abort").length).toBe(0);
+  });
+
+  it("abort() after a failed spawn still cleans up and is a no-op kill", async () => {
+    const ac = new AbortController();
+    const child = spawn("/nonexistent-binary-xyz", [], { signal: ac.signal });
+    const errors: any[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    child.on("error", e => errors.push(e));
+    child.on("close", () => resolve());
+    await closed;
+    expect(getEventListeners(ac.signal, "abort").length).toBe(0);
+    ac.abort();
+    expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
 });

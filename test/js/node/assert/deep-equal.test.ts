@@ -652,6 +652,17 @@ describe("detached ArrayBuffer", () => {
     expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);
   });
 
+  test("assert.partialDeepStrictEqual checks own properties on a KeyObject after equals()", () => {
+    const crypto = require("node:crypto");
+    const key = crypto.createSecretKey(Buffer.from("secret"));
+    const key2 = crypto.createSecretKey(Buffer.from("secret"));
+    Object.assign(key2, { x: 1 });
+    // expected has {x:1} that actual lacks: node throws ERR_ASSERTION.
+    expect(() => assert.partialDeepStrictEqual(key, key2)).toThrow(assert.AssertionError);
+    // subset direction: extra own prop on actual is fine.
+    expect(() => assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret")))).not.toThrow();
+  });
+
   test("error matches Node's message", () => {
     const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(0)));
     expect(error).toBeInstanceOf(TypeError);

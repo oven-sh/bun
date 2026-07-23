@@ -72,7 +72,7 @@ static bool hasValidParsedHost(const URL& url)
 // only (path/query/fragment are percent-encoded by the parser and must stay
 // untouched). Returns a null String when no rewrite is needed, which is the
 // case for every URL that stays on the common path.
-static String applyIDNADeltaToURLAuthority(const String& urlString)
+static String applyIDNADeltaToURLAuthority(const String& urlString, bool baseHasSpecialScheme = false)
 {
     if (urlString.is8Bit() || !urlString.length())
         return {};
@@ -80,14 +80,22 @@ static String applyIDNADeltaToURLAuthority(const String& urlString)
     StringView view { urlString };
 
     // Locate the start of an explicit authority: "scheme://" or a
-    // scheme-relative "//". Anything else has no IDNA host to fix.
+    // scheme-relative "//". Non-special-scheme URLs have opaque hosts and
+    // never run IDNA (their host is UTF-8 percent-encoded verbatim), so only
+    // the six special schemes are eligible. A scheme-relative "//" inherits
+    // the base's scheme, which the caller gates.
     size_t authorityStart = notFound;
-    if (view.length() >= 2 && view[0] == '/' && view[1] == '/')
+    if (baseHasSpecialScheme && view.length() >= 2 && view[0] == '/' && view[1] == '/')
         authorityStart = 2;
     else {
         size_t colon = view.find(':');
-        if (colon != notFound && view.length() >= colon + 3 && view[colon + 1] == '/' && view[colon + 2] == '/')
-            authorityStart = colon + 3;
+        if (colon != notFound && view.length() >= colon + 3 && view[colon + 1] == '/' && view[colon + 2] == '/') {
+            auto scheme = view.left(colon);
+            if (equalLettersIgnoringASCIICase(scheme, "http"_s) || equalLettersIgnoringASCIICase(scheme, "https"_s)
+                || equalLettersIgnoringASCIICase(scheme, "ws"_s) || equalLettersIgnoringASCIICase(scheme, "wss"_s)
+                || equalLettersIgnoringASCIICase(scheme, "ftp"_s) || equalLettersIgnoringASCIICase(scheme, "file"_s))
+                authorityStart = colon + 3;
+        }
     }
     if (authorityStart == notFound)
         return {};
@@ -147,7 +155,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
 {
     ASSERT(base.isValid() || base.isNull());
-    auto mapped = applyIDNADeltaToURLAuthority(url);
+    auto mapped = applyIDNADeltaToURLAuthority(url, base.hasSpecialScheme());
     URL completeURL { base, mapped.isNull() ? url : mapped };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL))
         return Exception { InvalidURLError, url };
@@ -171,7 +179,7 @@ static URL parseInternal(const String& url, const String& base)
     URL baseURL { mappedBase.isNull() ? base : mappedBase };
     if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL)))
         return {};
-    auto mapped = applyIDNADeltaToURLAuthority(url);
+    auto mapped = applyIDNADeltaToURLAuthority(url, baseURL.hasSpecialScheme());
     URL result { baseURL, mapped.isNull() ? url : mapped };
     if (result.isValid() && !hasValidParsedHost(result))
         return {};

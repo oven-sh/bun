@@ -123,14 +123,16 @@ static unsigned countASCIIDigits(StringView string)
 
 void URLDecomposition::setHost(StringView value)
 {
+    auto fullURL = this->fullURL();
     // The value is a host[:port] by definition: apply the Unicode 16 IDNA
     // delta so old platform ICU data yields node's host (see DOMURL.cpp).
+    // Non-special schemes have opaque hosts and never run IDNA, so the
+    // rewrite would change the resulting percent-encoding for those.
     String mappedValue;
-    if (Bun::containsUnicode16IDNADeltaSource(value)) {
+    if (fullURL.hasSpecialScheme() && Bun::containsUnicode16IDNADeltaSource(value)) {
         mappedValue = Bun::applyUnicode16IDNADelta(value.toString());
         value = mappedValue;
     }
-    auto fullURL = this->fullURL();
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
 
@@ -171,13 +173,14 @@ String URLDecomposition::hostname() const
 
 void URLDecomposition::setHostname(StringView host)
 {
-    // See setHost: the input is a hostname by definition.
+    auto fullURL = this->fullURL();
+    // See setHost: the input is a hostname by definition, and only special
+    // schemes run IDNA on it.
     String mappedHost;
-    if (Bun::containsUnicode16IDNADeltaSource(host)) {
+    if (fullURL.hasSpecialScheme() && Bun::containsUnicode16IDNADeltaSource(host)) {
         mappedHost = Bun::applyUnicode16IDNADelta(host.toString());
         host = mappedHost;
     }
-    auto fullURL = this->fullURL();
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
     if (fullURL.hasOpaquePath())

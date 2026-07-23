@@ -760,7 +760,9 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         args.append(expected);
         JSValue result = JSC::call(globalObject, equalsFunction, callData, actual, args);
         RETURN_IF_EXCEPTION(scope, false);
-        return result.toBoolean(globalObject);
+        if (!result.toBoolean(globalObject))
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }
 
     const bool actualIsURL = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMURL>();

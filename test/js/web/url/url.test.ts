@@ -77,6 +77,20 @@ describe("url", () => {
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("file://");
   });
+  it("leaves opaque (non-special-scheme) hosts unchanged", () => {
+    // Non-special schemes never run IDNA; the host is UTF-8 percent-encoded
+    // verbatim per WHATWG and node/ada. U+1E9E is an IDNA delta source for
+    // special schemes only.
+    expect(new URL("foo://\u1E9E.com/").href).toBe("foo://%E1%BA%9E.com/");
+    expect(new URL("foo://a\u180Eb/").href).toBe("foo://a%E1%A0%8Eb/");
+    // special scheme: delta applies, host is IDNA-processed.
+    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // setter on a non-special scheme: opaque host stays verbatim.
+    const u = new URL("foo://x/");
+    u.hostname = "\u1E9E";
+    expect(u.hostname).toBe("%E1%BA%9E");
+  });
+
   it("prints", () => {
     // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
     // Bun.inspect matches node's util.inspect output.

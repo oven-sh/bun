@@ -104,18 +104,26 @@ describe("Bun.build", () => {
       expect(result.success).toBe(false);
     });
 
-    test("multiple invalid values are all reported", async () => {
-      const dir = tempDirWithFiles("bun-build-define-invalid-multi", {
-        "entry.ts": `console.log(A, B);`,
+    test("new Bun.Transpiler throws", () => {
+      expect(() => new Bun.Transpiler({ define: { X: "60 * 60 * 1000" } })).toThrow(/define/i);
+      expect(() => new Bun.Transpiler({ define: { X: '{"a":' } })).toThrow(/define/i);
+    });
+
+    test("bun run --define fails before running the script", async () => {
+      const dir = tempDirWithFiles("bun-run-define-invalid", {
+        "entry.js": `console.log("RAN", typeof X);`,
       });
-      const result = await buildNoThrow({
-        entrypoints: [join(dir, "entry.ts")],
-        define: { A: "1 + 2", B: "foo bar" },
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--define", "X=60 * 60 * 1000", "entry.js"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const messages = result.logs.map(l => l.message).join("\n");
-      expect(messages).toContain('define value "1 + 2"');
-      expect(messages).toContain('define value "foo bar"');
-      expect(result.success).toBe(false);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('define value "60 * 60 * 1000" must be a valid JSON literal or identifier');
+      expect(stdout).not.toContain("RAN");
+      expect(exitCode).not.toBe(0);
     });
 
     test("CLI --define rejects trailing content", async () => {

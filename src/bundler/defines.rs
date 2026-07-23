@@ -460,7 +460,7 @@ impl DefineDataExt for DefineData {
                     None
                 },
                 flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
+                    /* valueless: */ false,
                     /* can_be_removed_if_unused: */ true,
                     /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
@@ -488,7 +488,7 @@ impl DefineDataExt for DefineData {
                     None
                 },
                 flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
+                    /* valueless: */ false,
                     /* can_be_removed_if_unused: */ can_be_removed_if_unused,
                     /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
@@ -536,16 +536,7 @@ impl DefineDataExt for DefineData {
                     bstr::BStr::new(value_str)
                 ),
             );
-            return Ok(DefineData {
-                value: ExprData::EUndefined(bun_ast::E::Undefined),
-                original_name: None,
-                flags: Flags::new(
-                    true,
-                    true,
-                    bun_ast::E::CallUnwrap::Never,
-                    method_call_must_be_replaced_with_undefined_,
-                ),
-            });
+            return Err(crate::Error::SyntaxError);
         };
         // The `deep_clone` is load-bearing even though `.data` bytes already
         // live in `bump`: `parse_define_value` → `new_expr` → `Expr::init`
@@ -565,7 +556,7 @@ impl DefineDataExt for DefineData {
                 None
             },
             flags: Flags::new(
-                /* valueless: */ value_is_undefined,
+                /* valueless: */ false,
                 /* can_be_removed_if_unused: */ can_be_removed_if_unused,
                 /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                 /* method_call_must_be_replaced_with_undefined: */

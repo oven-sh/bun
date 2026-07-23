@@ -5613,11 +5613,7 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
 
   async function runScript(source: string) {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // stderr is returned (not asserted) so a failing case can show the
     // child's stack trace; debug builds emit benign startup noise there.
     return { stdout: stdout.trim(), stderr, exitCode };

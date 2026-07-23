@@ -781,35 +781,45 @@ where
     }
 
     while i < n {
-        let width: u8 = match ENCODING {
-            Encoding::Latin1 | Encoding::Ascii => 1,
-            Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
-            Encoding::Utf16 => 1,
-        };
-        let clamped_width = (width as usize).min(n.saturating_sub(i));
-        let c: i32 = match ENCODING {
-            Encoding::Utf8 => {
-                let bytes: [u8; 4] = match clamped_width {
-                    1 => [text[i], 0, 0, 0],
-                    2 => [text[i], text[i + 1], 0, 0],
-                    3 => [text[i], text[i + 1], text[i + 2], 0],
-                    4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
-                    _ => unreachable!(),
-                };
-                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
-            }
+        let (width, c): (u8, i32) = match ENCODING {
+            Encoding::Latin1 => (1, text[i] as i32),
             Encoding::Ascii => {
                 debug_assert!(text[i] <= 0x7F);
-                text[i] as i32
+                (1, text[i] as i32)
             }
-            Encoding::Latin1 => text[i] as i32,
             Encoding::Utf16 => {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
                 // eg: "\u{10334}" will convert to "𐌴" without this.
-                code_unit_at!(i)
+                (1, code_unit_at!(i))
+            }
+            Encoding::Utf8 => {
+                let first = text[i];
+                if first < 0x80 {
+                    (1, first as i32)
+                } else {
+                    // WHATWG UTF-8 decode so ill-formed sequences become U+FFFD with
+                    // maximal-subpart advancement, matching `Bun.file().text()` /
+                    // `TextDecoder` / `fs.readFileSync(..., "utf8")`. The previous
+                    // WTF-8 stepper here widened invalid lead bytes to their Latin-1
+                    // code point and emitted NUL for bad multibyte sequences while
+                    // over-advancing past following bytes.
+                    let replacement = strings::convert_utf8_bytes_into_utf16(&text[i..]);
+                    let len = (replacement.len as usize).max(1);
+                    if replacement.fail {
+                        i += len;
+                        if ascii_only {
+                            writer.write_all(&bmp_escape(strings::UNICODE_REPLACEMENT))?;
+                        } else {
+                            writer.write_all(b"\xEF\xBF\xBD")?;
+                        }
+                        continue;
+                    }
+                    (len as u8, replacement.code_point as i32)
+                }
             }
         };
+        let clamped_width = (width as usize).min(n.saturating_sub(i));
 
         if can_print_without_escape(c, ascii_only) {
             match ENCODING {

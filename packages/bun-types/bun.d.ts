@@ -4217,9 +4217,9 @@ declare module "bun" {
      */
     colors?: boolean;
     /**
-     * The depth of the inspection
+     * The depth of the inspection. Pass `null` or `Infinity` for unlimited depth.
      */
-    depth?: number;
+    depth?: number | null;
     /**
      * Whether to sort the properties of the object
      */

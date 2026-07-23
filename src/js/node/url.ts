@@ -103,20 +103,39 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
 
 let urlParseWarned = false;
 
-// Port of node's IsInsideNodeModules (src/node_util.cc): examine the caller
-// frames for a node_modules path segment so url.parse() calls from library
-// code (hosted-git-info et al call it constantly) don't spam application
-// stderr — node only warns for first-party callers. String-stack heuristic:
-// Bun has no frame-inspection API here; the capture is bounded by a
-// temporary stackTraceLimit, and node:url frames can't false-positive (no
-// node_modules in their names).
+const nodeModulesRE = /[\\/]node_modules[\\/]/;
+
+// Port of node's IsInsideNodeModules (src/node_util.cc): test whether the
+// first real user frame (skipping node:/internal/native frames) lives inside
+// a node_modules directory, so url.parse() calls from library code don't
+// spam application stderr. Uses prepareStackTrace CallSites so no stack
+// string is materialized; globals restored in finally.
+function returnStackFrames(_err: unknown, frames: unknown[]) {
+  return frames;
+}
 function isInsideNodeModules(frameLimit: number): boolean {
   const prevLimit = Error.stackTraceLimit;
-  Error.stackTraceLimit = frameLimit + 2; // + this helper and urlParse
-  const stack = new Error().stack;
-  Error.stackTraceLimit = prevLimit;
-  if (typeof stack !== "string") return false;
-  return stack.includes("/node_modules/") || stack.includes("\\node_modules\\");
+  const prevPrepare = Error.prepareStackTrace;
+  let frames: { getFileName(): string | null }[];
+  try {
+    Error.stackTraceLimit = frameLimit + 2;
+    Error.prepareStackTrace = returnStackFrames;
+    const target: { stack?: unknown } = {};
+    Error.captureStackTrace(target, isInsideNodeModules);
+    frames = target.stack as typeof frames;
+  } finally {
+    Error.stackTraceLimit = prevLimit;
+    Error.prepareStackTrace = prevPrepare;
+  }
+  if (!$isJSArray(frames)) return false;
+  for (const frame of frames) {
+    const filename = frame.getFileName();
+    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+      continue;
+    }
+    return nodeModulesRE.test(filename);
+  }
+  return false;
 }
 
 function urlParse(

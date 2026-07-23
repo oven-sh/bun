@@ -1694,7 +1694,7 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
-    throw new Error(`Invalid stdio option[${index}] "${item}"`);
+    throw $ERR_INVALID_ARG_VALUE("stdio", item);
   }
   return result;
 }

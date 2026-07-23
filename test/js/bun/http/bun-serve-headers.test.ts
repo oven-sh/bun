@@ -160,3 +160,49 @@ describe("response Connection: close closes the socket", () => {
     }
   });
 });
+
+// The Content-Type on the wire must be the body's declared type string, not a
+// re-canonicalized entry from Bun's MIME table. Previously a Blob typed
+// "text/html; charset=utf-16" was sent as "text/html;charset=utf-8", silently
+// replacing the declared charset.
+test("Blob body Content-Type is sent verbatim", async () => {
+  const cases: Record<string, () => Response> = {
+    "blob-utf16": () => new Response(new Blob(["<b>x</b>"], { type: "text/html; charset=utf-16" })),
+    "blob-latin1": () => new Response(new Blob(["\xe9"], { type: "text/plain; charset=iso-8859-1" })),
+    "blob-param": () => new Response(new Blob(["b"], { type: "application/octet-stream; foo=bar" })),
+    "blob-json": () => new Response(new Blob(["{}"], { type: "application/json; charset=utf-16" })),
+    "file-utf16": () => new Response(new File(["<b>x</b>"], "x.bin", { type: "text/html; charset=utf-16" })),
+    // non-table essence already passed through untouched; keep as a control
+    "control-nontable": () =>
+      new Response(new Blob(["b"], { type: "application/vnd.api+json; charset=utf-16" })),
+  };
+
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    fetch(req) {
+      return cases[new URL(req.url).pathname.slice(1)]();
+    },
+  });
+
+  const norm = (s: string | null) => (s ?? "").toLowerCase().replace(/\s+/g, "");
+  const results: Record<string, { declared: string; wire: string }> = {};
+  for (const k of Object.keys(cases)) {
+    const declared = norm(cases[k]().headers.get("content-type"));
+    const r = await fetch(new URL("/" + k, server.url));
+    await r.arrayBuffer();
+    results[k] = { declared, wire: norm(r.headers.get("content-type")) };
+  }
+
+  expect(results).toEqual({
+    "blob-utf16": { declared: "text/html;charset=utf-16", wire: "text/html;charset=utf-16" },
+    "blob-latin1": { declared: "text/plain;charset=iso-8859-1", wire: "text/plain;charset=iso-8859-1" },
+    "blob-param": { declared: "application/octet-stream;foo=bar", wire: "application/octet-stream;foo=bar" },
+    "blob-json": { declared: "application/json;charset=utf-16", wire: "application/json;charset=utf-16" },
+    "file-utf16": { declared: "text/html;charset=utf-16", wire: "text/html;charset=utf-16" },
+    "control-nontable": {
+      declared: "application/vnd.api+json;charset=utf-16",
+      wire: "application/vnd.api+json;charset=utf-16",
+    },
+  });
+});

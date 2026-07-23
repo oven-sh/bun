@@ -4540,7 +4540,17 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
         }
 
         if !blob.content_type().is_empty() {
-            bun_http_types::MimeType::by_name(blob.content_type())
+            // Emit the blob's declared type verbatim. `by_name` classifies the
+            // essence for `.category` but may return a canonical table const
+            // whose `.value` rewrites the parameters (e.g. forcing
+            // `;charset=utf-8`); keep the declared string so the wire matches
+            // `response.headers.get("content-type")`.
+            let ct = blob.content_type();
+            let mut mt = bun_http_types::MimeType::by_name(ct);
+            if mt.value.as_ref() != ct {
+                mt.value = ct.to_vec().into();
+            }
+            mt
         } else if let Some(content) = bun_http_types::MimeType::sniff(blob.slice()) {
             content
         } else if blob.was_string() {

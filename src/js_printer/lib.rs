@@ -2301,6 +2301,17 @@ pub mod __gated_printer {
             let floored = float.floor();
             let remainder = float - floored;
             let is_integer = remainder == 0.0;
+
+            // When minifying JS, let print_float_smart compare the decimal and
+            // scientific forms for every value — otherwise the integer fast
+            // path below (e.g. `2000000000` -> 10 chars) would bypass the `{:e}`
+            // option (`2e9` -> 3 chars). The fast path only shortens a handful
+            // of round powers of ten, missing the general case.
+            if !IS_JSON && (self.options.minify_whitespace || self.options.minify_syntax) {
+                self.print_float_smart(float);
+                return;
+            }
+
             if float < (u64::MAX >> 12) as f64 /* maxInt(u52) */ && is_integer {
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
@@ -2319,6 +2330,54 @@ pub mod __gated_printer {
             // `Display` for f64 emits the shortest digit string that
             // round-trips, never scientific notation.
             let _ = self.fmt(format_args!("{}", float));
+        }
+
+        /// When minifying JS, print whichever of the decimal (`{}`) or
+        /// scientific (`{:e}`) form is strictly shorter, applying two
+        /// length-preserving rewrites: `0.5` -> `.5` and dropping a trailing
+        /// `e0`. Mirrors esbuild — without this, `1e300` expands to 301 digits.
+        /// JSON keeps the decimal form (`.5` and scientific are out of spec for
+        /// some consumers), so this is only reached for non-JSON output.
+        fn print_float_smart(&mut self, float: f64) {
+            // 512 bytes covers any f64 decimal form (~310 digits for f64::MAX);
+            // 64 bytes covers any scientific form.
+            let mut dec_buf = [0u8; 512];
+            let mut sci_buf = [0u8; 64];
+
+            let Ok(dec_full) = bun_core::fmt::buf_print(&mut dec_buf, format_args!("{}", float))
+            else {
+                // Unreachable in practice — the buffer is larger than any
+                // shortest round-trip decimal for f64. Fall back rather than crash.
+                let _ = self.fmt(format_args!("{}", float));
+                return;
+            };
+            let Ok(sci_full) = bun_core::fmt::buf_print(&mut sci_buf, format_args!("{:e}", float))
+            else {
+                self.print(dec_full);
+                return;
+            };
+
+            // "0.5" -> ".5": JS tokenises `.5` identically to `0.5`.
+            let dec: &[u8] = if dec_full.len() >= 2 && dec_full[0] == b'0' && dec_full[1] == b'.' {
+                &dec_full[1..]
+            } else {
+                dec_full
+            };
+
+            // Rust writes `3.14159e0`, but a JS integer `3` shouldn't become
+            // `3e0` — drop a trailing `e0`. Everything else (`1e300`, `1.5e20`,
+            // `1e-5`) already matches JS syntax.
+            let sci: &[u8] = match sci_full.iter().position(|&c| c == b'e') {
+                Some(e_pos) if &sci_full[e_pos + 1..] == b"0" => &sci_full[..e_pos],
+                _ => sci_full,
+            };
+
+            // Prefer decimal on ties to match esbuild and keep output stable.
+            if sci.len() < dec.len() {
+                self.print(sci);
+            } else {
+                self.print(dec);
+            }
         }
 
         pub fn print_string_characters_utf8(&mut self, text: &[u8], quote: u8) {

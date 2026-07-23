@@ -199,6 +199,24 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
+        // Compute the table's widest row. Short array rows are padded to this
+        // width (below) so an omitted optional trailing tuple element binds as
+        // `undefined` rather than being mistaken for the callback's `done`
+        // parameter (oven-sh/bun#24347). describe.each never appends `done`.
+        let max_row_width: usize = {
+            let mut width: usize = 0;
+            let mut width_iter = this.each.array_iterator(global)?;
+            while let Some(item) = width_iter.next()? {
+                if item.is_empty() {
+                    break;
+                }
+                let row_width = if item.is_array() { item.get_length(global)? as usize } else { 1 };
+                if row_width > width {
+                    width = row_width;
+                }
+            }
+            width
+        };
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
         while let Some(item) = iter.next()? {
@@ -221,6 +239,12 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     while let Some(array_item) = item_iter.next()? {
                         rooted.append(array_item);
                         args_list.push(array_item);
+                    }
+                    // Pad omitted trailing tuple elements to the table's width so a
+                    // short row binds later callback params (including `done`) to the
+                    // right slots — `done` must not land in an omitted slot (#24347).
+                    while args_list.len() < max_row_width {
+                        args_list.push(JSValue::UNDEFINED);
                     }
                 } else {
                     args_list.push(item);

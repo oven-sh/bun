@@ -193,7 +193,10 @@ test("mysql: a lenenc overrun on the buffered-reader path is rejected, not serve
         if (payload[0] !== 0x03 /* COM_QUERY */ || answered) return;
         answered = true;
         socket.write(full.subarray(0, split));
-        setImmediate(() => socket.write(full.subarray(split)));
+        // Yield twice so the first write reaches the client's on_data before
+        // the second is sent (immediates run before I/O polling, so a single
+        // setImmediate would let both chunks coalesce into one client read).
+        setImmediate(() => setImmediate(() => socket.write(full.subarray(split))));
       });
     });
     socket.on("error", () => {});

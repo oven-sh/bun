@@ -77,7 +77,11 @@ impl<'a> StackReader<'a> {
     }
 
     pub fn packet_remaining(&self) -> usize {
-        self.packet_end.get().saturating_sub(self.offset.get())
+        let end = self.packet_end.get();
+        if end == usize::MAX {
+            return usize::MAX;
+        }
+        end.saturating_sub(self.offset.get())
     }
 
     pub fn set_offset_from_start(&self, offset: usize) {

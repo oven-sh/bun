@@ -1041,7 +1041,7 @@ static bool NodeHTTPServer__writeHead(
             RETURN_IF_EXCEPTION(scope, false);
 
             for (unsigned i = 0; i < propertyNames.size(); ++i) {
-                JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
+                JSValue headerValue = headersObject->get(globalObject, propertyNames[i]);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!headerValue.isString()) {
                     continue;

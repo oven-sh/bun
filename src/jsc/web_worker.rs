@@ -1512,6 +1512,10 @@ fn on_unhandled_rejection(
 ) {
     // Prevent recursion
     vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+    // uncaught_exception() sets exit_code = 1 before calling us; unhandled_rejection()
+    // in Mode::Bun does not, so set it here so both paths report the same nonzero code
+    // to the parent's 'exit' event and to this worker's process.on('exit') below.
+    vm.exit_handler.exit_code = 1;
 
     let mut error_instance = error_instance_or_exception
         .to_error()

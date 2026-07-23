@@ -229,7 +229,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
+                let was_anonymous_named_expr = default.is_anonymous_named();
                 self.visit_expr(default);
+                if let BData::BIdentifier(bind_) = arg.binding.data {
+                    let bind_ = bind_.get();
+                    let name: &'a [u8] = self.symbols[bind_.r#ref.inner_index() as usize]
+                        .original_name
+                        .slice();
+                    arg.default = Some(self.maybe_keep_expr_symbol_name(
+                        arg.default.expect("unreachable"),
+                        name,
+                        was_anonymous_named_expr,
+                    ));
+                }
             }
         }
     }

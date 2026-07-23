@@ -179,7 +179,7 @@ class Utf8Stream extends EventEmitter {
     });
 
     if (this.#periodicFlush !== 0) {
-      this.#periodicFlushTimer = setInterval(() => this.flush(null), this.#periodicFlush);
+      this.#periodicFlushTimer = setInterval(() => this.flush(), this.#periodicFlush);
       this.#periodicFlushTimer.unref();
     }
   }
@@ -770,7 +770,7 @@ class Utf8Stream extends EventEmitter {
     }
 
     if (bufs.length === 0 || lens[lens.length - 1] + dataLength > this.#maxWrite) {
-      bufs.push([]);
+      bufs.push([data]);
       lens.push(dataLength);
     } else {
       bufs[bufs.length - 1].push(data);

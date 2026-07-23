@@ -266,7 +266,14 @@ function objectFromShape(t: string, depth: number): string | null {
 // optional ones are included ~half the time (never leaving a required
 // stream/array/cmd argument undefined - that only exercises validation).
 function argList(c: Callable): string {
-  return c.params.filter(p => !p.optional || chance(0.5)).map(p => valueFor(p.type, p.name)).join(", ");
+  const args = c.params.filter(p => !p.optional || chance(0.5)).map(p => valueFor(p.type, p.name));
+  // Known-reported: Bun.write(x, x) with one pooled object as both
+  // destination and source (aliased self-copy). Break the alias so the
+  // engine explores past it instead of re-finding it in every program.
+  if (c.path === "Bun.write" && args.length >= 2 && args[0] === args[1] && /\$pool\(/.test(args[0])) {
+    args[1] = args[1].replace(/\$pool\((\"[A-Za-z]+\")\)/, "$pool2($1)");
+  }
+  return args.join(", ");
 }
 
 // A value expression for a parameter of declared type `t` named `name`.
@@ -340,6 +347,7 @@ emit(`const $stats = { ok: 0, threw: 0, kinds: new Set(), calls: 0 };`);
 emit(`const $poolMap = new Map();`);
 emit(`const $add = (kind, v) => { if (v == null) return v; const a = $poolMap.get(kind) ?? []; a.push(v); $poolMap.set(kind, a); $stats.kinds.add(kind); return v; };`);
 emit(`const $pool = (kind) => { const a = $poolMap.get(kind); return a && a.length ? a[($n * 7919) % a.length] : undefined; };`);
+emit(`const $pool2 = (kind) => { const a = $poolMap.get(kind); return a && a.length ? a[($n * 7919 + 1) % a.length] : undefined; };`);
 // WSF_GEN_DEBUG=1: log every failing step's label + error - the input to
 // generator iteration (validation rejections vs implementation errors).
 emit(`const $dbg = !!process.env.WSF_GEN_DEBUG;`);

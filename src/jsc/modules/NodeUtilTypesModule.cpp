@@ -443,7 +443,14 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
 
     auto identityKeyUsed = [&](JSValue key) -> bool {
         for (size_t i = 0; i < usedIdentityKeys.size(); i++) {
-            if (JSC::sameValue(globalObject, usedIdentityKeys.at(i), key))
+            bool same = JSC::sameValue(globalObject, usedIdentityKeys.at(i), key);
+            // sameValue can resolve rope strings and throw; stop scanning so
+            // no further VM-entering call runs with the exception pending.
+            // (Plain check: the macro cannot live inside a lambda; callers
+            // RETURN_IF_EXCEPTION right after this returns.)
+            if (scope.exception()) [[unlikely]]
+                return false;
+            if (same)
                 return true;
         }
         return false;
@@ -466,12 +473,15 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
             size_t identityIndex = SIZE_MAX;
             if (materialized) {
                 for (size_t i = 0; i < entryCount; i++) {
-                    if (JSC::sameValueZero(globalObject, gcBuffer.at(entriesStart + i * 2), expectedKey)) {
+                    bool same = JSC::sameValueZero(globalObject, gcBuffer.at(entriesStart + i * 2), expectedKey);
+                    // Same rope-resolution hazard as identityKeyUsed: bail
+                    // before the next VM-entering call, not after the loop.
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (same) {
                         identityIndex = i;
                         break;
                     }
                 }
-                RETURN_IF_EXCEPTION(scope, false);
             }
             if (identityIndex == SIZE_MAX || !usedIndices[identityIndex]) {
                 JSValue actualValue = actualMap->get(globalObject, expectedKey);

@@ -71,7 +71,13 @@ unsafe impl Send for AlignedBlob {}
 
 /// Blobs displaced by an entry refresh. JSC providers hold raw spans into
 /// accepted blobs (lazy inner-function decode can read them long after the
-/// initial compile), so displaced blobs are retired here, never freed.
+/// initial compile), so displaced blobs are retired here, never freed —
+/// freeing one is a use-after-free the borrow checker cannot see across the
+/// FFI boundary. Deliberate leak-for-safety: growth is one blob per refresh
+/// of an already-cached module, which only recurs under `--hot`-style
+/// same-process reloads; a long-lived hot session accretes retired bytecode
+/// proportional to reload count. Bounding this needs a JSC-side provider
+/// release hook first (maintainer call), not a cap here.
 static RETIRED_BLOBS: Mutex<Vec<AlignedBlob>> = Mutex::new(Vec::new());
 
 const BLOB_ALIGN: usize = 128;
@@ -522,6 +528,7 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
     };
     if let Some(old) = state.entries.insert(key, entry) {
         if let Some(blob) = old.blob {
+            // Never freed; see RETIRED_BLOBS for the invariant.
             RETIRED_BLOBS.lock().push(blob);
         }
     }

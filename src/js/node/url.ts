@@ -101,11 +101,28 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
     "wss:": true,
   };
 
+let urlParseWarned = false;
+
 function urlParse(
   url: string | URL | typeof Url, // really has unknown type but intellisense is nice
   parseQueryString?: boolean,
   slashesDenoteHost?: boolean,
 ) {
+  // Once-per-process, matching node v26.3.0 lib/url.js urlParse. Node
+  // additionally suppresses the warning when the caller sits inside
+  // node_modules (a native stack walk, IsInsideNodeModules in node_util.cc)
+  // — deliberately left out; the latch bounds the divergence to one warning.
+  if (!urlParseWarned) {
+    urlParseWarned = true;
+    process.emitWarning(
+      "`url.parse()` behavior is not standardized and prone to " +
+        "errors that have security implications. Use the WHATWG URL API " +
+        "instead. CVEs are not issued for `url.parse()` vulnerabilities.",
+      "DeprecationWarning",
+      "DEP0169",
+    );
+  }
+
   if ($isObject(url) && url instanceof Url) return url;
 
   var u = new Url();

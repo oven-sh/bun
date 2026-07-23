@@ -37,8 +37,6 @@ const SymbolPrototypeValueOf = Symbol.prototype.valueOf;
 const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
 const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
 const SafeMapPrototypeHas = SafeMap.prototype.has;
-const SafeMapPrototypeGet = SafeMap.prototype.get;
-
 // Node semantics: strict deepEquals plus node's [[Prototype]] identity rule
 // (Bun.deepEquals stays prototype-blind).
 const nodeDeepStrictEqual = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsDeepStrictEqual", 2);

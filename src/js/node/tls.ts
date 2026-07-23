@@ -223,6 +223,8 @@ function validateSecureContextOptions(options) {
     if (ecdhCurve !== "auto") {
       for (const curve of StringPrototypeSplit.$call(ecdhCurve, ":")) {
         if (!SUPPORTED_ECDH_GROUPS.has(curve)) {
+          // Not $ERR_*: Node's THROW_ERR_CRYPTO_OPERATION_FAILED has no bracketed
+          // toString; test-tls-ecdh-multiple.js pins /Error: Failed to set ECDH curve/.
           const err = new Error("Failed to set ECDH curve") as Error & { code: string };
           err.code = "ERR_CRYPTO_OPERATION_FAILED";
           throw err;

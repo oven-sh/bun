@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { Glob } from "bun";
+import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 

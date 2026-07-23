@@ -90,6 +90,28 @@ describe("SocketAddress constructor", () => {
     },
   );
 
+  it.each([[["1.2.3.4"]], [[]], [null], ["127.0.0.1"], [0]])(
+    "given %p as options, throws ERR_INVALID_ARG_TYPE",
+    (options: any) => {
+      expect(() => new SocketAddress(options)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    },
+  );
+
+  it.each([0xfffff + 1, 0xffffffff, -1, 1.5])(
+    "given flowlabel %p outside the 20-bit IPv6 range, throws ERR_OUT_OF_RANGE",
+    (flowlabel: any) => {
+      expect(() => new SocketAddress({ address: "::1", family: "ipv6", flowlabel })).toThrowWithCode(
+        RangeError,
+        "ERR_OUT_OF_RANGE",
+      );
+    },
+  );
+
+  it("accepts flowlabel at the 20-bit ceiling", () => {
+    const sa = new SocketAddress({ address: "::1", family: "ipv6", flowlabel: 0xfffff });
+    expect(sa.flowlabel).toBe(0xfffff);
+  });
+
   // ===========================================================================
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================

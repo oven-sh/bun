@@ -729,7 +729,12 @@ impl Cmd {
                         stdio[STDIN_NO] = if bytes.is_empty() {
                             Stdio::Ignore
                         } else {
-                            Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
+                            let mut owned = Vec::new();
+                            if owned.try_reserve_exact(bytes.len()).is_err() {
+                                return Err(global.throw_out_of_memory());
+                            }
+                            owned.extend_from_slice(bytes);
+                            Stdio::OwnedBuffer(owned)
                         };
                     }
                     if flags.duplicate_out() {

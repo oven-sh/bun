@@ -250,86 +250,24 @@ export function parseHandle(target, serialized, fd) {
 }
 
 /**
- * Advanced-mode (V8-style) IPC ships Buffers so they arrive as Buffers, like
- * node's ChildProcessSerializer._writeHostObject
- * (lib/internal/child_process/serialization.js). JSC's serializer has no
- * host-object hook, so the sender walks the message and, when Buffers are
- * present, sends the envelope [message, buffers] instead of the bare message:
- * each entry of `buffers` aliases a view inside `message`, and JSC preserves
- * object identity across one serialized graph, so restoring the Buffer
- * prototype on the aliased entries reaches every occurrence in the message
- * with no path bookkeeping. Returns null when the message holds no Buffers so
- * the caller keeps the bare wire format (and its zero-walk ack fast paths).
- *
- * The walk never runs user code: it descends through data properties only
- * (descriptor-checked), so getters keep their run-exactly-once-during-send
- * contract — the serializer alone evaluates them. The cost is that a Buffer
- * returned by a getter arrives as a plain Uint8Array, where node (whose
- * tagging happens inside the serializer) preserves it; that narrow divergence
- * is the price of not double-firing getter side effects. A hostile sender can
- * still lie through a patched Map/Set iterator, but that only mis-tags its
- * own message.
+ * Advanced-mode IPC Buffer tagging; the mechanism lives in
+ * internal/serialization_buffers (shared with node:v8 serialize/deserialize).
+ * Returns null when the message holds no Buffers so the caller keeps the bare
+ * wire format (and its zero-walk ack fast paths).
  *
  * @param {unknown} message
  * @returns {[unknown, unknown[]] | null}
  */
 export function tagAdvancedBuffers(message) {
-  const { isBuffer } = require("node:buffer").Buffer;
-  let buffers = null;
-  let visited = null;
-  const stack = [message];
-  while (stack.length !== 0) {
-    const value = stack.pop();
-    if (value === null || typeof value !== "object") continue;
-    visited ??= new Set();
-    if (visited.has(value)) continue;
-    visited.add(value);
-    if (isBuffer(value)) {
-      (buffers ??= []).push(value);
-      continue;
-    }
-    // Other ArrayBuffer views round-trip with their type already.
-    if ($isTypedArrayView(value)) continue;
-    if ($isMap(value)) {
-      for (const { 0: key, 1: entry } of value) {
-        stack.push(key);
-        stack.push(entry);
-      }
-      continue;
-    }
-    if ($isSet(value)) {
-      for (const entry of value) stack.push(entry);
-      continue;
-    }
-    // Objects, arrays and errors: the serializer walks own enumerable
-    // properties. Only data properties are descended so no getter runs here.
-    const keys = Object.keys(value);
-    for (let i = 0; i < keys.length; i++) {
-      const desc = Object.getOwnPropertyDescriptor(value, keys[i]);
-      if (desc && "value" in desc) stack.push(desc.value);
-    }
-  }
-  return buffers === null ? null : [message, buffers];
+  return require("internal/serialization_buffers").tagBuffers(message);
 }
 
 /**
- * Receive side of tagAdvancedBuffers: restore the Buffer prototype on the
- * envelope's aliased views and hand back the message. The envelope came off
- * the wire, so its shape is validated before it is trusted.
+ * Receive side of tagAdvancedBuffers.
  *
  * @param {unknown} envelope
  * @returns {unknown}
  */
 export function restoreAdvancedBuffers(envelope) {
-  if (!$isJSArray(envelope) || envelope.length !== 2 || !$isJSArray(envelope[1])) {
-    throw new Error("failed to parse advanced IPC message");
-  }
-  const { prototype } = require("node:buffer").Buffer;
-  const buffers = envelope[1];
-  for (let i = 0; i < buffers.length; i++) {
-    const view = buffers[i];
-    // Fresh from deserialization: plain Uint8Arrays the sender tagged.
-    if ($isTypedArrayView(view)) Object.setPrototypeOf(view, prototype);
-  }
-  return envelope[0];
+  return require("internal/serialization_buffers").restoreBuffers(envelope);
 }

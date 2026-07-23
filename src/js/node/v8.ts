@@ -160,7 +160,30 @@ function getCppHeapStatistics(type = "detailed") {
     detail_level: type,
   };
 }
+// Buffer-bearing payloads are framed as MAGIC + version + SSV([value, buffers])
+// so deserialize can restore Buffer prototypes (JSC's serializer has no
+// host-object hook; see internal/serialization_buffers). The magic's leading
+// 0xFF cannot collide with bare SSV output, whose first byte is the small
+// little-endian format version. Buffer-free payloads stay bare SSV, so older
+// readers keep working for them.
+const kBufferEnvelopeMagic = [0xff, 0x42, 0x55, 0x4e, 0x01]; // 0xFF "BUN" v1
+
+function hasBufferEnvelopeMagic(view) {
+  if (view.byteLength < kBufferEnvelopeMagic.length) return false;
+  for (let i = 0; i < kBufferEnvelopeMagic.length; i++) {
+    if (view[i] !== kBufferEnvelopeMagic[i]) return false;
+  }
+  return true;
+}
+
 function deserialize(value) {
+  const view = ArrayBuffer.isView(value)
+    ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+    : new Uint8Array(value);
+  if (hasBufferEnvelopeMagic(view)) {
+    const envelope = jsc.deserialize(view.subarray(kBufferEnvelopeMagic.length));
+    return require("internal/serialization_buffers").restoreBuffers(envelope);
+  }
   return jsc.deserialize(value);
 }
 function takeCoverage() {
@@ -170,7 +193,15 @@ function stopCoverage() {
   notimpl("stopCoverage");
 }
 function serialize(arg1) {
-  return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+  const tagged = require("internal/serialization_buffers").tagBuffers(arg1);
+  if (tagged === null) {
+    return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+  }
+  const payload = jsc.serialize(tagged, { binaryType: "nodebuffer" });
+  const framed = Buffer.allocUnsafe(kBufferEnvelopeMagic.length + payload.byteLength);
+  for (let i = 0; i < kBufferEnvelopeMagic.length; i++) framed[i] = kBufferEnvelopeMagic[i];
+  payload.copy(framed, kBufferEnvelopeMagic.length);
+  return framed;
 }
 
 function getDefaultHeapSnapshotPath() {

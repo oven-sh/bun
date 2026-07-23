@@ -3068,3 +3068,102 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// https://github.com/oven-sh/bun/issues/34397
+describe("fetch network errors expose a node-style `cause`", () => {
+  it("connection refused has cause.code ECONNREFUSED", async () => {
+    // Grab a port nothing is listening on: bind to an ephemeral port, then
+    // close the listener before fetching it.
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const port = listener.port;
+    listener.stop(true);
+
+    let err: any;
+    try {
+      await fetch(`http://127.0.0.1:${port}/`);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect({ code: err.code, cause: { code: err.cause?.code, syscall: err.cause?.syscall } }).toEqual({
+      code: "ConnectionRefused",
+      cause: { code: "ECONNREFUSED", syscall: "connect" },
+    });
+    expect(err.cause.errno).toBeLessThan(0);
+    // `cause` is non-enumerable, like the ES `new Error(msg, { cause })` shape.
+    expect(Object.getOwnPropertyDescriptor(err, "cause")?.enumerable).toBe(false);
+  });
+
+  it("connection closed mid-response has cause.code ECONNRESET", async () => {
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          // Promise a 10-byte body but close after 2 bytes.
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhi");
+        },
+      },
+    });
+
+    let err: any;
+    try {
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`);
+      await res.text();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect({ code: err.code, cause: { code: err.cause?.code, syscall: err.cause?.syscall } }).toEqual({
+      code: "ECONNRESET",
+      cause: { code: "ECONNRESET", syscall: "read" },
+    });
+    expect(err.cause.errno).toBeLessThan(0);
+  });
+
+  it("dns resolution failure mirrors the resolver error on cause", async () => {
+    // Subprocess with proxy env unset so the lookup fails locally instead of
+    // being forwarded to a proxy (`.invalid` never resolves, RFC 6761).
+    const hostname = "does-not-exist-34397.invalid";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `fetch("http://${hostname}/").then(
+           () => console.log(JSON.stringify({ resolved: true })),
+           e => console.log(JSON.stringify({
+             code: e.code,
+             cause: e.cause && { code: e.cause.code, syscall: e.cause.syscall, hostname: e.cause.hostname },
+           })),
+         )`,
+      ],
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `out` stays the raw stdout when it is not JSON (the child crashed), so
+    // the failure diff shows what the child printed alongside stderr.
+    let out: any = { stdout, stderr };
+    try {
+      out = JSON.parse(stdout);
+    } catch {}
+    // The exact resolver code is environment-dependent (ENOTFOUND on a real
+    // resolver; client-fetch.test.ts pins it), so assert the new contract:
+    // the resolver error is mirrored on `cause` with the same errno code.
+    expect({ out, exitCode }).toEqual({
+      out: {
+        code: expect.stringMatching(/^E[A-Z]+$/),
+        cause: { code: out?.code, syscall: "getaddrinfo", hostname },
+      },
+      exitCode: 0,
+    });
+  });
+});

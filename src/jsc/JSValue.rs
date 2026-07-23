@@ -1420,6 +1420,13 @@ impl JSValue {
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
+    /// Like [`put`](Self::put) but the property is non-enumerable
+    /// (`DontEnum`), matching how the ES `{ cause }` error option installs
+    /// `error.cause`.
+    pub fn put_dont_enum(self, global: &JSGlobalObject, key: impl AsRef<[u8]>, value: JSValue) {
+        let zs = bun_core::ZigString::init(key.as_ref());
+        JSC__JSValue__putDontEnum(self, global, &zs, value)
+    }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
     /// `undefined`) when `None`. Collapses the open-coded
     /// `if let Some(v) = field { obj.put(g, key, v.into()) }` used when
@@ -2031,6 +2038,12 @@ unsafe extern "C" {
         args_len: usize,
     ) -> JSValue;
     safe fn JSC__JSValue__put(
+        this: JSValue,
+        global: &JSGlobalObject,
+        key: &bun_core::ZigString,
+        value: JSValue,
+    );
+    safe fn JSC__JSValue__putDontEnum(
         this: JSValue,
         global: &JSGlobalObject,
         key: &bun_core::ZigString,

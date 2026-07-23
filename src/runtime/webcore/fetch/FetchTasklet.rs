@@ -1322,7 +1322,13 @@ impl FetchTasklet {
                     hostname,
                 );
                 err.path = path;
-                return BodyValueError::SystemError(err);
+                // Node (undici) nests the resolver error under `cause`;
+                // mirror it there so `err.cause?.code === "ENOTFOUND"` works.
+                let global_this = self.global_this;
+                let cause = err.dupe();
+                let js_err = err.to_error_instance(&global_this);
+                js_err.put_dont_enum(&global_this, "cause", cause.to_error_instance(&global_this));
+                return BodyValueError::JSValue(StrongOptional::create(js_err, &global_this));
             }
         }
 
@@ -1555,20 +1561,41 @@ impl FetchTasklet {
             )),
         };
 
-        // `jsc::SystemError` has no `Default` impl upstream — spell out
-        // every field's default.
         let fetch_error = jsc::SystemError {
-            errno: 0,
             code,
             message,
             path,
-            syscall: BunString::EMPTY,
-            hostname: BunString::EMPTY,
-            fd: core::ffi::c_int::MIN,
-            dest: BunString::EMPTY,
+            ..Default::default()
         };
 
-        BodyValueError::SystemError(fetch_error)
+        // Node (undici) exposes the underlying socket error on `err.cause`
+        // with an errno-style `code`; attach a matching cause so
+        // cross-runtime `err.cause?.code === "ECONNREFUSED"` checks work.
+        let cause = match fail {
+            http::Error::ConnectionRefused => Some(jsc::SystemError {
+                errno: -bun_sys::UV_E::CONNREFUSED,
+                code: BunString::static_("ECONNREFUSED"),
+                message: BunString::static_("connect ECONNREFUSED"),
+                syscall: BunString::static_("connect"),
+                ..Default::default()
+            }),
+            http::Error::ConnectionClosed => Some(jsc::SystemError {
+                errno: -bun_sys::UV_E::CONNRESET,
+                code: BunString::static_("ECONNRESET"),
+                message: BunString::static_("read ECONNRESET"),
+                syscall: BunString::static_("read"),
+                ..Default::default()
+            }),
+            _ => None,
+        };
+        let Some(cause) = cause else {
+            return BodyValueError::SystemError(fetch_error);
+        };
+
+        let global_this = self.global_this;
+        let js_err = fetch_error.to_error_instance(&global_this);
+        js_err.put_dont_enum(&global_this, "cause", cause.to_error_instance(&global_this));
+        BodyValueError::JSValue(StrongOptional::create(js_err, &global_this))
     }
 
     pub(crate) fn on_readable_stream_available(

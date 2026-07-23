@@ -969,13 +969,6 @@ impl lol_html::OutputSink for SinkRef {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum BufferOutputSinkSync {
-    Suspended,
-    Pending,
-    Done,
-}
-
 impl Drop for BufferOutputSink {
     fn drop(&mut self) {
         // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.

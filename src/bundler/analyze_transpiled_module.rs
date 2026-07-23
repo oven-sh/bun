@@ -2,7 +2,7 @@ use core::ffi::c_char;
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_core::{self, slice_as_bytes};
+use bun_core;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from the printer crate
@@ -340,37 +340,6 @@ impl ModuleInfoDeserialized {
         // BadModuleInfo remains.
         Self::create(source).ok()
     }
-
-    pub fn serialize(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
-        let record_kinds = self.record_kinds();
-        writer.write_all(&(record_kinds.len() as u32).to_le_bytes())?;
-        writer.write_all(slice_as_bytes(record_kinds))?;
-        let pad = (4 - (record_kinds.len() % 4)) % 4;
-        writer.write_all(&[0u8; 4][..pad])?; // alignment padding
-
-        let buffer = self.buffer();
-        writer.write_all(&(buffer.len() as u32).to_le_bytes())?;
-        writer.write_all(slice_as_bytes(buffer))?;
-
-        let rm_keys = self.requested_modules_keys();
-        writer.write_all(&(rm_keys.len() as u32).to_le_bytes())?;
-        writer.write_all(slice_as_bytes(rm_keys))?;
-        writer.write_all(slice_as_bytes(self.requested_modules_values()))?;
-        let rm_phases = self.requested_modules_phases();
-        debug_assert_eq!(rm_phases.len(), rm_keys.len());
-        writer.write_all(rm_phases)?;
-        let pad = (4 - (rm_keys.len() % 4)) % 4;
-        writer.write_all(&[0u8; 4][..pad])?; // alignment padding
-
-        writer.write_all(&[self.flags.bits()])?;
-        writer.write_all(&[0u8; 3])?; // alignment padding
-
-        let strings_lens = self.strings_lens();
-        writer.write_all(&(strings_lens.len() as u32).to_le_bytes())?;
-        writer.write_all(slice_as_bytes(strings_lens))?;
-        writer.write_all(self.strings_buf())?;
-        Ok(())
-    }
 }
 
 /// Maximum element alignment appearing in the serialized format
@@ -456,20 +425,12 @@ impl StringIDExt for StringID {
 /// Bridges the printer-crate `ModuleInfo` to the raw-pointer FFI
 /// `ModuleInfoDeserialized` view kept in this crate.
 pub trait ModuleInfoExt {
-    /// # Safety
-    /// `this` must originate from `heap::alloc(ModuleInfo::create(..))`.
-    unsafe fn destroy_raw(this: *mut ModuleInfo);
     /// Finalize and box the raw-pointer `ModuleInfoDeserialized` view, taking
     /// ownership of `self`.
     fn into_deserialized(self: Box<Self>) -> Box<ModuleInfoDeserialized>;
 }
 
 impl ModuleInfoExt for ModuleInfo {
-    #[inline]
-    unsafe fn destroy_raw(this: *mut ModuleInfo) {
-        // SAFETY: caller contract — `this` is `heap::alloc` output.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
         // The printer-crate `ModuleInfo`
         // exposes a borrowed `as_deserialized()`; here we materialise the

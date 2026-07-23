@@ -357,7 +357,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         // Handle options.paths if provided
         JSC::JSValue pathsValue = JSC::jsUndefined();
         if (optionsValue.isObject()) {
-            pathsValue = optionsValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
+            pathsValue = optionsValue.getObject()->get(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -872,7 +872,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEnableCompileCache,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Accepts `string | { directory?: string, portable?: boolean } | undefined`.
+    // When a directory is provided explicitly it must be a string.
+    JSC::JSValue optionsValue = callFrame->argument(0);
+    JSC::JSValue directoryValue = optionsValue;
+    // Matches `typeof options === "object"`, so a callable is not an options bag.
+    if (optionsValue.isObject() && !optionsValue.isCallable()) {
+        auto* options = optionsValue.getObject();
+        directoryValue = options->get(globalObject, JSC::Identifier::fromString(vm, "directory"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        // Node reads `portable` before validating `directory`; the value is unused
+        // here but a throwing getter still propagates.
+        options->get(globalObject, JSC::Identifier::fromString(vm, "portable"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!directoryValue.isUndefined() && !directoryValue.isString()) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "cacheDir should be a string"_s);
+        return {};
+    }
+
+    // There is no on-disk module compile cache, so report failure instead of
+    // silently claiming the cache was enabled.
+    auto* result = JSC::constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "status"_s),
+        JSC::jsNumber(0)); // constants.compileCacheStatus.FAILED
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s),
+        JSC::jsString(vm, String("the on-disk module compile cache is not supported"_s)));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
@@ -904,7 +935,7 @@ _stat                   &Generated::NodeModuleModule::js_stat Function 1
 builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
-enableCompileCache      jsFunctionEnableCompileCache      Function 0
+enableCompileCache      jsFunctionEnableCompileCache      Function 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback

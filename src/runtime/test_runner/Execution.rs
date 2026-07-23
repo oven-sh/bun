@@ -159,8 +159,6 @@ pub struct ExecutionSequence {
     pub test_entry: Option<NonNull<ExecutionEntry>>,
     pub remaining_repeat_count: u32,
     pub remaining_retry_count: u32,
-    pub flaky_attempt_count: usize,
-    pub flaky_attempts_buf: [FlakyAttempt; ExecutionSequence::MAX_FLAKY_ATTEMPTS],
     pub result: Result,
     pub executing: bool,
     pub started_at: Timespec,
@@ -171,15 +169,7 @@ pub struct ExecutionSequence {
     pub maybe_skip: bool,
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct FlakyAttempt {
-    pub result: Result,
-    pub elapsed_ns: u64,
-}
-
 impl ExecutionSequence {
-    pub(crate) const MAX_FLAKY_ATTEMPTS: usize = 16;
-
     pub(crate) fn init(
         first_entry: Option<NonNull<ExecutionEntry>>,
         test_entry: Option<NonNull<ExecutionEntry>>,
@@ -193,8 +183,6 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
-            flaky_attempt_count: 0,
-            flaky_attempts_buf: [FlakyAttempt::default(); Self::MAX_FLAKY_ATTEMPTS],
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -202,10 +190,6 @@ impl ExecutionSequence {
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
         }
-    }
-
-    pub(crate) fn flaky_attempts(&self) -> &[FlakyAttempt] {
-        &self.flaky_attempts_buf[0..self.flaky_attempt_count]
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -528,7 +512,6 @@ impl Execution {
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
-            Execution::on_entry_completed(entry_ptr);
 
             sequence.executing = false;
             if sequence.maybe_skip {
@@ -552,19 +535,8 @@ impl Execution {
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
-                if sequence.flaky_attempt_count < ExecutionSequence::MAX_FLAKY_ATTEMPTS {
-                    let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
-                        0
-                    } else {
-                        sequence.started_at.since_now_force_real_time()
-                    };
-                    sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = FlakyAttempt {
-                        result: sequence.result,
-                        elapsed_ns,
-                    };
-                    sequence.flaky_attempt_count += 1;
-                }
                 sequence.remaining_retry_count -= 1;
+                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -572,6 +544,7 @@ impl Execution {
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
+                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -647,8 +620,6 @@ impl Execution {
             entry.timespec = Timespec::EPOCH;
         }
     }
-
-    fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
@@ -729,6 +700,22 @@ impl Execution {
         }
     }
 
+    /// Drop any captured junit failure so the next retry/repeat starts fresh.
+    /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
+    /// afterEach after the test body already threw) accumulate instead of
+    /// clobbering the primary failure.
+    fn discard_junit_failure(buntest: NonNull<BunTest>) {
+        // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
+        // test runner, no other borrow live here.
+        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
+            // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
+            // provenance (see BunTest docs); single-threaded, no other borrow.
+            if let Some(junit) = unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
+                junit.last_failure = None;
+            }
+        }
+    }
+
     pub fn reset_sequence(sequence: &mut ExecutionSequence) {
         debug_assert!(!sequence.executing);
         {
@@ -752,17 +739,13 @@ impl Execution {
             }
         }
 
-        // Preserve retry/repeat counts and flaky attempt history across reset
-        let saved_flaky_attempt_count = sequence.flaky_attempt_count;
-        let saved_flaky_attempts_buf = sequence.flaky_attempts_buf;
+        // Preserve retry/repeat counts across reset
         *sequence = ExecutionSequence::init(
             sequence.first_entry,
             sequence.test_entry,
             sequence.remaining_retry_count,
             sequence.remaining_repeat_count,
         );
-        sequence.flaky_attempt_count = saved_flaky_attempt_count;
-        sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would

@@ -519,13 +519,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     StringBuilder builder;
     bool first = true;
 
-    JSValue iteratorValue = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    JSMapIterator* iterator = dynamicDowncast<JSMapIterator>(iteratorValue);
-    if (!iterator) { // Should not happen for JSMap.entries()
-        scope.release();
-        return Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "Internal error: Expected MapIterator"_s, "toString"_s, -1);
-    }
+    JSMapIterator* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
 
     while (true) {
         JSValue nextValue;

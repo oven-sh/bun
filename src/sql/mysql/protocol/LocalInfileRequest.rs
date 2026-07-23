@@ -35,11 +35,4 @@ impl LocalInfileRequest {
         self.filename = reader.read(filename_len as usize)?;
         Ok(())
     }
-
-    pub fn decode<Context: ReaderContext>(
-        &mut self,
-        context: Context,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(NewReader { wrapped: context })
-    }
 }

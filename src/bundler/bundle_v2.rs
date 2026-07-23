@@ -114,7 +114,6 @@ pub struct BundleV2<'a> {
     /// See the comment in `Chunk.OutputPiece`.
     pub unique_key: u64,
     pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
-    pub has_on_parse_plugins: bool,
 
     pub finalizers: Vec<ExternalFreeFunction>,
 
@@ -164,10 +163,6 @@ impl<'a> BundleV2<'a> {
     #[inline]
     pub fn transpiler(&self) -> &Transpiler<'a> {
         &*self.transpiler
-    }
-    #[inline]
-    pub fn transpiler_mut(&mut self) -> &mut Transpiler<'a> {
-        &mut *self.transpiler
     }
 
     #[inline]
@@ -468,8 +463,6 @@ pub mod bv2_impl {
             /// Mirrors `Framework.is_built_in_react` — read by
             /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
             pub is_built_in_react: bool,
-            /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
-            pub client_css_in_js: crate::options::ClientCssInJs,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
@@ -487,7 +480,6 @@ pub mod bv2_impl {
                     server_components,
                     react_fast_refresh,
                     is_built_in_react,
-                    client_css_in_js: crate::options::ClientCssInJs::default(),
                 }
             }
         }
@@ -513,24 +505,10 @@ pub mod bv2_impl {
         #[derive(Clone, Copy)]
         pub struct HmrRuntime {
             pub code: &'static [u8],
-            /// Precomputed `\n` count — sourcemap generation skips this many lines.
-            pub line_count: u32,
         }
         impl HmrRuntime {
             pub const fn init(code: &'static [u8]) -> Self {
-                // const-fn newline counter.
-                let mut n: u32 = 0;
-                let mut i = 0usize;
-                while i < code.len() {
-                    if code[i] == b'\n' {
-                        n += 1;
-                    }
-                    i += 1;
-                }
-                Self {
-                    code,
-                    line_count: n,
-                }
+                Self { code }
             }
         }
         /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
@@ -706,14 +684,6 @@ pub mod bv2_impl {
     /// JSC. The JS-thread halves (dispatch onto the JS event loop, `toJS`, plugin
     /// FFI bodies) stay in tier-6 (`bun_runtime::api`) and re-export these.
     pub mod api {
-        /// `BuildArtifact.OutputKind`.
-        /// Canonical definition lives in `crate::options::OutputKind`; re-exported
-        /// here so the documented CYCLEBREAK path `api::build_artifact::OutputKind`
-        /// keeps resolving.
-        pub mod build_artifact {
-            pub use crate::options::OutputKind;
-        }
-
         /// `JSBundler` — TYPE_ONLY subset.
         /// Exposed as a module (not a struct) so callers can write
         /// `api::JSBundler::Load` / `api::JSBundler::Resolve::MiniImportRecord`.
@@ -1248,18 +1218,6 @@ pub mod bv2_impl {
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
-                /// Raw backref to the owning `BundleV2`.
-                ///
-                /// No `&`/`&mut`-returning accessor is provided: the bundle is
-                /// reachable from both the bundler thread and JS-thread plugin
-                /// callbacks, and several callers (`on_load_async`,
-                /// `on_load_from_js_loop`) need `&mut BundleV2` *alongside*
-                /// `&mut Load`, which a borrowing accessor cannot express. Callers
-                /// must keep the raw deref + SAFETY note locally.
-                #[inline]
-                pub fn bv2_ptr(&self) -> *mut BundleV2<'static> {
-                    self.bv2
-                }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
                 ///
                 /// `parse_task` is a `BackRef` set from `&mut ParseTask` in `init`
@@ -1332,21 +1290,6 @@ pub mod bv2_impl {
             }
         }
     }
-
-    /// `SavedFile`'s only member is `toJS`, which
-    /// is JSC-bound and stays in T6. The bundler stores it as an `OutputFile` value
-    /// tag, so a unit struct here is sufficient.
-    pub mod saved_file {
-        #[derive(Default, Clone, Copy)]
-        pub struct SavedFile;
-    }
-
-    // ── crate-root re-exports for forward-refs left by move-out ───────────────
-    pub use self::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-
-    /// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
-    pub type JSBundlerPlugin = self::api::JSBundler::Plugin;
-    pub type FileMap = self::api::JSBundler::FileMap;
 
     use bun_sourcemap as SourceMap;
 
@@ -1695,9 +1638,6 @@ pub mod bv2_impl {
         pub all_loaders: &'a [Loader],
         pub all_urls_for_css: &'a [&'a [u8]],
         pub redirects: &'a [u32],
-        // `PathToSourceIndexMap` is `!Clone` and the field is unread in `visit`, so
-        // store a raw backref to satisfy the struct shape without forcing `Clone`.
-        pub redirect_map: *const PathToSourceIndexMap,
         pub dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
         /// Files which are Server Component Boundaries
         pub scb_bitset: Option<DynamicBitSetUnmanaged>,
@@ -1707,6 +1647,20 @@ pub mod bv2_impl {
         pub additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
         /// Files which are imported by CSS and inlined in CSS
         pub additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
+
+        pub stack: Vec<ReachFrame>,
+    }
+
+    #[derive(Copy, Clone)]
+    pub enum ReachFrame {
+        Enter {
+            source_index: Index,
+            was_dynamic_import: bool,
+        },
+        Leave {
+            source_index: Index,
+            was_dynamic_import: bool,
+        },
     }
 
     impl<'a> ReachableFileVisitor<'a> {
@@ -1716,141 +1670,178 @@ pub mod bv2_impl {
         // deterministic given that the entry point order is deterministic, since the
         // returned order is the postorder of the graph traversal and import record
         // order within a given file is deterministic.
+        //
+        // Explicit-stack DFS (was per-edge recursive). `Enter` does the
+        // pre-order work and queues successors; `Leave` performs the
+        // post-order append. Successors are pushed in pop order then the tail
+        // is reversed so LIFO pop reproduces the original recursion order.
         pub fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
             &mut self,
             source_index: Index,
             was_dynamic_import: bool,
         ) {
-            if source_index.is_invalid() {
-                return;
-            }
+            debug_assert!(self.stack.is_empty());
+            self.stack.push(ReachFrame::Enter {
+                source_index,
+                was_dynamic_import,
+            });
 
-            if self.visited.is_set(source_index.get() as usize) {
-                if CHECK_DYNAMIC_IMPORTS {
-                    if was_dynamic_import {
+            while let Some(frame) = self.stack.pop() {
+                let (source_index, was_dynamic_import) = match frame {
+                    ReachFrame::Leave {
+                        source_index,
+                        was_dynamic_import,
+                    } => {
+                        // Each file must come after its dependencies
+                        self.reachable.push(source_index);
+                        if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
+                            self.dynamic_import_entry_points
+                                .put(source_index.get(), ())
+                                .expect("unreachable");
+                        }
+                        continue;
+                    }
+                    ReachFrame::Enter {
+                        source_index,
+                        was_dynamic_import,
+                    } => (source_index, was_dynamic_import),
+                };
+
+                if source_index.is_invalid() {
+                    continue;
+                }
+
+                if self.visited.is_set(source_index.get() as usize) {
+                    if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
                         self.dynamic_import_entry_points
                             .put(source_index.get(), ())
                             .expect("unreachable");
                     }
+                    continue;
                 }
-                return;
-            }
-            self.visited.set(source_index.get() as usize);
+                self.visited.set(source_index.get() as usize);
 
-            if let Some(scb_bitset) = &self.scb_bitset {
-                if scb_bitset.is_set(source_index.get() as usize) {
-                    let scb_index = self
-                        .scb_list
-                        .get_index(source_index.get())
-                        .expect("unreachable");
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::init(self.scb_list.list.items_reference_source_index()[scb_index]),
-                        false,
-                    );
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::init(self.scb_list.list.items_ssr_source_index()[scb_index]),
-                        false,
-                    );
-                }
-            }
+                let mark = self.stack.len();
 
-            let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
-            let is_css = self.all_loaders[source_index.get() as usize].is_css();
-
-            let import_record_list_id = source_index;
-            // when there are no import records, v index will be invalid
-            if (import_record_list_id.get() as usize) < self.all_import_records.len() {
-                // reshaped for borrowck — split borrow of all_import_records
-                let import_records_len =
-                    self.all_import_records[import_record_list_id.get() as usize].len() as usize;
-                for ir_idx in 0..import_records_len {
-                    let import_record = &mut self.all_import_records
-                        [import_record_list_id.get() as usize]
-                        .as_mut_slice()[ir_idx];
-                    let mut other_source = import_record.source_index;
-                    if other_source.is_valid() {
-                        let mut redirect_count: usize = 0;
-                        while let Some(redirect_id) =
-                            get_redirect_id(self.redirects[other_source.get() as usize])
-                        {
-                            // reshaped for borrowck — copy out the redirect target's
-                            // (source_index, path) before re-borrowing `all_import_records` mutably.
-                            let (other_src_idx, other_path) = {
-                                let other_import_records =
-                                    self.all_import_records[other_source.get() as usize].as_slice();
-                                let other_import_record =
-                                    &other_import_records[redirect_id as usize];
-                                (other_import_record.source_index, other_import_record.path)
-                            };
-                            let import_record = &mut self.all_import_records
-                                [import_record_list_id.get() as usize]
-                                .as_mut_slice()[ir_idx];
-                            import_record.source_index = other_src_idx;
-                            import_record.path = other_path;
-                            other_source = other_src_idx;
-                            if redirect_count == Self::MAX_REDIRECTS {
-                                import_record.path.is_disabled = true;
-                                import_record.source_index = Index::INVALID;
-                                break;
-                            }
-
-                            // Handle redirects to a builtin or external module
-                            // https://github.com/oven-sh/bun/issues/3764
-                            if !other_source.is_valid() {
-                                break;
-                            }
-                            redirect_count += 1;
-                        }
-
-                        let import_record = &self.all_import_records
-                            [import_record_list_id.get() as usize]
-                            .as_slice()[ir_idx];
-                        // Mark if the file is imported by JS and its URL is inlined for CSS
-                        let is_inlined = import_record.source_index.is_valid()
-                            && !self.all_urls_for_css[import_record.source_index.get() as usize]
-                                .is_empty();
-                        if is_js && is_inlined {
-                            self.additional_files_imported_by_js_and_inlined_in_css
-                                .set(import_record.source_index.get() as usize);
-                        } else if is_css && is_inlined {
-                            self.additional_files_imported_by_css_and_inlined
-                                .set(import_record.source_index.get() as usize);
-                        }
-
-                        let next_source = import_record.source_index;
-                        let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
-                        self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                            next_source,
-                            CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
-                        );
+                if let Some(scb_bitset) = &self.scb_bitset {
+                    if scb_bitset.is_set(source_index.get() as usize) {
+                        let scb_index = self
+                            .scb_list
+                            .get_index(source_index.get())
+                            .expect("unreachable");
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::init(
+                                self.scb_list.list.items_reference_source_index()[scb_index],
+                            ),
+                            was_dynamic_import: false,
+                        });
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::init(
+                                self.scb_list.list.items_ssr_source_index()[scb_index],
+                            ),
+                            was_dynamic_import: false,
+                        });
                     }
                 }
 
-                // Redirects replace the source file with another file
-                if let Some(redirect_id) =
-                    get_redirect_id(self.redirects[source_index.get() as usize])
-                {
-                    let redirect_source_index = self.all_import_records
-                        [source_index.get() as usize]
-                        .as_slice()[redirect_id as usize]
-                        .source_index
-                        .get();
-                    self.visit::<CHECK_DYNAMIC_IMPORTS>(
-                        Index::source(redirect_source_index),
-                        was_dynamic_import,
-                    );
-                    return;
-                }
-            }
+                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
+                let is_css = self.all_loaders[source_index.get() as usize].is_css();
 
-            // Each file must come after its dependencies
-            self.reachable.push(source_index);
-            if CHECK_DYNAMIC_IMPORTS {
-                if was_dynamic_import {
-                    self.dynamic_import_entry_points
-                        .put(source_index.get(), ())
-                        .expect("unreachable");
+                let import_record_list_id = source_index;
+                let mut has_redirect = false;
+                // when there are no import records, v index will be invalid
+                if (import_record_list_id.get() as usize) < self.all_import_records.len() {
+                    let import_records_len = self.all_import_records
+                        [import_record_list_id.get() as usize]
+                        .len() as usize;
+                    for ir_idx in 0..import_records_len {
+                        let import_record = &mut self.all_import_records
+                            [import_record_list_id.get() as usize]
+                            .as_mut_slice()[ir_idx];
+                        let mut other_source = import_record.source_index;
+                        if other_source.is_valid() {
+                            let mut redirect_count: usize = 0;
+                            while let Some(redirect_id) =
+                                get_redirect_id(self.redirects[other_source.get() as usize])
+                            {
+                                let (other_src_idx, other_path) = {
+                                    let other_import_records = self.all_import_records
+                                        [other_source.get() as usize]
+                                        .as_slice();
+                                    let other_import_record =
+                                        &other_import_records[redirect_id as usize];
+                                    (other_import_record.source_index, other_import_record.path)
+                                };
+                                let import_record = &mut self.all_import_records
+                                    [import_record_list_id.get() as usize]
+                                    .as_mut_slice()[ir_idx];
+                                import_record.source_index = other_src_idx;
+                                import_record.path = other_path;
+                                other_source = other_src_idx;
+                                if redirect_count == Self::MAX_REDIRECTS {
+                                    import_record.path.is_disabled = true;
+                                    import_record.source_index = Index::INVALID;
+                                    break;
+                                }
+
+                                // Handle redirects to a builtin or external module
+                                // https://github.com/oven-sh/bun/issues/3764
+                                if !other_source.is_valid() {
+                                    break;
+                                }
+                                redirect_count += 1;
+                            }
+
+                            let import_record = &self.all_import_records
+                                [import_record_list_id.get() as usize]
+                                .as_slice()[ir_idx];
+                            // Mark if the file is imported by JS and its URL is inlined for CSS
+                            let is_inlined = import_record.source_index.is_valid()
+                                && !self.all_urls_for_css
+                                    [import_record.source_index.get() as usize]
+                                    .is_empty();
+                            if is_js && is_inlined {
+                                self.additional_files_imported_by_js_and_inlined_in_css
+                                    .set(import_record.source_index.get() as usize);
+                            } else if is_css && is_inlined {
+                                self.additional_files_imported_by_css_and_inlined
+                                    .set(import_record.source_index.get() as usize);
+                            }
+
+                            let next_source = import_record.source_index;
+                            let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
+                            self.stack.push(ReachFrame::Enter {
+                                source_index: next_source,
+                                was_dynamic_import: CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
+                            });
+                        }
+                    }
+
+                    // Redirects replace the source file with another file
+                    if let Some(redirect_id) =
+                        get_redirect_id(self.redirects[source_index.get() as usize])
+                    {
+                        let redirect_source_index = self.all_import_records
+                            [source_index.get() as usize]
+                            .as_slice()[redirect_id as usize]
+                            .source_index
+                            .get();
+                        self.stack.push(ReachFrame::Enter {
+                            source_index: Index::source(redirect_source_index),
+                            was_dynamic_import,
+                        });
+                        has_redirect = true;
+                    }
                 }
+
+                if !has_redirect {
+                    self.stack.push(ReachFrame::Leave {
+                        source_index,
+                        was_dynamic_import,
+                    });
+                }
+
+                self.stack[mark..].reverse();
             }
         }
     }
@@ -1901,8 +1892,6 @@ pub mod bv2_impl {
             // reshaped for borrowck — hoist the values that would
             // otherwise re-borrow `self`/`self.graph` while the visitor holds
             // disjoint column refs.
-            let redirect_map: *const PathToSourceIndexMap =
-                std::ptr::from_ref(self.path_to_source_index_map(self.transpiler.options.target));
             // Always materialize a valid slice; when the boundary list is empty
             // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
             // null `&Map` via `mem::zeroed()` (UB even though it was never read
@@ -1925,7 +1914,6 @@ pub mod bv2_impl {
                 all_import_records,
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
-                redirect_map,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
                 scb_bitset,
                 scb_list,
@@ -1933,6 +1921,7 @@ pub mod bv2_impl {
                     &mut additional_files_imported_by_js_and_inlined_in_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
+                stack: Vec::new(),
             };
 
             // If we don't include the runtime, __toESM or __toCommonJS will not get
@@ -2740,7 +2729,6 @@ pub mod bv2_impl {
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
-                has_on_parse_plugins: false,
                 finalizers: Vec::new(),
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
@@ -2840,20 +2828,9 @@ pub mod bv2_impl {
 
             this.linker.dev_server = this.dev_server;
 
-            // Arena-owned. Coerce to `*mut`
-            // immediately so the `&this` borrow from `arena()` ends before
-            // `ThreadPool::init` takes `&mut this`.
-            let pool: *mut ThreadPool =
-                std::ptr::from_mut(this.arena().alloc(ThreadPool::default()));
+            let tp = ThreadPool::init(&*this, thread_pool)?;
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
-
-            // SAFETY: arena slot is live for the bundle pass; the default value
-            // written above has no Drop, so overwriting via `*pool = ...` is fine.
-            unsafe {
-                *pool = ThreadPool::init(&*this, thread_pool)?;
-            }
-            this.graph.pool =
-                bun_ptr::BackRef::from(NonNull::new(pool).expect("arena allocation is non-null"));
+            this.graph.pool = bun_ptr::BackRef::from(NonNull::from(this.arena().alloc(tp)));
             // Install the watcher only after `ThreadPool::init()` has succeeded —
             // the `?` above is the last early-return in this fn, so the watcher's
             // raw `*mut BundleV2` can't outlive the box it points at (the caller
@@ -7235,11 +7212,6 @@ pub mod bv2_impl {
         }
 
         /// To satisfy the interface from NewHotReloader()
-        pub fn get_loaders(&mut self) -> &mut options::LoaderHashTable {
-            &mut self.transpiler.options.loaders
-        }
-
-        /// To satisfy the interface from NewHotReloader()
         pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
             self.transpiler.resolver.bust_dir_cache(path)
         }
@@ -7645,20 +7617,6 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
-    }
-
-    impl<'a> DevServerOutput<'a> {
-        pub fn js_pseudo_chunk(&mut self) -> &mut Chunk {
-            &mut self.chunks[0]
-        }
-
-        pub fn css_chunks(&mut self) -> &mut [Chunk] {
-            &mut self.chunks[1..][..self.css_file_list.count()]
-        }
-
-        pub fn html_chunks(&mut self) -> &mut [Chunk] {
-            &mut self.chunks[1 + self.css_file_list.count()..][..self.html_files.count()]
-        }
     }
 
     pub fn generate_unique_key() -> u64 {

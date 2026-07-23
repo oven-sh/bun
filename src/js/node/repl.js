@@ -87,6 +87,16 @@ const {
   globalThis,
 } = primordials;
 
+// The whole implementation is deferred so `require("node:repl")` is
+// near-free for consumers (ts-node) that import it at top level but only
+// touch repl.start / repl.Recoverable on the REPL path.
+let _loaded;
+function loadImpl() {
+  if (_loaded) return _loaded;
+  // Populated at the bottom; internal references (inside REPLServer methods)
+  // run only after loadImpl completes.
+  _loaded = {};
+
 const { makeRequireFunction, addBuiltinLibsToObject } = require("internal/repl/node-shims");
 // Lazy: acorn's ~122 KB source parses on first property access, not on
 // require('node:repl'); don't destructure at module scope.
@@ -112,7 +122,9 @@ const { Console } = require("node:console");
 const { shouldColorize } = require("internal/repl/node-shims");
 const CJSModule = require("internal/repl/node-shims").Module;
 const { AsyncLocalStorage } = require("node:async_hooks");
-let debug = require("internal/repl/node-shims").debuglog("repl", fn => {
+// `var`, not `let`: the shim's debuglog calls the callback synchronously, so
+// the assignment would hit `let`'s TDZ now that this runs inside a function.
+var debug = require("internal/repl/node-shims").debuglog("repl", fn => {
   debug = fn;
 });
 const {
@@ -148,7 +160,8 @@ const {
   setReplBuiltinLibs,
   fixReplRequire,
 } = require("internal/repl/utils");
-const { complete } = require("internal/repl/completion");
+// internal/repl/completion (839 lines) is only needed on TAB; load on first use.
+let _complete;
 const { startSigintWatchdog, stopSigintWatchdog } = require("internal/repl/node-shims");
 
 const { makeContextifyScript } = require("internal/repl/node-shims");
@@ -360,7 +373,7 @@ class REPLServer extends Interface {
 
     this.useGlobal = !!useGlobal;
     this.ignoreUndefined = !!ignoreUndefined;
-    this.replMode = replMode || __node_module__.exports.REPL_MODE_SLOPPY;
+    this.replMode = replMode || _loaded.REPL_MODE_SLOPPY;
     this.underscoreAssigned = false;
     this.last = undefined;
     this.underscoreErrAssigned = false;
@@ -381,7 +394,7 @@ class REPLServer extends Interface {
     if (options[kStandaloneREPL]) {
       // It is possible to introspect the running REPL accessing this variable
       // from inside the REPL. This is useful for anyone working on the REPL.
-      __node_module__.exports.repl = this;
+      _loaded.repl = this;
     } else {
       addProcessNewListener();
       this.once("exit", removeProcessNewListener);
@@ -517,7 +530,7 @@ class REPLServer extends Interface {
         while (true) {
           try {
             if (
-              self.replMode === __node_module__.exports.REPL_MODE_STRICT &&
+              self.replMode === _loaded.REPL_MODE_STRICT &&
               RegExpPrototypeExec(/^\s*$/, code) === null
             ) {
               // "void 0" keeps the repl from returning "use strict" as the result
@@ -690,7 +703,8 @@ class REPLServer extends Interface {
     self.clearBufferedCommand();
 
     function completer(text, cb) {
-      FunctionPrototypeCall(complete, self, text, self.editorMode ? self.completeOnEditorMode(cb) : cb);
+      _complete ??= require("internal/repl/completion").complete;
+      FunctionPrototypeCall(_complete, self, text, self.editorMode ? self.completeOnEditorMode(cb) : cb);
     }
 
     self.resetContext();
@@ -699,7 +713,7 @@ class REPLServer extends Interface {
     defineDefaultCommands(this);
 
     // Figure out which "writer" function to use
-    self.writer = options.writer || __node_module__.exports.writer;
+    self.writer = options.writer || _loaded.writer;
 
     if (self.writer === writer) {
       // Conditionally turn on ANSI coloring.
@@ -1018,7 +1032,7 @@ class REPLServer extends Interface {
                   `SyntaxError: ${e.message}\n`,
                 );
               }
-            } else if (this.replMode === __node_module__.exports.REPL_MODE_STRICT) {
+            } else if (this.replMode === _loaded.REPL_MODE_STRICT) {
               e.stack = SideEffectFreeRegExpPrototypeSymbolReplace(
                 /(\s+at\s+REPL\d+:)(\d+)/,
                 e.stack,
@@ -1427,7 +1441,7 @@ function defineDefaultCommands(repl) {
   }
 }
 
-__node_module__.exports = {
+ObjectAssign(_loaded, {
   start,
   writer,
   REPLServer,
@@ -1435,9 +1449,9 @@ __node_module__.exports = {
   REPL_MODE_STRICT,
   Recoverable,
   isValidSyntax,
-};
+});
 
-ObjectDefineProperty(__node_module__.exports, "builtinModules", {
+ObjectDefineProperty(_loaded, "builtinModules", {
   __proto__: null,
   get: pendingDeprecation
     ? deprecate(
@@ -1457,7 +1471,7 @@ ObjectDefineProperty(__node_module__.exports, "builtinModules", {
   configurable: true,
 });
 
-ObjectDefineProperty(__node_module__.exports, "_builtinLibs", {
+ObjectDefineProperty(_loaded, "_builtinLibs", {
   __proto__: null,
   get: pendingDeprecation
     ? deprecate(
@@ -1476,6 +1490,27 @@ ObjectDefineProperty(__node_module__.exports, "_builtinLibs", {
   enumerable: false,
   configurable: true,
 });
+  return _loaded;
+}
+
+for (const name of ["start", "writer", "REPLServer", "REPL_MODE_SLOPPY", "REPL_MODE_STRICT", "Recoverable", "isValidSyntax", "repl"]) {
+  ObjectDefineProperty(__node_module__.exports, name, {
+    __proto__: null,
+    get: () => loadImpl()[name],
+    set: v => { loadImpl()[name] = v; },
+    enumerable: true,
+    configurable: true,
+  });
+}
+for (const name of ["builtinModules", "_builtinLibs"]) {
+  ObjectDefineProperty(__node_module__.exports, name, {
+    __proto__: null,
+    get: () => loadImpl()[name],
+    set: v => { loadImpl()[name] = v; },
+    enumerable: false,
+    configurable: true,
+  });
+}
 
 // Lets the bun --interactive entry (a plain eval script, not a builtin) reach
 // internal/repl's createInternalRepl so the NODE_REPL_* env parsing has one

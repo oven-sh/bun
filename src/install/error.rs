@@ -26,10 +26,6 @@ pub enum Error {
     FileBusy,
     #[error("DeviceBusy")]
     DeviceBusy,
-    #[error("InvalidUtf8")]
-    InvalidUtf8,
-    #[error("InvalidWtf8")]
-    InvalidWtf8,
     #[error("TarballHTTP400")]
     TarballHTTP400,
     #[error("TarballHTTP401")]
@@ -286,8 +282,6 @@ impl Error {
             Self::FileSystem => "FileSystem",
             Self::FileBusy => "FileBusy",
             Self::DeviceBusy => "DeviceBusy",
-            Self::InvalidUtf8 => "InvalidUtf8",
-            Self::InvalidWtf8 => "InvalidWtf8",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
             Self::TarballHTTP402 => "TarballHTTP402",

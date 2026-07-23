@@ -19,6 +19,68 @@ namespace Bun {
 using namespace JSC;
 using namespace ncrypto;
 
+int pqcKeyTypeToNid(const WTF::StringView& name, bool ignoreCase)
+{
+    static constexpr std::pair<ASCIILiteral, int> table[] = {
+        { "ml-dsa-44"_s, EVP_PKEY_ML_DSA_44 },
+        { "ml-dsa-65"_s, EVP_PKEY_ML_DSA_65 },
+        { "ml-dsa-87"_s, EVP_PKEY_ML_DSA_87 },
+        { "ml-kem-768"_s, EVP_PKEY_ML_KEM_768 },
+        { "ml-kem-1024"_s, EVP_PKEY_ML_KEM_1024 },
+    };
+    for (const auto& [candidate, nid] : table) {
+        if (ignoreCase ? WTF::equalIgnoringASCIICase(name, candidate) : name == candidate)
+            return nid;
+    }
+    return 0;
+}
+
+ASCIILiteral pqcNidToKeyTypeName(int nid)
+{
+    switch (nid) {
+    case EVP_PKEY_ML_DSA_44:
+        return "ml-dsa-44"_s;
+    case EVP_PKEY_ML_DSA_65:
+        return "ml-dsa-65"_s;
+    case EVP_PKEY_ML_DSA_87:
+        return "ml-dsa-87"_s;
+    case EVP_PKEY_ML_KEM_768:
+        return "ml-kem-768"_s;
+    case EVP_PKEY_ML_KEM_1024:
+        return "ml-kem-1024"_s;
+    default:
+        return {};
+    }
+}
+
+bool isMlDsaNid(int nid)
+{
+    return nid == EVP_PKEY_ML_DSA_44 || nid == EVP_PKEY_ML_DSA_65 || nid == EVP_PKEY_ML_DSA_87;
+}
+
+bool isMlKemNid(int nid)
+{
+    return nid == EVP_PKEY_ML_KEM_768 || nid == EVP_PKEY_ML_KEM_1024;
+}
+
+const EVP_PKEY_ALG* pqcNidToAlg(int nid)
+{
+    switch (nid) {
+    case EVP_PKEY_ML_DSA_44:
+        return EVP_pkey_ml_dsa_44();
+    case EVP_PKEY_ML_DSA_65:
+        return EVP_pkey_ml_dsa_65();
+    case EVP_PKEY_ML_DSA_87:
+        return EVP_pkey_ml_dsa_87();
+    case EVP_PKEY_ML_KEM_768:
+        return EVP_pkey_ml_kem_768();
+    case EVP_PKEY_ML_KEM_1024:
+        return EVP_pkey_ml_kem_1024();
+    default:
+        return nullptr;
+    }
+}
+
 namespace ExternZigHash {
 struct Hasher;
 
@@ -162,6 +224,8 @@ std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGloba
         .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
         .len = keySpan.size(),
     };
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
     if (res) {
         ncrypto::EVPKeyPointer keyPtr(WTF::move(res.value));
@@ -359,9 +423,12 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
             RETURN_IF_EXCEPTION(scope, {});
 
             // Build "ERR_OSSL_<LIB>_THIS_ERROR" like Node's error::Decorate (crypto_util.cc);
-            // the SSL library drops the OSSL_ prefix. BoringSSL reason strings are already
-            // underscore-separated macro names, so only uppercasing is needed here.
-            String upperReason = reasonString.convertToASCIIUppercase();
+            // the SSL library drops the OSSL_ prefix. Node uppercases and replaces spaces with
+            // underscores: most BoringSSL reason strings are already macro names, but compound
+            // ones like "ASN.1 encoding routines" (a library name forwarded as a PEM reason) are
+            // not, and Node's test-tls-set-default-ca-certificates-recovery pins the underscored
+            // form for the BoringSSL case.
+            String upperReason = makeStringByReplacingAll(reasonString.convertToASCIIUppercase(), ' ', '_');
 
             int errLib = ERR_GET_LIB(err);
             ASCIILiteral lib = ""_s;
@@ -675,11 +742,6 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         }
 
         return view;
-    }
-
-    if (!value.isCell() || !JSC::isTypedArrayTypeIncludingDataView(value.asCell()->type())) {
-        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);
-        return {};
     }
 
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);

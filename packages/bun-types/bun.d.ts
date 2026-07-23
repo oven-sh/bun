@@ -4551,6 +4551,16 @@ declare module "bun" {
      * @default true
      */
     shared?: boolean;
+    /**
+     * Byte offset into the file where the mapping starts.
+     * @default 0
+     */
+    offset?: number;
+    /**
+     * Maximum number of bytes to map. Clamped to the file size
+     * (minus `offset`). Defaults to mapping the rest of the file.
+     */
+    size?: number;
   }
   /**
    * Open a file as a live-updating `Uint8Array` without copying memory
@@ -7597,6 +7607,17 @@ declare module "bun" {
   }
 
   /**
+   * Options for the in-process {@link Bun.cron} callback overload and {@link Bun.cron.parse}.
+   */
+  interface CronOptions {
+    /**
+     * IANA time-zone name to interpret the schedule in (e.g. `"UTC"`,
+     * `"America/New_York"`). Defaults to the system's local time zone.
+     */
+    tz?: string;
+  }
+
+  /**
    * Schedule cron jobs.
    *
    * Call with a callback to run an in-process job, or with a module path and
@@ -7637,8 +7658,7 @@ declare module "bun" {
      *
      * ### Cron expression syntax
      *
-     * Five fields: `minute hour day-of-month month day-of-week`. Schedules are
-     * interpreted in **UTC** — `0 9 * * *` fires at 9:00 UTC, regardless of `TZ`.
+     * Five fields: `minute hour day-of-month month day-of-week`.
      *
      * | Field | Values | Special chars |
      * |-------|--------|---------------|
@@ -7692,7 +7712,7 @@ declare module "bun" {
      * @see {@link CronJob} for the returned handle.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown): CronJob;
+    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown, options?: CronOptions): CronJob;
     /**
      * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
      *
@@ -7792,7 +7812,10 @@ declare module "bun" {
      */
     remove(title: string): Promise<void>;
     /**
-     * Parse a cron expression and return the next matching `Date` in UTC.
+     * Parse a cron expression and return the next matching `Date` in the
+     * system's local time zone — the same way crontab, launchd, and Windows
+     * Task Scheduler interpret schedules. Pass `{ tz: "UTC" }` (or any IANA
+     * time-zone name) to override.
      *
      * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
      * days/months, and predefined nicknames like `@daily`.
@@ -7801,15 +7824,23 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
+     * DST: spring-forward times shift forward by the gap; in the fall-back
+     * duplicated hour, fixed-time schedules fire once (first occurrence) while
+     * schedules with `*` minute or hour fire through both occurrences.
+     *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression in UTC, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
-     * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
+     * @param options - `{ tz?: string }` — IANA time-zone name to interpret the schedule in (defaults to the system's local zone).
+     * @returns The next `Date` matching the expression, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @throws If the expression is invalid, `relativeDate` is `NaN`/`Infinity`, or `options.tz` is not a valid IANA name
      *
      * @example
      * ```ts
-     * // Next weekday at 09:30 UTC
+     * // Next weekday at 09:30 local time
      * const next = Bun.cron.parse("30 9 * * MON-FRI");
+     *
+     * // 09:00 in New York, regardless of the server's TZ
+     * const ny = Bun.cron.parse("0 9 * * *", Date.now(), { tz: "America/New_York" });
      *
      * // Chain calls to get a sequence
      * const from = new Date();
@@ -7817,7 +7848,7 @@ declare module "bun" {
      * const second = first ? Bun.cron.parse("@hourly", first) : null;
      * ```
      */
-    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number, options?: CronOptions): Date | null;
   };
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

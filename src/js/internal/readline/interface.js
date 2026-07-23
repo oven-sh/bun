@@ -47,7 +47,10 @@ const { validateAbortSignal, validateString, validateUint32 } = require("interna
 // node-shims eagerly loads node:{util,module,path,vm}; readline only needs
 // kEmptyObject/addAbortListener, so import them from their tiny sources.
 const { kEmptyObject } = require("internal/shared");
-const { inspect, getStringWidth, stripVTControlCharacters } = require("internal/repl/node-inspect");
+// Don't destructure `inspect` — reading it loads internal/util/inspect (99 KB).
+// Readline only touches it on the tab-completion error path.
+const nodeInspect = require("internal/repl/node-inspect");
+const { getStringWidth, stripVTControlCharacters } = nodeInspect;
 const EventEmitter = require("node:events");
 const { addAbortListener } = require("internal/abort_listener");
 const { charLengthAt, charLengthLeft, commonPrefix, kSubstringSearch } = require("internal/readline/utils");
@@ -56,9 +59,9 @@ let kFirstEventParam;
 const { clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
 const { StringDecoder } = require("node:string_decoder");
-// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so
-// non-terminal readline interfaces (FileHandle#readLines, tty cursor calls)
-// stay cheap.
+// history.js eagerly loads node:{fs,os,path,timers}; keep it lazy so a bare
+// require("node:readline") for cursorTo/clearLine stays cheap. Constructing
+// an Interface always calls setupHistoryManager, so readLines() still loads it.
 let ReplHistory;
 
 const kMaxUndoRedoStackSize = 2048;
@@ -689,7 +692,7 @@ class Interface extends InterfaceConstructor {
     try {
       value = await this.completer(string);
     } catch (err) {
-      this[kWriteToOutput](`Tab completion error: ${inspect(err)}`);
+      this[kWriteToOutput](`Tab completion error: ${nodeInspect.inspect(err)}`);
       return;
     } finally {
       this.resume();

@@ -1,6 +1,13 @@
 //! Raw Win32 extern fn declarations + tier-0 Win32 typedefs.
 //! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf: it depends on nothing above
 //! `libuv_sys`.
+//!
+//! `#[link(name = "...")]` on every `extern` block is wrapped in
+//! `#[cfg_attr(windows, ...)]`. This crate is depended on unconditionally (not
+//! behind `[target.'cfg(windows)']`) by several workspace members that need
+//! the POD typedefs on every target, so an unconditional `#[link]` would bake
+//! `-lntdll`/`-lkernel32`/... into the rlib and break linking any standalone
+//! test/bench binary on a non-Windows host.
 
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
 
@@ -10,7 +17,6 @@ use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_voi
 
 pub type BOOL = c_int;
 pub type BOOLEAN = u8;
-pub type BYTE = u8;
 pub type WORD = c_ushort;
 pub type DWORD = c_ulong;
 pub type DWORD_PTR = usize;
@@ -224,8 +230,6 @@ pub struct WIN32_FILE_ATTRIBUTE_DATA {
 
 /// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
 pub type GET_FILEEX_INFO_LEVELS = u32;
-pub const GetFileExInfoStandard: GET_FILEEX_INFO_LEVELS = 0;
-pub const GetFileExMaxInfoLevel: GET_FILEEX_INFO_LEVELS = 1;
 
 /// `FILE_INFO_BY_HANDLE_CLASS` (`winbase.h`), as a bare `u32`.
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
@@ -293,7 +297,6 @@ pub const FILE_ATTRIBUTE_OFFLINE: DWORD = 0x0000_1000;
 pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: DWORD = 0x0000_2000;
 
 // `NtCreateFile` CreateDisposition (`ntifs.h`).
-pub const FILE_SUPERSEDE: ULONG = 0;
 pub const FILE_OPEN: ULONG = 1;
 pub const FILE_CREATE: ULONG = 2;
 pub const FILE_OPEN_IF: ULONG = 3;
@@ -319,25 +322,25 @@ pub const GENERIC_WRITE: ACCESS_MASK = 0x4000_0000;
 // File-specific access rights (`winnt.h`).
 pub const FILE_READ_DATA: ACCESS_MASK = 0x0001;
 pub const FILE_LIST_DIRECTORY: ACCESS_MASK = 0x0001;
-pub const FILE_ADD_FILE: ACCESS_MASK = 0x0002;
 pub const FILE_APPEND_DATA: ACCESS_MASK = 0x0004;
-pub const FILE_ADD_SUBDIRECTORY: ACCESS_MASK = 0x0004;
 pub const FILE_READ_EA: ACCESS_MASK = 0x0008;
 pub const FILE_TRAVERSE: ACCESS_MASK = 0x0020;
 pub const FILE_READ_ATTRIBUTES: ACCESS_MASK = 0x0080;
-pub const FILE_WRITE_ATTRIBUTES: ACCESS_MASK = 0x0100;
 
 // `CreateFileW` dwCreationDisposition (`winbase.h`).
-pub const CREATE_NEW: DWORD = 1;
-pub const CREATE_ALWAYS: DWORD = 2;
 pub const OPEN_EXISTING: DWORD = 3;
-pub const OPEN_ALWAYS: DWORD = 4;
-pub const TRUNCATE_EXISTING: DWORD = 5;
 
 // `CreateFileW` dwFlagsAndAttributes (`winbase.h`).
 pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
-pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
+
+// Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
+// point names another filesystem entity (symlink, mount point). Non-surrogate
+// tags such as `IO_REPARSE_TAG_APPEXECLINK` are opaque and not traversed.
+#[inline]
+pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
+    (tag & 0x2000_0000) != 0
+}
 
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
 pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
@@ -387,7 +390,6 @@ pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
     pub const FileBasicInformation: Self = Self(4);
-    pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
@@ -512,9 +514,6 @@ pub struct FILE_RENAME_INFORMATION_EX {
 }
 
 // `FILE_DISPOSITION_INFORMATION_EX.Flags` bits (winnt.h).
-pub const FILE_DISPOSITION_DELETE: ULONG = 0x0000_0001;
-pub const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x0000_0002;
-pub const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x0000_0010;
 
 // `FILE_RENAME_INFORMATION_EX.Flags` bits (winnt.h).
 pub const FILE_RENAME_REPLACE_IF_EXISTS: ULONG = 0x0000_0001;
@@ -523,7 +522,6 @@ pub const FILE_RENAME_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x0000_0040;
 
 // `GetFinalPathNameByHandleW` flag bits (fileapi.h).
 pub const FILE_NAME_NORMALIZED: DWORD = 0x0;
-pub const FILE_NAME_OPENED: DWORD = 0x8;
 pub const VOLUME_NAME_DOS: DWORD = 0x0;
 pub const VOLUME_NAME_GUID: DWORD = 0x1;
 pub const VOLUME_NAME_NT: DWORD = 0x2;
@@ -548,12 +546,148 @@ impl FILE_INFORMATION_CLASS {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Stack unwinding (winnt.h) — used by the crash handler to walk the faulting
+// thread's stack from its saved CONTEXT record.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub const UNW_FLAG_NHANDLER: DWORD = 0;
+
+/// `_IMAGE_RUNTIME_FUNCTION_ENTRY` (winnt.h). x64 and ARM64 share the first
+/// two DWORDs; x64 adds `UnwindInfoAddress`. Only ever used via pointer
+/// returned by `RtlLookupFunctionEntry`, so the exact tail layout is not
+/// read here.
+#[repr(C)]
+pub struct RUNTIME_FUNCTION {
+    pub BeginAddress: DWORD,
+    #[cfg(target_arch = "x86_64")]
+    pub EndAddress: DWORD,
+    pub UnwindData: DWORD,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct M128A {
+    pub Low: u64,
+    pub High: i64,
+}
+
+/// `_CONTEXT` for AMD64 (winnt.h). Full layout so `RtlVirtualUnwind` can
+/// mutate it in place during a stack walk. Only `Rip`/`Rsp` are read by bun.
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct CONTEXT {
+    pub P1Home: u64,
+    pub P2Home: u64,
+    pub P3Home: u64,
+    pub P4Home: u64,
+    pub P5Home: u64,
+    pub P6Home: u64,
+    pub ContextFlags: DWORD,
+    pub MxCsr: DWORD,
+    pub SegCs: WORD,
+    pub SegDs: WORD,
+    pub SegEs: WORD,
+    pub SegFs: WORD,
+    pub SegGs: WORD,
+    pub SegSs: WORD,
+    pub EFlags: DWORD,
+    pub Dr0: u64,
+    pub Dr1: u64,
+    pub Dr2: u64,
+    pub Dr3: u64,
+    pub Dr6: u64,
+    pub Dr7: u64,
+    pub Rax: u64,
+    pub Rcx: u64,
+    pub Rdx: u64,
+    pub Rbx: u64,
+    pub Rsp: u64,
+    pub Rbp: u64,
+    pub Rsi: u64,
+    pub Rdi: u64,
+    pub R8: u64,
+    pub R9: u64,
+    pub R10: u64,
+    pub R11: u64,
+    pub R12: u64,
+    pub R13: u64,
+    pub R14: u64,
+    pub R15: u64,
+    pub Rip: u64,
+    pub FltSave: [u8; 512],
+    pub VectorRegister: [M128A; 26],
+    pub VectorControl: u64,
+    pub DebugControl: u64,
+    pub LastBranchToRip: u64,
+    pub LastBranchFromRip: u64,
+    pub LastExceptionToRip: u64,
+    pub LastExceptionFromRip: u64,
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+const _: () = {
+    assert!(core::mem::size_of::<CONTEXT>() == 1232);
+    assert!(core::mem::offset_of!(CONTEXT, Rsp) == 0x98);
+    assert!(core::mem::offset_of!(CONTEXT, Rip) == 0xf8);
+};
+
+/// `_ARM64_NT_CONTEXT` (winnt.h). Only `Pc`/`Sp`/`Lr` are read by bun.
+#[cfg(all(windows, target_arch = "aarch64"))]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct CONTEXT {
+    pub ContextFlags: DWORD,
+    pub Cpsr: DWORD,
+    pub X: [u64; 29],
+    pub Fp: u64,
+    pub Lr: u64,
+    pub Sp: u64,
+    pub Pc: u64,
+    pub V: [M128A; 32],
+    pub Fpcr: DWORD,
+    pub Fpsr: DWORD,
+    pub Bcr: [DWORD; 8],
+    pub Bvr: [u64; 8],
+    pub Wcr: [DWORD; 2],
+    pub Wvr: [u64; 2],
+}
+
+#[cfg(all(windows, target_arch = "aarch64"))]
+const _: () = {
+    assert!(core::mem::size_of::<CONTEXT>() == 912);
+    assert!(core::mem::offset_of!(CONTEXT, Lr) == 0xf8);
+    assert!(core::mem::offset_of!(CONTEXT, Sp) == 0x100);
+    assert!(core::mem::offset_of!(CONTEXT, Pc) == 0x108);
+};
+
+// ──────────────────────────────────────────────────────────────────────────
 // ntdll namespace (subset).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ntdll {
     use super::*;
 
-    #[link(name = "ntdll")]
+    #[cfg(windows)]
+    #[cfg_attr(windows, link(name = "ntdll"))]
+    unsafe extern "system" {
+        pub fn RtlLookupFunctionEntry(
+            ControlPc: u64,
+            ImageBase: *mut u64,
+            HistoryTable: *mut c_void,
+        ) -> *mut RUNTIME_FUNCTION;
+        pub fn RtlVirtualUnwind(
+            HandlerType: DWORD,
+            ImageBase: u64,
+            ControlPc: u64,
+            FunctionEntry: *mut RUNTIME_FUNCTION,
+            ContextRecord: *mut CONTEXT,
+            HandlerData: *mut *mut c_void,
+            EstablisherFrame: *mut u64,
+            ContextPointers: *mut c_void,
+        ) -> *mut c_void;
+    }
+
+    #[cfg_attr(windows, link(name = "ntdll"))]
     unsafe extern "system" {
         pub fn RtlCaptureStackBackTrace(
             FramesToSkip: u32,
@@ -636,6 +770,16 @@ pub mod ntdll {
         /// linking kernel32 in the standalone PE.
         pub fn RtlExitUserProcess(ExitStatus: u32) -> !;
 
+        /// `NtQueryInformationProcess` (`winternl.h`). With
+        /// `ProcessBasicInformation` (0), fills a [`PROCESS_BASIC_INFORMATION`].
+        pub fn NtQueryInformationProcess(
+            ProcessHandle: HANDLE,
+            ProcessInformationClass: ULONG,
+            ProcessInformation: *mut c_void,
+            ProcessInformationLength: ULONG,
+            ReturnLength: *mut ULONG,
+        ) -> NTSTATUS;
+
         pub fn NtReadFile(
             FileHandle: HANDLE,
             Event: HANDLE,
@@ -689,12 +833,24 @@ pub mod kernel32 {
         pub Protect: u32,
         pub Type: u32,
     }
+    pub const MEM_COMMIT: u32 = 0x1000;
     pub const MEM_FREE: u32 = 0x10000;
 
-    #[link(name = "kernel32")]
+    pub const PAGE_NOACCESS: u32 = 0x01;
+    pub const PAGE_READONLY: u32 = 0x02;
+    pub const PAGE_READWRITE: u32 = 0x04;
+    pub const PAGE_WRITECOPY: u32 = 0x08;
+    pub const PAGE_EXECUTE_READ: u32 = 0x20;
+    pub const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
+    pub const PAGE_GUARD: u32 = 0x100;
+
+    #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
+        /// No preconditions; writes the thread-local Win32 error slot.
+        pub safe fn SetLastError(dwErrCode: DWORD);
         pub fn VirtualQuery(
             lpAddress: LPCVOID,
             lpBuffer: *mut MEMORY_BASIC_INFORMATION,
@@ -772,7 +928,7 @@ pub mod kernel32 {
             Add: BOOL,
         ) -> BOOL;
     }
-    #[link(name = "kernel32")]
+    #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// `GetConsoleScreenBufferInfo` (`wincon.h`).
         pub fn GetConsoleScreenBufferInfo(
@@ -821,8 +977,8 @@ pub mod kernel32 {
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
-        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SYSTEM_INFO,
-        SetCurrentDirectoryW, SetFilePointerEx,
+        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
+        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
@@ -832,12 +988,10 @@ pub mod kernel32 {
 pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
 
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
-pub const WAIT_OBJECT_0: DWORD = 0;
-pub const WAIT_TIMEOUT: DWORD = 258;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     #[link_name = "WaitForSingleObject"]
     fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
@@ -887,7 +1041,6 @@ impl NTSTATUS {
     /// memory-mapped section exists for the file. Returned by
     /// `NtSetInformationFile(FileDispositionInformation)`.
     pub const CANNOT_DELETE: NTSTATUS = NTSTATUS(0xC000_0121);
-    pub const OBJECT_PATH_SYNTAX_BAD: NTSTATUS = NTSTATUS(0xC000_003B);
     pub const NOT_IMPLEMENTED: NTSTATUS = NTSTATUS(0xC000_0002);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);
@@ -919,7 +1072,7 @@ pub const fn NT_ERROR(status: NTSTATUS) -> bool {
 }
 pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 
-#[link(name = "ntdll")]
+#[cfg_attr(windows, link(name = "ntdll"))]
 unsafe extern "system" {
     /// Total over `NTSTATUS`; no preconditions.
     pub safe fn RtlNtStatusToDosError(status: NTSTATUS) -> DWORD;
@@ -953,7 +1106,7 @@ pub mod ws2_32 {
         pub ai_next: *mut addrinfo,
     }
 
-    #[link(name = "ws2_32")]
+    #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         pub fn getaddrinfo(
             node: *const c_char,
@@ -1142,7 +1295,7 @@ pub mod ws2_32 {
         pub const WSA_QOS_RESERVED_PETYPE: Self = Self(11031);
     }
 
-    #[link(name = "ws2_32")]
+    #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
         /// because `SystemErrno` is a higher-tier type. No preconditions; reads
@@ -1265,26 +1418,15 @@ impl Win32Error {
     pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
     // — WSA pseudo-variants —
-    pub const WSA_INVALID_HANDLE: Win32Error = Win32Error(6);
-    pub const WSA_NOT_ENOUGH_MEMORY: Win32Error = Win32Error(8);
-    pub const WSA_INVALID_PARAMETER: Win32Error = Win32Error(87);
-    pub const WSA_OPERATION_ABORTED: Win32Error = Win32Error(995);
-    pub const WSA_IO_INCOMPLETE: Win32Error = Win32Error(996);
-    pub const WSA_IO_PENDING: Win32Error = Win32Error(997);
     pub const WSAEINTR: Win32Error = Win32Error(10004);
-    pub const WSAEBADF: Win32Error = Win32Error(10009);
     pub const WSAEACCES: Win32Error = Win32Error(10013);
     pub const WSAEFAULT: Win32Error = Win32Error(10014);
     pub const WSAEINVAL: Win32Error = Win32Error(10022);
     pub const WSAEMFILE: Win32Error = Win32Error(10024);
     pub const WSAEWOULDBLOCK: Win32Error = Win32Error(10035);
-    pub const WSAEINPROGRESS: Win32Error = Win32Error(10036);
     pub const WSAEALREADY: Win32Error = Win32Error(10037);
     pub const WSAENOTSOCK: Win32Error = Win32Error(10038);
-    pub const WSAEDESTADDRREQ: Win32Error = Win32Error(10039);
     pub const WSAEMSGSIZE: Win32Error = Win32Error(10040);
-    pub const WSAEPROTOTYPE: Win32Error = Win32Error(10041);
-    pub const WSAENOPROTOOPT: Win32Error = Win32Error(10042);
     pub const WSAEPROTONOSUPPORT: Win32Error = Win32Error(10043);
     pub const WSAESOCKTNOSUPPORT: Win32Error = Win32Error(10044);
     pub const WSAEOPNOTSUPP: Win32Error = Win32Error(10045);
@@ -1292,46 +1434,17 @@ impl Win32Error {
     pub const WSAEAFNOSUPPORT: Win32Error = Win32Error(10047);
     pub const WSAEADDRINUSE: Win32Error = Win32Error(10048);
     pub const WSAEADDRNOTAVAIL: Win32Error = Win32Error(10049);
-    pub const WSAENETDOWN: Win32Error = Win32Error(10050);
     pub const WSAENETUNREACH: Win32Error = Win32Error(10051);
-    pub const WSAENETRESET: Win32Error = Win32Error(10052);
     pub const WSAECONNABORTED: Win32Error = Win32Error(10053);
     pub const WSAECONNRESET: Win32Error = Win32Error(10054);
     pub const WSAENOBUFS: Win32Error = Win32Error(10055);
     pub const WSAEISCONN: Win32Error = Win32Error(10056);
     pub const WSAENOTCONN: Win32Error = Win32Error(10057);
     pub const WSAESHUTDOWN: Win32Error = Win32Error(10058);
-    pub const WSAETOOMANYREFS: Win32Error = Win32Error(10059);
     pub const WSAETIMEDOUT: Win32Error = Win32Error(10060);
     pub const WSAECONNREFUSED: Win32Error = Win32Error(10061);
-    pub const WSAELOOP: Win32Error = Win32Error(10062);
-    pub const WSAENAMETOOLONG: Win32Error = Win32Error(10063);
-    pub const WSAEHOSTDOWN: Win32Error = Win32Error(10064);
     pub const WSAEHOSTUNREACH: Win32Error = Win32Error(10065);
-    pub const WSAENOTEMPTY: Win32Error = Win32Error(10066);
-    pub const WSAEPROCLIM: Win32Error = Win32Error(10067);
-    pub const WSAEUSERS: Win32Error = Win32Error(10068);
-    pub const WSAEDQUOT: Win32Error = Win32Error(10069);
-    pub const WSAESTALE: Win32Error = Win32Error(10070);
-    pub const WSAEREMOTE: Win32Error = Win32Error(10071);
-    pub const WSASYSNOTREADY: Win32Error = Win32Error(10091);
-    pub const WSAVERNOTSUPPORTED: Win32Error = Win32Error(10092);
-    pub const WSANOTINITIALISED: Win32Error = Win32Error(10093);
-    pub const WSAEDISCON: Win32Error = Win32Error(10101);
-    pub const WSAENOMORE: Win32Error = Win32Error(10102);
-    pub const WSAECANCELLED: Win32Error = Win32Error(10103);
-    pub const WSAEINVALIDPROCTABLE: Win32Error = Win32Error(10104);
-    pub const WSAEINVALIDPROVIDER: Win32Error = Win32Error(10105);
-    pub const WSAEPROVIDERFAILEDINIT: Win32Error = Win32Error(10106);
-    pub const WSASYSCALLFAILURE: Win32Error = Win32Error(10107);
-    pub const WSASERVICE_NOT_FOUND: Win32Error = Win32Error(10108);
-    pub const WSATYPE_NOT_FOUND: Win32Error = Win32Error(10109);
-    pub const WSA_E_NO_MORE: Win32Error = Win32Error(10110);
-    pub const WSA_E_CANCELLED: Win32Error = Win32Error(10111);
-    pub const WSAEREFUSED: Win32Error = Win32Error(10112);
     pub const WSAHOST_NOT_FOUND: Win32Error = Win32Error(11001);
-    pub const WSATRY_AGAIN: Win32Error = Win32Error(11002);
-    pub const WSANO_RECOVERY: Win32Error = Win32Error(11003);
     pub const WSANO_DATA: Win32Error = Win32Error(11004);
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
 
@@ -1370,12 +1483,12 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
-#[link(name = "shell32")]
+#[cfg_attr(windows, link(name = "shell32"))]
 unsafe extern "system" {
     pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
 }
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(
         hFile: HANDLE,
@@ -1384,9 +1497,15 @@ unsafe extern "system" {
 
     pub fn GetBinaryTypeW(lpApplicationName: LPCWSTR, lpBinaryType: LPDWORD) -> BOOL;
 
+    pub fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: *mut WIN32_FIND_DATAW) -> HANDLE;
+
+    pub fn FindClose(hFindFile: HANDLE) -> BOOL;
+
     pub fn SetCurrentDirectoryW(lpPathName: LPCWSTR) -> BOOL;
 
     pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
+
+    pub fn GetSystemDirectoryW(lpBuffer: LPWSTR, uSize: DWORD) -> DWORD;
 
     pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
 
@@ -1423,20 +1542,38 @@ pub struct SYSTEM_INFO {
     pub wProcessorLevel: WORD,
     pub wProcessorRevision: WORD,
 }
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
 }
 
-#[link(name = "advapi32")]
+pub const TOKEN_QUERY: DWORD = 0x0008;
+/// `TOKEN_INFORMATION_CLASS::TokenIsAppContainer`
+pub const TOKEN_IS_APP_CONTAINER: c_int = 29;
+
+#[cfg_attr(windows, link(name = "advapi32"))]
 unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
+
+    pub fn OpenProcessToken(
+        ProcessHandle: HANDLE,
+        DesiredAccess: DWORD,
+        TokenHandle: *mut HANDLE,
+    ) -> BOOL;
+
+    pub fn GetTokenInformation(
+        TokenHandle: HANDLE,
+        TokenInformationClass: c_int,
+        TokenInformation: LPVOID,
+        TokenInformationLength: DWORD,
+        ReturnLength: *mut DWORD,
+    ) -> BOOL;
 }
 
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
 // callconv is correct on all targets (winapi == C only on x64). `GetProcAddress`
 // takes `LPCSTR` (narrow), not wide.
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
 
@@ -1445,7 +1582,7 @@ unsafe extern "system" {
 
 // Declared as `extern "system"` so the callconv is correct on all targets
 // (winapi == C only on x64).
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
@@ -1457,6 +1594,8 @@ unsafe extern "system" {
     ) -> BOOL;
 
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
+
+    pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
 
     pub fn GetTempPathW(
         nBufferLength: DWORD, // [in]
@@ -1504,9 +1643,27 @@ unsafe extern "C" {
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 /// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
-/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — kill all job processes when the
-/// last job handle closes.
-pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x0000_2000;
+
+/// `WAITORTIMERCALLBACK` (`winnt.h`) — thread-pool callback for
+/// `RegisterWaitForSingleObject`. `TimerOrWaitFired` is `TRUE` on timeout.
+pub type WAITORTIMERCALLBACK =
+    unsafe extern "system" fn(lpParameter: LPVOID, TimerOrWaitFired: BOOLEAN);
+/// `WT_EXECUTEONLYONCE` (`winnt.h`) — fire once; caller does not unregister.
+pub const WT_EXECUTEONLYONCE: ULONG = 0x0000_0008;
+
+/// `PROCESS_BASIC_INFORMATION` (`winternl.h`). Only
+/// `InheritedFromUniqueProcessId` is read; the rest are layout padding.
+#[repr(C)]
+pub struct PROCESS_BASIC_INFORMATION {
+    pub ExitStatus: NTSTATUS,
+    pub PebBaseAddress: *mut c_void,
+    pub AffinityMask: usize,
+    pub BasePriority: i32,
+    pub UniqueProcessId: usize,
+    pub InheritedFromUniqueProcessId: usize,
+}
+/// `PROCESSINFOCLASS::ProcessBasicInformation` (`winternl.h`).
+pub const ProcessBasicInformation: ULONG = 0;
 
 /// `JOBOBJECT_ASSOCIATE_COMPLETION_PORT` (`winnt.h`).
 #[repr(C)]
@@ -1749,7 +1906,7 @@ pub const CTRL_CLOSE_EVENT: DWORD = 2;
 pub const CTRL_LOGOFF_EVENT: DWORD = 5;
 pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CreateDirectoryExW(
         lpTemplateDirectory: *const u16,
@@ -1785,7 +1942,7 @@ unsafe extern "C" {
     pub safe fn GetConsoleCP() -> u32;
 }
 
-#[link(name = "kernel32")]
+#[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     /// No preconditions; returns 0 on failure.
     pub safe fn SetConsoleCP(wCodePageID: UINT) -> BOOL;
@@ -1862,6 +2019,19 @@ unsafe extern "system" {
         out_lpExitTime: *mut FILETIME,
         out_lpKernelTime: *mut FILETIME,
         out_lpUserTime: *mut FILETIME,
+    ) -> BOOL;
+
+    /// `RegisterWaitForSingleObject` (`winbase.h`). Queues `Callback` to the
+    /// system thread pool once `hObject` is signaled (or `dwMilliseconds`
+    /// elapses). Returns non-zero on success; `*phNewWaitObject` receives the
+    /// wait handle.
+    pub fn RegisterWaitForSingleObject(
+        phNewWaitObject: *mut HANDLE,
+        hObject: HANDLE,
+        Callback: WAITORTIMERCALLBACK,
+        Context: LPVOID,
+        dwMilliseconds: ULONG,
+        dwFlags: ULONG,
     ) -> BOOL;
 
     pub fn GetFileAttributesExW(

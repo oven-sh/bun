@@ -686,13 +686,15 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     // Own-property-scoped reads: a plain get() would walk the prototype
     // chain and match `a1 = [1, x: 1]` against `a2` inheriting `x` while
     // owning some other key. GetOwnProperty slots enforce name-for-name
-    // ownership and read the value in one lookup.
+    // ownership and read the value in one lookup. DontEnum is rejected too:
+    // the name lists exclude non-enumerable properties, so a non-enumerable
+    // own property on the other side must not satisfy an enumerable name.
     for (size_t i = 0; i < a1.size(); i++) {
         JSC::PropertyName propertyName(a1[i]);
         PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
         bool o2Owns = o2->methodTable()->getOwnPropertySlot(o2, globalObject, propertyName, slot2);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!o2Owns) {
+        if (!o2Owns || (slot2.attributes() & PropertyAttribute::DontEnum)) {
             return false;
         }
         JSValue v2 = slot2.getValue(globalObject, propertyName);
@@ -700,8 +702,8 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
         PropertySlot slot1(o1, PropertySlot::InternalMethodType::GetOwnProperty);
         bool o1Owns = o1->methodTable()->getOwnPropertySlot(o1, globalObject, propertyName, slot1);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!o1Owns) {
-            // A getter above removed the property mid-iteration.
+        if (!o1Owns || (slot1.attributes() & PropertyAttribute::DontEnum)) {
+            // A getter above removed or redefined the property mid-iteration.
             return false;
         }
         JSValue v1 = slot1.getValue(globalObject, propertyName);

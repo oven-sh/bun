@@ -2915,6 +2915,14 @@ impl<'a> LinkerContext<'a> {
         if source.path.is_node_module() {
             return;
         }
+        // A "file" / "napi" / "wasm" loader copies the asset into the output
+        // even though its JS wrapper has no side effects, so the import is not
+        // actually ignored. esbuild drops the asset and warns; we keep it.
+        let other_loader =
+            self.parse_graph().input_files.items_loader()[other_source_index as usize];
+        if other_loader.should_copy_for_bundling() {
+            return;
+        }
         let other_source = self.get_source(other_source_index);
 
         let note_text: std::borrow::Cow<'static, [u8]> = match se {
@@ -2924,9 +2932,9 @@ impl<'a> LinkerContext<'a> {
             SideEffects::NoSideEffectsPureData => std::borrow::Cow::Borrowed(
                 b"This file is considered to have no side effects because of the loader used",
             ),
-            SideEffects::NoSideEffectsEmptyAst => std::borrow::Cow::Borrowed(
-                b"This file is considered to have no side effects because it was empty after parsing",
-            ),
+            // Don't warn for type-only / .d.ts files; the import is a no-op by
+            // design and there's nothing actionable.
+            SideEffects::NoSideEffectsEmptyAst => return,
             SideEffects::HasSideEffects => return,
         };
         let notes: Box<[Data]> = Box::new([Data {

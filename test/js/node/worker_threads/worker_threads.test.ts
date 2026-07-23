@@ -1684,12 +1684,19 @@ test("parentPort.postMessage queue is flushed to the parent before 'exit' fires"
          if (first) {
            first = false;
            // Hold this handler (and so the current drain pass) open until the
-           // worker has enqueued the whole burst AND entered shutdown, so the
-           // worker's close task is posted before this drain pass reschedules.
+           // worker has enqueued the whole burst AND posted its close task, so
+           // this drain pass's reschedule lands behind it. flag[1] flips in
+           // process.on('exit'), which is shutdown() step 2; the close task is
+           // posted in step 4 after step 3's full sync GC (teardownJSCVM). No
+           // worker-side JS runs after step 2, so nothing observable marks the
+           // actual post: the busy-wait below covers steps 3+4. Wider on
+           // debug/ASAN where collectNow is slower; in practice the 999
+           // remaining dispatches after this handler returns buy additional
+           // margin on the same slow builds.
            Atomics.store(flag, 0, 1);
            Atomics.notify(flag, 0);
            while (Atomics.load(flag, 1) === 0);
-           const t = Date.now(); while (Date.now() - t < 500);
+           const t = Date.now(); while (Date.now() - t < ${isDebug ? 3000 : 500});
            return;
          }
          if (m === "END") gotEnd = true; else got++;

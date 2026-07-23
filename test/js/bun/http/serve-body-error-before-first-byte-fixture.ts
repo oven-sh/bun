@@ -1,5 +1,6 @@
 // argv[2]: route name (see below)
-// argv[3]: "no-error-handler" to omit error()
+// argv[3]: "no-error-handler" to omit error(), "async-error-handler" for an
+//   async error()
 //
 // Prints one JSON object on stdout. Raw keep-alive socket so the exact wire
 // framing (status line, body bytes, presence of the terminating chunk) can be
@@ -7,23 +8,33 @@
 import net from "node:net";
 
 const route = process.argv[2];
-const withoutErrorHandler = process.argv[3] === "no-error-handler";
+const errorMode = process.argv[3];
 
 let unhandled = 0;
 process.on("unhandledRejection", () => unhandled++);
 
 let errorCalls: string[] = [];
+const errorHandler =
+  errorMode === "no-error-handler"
+    ? {}
+    : errorMode === "async-error-handler"
+      ? {
+          async error(e: Error) {
+            errorCalls.push(e?.message ?? String(e));
+            await Bun.sleep(1);
+            return new Response("E:" + e?.message, { status: 500, headers: { "x-err": "1" } });
+          },
+        }
+      : {
+          error(e: Error) {
+            errorCalls.push(e?.message ?? String(e));
+            return new Response("E:" + e?.message, { status: 500, headers: { "x-err": "1" } });
+          },
+        };
 await using server = Bun.serve({
   port: 0,
   development: false,
-  ...(withoutErrorHandler
-    ? {}
-    : {
-        error(e: Error) {
-          errorCalls.push(e?.message ?? String(e));
-          return new Response("E:" + e?.message, { status: 500, headers: { "x-err": "1" } });
-        },
-      }),
+  ...errorHandler,
   fetch(req) {
     const p = new URL(req.url).pathname;
     // async iterable: throws before the first yield
@@ -81,6 +92,19 @@ await using server = Bun.serve({
     if (p === "/rs-empty-ok") {
       return new Response(
         new ReadableStream({ start: c => c.close() }),
+        { status: 202, headers: { "x-custom": "yes" } },
+      );
+    }
+    // direct stream: async pull resolves without write/end (handle_resolve_stream
+    // reaches finalize()'s !done branch with the user status still unwritten)
+    if (p === "/direct-empty-ok") {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull() {
+            await Bun.sleep(1);
+          },
+        } as any),
         { status: 202, headers: { "x-custom": "yes" } },
       );
     }

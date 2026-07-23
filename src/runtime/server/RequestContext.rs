@@ -2938,9 +2938,11 @@ where
         stream_log!("handleRejectStream");
 
         let mut ended_response = false;
+        let mut stream_produced_bytes = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             ended_response = wrapper.sink.ended_response;
+            stream_produced_bytes = wrapper.sink.wrote > 0 || !wrapper.sink.buffer.is_empty();
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
                 // assigned (flushFromJS / endFromJS). Drop that root before
@@ -2993,6 +2995,18 @@ where
         if !HTTP3 && ended_response {
             req.end_already_responded_stream();
             return;
+        }
+
+        // The stream produced bytes (flushed or still in the sink buffer), or
+        // this stream is itself `error()`'s Response body: either way the
+        // Response's own status is what should go out. Write it now so the
+        // terminate path below closes without a terminator instead of
+        // re-entering `handle_reject` (which would replace it with the
+        // default 500).
+        if (stream_produced_bytes || req.flags.has_called_error_handler())
+            && !req.flags.has_written_status()
+        {
+            req.render_metadata();
         }
 
         // No status line committed: the stream failed before its first body
@@ -3432,6 +3446,16 @@ where
                     )
                     .unwrap_or_else(|err| server.global_this().take_exception(err));
                 let _keep = jsc::EnsureStillAlive(result);
+                // `handle_reject_stream` reaches here with the original
+                // `fetch()` Response still protected. Every arm below either
+                // ends the response itself or installs a new one, so release
+                // the old root before branching: `process_on_error_promise`
+                // overwrites `response_jsvalue` (Fulfilled) or hands it to
+                // `handle_resolve` (Pending) which asserts the flag is clear.
+                if !self.response_jsvalue.is_empty() && self.flags.response_protected() {
+                    self.response_jsvalue.unprotect();
+                    self.flags.set_response_protected(false);
+                }
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {
                         self.finish_running_error_handler(err, status);
@@ -3449,12 +3473,7 @@ where
                             // `render()` may suspend (stream/file body); root
                             // the Response like `process_on_error_promise` and
                             // the normal fetch() path do, so the deferred
-                            // `render_metadata()` can still read it. Release
-                            // any previously-protected Response first.
-                            if !self.response_jsvalue.is_empty() && self.flags.response_protected()
-                            {
-                                self.response_jsvalue.unprotect();
-                            }
+                            // `render_metadata()` can still read it.
                             self.response_jsvalue = result;
                             self.flags.set_response_protected(false);
                             // SAFETY: as above; body_value borrows the rooted

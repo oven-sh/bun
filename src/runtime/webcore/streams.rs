@@ -1907,6 +1907,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             let _ = self.flush_no_wait();
             self.done = true;
 
+            // The owner's status line is written on the first body byte; an
+            // empty body never fires that, so fire it here before
+            // `res.end_stream()` writes uWS's default `200 OK`. Same hazard
+            // as `end_from_js`'s empty-body branch.
+            self.handle_first_write_if_necessary();
             if let Some(res) = self.any_res() {
                 // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
                 res.end_stream(false);

@@ -559,7 +559,28 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
+    /// `Bun.udpSocket(options): Promise<UDPSocket>`. Any error raised while
+    /// creating/binding the socket is surfaced as a rejected promise rather
+    /// than a synchronous throw so callers can rely on `.catch()` /
+    /// `Promise.allSettled` for the fallback-port pattern.
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
+        let err = match Self::udp_socket_impl(global_this, options) {
+            Ok(v) => return Ok(v),
+            Err(bun_jsc::JsError::Terminated) => return Err(bun_jsc::JsError::Terminated),
+            Err(bun_jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+            Err(bun_jsc::JsError::Thrown) => match global_this.try_take_exception() {
+                Some(exc) if exc.is_termination_exception() => {
+                    return Err(bun_jsc::JsError::Terminated);
+                }
+                Some(exc) => exc.to_error().unwrap_or(exc),
+                None => global_this
+                    .create_error_instance(format_args!("Bun.udpSocket() failed to bind")),
+            },
+        };
+        Ok(bun_jsc::JSPromise::rejected_promise(global_this, err).to_js())
+    }
+
+    fn udp_socket_impl(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
         let this_ptr = Self::new(Self {

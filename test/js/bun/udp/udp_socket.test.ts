@@ -89,10 +89,121 @@ describe("udpSocket()", () => {
   // Out-of-range connect.port used to be silently rewritten to 0, so send()
   // returned true while every datagram was dropped. The bind path already
   // rejected the same values; connect must too.
-  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)("connect with out-of-range port %p rejects", port => {
-    expect(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })).toThrow(
-      'Expected "connect.port" to be an integer between 1 and 65535',
-    );
+  test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)(
+    "connect with out-of-range port %p rejects",
+    async port => {
+      await expect(
+        Promise.resolve().then(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })),
+      ).rejects.toThrow('Expected "connect.port" to be an integer between 1 and 65535');
+    },
+  );
+
+  // Bun.udpSocket() is typed as returning a Promise; bind/connect failures must
+  // surface as promise rejections so `.catch()` / `.then(ok, err)` /
+  // `Promise.allSettled` work. Previously these threw synchronously out of the
+  // native call, bypassing any promise chain.
+  describe("returns a rejected promise on failure instead of throwing synchronously", () => {
+    test("EADDRINUSE", async () => {
+      const holder = await udpSocket({ hostname: "127.0.0.1", socket: {} });
+      try {
+        let syncThrew = false;
+        let result: any;
+        try {
+          result = udpSocket({ hostname: "127.0.0.1", port: holder.port, socket: {} });
+        } catch {
+          syncThrew = true;
+        }
+        expect(syncThrew).toBe(false);
+        expect(result).toBeInstanceOf(Promise);
+        const rejection = await result.then(
+          (s: any) => {
+            s.close();
+            return null;
+          },
+          (e: any) => e,
+        );
+        expect(rejection).not.toBeNull();
+        expect(rejection.syscall).toBe("bind");
+        expect(rejection.code).toBe("EADDRINUSE");
+        expect(rejection.address).toBe("127.0.0.1");
+      } finally {
+        holder.close();
+      }
+    });
+
+    test("EADDRINUSE is catchable via .catch()", async () => {
+      const holder = await udpSocket({ hostname: "127.0.0.1", socket: {} });
+      try {
+        // The fallback-port resilience pattern that motivated this fix.
+        const socket = await udpSocket({ hostname: "127.0.0.1", port: holder.port, socket: {} }).catch(() =>
+          udpSocket({ hostname: "127.0.0.1", port: 0, socket: {} }),
+        );
+        expect(socket.port).toBeInteger();
+        expect(socket.port).not.toBe(holder.port);
+        socket.close();
+      } finally {
+        holder.close();
+      }
+    });
+
+    test("EADDRNOTAVAIL", async () => {
+      let syncThrew = false;
+      let result: any;
+      try {
+        // 192.0.2.0/24 (TEST-NET-1) is guaranteed non-local.
+        result = udpSocket({ hostname: "192.0.2.1", port: 0, socket: {} });
+      } catch {
+        syncThrew = true;
+      }
+      expect(syncThrew).toBe(false);
+      expect(result).toBeInstanceOf(Promise);
+      const rejection = await result.then(
+        (s: any) => {
+          s.close();
+          return null;
+        },
+        (e: any) => e,
+      );
+      expect(rejection).not.toBeNull();
+      expect(rejection.syscall).toBe("bind");
+    });
+
+    test("invalid options", async () => {
+      let syncThrew = false;
+      let result: any;
+      try {
+        result = udpSocket({ port: -1 } as any);
+      } catch {
+        syncThrew = true;
+      }
+      // Attach a handler immediately so the rejected promise is observed.
+      const rejection = await result?.then(
+        (s: any) => {
+          s.close();
+          return null;
+        },
+        (e: any) => e,
+      );
+      expect(syncThrew).toBe(false);
+      expect(result).toBeInstanceOf(Promise);
+      expect(rejection?.code).toBe("ERR_INVALID_ARG_TYPE");
+    });
+
+    test("Promise.allSettled over a port range", async () => {
+      const holder = await udpSocket({ hostname: "127.0.0.1", socket: {} });
+      try {
+        const results = await Promise.allSettled([
+          udpSocket({ hostname: "127.0.0.1", port: holder.port, socket: {} }),
+          udpSocket({ hostname: "127.0.0.1", port: 0, socket: {} }),
+        ]);
+        expect(results[0].status).toBe("rejected");
+        expect((results[0] as PromiseRejectedResult).reason.code).toBe("EADDRINUSE");
+        expect(results[1].status).toBe("fulfilled");
+        (results[1] as PromiseFulfilledResult<any>).value.close();
+      } finally {
+        holder.close();
+      }
+    });
   });
 
   test("connect with valid port at range boundaries is accepted", async () => {

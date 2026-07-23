@@ -187,6 +187,11 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // its watcher, so init/start failure routes to Output::panic by design
       // (hot_reloader.rs Failed to enable/start File Watcher). Not a bug.
       if (/Failed to (enable|start) File Watcher/.test(detail)) k = "intentional-fatal";
+      // debug_assert!(is_absolute_windows(cwd)) in _join_abs_string_buf_windows
+      // (resolve_path.rs) is a documented precondition compiled out of
+      // release; a non-absolute cwd is only manufacturable by mangling the
+      // OS's own returned path length - real Windows returns absolute cwds.
+      if (/assertion failed: crate::is_absolute_windows\(cwd\)/.test(detail)) k = "debug-only";
       // The bake DevServer hashes its own exe's mtime into a debug-only
       // cache-bust key (guarded by IS_DEBUG) and panics if that stat fails:
       // "unhandled EINVAL: <bun>: ... (stat())" on the running binary.

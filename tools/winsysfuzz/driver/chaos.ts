@@ -299,6 +299,37 @@ async function worker(w: number) {
       } catch {}
       continue;
     }
+    // A confirmed STALL (more tests timed out) ends at the runner's own
+    // ceiling, before hang-capture engages - so it arrives without stacks
+    // and cannot be told from load-slowness. Decide it here: one more
+    // replay at 3x the timeout WITH capture. If it wedges past even that, it
+    // is a real hang and its stuck stacks ride onto the finding; if it
+    // completes, it was slowness under fault, not queued.
+    let stallStacks: string[] = [];
+    if (outcome === "stalled") {
+      const long = await replayCoordinate({
+        bun,
+        args: progArgs,
+        schedule: schedule.join("\n"),
+        dir: join(dir, "stall-capture"),
+        timeoutMs: timeoutMs * 3,
+        capture: true,
+      });
+      const wedged = long.outcome === "HANG";
+      stallStacks = wedged ? digestStacks(long.hangStacks ?? long.crashDump ?? "") : [];
+      try {
+        for (const f of readdirSync(join(dir, "stall-capture")))
+          if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(join(dir, "stall-capture", f), { force: true });
+      } catch {}
+      if (!wedged) {
+        console.log(`   [${n}] stall completed at 3x timeout (${long.ms}ms) - load slowness, not queued`);
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {}
+        continue;
+      }
+      console.log(`   [${n}] stall WEDGED at 3x timeout - real hang, stacks captured`);
+    }
     const minimal = await minimize(schedule, dir);
     findings++;
     await Bun.write(join(dir, "minimal-schedule.txt"), minimal.join("\n") + "\n");
@@ -364,7 +395,7 @@ async function worker(w: number) {
       standalone: [`verified ${bad}/3`],
       lastStage: null,
       termChain: null,
-      stacks: stacks.length ? stacks.slice(0, 12) : null,
+      stacks: stacks.length ? stacks.slice(0, 12) : stallStacks.length ? stallStacks.slice(0, 12) : null,
       findings: join(dir, "minimal-schedule.txt"),
       workDir: dir,
     };

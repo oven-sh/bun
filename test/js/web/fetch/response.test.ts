@@ -47,9 +47,12 @@ describe("2-arg form", () => {
 });
 
 test("print size", () => {
-  expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
-    .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+  const inspected = normalizeBunSnapshot(
+    Bun.inspect(new Response(Bun.file(import.meta.filename))),
+    import.meta.dir,
+  ).replace(/Response \([\d.]+ KB\)/, "Response (<size> KB)");
+  expect(inspected).toMatchInlineSnapshot(`
+    "Response (<size> KB) {
       ok: true,
       url: "",
       status: 200,
@@ -59,7 +62,7 @@ test("print size", () => {
       },
       redirected: false,
       bodyUsed: false,
-      FileRef ("<cwd>/test/js/web/fetch/response.test.ts") {
+      FileRef ("<dir>/response.test.ts") {
         type: "text/javascript;charset=utf-8"
       }
     }"
@@ -67,15 +70,14 @@ test("print size", () => {
 });
 
 test("Response.redirect with invalid arguments should not crash", () => {
-  // This should not crash - issue #18414
-  // Passing a number as URL and string as init should handle gracefully
-  expect(() => Response.redirect(400, "a")).not.toThrow();
-
-  // Test various invalid argument combinations - should not crash
-  expect(() => Response.redirect(42, "test")).not.toThrow();
-  expect(() => Response.redirect(true, "string")).not.toThrow();
-  expect(() => Response.redirect(null, "init")).not.toThrow();
-  expect(() => Response.redirect(undefined, "value")).not.toThrow();
+  // issue #18414: passing a number as URL and a string as init used to
+  // segfault inside fastGet. These now reject the status with a RangeError
+  // (per WebIDL ToNumber), which is still "not a crash".
+  expect(() => Response.redirect(400, "a")).toThrow(RangeError);
+  expect(() => Response.redirect(42, "test")).toThrow(RangeError);
+  expect(() => Response.redirect(true, "string")).toThrow(RangeError);
+  expect(() => Response.redirect(null, "init")).toThrow(RangeError);
+  expect(() => Response.redirect(undefined, "value")).toThrow(RangeError);
 });
 
 test("Response.redirect status code validation", () => {
@@ -98,6 +100,42 @@ test("Response.redirect status code validation", () => {
   // Check that the correct status is set
   expect(Response.redirect("url", 301).status).toBe(301);
   expect(Response.redirect("url", { status: 308 }).status).toBe(308);
+});
+
+// https://github.com/oven-sh/bun/issues/2939
+// WebIDL `optional unsigned short status = 302`: the argument is converted
+// via ToNumber and then range-checked. Previously only JS numbers were
+// validated; strings/booleans silently fell back to 302 and `{status:200}`
+// produced a 200 non-redirect with a Location header.
+test("Response.redirect coerces the status argument per WebIDL", () => {
+  // string status → ToNumber
+  expect(Response.redirect("http://x/", "307").status).toBe(307);
+  expect(Response.redirect("http://x/", "301").status).toBe(301);
+  expect(Response.redirect("http://x/", "308").status).toBe(308);
+  // numeric coercion edge cases
+  expect(Response.redirect("http://x/", 307.9).status).toBe(307);
+  // out-of-range / non-numeric → RangeError
+  expect(() => Response.redirect("http://x/", "9999")).toThrow(RangeError);
+  expect(() => Response.redirect("http://x/", "abc")).toThrow(RangeError);
+  expect(() => Response.redirect("http://x/", "")).toThrow(RangeError);
+  expect(() => Response.redirect("http://x/", true)).toThrow(RangeError);
+  expect(() => Response.redirect("http://x/", null)).toThrow(RangeError);
+  // number control
+  expect(Response.redirect("http://x/", 307).status).toBe(307);
+});
+
+test("Response.redirect with a ResponseInit object (Bun extension)", () => {
+  // status present → must be a redirect status
+  expect(Response.redirect("http://x/", { status: 307 }).status).toBe(307);
+  expect(Response.redirect("http://x/", { status: "307" }).status).toBe(307);
+  expect(() => Response.redirect("http://x/", { status: 200 })).toThrow(RangeError);
+  expect(() => Response.redirect("http://x/", { status: 500 })).toThrow(RangeError);
+  // status absent → defaults to 302 (not Init's own 200 default)
+  expect(Response.redirect("http://x/", {}).status).toBe(302);
+  const withHeaders = Response.redirect("http://x/", { headers: { "X-A": "1" } });
+  expect(withHeaders.status).toBe(302);
+  expect(withHeaders.headers.get("X-A")).toBe("1");
+  expect(withHeaders.headers.get("Location")).toBe("http://x/");
 });
 
 // https://fetch.spec.whatwg.org/#dom-response-redirect

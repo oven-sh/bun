@@ -407,7 +407,7 @@ impl DefineDataExt for DefineData {
                         ),
                     );
                 }
-                break;
+                return Err(crate::Error::SyntaxError);
             }
         }
 

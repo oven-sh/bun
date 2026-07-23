@@ -1849,15 +1849,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
         }
 
-        // Node's handshake-done path (_finishInit -> 'secure' -> 'secureConnection')
-        // has no try/catch; a throwing listener reaches InternalCallbackScope and
-        // becomes an uncaught exception, not a socket 'error'.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
         if let Some(err_value) = result.to_error() {
-            let _ = global
-                .bun_vm()
-                .as_mut()
-                .uncaught_exception(&global, err_value, false);
+            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
         this.exit_scope(scope);
         if reject_unauthorized {

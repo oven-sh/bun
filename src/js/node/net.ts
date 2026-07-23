@@ -955,25 +955,34 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L524
       self.read(0);
     }
-    if (server) {
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
-      if (!self.destroyed && self._releaseControl()) {
-        const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-        if (typeof connectionListener === "function") {
-          server.prependOnceListener("secureConnection", connectionListener);
-        }
-        server.emit("secureConnection", self);
-        // Same post-emit reader check onconnection does for plain net sockets:
-        // the 'connection' emit runs no user code for natively-accepted TLS.
-        if (self.readableFlowing !== null || self.listenerCount("data") > 0 || self.listenerCount("readable") > 0) {
-          self[kReaderInterest] = true;
+    // Node has no try/catch around these emits; a listener throw reaches C++
+    // InternalCallbackScope and becomes uncaughtException. Bun's native dispatch
+    // routes a throw here to this table's error handler, so reportError in the
+    // catch gives Node-identical behaviour without changing Bun.connect's
+    // documented handshake-throw-to-error-handler contract.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+    try {
+      if (server) {
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
+        if (!self.destroyed && self._releaseControl()) {
+          const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+          if (typeof connectionListener === "function") {
+            server.prependOnceListener("secureConnection", connectionListener);
+          }
+          server.emit("secureConnection", self);
+          // Same post-emit reader check onconnection does for plain net sockets:
+          // the 'connection' emit runs no user code for natively-accepted TLS.
+          if (self.readableFlowing !== null || self.listenerCount("data") > 0 || self.listenerCount("readable") > 0) {
+            self[kReaderInterest] = true;
+          }
         }
       }
+      if (self.destroyed) return;
+      self.emit("secure", self);
+      self.emit("secureConnect", verifyError);
+    } catch (err) {
+      reportError(err);
     }
-    if (self.destroyed) return;
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
-    self.emit("secure", self);
-    self.emit("secureConnect", verifyError);
   },
   error(socket, error) {
     const data = this.data;

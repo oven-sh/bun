@@ -398,8 +398,7 @@ class SourceTextModule extends Module {
 
     // Parse eagerly so a SyntaxError surfaces from the constructor and
     // moduleRequests is available immediately, matching Node where ModuleWrap
-    // compiles the module during construction. JSC has no source-phase
-    // imports, so every request is an evaluation-phase request.
+    // compiles the module during construction.
     const requests = this[kNative].createModuleRecord();
     this.#moduleRequests = ObjectFreeze(
       ArrayPrototypeMap.$call(requests, request =>
@@ -407,7 +406,7 @@ class SourceTextModule extends Module {
           __proto__: null,
           specifier: request.specifier,
           attributes: request.attributes,
-          phase: "evaluation",
+          phase: request.phase ?? "evaluation",
         }),
       ),
     );
@@ -619,9 +618,8 @@ function isModule(object) {
 
 function importModuleDynamicallyWrap(importModuleDynamically) {
   const importModuleDynamicallyWrapper = async (specifier, referrer, attributes, phase) => {
-    // JSC has no source-phase imports, so every dynamic import is an
-    // evaluation-phase request (Node passes the phase name as 4th argument).
-    const m: any = await importModuleDynamically.$call(this, specifier, referrer, attributes, phase ?? "evaluation");
+    phase ??= "evaluation";
+    const m: any = await importModuleDynamically.$call(this, specifier, referrer, attributes, phase);
     if (isModuleNamespaceObject(m)) {
       return m;
     }
@@ -630,6 +628,12 @@ function importModuleDynamicallyWrap(importModuleDynamically) {
     }
     if (m.status === "errored") {
       throw m.error;
+    }
+    if (phase === "defer") {
+      if (m[kNative].getStatusCode() < kLinked) {
+        throw $ERR_VM_MODULE_STATUS("must not be unlinked or linking");
+      }
+      return m[kNative].getDeferredNamespace();
     }
     return m.namespace;
   };

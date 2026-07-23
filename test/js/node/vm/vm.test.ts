@@ -1236,3 +1236,217 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("node:vm SourceTextModule import defer", () => {
+  const vm = require("node:vm");
+
+  test("static `import defer` leaves the dependency unevaluated until first namespace access", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('DEP-EVAL'); export const a = 41;", {
+      identifier: "dep",
+      context: ctx,
+    });
+    const root = new vm.SourceTextModule(
+      "import defer * as N from 'dep';\n" +
+        "LOG.push('ROOT');\n" +
+        "export const before = LOG.join('|');\n" +
+        "export const v = N.a + 1;\n" +
+        "export const after = LOG.join('|');",
+      { identifier: "root", context: ctx },
+    );
+
+    await root.link(() => dep);
+    await root.evaluate();
+
+    // Bun previously evaluated the deferred dependency eagerly, giving
+    // before === "DEP-EVAL|ROOT".
+    expect({ ...root.namespace }).toEqual({ before: "ROOT", v: 42, after: "ROOT|DEP-EVAL" });
+    expect(dep.status).toBe("evaluated");
+    expect(root.moduleRequests).toEqual([{ specifier: "dep", attributes: {}, phase: "defer" }]);
+  });
+
+  test("dynamic `import.defer()` returns a deferred namespace that evaluates on first access", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('D2'); export const z = 7;", {
+      identifier: "d2",
+      context: ctx,
+    });
+    await dep.link(() => {
+      throw new Error("no deps");
+    });
+
+    let seenPhase: string | undefined;
+    const root = new vm.SourceTextModule("export const p = import.defer('x');", {
+      identifier: "r2",
+      context: ctx,
+      importModuleDynamically: (_spec: string, _ref: unknown, _attrs: unknown, phase: string) => {
+        seenPhase = phase;
+        return dep;
+      },
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+
+    const ns = await root.namespace.p;
+    // Bun previously dropped the deferred flag and handed back the regular
+    // (un-evaluated) namespace, so every property read TDZ-threw and the
+    // dependency body never ran.
+    expect(ctx.LOG.join("|")).toBe("");
+    expect(ns.z).toBe(7);
+    expect(ctx.LOG.join("|")).toBe("D2");
+    expect(dep.status).toBe("evaluated");
+    expect(seenPhase).toBe("defer");
+  });
+
+  test("`import defer` of a SyntheticModule still runs its evaluation steps", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SyntheticModule(
+      ["x"],
+      function () {
+        ctx.LOG.push("SYNTH");
+        this.setExport("x", 42);
+      },
+      { context: ctx, identifier: "dep" },
+    );
+    const root = new vm.SourceTextModule("import defer * as N from 'dep'; LOG.push('ROOT'); export const v = N.x;", {
+      context: ctx,
+      identifier: "root",
+    });
+    await root.link(() => dep);
+    await root.evaluate();
+
+    // The JSC SyntheticModuleRecord has no reference to the wrapper's
+    // evaluateCallback, so the wrapper must evaluate synthetic dependencies
+    // itself even for a defer-phase request.
+    expect(root.namespace.v).toBe(42);
+    expect(ctx.LOG).toContain("SYNTH");
+    expect(dep.status).toBe("evaluated");
+  });
+
+  test("`import defer` of a SourceTextModule still runs initializeImportMeta", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    let metaCalls = 0;
+    const dep = new vm.SourceTextModule("LOG.push('DEP'); export const u = import.meta.url;", {
+      context: ctx,
+      identifier: "dep",
+      initializeImportMeta(meta: any) {
+        metaCalls++;
+        meta.url = "file:///dep.js";
+      },
+    });
+    const root = new vm.SourceTextModule(
+      "import defer * as N from 'dep'; LOG.push('ROOT'); export const before = LOG.join('|'); export const u = N.u;",
+      { context: ctx, identifier: "root" },
+    );
+    await root.link(() => dep);
+    await root.evaluate();
+
+    expect(root.namespace.before).toBe("ROOT");
+    expect(root.namespace.u).toBe("file:///dep.js");
+    expect(ctx.LOG.join("|")).toBe("ROOT|DEP");
+    expect(metaCalls).toBe(1);
+  });
+
+  test("dynamic `import.defer()` of a SyntheticModule still runs its evaluation steps", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SyntheticModule(
+      ["x"],
+      function () {
+        ctx.LOG.push("SYNTH");
+        this.setExport("x", 42);
+      },
+      { context: ctx, identifier: "dep" },
+    );
+    const root = new vm.SourceTextModule("export const p = import.defer('d');", {
+      context: ctx,
+      identifier: "root",
+      importModuleDynamically: () => dep,
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+
+    const ns = await root.namespace.p;
+    expect(ns.x).toBe(42);
+    expect(ctx.LOG).toContain("SYNTH");
+    expect(dep.status).toBe("evaluated");
+  });
+
+  test("dynamic `import.defer()` of a SourceTextModule still runs initializeImportMeta", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('DEP'); export const u = import.meta.url;", {
+      context: ctx,
+      identifier: "dep",
+      initializeImportMeta(meta: any) {
+        meta.url = "file:///dep.js";
+      },
+    });
+    await dep.link(() => {
+      throw new Error("no deps");
+    });
+    const root = new vm.SourceTextModule("export const p = import.defer('d');", {
+      context: ctx,
+      identifier: "root",
+      importModuleDynamically: () => dep,
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+
+    const ns = await root.namespace.p;
+    expect(ctx.LOG.join("|")).toBe("");
+    expect(ns.u).toBe("file:///dep.js");
+    expect(ctx.LOG.join("|")).toBe("DEP");
+  });
+
+  test("a throwing deferred dependency surfaces the error and reports errored status", async () => {
+    const ctx = vm.createContext({ LOG: [] });
+    const dep = new vm.SourceTextModule("LOG.push('DEP'); throw new Error('boom'); export const a = 1;", {
+      identifier: "dep",
+      context: ctx,
+    });
+    const root = new vm.SourceTextModule(
+      "import defer * as N from 'dep'; LOG.push('ROOT'); export let caught; try { N.a; } catch (e) { caught = String(e); }",
+      { identifier: "root", context: ctx },
+    );
+    await root.link(() => dep);
+    await root.evaluate();
+
+    expect(root.namespace.caught).toBe("Error: boom");
+    expect(ctx.LOG.join("|")).toBe("ROOT|DEP");
+    expect(dep.status).toBe("errored");
+    expect(String(dep.error)).toBe("Error: boom");
+    expect(root.status).toBe("evaluated");
+  });
+
+  test("`import.defer()` and `import()` from the same module report distinct phases", async () => {
+    const ctx = vm.createContext({});
+    const dep = new vm.SourceTextModule("export const v = 1;", { identifier: "dep", context: ctx });
+    await dep.link(() => {
+      throw new Error("no deps");
+    });
+    await dep.evaluate();
+
+    const phases: string[] = [];
+    const root = new vm.SourceTextModule("export const a = import('x'); export const b = import.defer('y');", {
+      identifier: "root",
+      context: ctx,
+      importModuleDynamically: (_s: string, _r: unknown, _a: unknown, phase: string) => {
+        phases.push(phase);
+        return dep;
+      },
+    });
+    await root.link(() => {
+      throw new Error("no deps");
+    });
+    await root.evaluate();
+    await root.namespace.a;
+    await root.namespace.b;
+
+    expect(phases).toEqual(["evaluation", "defer"]);
+  });
+});

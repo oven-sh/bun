@@ -633,7 +633,9 @@ class InspectorCDPAdapter {
     if (this.#preParseBreakpoints.size === 0) return;
     const script = this.#scripts.$get(scriptId);
     // Without a map the original coordinates were already the right ones.
-    if (!script || script.mappings === undefined) return;
+    // A synchronous scriptParsed listener may have already decoded the map
+    // (#sourceMapFor consumes mappings into map), so check both states.
+    if (!script || (script.mappings === undefined && script.map === undefined)) return;
     for (const [clientBreakpointId, bp] of this.#preParseBreakpoints) {
       if (bp.resolved) continue;
       const { url: bpUrl, urlRegex: bpUrlRegex } = bp;

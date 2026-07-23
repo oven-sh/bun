@@ -640,6 +640,20 @@ test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its
   // rather than throwing; the ERR_INSPECTOR_COMMAND error goes to the callback.
   expect(() => session.post("Nonexistent.domain")).not.toThrow();
   expect(session.post("Nonexistent.domain")).toBeUndefined();
+  // The Network handlers follow the same contract: protocol errors reach the
+  // callback and are unobservable without one (node returns undefined here).
+  session.post("Network.enable");
+  expect(session.post("Network.getResponseBody", { requestId: "nope" })).toBeUndefined();
+  expect(session.post("Network.getRequestPostData", { requestId: "nope" })).toBeUndefined();
+  expect(session.post("Network.streamResourceContent", { requestId: "nope" })).toBeUndefined();
+  {
+    const { promise, resolve } = Promise.withResolvers<any>();
+    session.post("Network.getResponseBody", { requestId: "nope" }, err => resolve(err));
+    const bodyErr = await promise;
+    expect(bodyErr).toBeInstanceOf(Error);
+    expect(bodyErr.code).toBe("ERR_INSPECTOR_COMMAND");
+  }
+  session.post("Network.disable");
   const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<any>();
   session.post("Nonexistent.domain", err => resolveErr(err));
   const unknownErr = await errPromise;

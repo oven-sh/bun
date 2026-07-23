@@ -1057,10 +1057,8 @@ describe("many routes", () => {
   // Route registration used to linear-scan sibling nodes in the uWS router and
   // an `any` route fans out to every supported HTTP method, so an N-entry flat
   // table cost ~36*N^2 string compares to build (and again on every reload()).
-  // This asserts registration scales linearly in N. A perf outlier, hence the
-  // explicit per-test timeout: before the fix the 2400-route build alone took
-  // several seconds under ASAN.
-  test("route registration time scales linearly with route count", async () => {
+  // This asserts registration scales linearly in N.
+  test("route registration time scales linearly with route count", () => {
     function timeBuild(n: number) {
       const routes = buildFlatTable(n);
       const t0 = performance.now();
@@ -1084,7 +1082,7 @@ describe("many routes", () => {
     // 8x the routes. Linear ~= 8x; the old O(N^2) path measured 50-80x here.
     // Printed alongside the assertion so a failure shows the raw timings.
     expect({ small, large, ratio, linear: ratio < 24 }).toMatchObject({ linear: true });
-  }, 30_000);
+  });
 
   test("routes to the right handler in a large flat table", async () => {
     const n = 1200;

@@ -592,6 +592,44 @@ test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned g
   expect(counts.passed).toBeGreaterThanOrEqual(1);
 }, 30_000);
 
+test("run({isolation:'none'}): .only inside describe.only narrows to the inner test", async () => {
+  // node's rule: an only suite runs all its tests unless it has only-marked
+  // descendants, in which case only those run.
+  using dir = tempDir("node-test-nested-only", {
+    "f.test.mjs": `
+      import { describe, it } from 'node:test';
+      describe.only('s', () => {
+        it('a', () => { throw new Error('a should not run'); });
+        it.only('b', () => {});
+      });
+      describe('plain', () => {
+        it('c', () => { throw new Error('c should not run'); });
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], isolation: 'none' });
+      const passed = [], failed = [];
+      stream.on('test:pass', t => passed.push(t.name));
+      stream.on('test:fail', t => failed.push(t.name));
+      for await (const _ of stream);
+      console.log(JSON.stringify({ passed, failed }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Same event stream real node v26.3.0 emits for this fixture.
+  expect(JSON.parse(stdout.trim() || "null")).toEqual({ passed: ["b", "s"], failed: [] });
+  expect(exitCode).toBe(0);
+}, 30_000);
+
 test.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {
   // exec_as_if_node's eval branch must merge positionals into passthrough so
   // the eval driver sees the file in process.argv; without that it silently

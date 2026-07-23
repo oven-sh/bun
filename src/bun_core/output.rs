@@ -485,21 +485,14 @@ impl Source {
 
     pub fn get_force_color_depth() -> Option<ColorDepth> {
         let force_color = env_var::FORCE_COLOR.get()?;
-        // Supported by Node.js, if set will ignore NO_COLOR.
-        // - "0" to indicate no color support
-        // - "1", "true", or "" to indicate 16-color support
-        // - "2" to indicate 256-color support
-        // - "3" to indicate 16 million-color support
+        // Node.js table (tty getColorDepth): only these exact values enable
+        // color; any other value (including "0", "4", "junk") is no color.
         Some(match force_color {
-            0 => ColorDepth::None,
-            1 => ColorDepth::C16,
-            2 => ColorDepth::C256,
-            _ => ColorDepth::C16m,
+            b"" | b"1" | b"true" => ColorDepth::C16,
+            b"2" => ColorDepth::C256,
+            b"3" => ColorDepth::C16m,
+            _ => ColorDepth::None,
         })
-    }
-
-    pub fn is_force_color() -> bool {
-        Self::get_force_color_depth().unwrap_or(ColorDepth::None) != ColorDepth::None
     }
 
     pub fn is_color_terminal() -> bool {
@@ -540,8 +533,9 @@ impl Source {
                 }
 
                 let mut enable_color: Option<bool> = None;
-                if Self::is_force_color() {
-                    enable_color = Some(true);
+                if let Some(depth) = Self::get_force_color_depth() {
+                    // FORCE_COLOR set: its value decides, overriding NO_COLOR and TTY state.
+                    enable_color = Some(depth != ColorDepth::None);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
                 } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {

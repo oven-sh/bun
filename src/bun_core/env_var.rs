@@ -125,9 +125,9 @@ new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { de
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
 platform_specific_new!(pub DYLD_ROOT_PATH: string, posix = "DYLD_ROOT_PATH", windows = None, {});
-// TODO(markovejnovic): We should support enums in this library, and force_color's usage is,
-// indeed, an enum. The 80-20 is to make it an unsigned value (which also works well).
-new!(pub FORCE_COLOR: unsigned, "FORCE_COLOR", { deser: { error_handling: TruthyCast, empty_string_as: Value(1) } });
+// Raw string so `output::Source::get_force_color_depth` can do the exact
+// Node.js value match (""/"1"/"true"/"2"/"3"); any other value means no color.
+new!(pub FORCE_COLOR: string, "FORCE_COLOR", {});
 platform_specific_new!(pub fpath: string, posix = "fpath", windows = None, {});
 new!(pub GIT_SHA: string, "GIT_SHA", {});
 new!(pub GITHUB_ACTIONS: boolean, "GITHUB_ACTIONS", { default: false });
@@ -480,34 +480,15 @@ pub(crate) mod kind {
             DebugWarn,
             /// Ignore deserialization errors and treat the variable as not set.
             NotSet,
-            /// Formatting errors are treated as truthy values.
-            ///
-            /// If this library fails to parse the value as an integer and truthy cast is
-            /// enabled, truthy values will be set to 1 or 0.
-            ///
-            /// Note: Most values are considered truthy, except for "", "0", "false", "no",
-            /// and "off".
-            TruthyCast,
-        }
-
-        /// Control what empty strings are treated as.
-        #[derive(Clone, Copy)]
-        pub(crate) enum EmptyStringAs {
-            /// Empty strings are handled as the given value.
-            Value(ValueType),
-            /// Empty strings are treated as deserialization errors.
-            Erroneous,
         }
 
         #[derive(Clone, Copy)]
         pub(crate) struct DeserOpts {
             pub error_handling: ErrorHandling,
-            pub empty_string_as: EmptyStringAs,
         }
         impl DeserOpts {
             pub(crate) const DEFAULT: Self = Self {
                 error_handling: ErrorHandling::DebugWarn,
-                empty_string_as: EmptyStringAs::Erroneous,
             };
         }
         impl Default for DeserOpts {
@@ -558,15 +539,7 @@ pub(crate) mod kind {
                 };
 
                 if raw_env == b"" {
-                    match self.ip.opts.deser.empty_string_as {
-                        EmptyStringAs::Value(v) => {
-                            self.value.store(v, Ordering::Relaxed);
-                            return Some(v);
-                        }
-                        EmptyStringAs::Erroneous => {
-                            return self.handle_error(raw_env, "is an empty string");
-                        }
-                    }
+                    return self.handle_error(raw_env, "is an empty string");
                 }
 
                 // Distinguishes Overflow vs InvalidCharacter; '-0'→0, '-N'→Overflow,
@@ -604,15 +577,6 @@ pub(crate) mod kind {
                     ErrorHandling::NotSet => {
                         self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
                         None
-                    }
-                    ErrorHandling::TruthyCast => {
-                        if super::boolean::string_is_truthy(raw_env) {
-                            self.value.store(1, Ordering::Relaxed);
-                            Some(1)
-                        } else {
-                            self.value.store(0, Ordering::Relaxed);
-                            Some(0)
-                        }
                     }
                 }
             }
@@ -865,15 +829,6 @@ macro_rules! __unsigned_opts {
         $crate::env_var::kind::unsigned::CtorOptions {
             deser: $crate::env_var::kind::unsigned::DeserOpts {
                 error_handling: $crate::env_var::kind::unsigned::ErrorHandling::$eh,
-                empty_string_as: $crate::env_var::kind::unsigned::EmptyStringAs::Erroneous,
-            },
-        }
-    };
-    ({ deser: { error_handling: $eh:ident, empty_string_as: Value($v:expr) } }) => {
-        $crate::env_var::kind::unsigned::CtorOptions {
-            deser: $crate::env_var::kind::unsigned::DeserOpts {
-                error_handling: $crate::env_var::kind::unsigned::ErrorHandling::$eh,
-                empty_string_as: $crate::env_var::kind::unsigned::EmptyStringAs::Value($v),
             },
         }
     };

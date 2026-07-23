@@ -1086,7 +1086,9 @@ describe("net.Server accepted-socket buffering", () => {
       // Wait well past the teardown's setImmediate window before reading.
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       expect(client.destroyed).toBe(false);
-      client.on("data", chunk => received.resolve(chunk.toString()));
+      let got = "";
+      client.on("data", chunk => (got += chunk));
+      client.on("end", () => received.resolve(got));
       expect(await received.promise).toBe("late response");
     } finally {
       client?.destroy();

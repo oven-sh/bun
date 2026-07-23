@@ -179,8 +179,9 @@ async function main(): Promise<void> {
         if (result.output.exe) verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe);
       }
     } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
-      // Inherited: a stale file is a slower binary, not a broken one.
-      if (!inherited && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
+      // Inherited: a stale file is a slower binary, not a broken one. PRs have no
+      // trace-order step to point at, so a failed inherit there is just unordered.
+      if (!inherited && !orderCtx.pullRequest && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
       verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
     }
 

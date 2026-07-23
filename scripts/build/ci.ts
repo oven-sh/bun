@@ -657,7 +657,8 @@ async function waitForStepOutcome(stepKey: string): Promise<void> {
 //
 // A build either generates one (trace its own binary, relink against the result)
 // or inherits an earlier build's and links once. Releases generate, canaries
-// inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
+// inherit, PRs inherit the base branch's; one that inherits nothing generates,
+// seeding the chain (PRs excepted: they ship unordered rather than pay a relink).
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Cap on builds we ask for an order file before giving up and generating one. */
@@ -677,7 +678,13 @@ export interface OrderFileContext {
   buildkite: boolean;
   /** Buildkite build URL of the running build, for walking the branch. */
   buildUrl: string | undefined;
-  branch: string | undefined;
+  /**
+   * Branch to pull an earlier `.order` artifact from. Own branch on main,
+   * the PR's base branch on a PR: a PR branch has no prior build to inherit
+   * from, and linking with the base's file is what makes a PR artifact
+   * comparable to the base when someone benchmarks startup.
+   */
+  inheritBranch: string | undefined;
   buildNumber: number | undefined;
   commitMessage: string;
   pullRequest: boolean;
@@ -686,19 +693,22 @@ export interface OrderFileContext {
 /** Read the environment once, at the edge. */
 export function orderFileContext(): OrderFileContext {
   const pr = process.env.BUILDKITE_PULL_REQUEST;
+  const pullRequest = pr !== undefined && pr !== "" && pr !== "false";
   return {
     buildkite: isBuildkite,
     buildUrl: process.env.BUILDKITE_BUILD_URL,
-    branch: process.env.BUILDKITE_BRANCH,
+    inheritBranch: pullRequest
+      ? process.env.BUILDKITE_PULL_REQUEST_BASE_BRANCH || "main"
+      : process.env.BUILDKITE_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
     commitMessage: process.env.BUILDKITE_MESSAGE ?? "",
-    pullRequest: pr !== undefined && pr !== "" && pr !== "false",
+    pullRequest,
   };
 }
 
-/** Only builds that link, on targets that use an order file, outside PRs. */
+/** Only builds that link, on targets that use an order file. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
-  if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
+  if (!usesOrderFile(cfg) || !ctx.buildkite) return false;
   return cfg.mode === "full" || cfg.mode === "link-only" || cfg.mode === "rust-and-link";
 }
 
@@ -768,10 +778,13 @@ export function shouldGenerateOrderFile(cfg: Config, ctx: OrderFileContext): boo
 
 /**
  * A build that inherited nothing must generate: otherwise it publishes nothing,
- * the next build inherits nothing either, and the chain never recovers.
+ * the next build inherits nothing either, and the chain never recovers. PRs are
+ * not part of the chain (they inherit from the base branch, not each other), so
+ * a PR that inherits nothing ships unordered rather than pay a second link.
  */
 export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inherited: boolean): boolean {
   if (shouldGenerateOrderFile(cfg, ctx)) return true;
+  if (ctx.pullRequest) return false;
   return orderFileEligible(cfg, ctx) && canTraceOrderFile(cfg) && !inherited;
 }
 
@@ -781,7 +794,7 @@ export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inheri
  * there, so the happy path is one lookup.
  */
 async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: string; number?: number }> {
-  const { branch, buildUrl } = ctx;
+  const { inheritBranch: branch, buildUrl } = ctx;
   if (!branch || !buildUrl) return;
 
   // https://buildkite.com/<org>/<pipeline>/builds/<n> -> https://buildkite.com/<org>/<pipeline>
@@ -837,7 +850,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   const start = Date.now();
   const artifact = orderFileArtifact(cfg);
 
-  console.log(`Looking for ${artifact} published by an earlier build on ${ctx.branch}...`);
+  console.log(`Looking for ${artifact} published by an earlier build on ${ctx.inheritBranch}...`);
   const downloaded = resolve(cfg.buildDir, artifact);
   let tried = 0;
 

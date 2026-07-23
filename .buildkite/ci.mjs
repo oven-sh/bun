@@ -784,8 +784,9 @@ const traceOrderTargets = [
  * orderfile/generate.ts` (the traced binary doubles as the interpreter), and
  * uploads the result.
  *
- * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
- * no consumer. Soft-fail: the order file is an optimization, and a broken
+ * Main only (plus `[generate symbol order]` opt-in). PR builds inherit the
+ * base branch's file rather than tracing, so a trace step on every PR would
+ * have no consumer. Soft-fail: the order file is an optimization, and a broken
  * tracer must not fail a build.
  * @param {Target} target
  * @param {Platform} tracePlatform

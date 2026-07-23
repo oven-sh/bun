@@ -4181,6 +4181,15 @@ impl VirtualMachine {
         )
     }
 
+    /// Whether a file-path `specifier` is too long to resolve on disk. `data:`
+    /// URLs are resolved by the data-URL resolver, not the filesystem, so their
+    /// length is unbounded by any path limit. Shared with
+    /// `jsc_hooks::resolve_hook` so both resolver paths use one threshold.
+    pub fn specifier_exceeds_path_limit(specifier: &bun_core::String) -> bool {
+        const MAX_LEN: usize = bun_paths::MAX_PATH_BYTES * 3 / 2;
+        specifier.length() > MAX_LEN && !specifier.has_prefix_comptime(b"data:")
+    }
+
     /// Module-resolution core: resolves `specifier` relative to `source`, with path-length checks when `IS_A_FILE_PATH`.
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>(
         res: &mut ErrorableString,
@@ -4191,8 +4200,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_user_require_resolve: bool,
     ) -> JsResult<()> {
-        const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
-        if IS_A_FILE_PATH && specifier.length() > MAX_LEN {
+        if IS_A_FILE_PATH && Self::specifier_exceeds_path_limit(&specifier) {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();
             let import_kind = if is_esm {

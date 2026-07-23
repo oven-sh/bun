@@ -5062,10 +5062,8 @@ unsafe fn resolve_hook(
     // through under Stacked Borrows.
     let vm: *mut VirtualMachine = global_ref.bun_vm_ptr();
 
-    // Overlong specifier guard. `MAX_PATH_BYTES * 1.5`, truncated:
-    // integer `* 3 / 2` is exact for the powers-of-two MAX_PATH_BYTES values.
-    const MAX_SPECIFIER_LEN: usize = bun_paths::MAX_PATH_BYTES * 3 / 2;
-    if is_a_file_path && specifier.length() > MAX_SPECIFIER_LEN {
+    // Overlong specifier guard (shared threshold + `data:` exemption).
+    if is_a_file_path && VirtualMachine::specifier_exceeds_path_limit(&specifier) {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
         let import_kind = if is_esm {

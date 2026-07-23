@@ -751,7 +751,10 @@ class Debugger {
 
     if (this.#nodeInspector || data.isCDP) {
       // Node prints this on every remote session attach; tools gate on it.
-      Bun.write(Bun.stderr, "Debugger attached.\n");
+      // Written via fs.writeSync so the debugger thread's global never reifies
+      // Bun.stderr: that global is never destroyed, so the lazy Blob behind
+      // Bun.stderr would otherwise leak at exit (LSAN).
+      require("node:fs").writeSync(2, "Debugger attached.\n");
       // node:inspector clients speak CDP; the adapter sits between the
       // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
       // --inspect connections, an attached client must not keep the process

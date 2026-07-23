@@ -7,6 +7,23 @@ import { pathToFileURL } from "node:url";
 // Node prints this and blocks while a CDP frontend is still attached at exit.
 const DISCONNECT_NOTICE = "Waiting for the debugger to disconnect...";
 
+// Children that call inspector.open() and take a remote connection run the
+// debugger thread, whose global is never destroyed (its BunInspectorConnection
+// is deliberately leaked; base's leaksan.supp records that). Per-connection
+// state allocated on that thread is therefore reported by LSAN at exit, and
+// Runtime.evaluate over the protocol trips WebKit's internal
+// evaluateWithScopeExtension validator abort this file is already exempted
+// from. Children inherit neither so these tests observe the process behavior,
+// not the debugger thread's exit-time bookkeeping.
+const inspectorChildEnv = {
+  ...bunEnv,
+  BUN_JSC_validateExceptionChecks: undefined,
+  BUN_JSC_dumpSimulatedThrows: undefined,
+  BUN_DESTRUCT_VM_ON_EXIT: undefined,
+  LSAN_OPTIONS: undefined,
+  ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0",
+};
+
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
 });
@@ -196,7 +213,7 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -288,7 +305,7 @@ test("inspector.close() followed by inspector.open() starts a new server", async
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -346,7 +363,7 @@ test("inspector.open() can be retried after a failed start", async () => {
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -381,7 +398,7 @@ test("inspector.open() with wait=true does not hang the process after a bind fai
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -413,10 +430,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    // The client drives Runtime.evaluate in the child, which trips the
-    // WebKit-internal evaluateWithScopeExtension validator abort this file
-    // is exempted from; children must not re-inherit the validator env.
-    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -502,8 +516,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    // Same validator-env strip as the single-wait test above.
-    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
+    env: inspectorChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -797,7 +810,7 @@ export { after };
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--inspect=127.0.0.1:0/runtime-attach", "entry.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stdin: "pipe",
     stdout: "pipe",
@@ -902,7 +915,7 @@ export { after };
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "entry.mjs"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

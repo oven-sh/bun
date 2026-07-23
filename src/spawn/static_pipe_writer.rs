@@ -167,6 +167,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // Self-borrow into `self.source` — see `buffer` field invariant.
         self.buffer = RawSlice::new(self.source.slice());
+        let empty = self.buffer.is_empty();
         #[cfg(windows)]
         {
             let r = self.writer.start_with_current_pipe();
@@ -178,6 +179,15 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 // `start()`; the caller's `IntrusiveRc` keeps it alive and
                 // `started` is false so no other site re-derefs.
                 unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            } else if empty {
+                // Nothing to write: WindowsBufferedWriter::write() returns
+                // without issuing a uv_write for a zero-length buffer, so the
+                // pipe would stay open and the child would block on stdin.
+                // Drive the drained path now so the write end closes and the
+                // child reads EOF. `on_write(.., Drained)` may free `self`
+                // via on_close -> on_close_io -> finalize; this is the last
+                // access (same contract as PipeWriter.rs's on_poll tail call).
+                self.on_write(0, WriteStatus::Drained);
             }
             return r;
         }
@@ -203,6 +213,17 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                         if let Some(poll) = self.writer.handle.get_poll() {
                             poll.set_flag(bun_io::FilePollFlag::Socket);
                         }
+                    }
+                    if empty {
+                        // Nothing to write: PosixBufferedWriter's on_poll
+                        // returns without closing for a zero-length buffer, so
+                        // the pipe would stay open and the child would block on
+                        // stdin. Drive the drained path now so the write end
+                        // closes and the child reads EOF. `on_write(.., Drained)`
+                        // may free `self` via on_close -> on_close_io ->
+                        // finalize; this is the last access (same contract as
+                        // PipeWriter.rs's on_poll tail call).
+                        self.on_write(0, WriteStatus::Drained);
                     }
                     bun_sys::Result::Ok(())
                 }

@@ -99,20 +99,19 @@ describe("tls ecdhCurve", () => {
     });
   });
 
-  it("rejects listen() on a server configured with an unknown curve name", async () => {
-    const server = createServer({ ...COMMON_CERT, ecdhCurve: "not-a-curve" });
-    const outcome = Promise.withResolvers<{ code?: string; message?: string }>();
-    server.once("listening", () => outcome.resolve({ code: "listening" }));
-    server.once("error", err => outcome.resolve({ code: (err as any).code, message: (err as any).message }));
-    server.listen(0, "127.0.0.1");
+  it("rejects an unknown curve name in createServer synchronously", () => {
+    // Node throws from the Server constructor (configSecureContext -> SetECDHCurve):
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1973
+    let err: any;
     try {
-      expect(await outcome.promise).toEqual({
-        code: "ERR_CRYPTO_OPERATION_FAILED",
-        message: "Failed to set ECDH curve",
-      });
-    } finally {
-      if (server.listening) server.close();
+      createServer({ ...COMMON_CERT, ecdhCurve: "not-a-curve" });
+    } catch (e) {
+      err = e;
     }
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "ERR_CRYPTO_OPERATION_FAILED",
+      message: "Failed to set ECDH curve",
+    });
   });
 
   it("treats 'auto' as the library default group list", async () => {

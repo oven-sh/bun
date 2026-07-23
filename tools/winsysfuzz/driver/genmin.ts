@@ -20,6 +20,9 @@ const inFile = flag("--in")!;
 const outFile = flag("--out")!;
 const timeoutMs = 1000 * +(flag("--timeout", "6") as string);
 const cls = (flag("--class", "any") as string).toLowerCase();
+// --attempts N: runs per candidate for INTERMITTENT (race) crashes - a
+// candidate is 'crashes' if ANY of N runs faults. Default 2 (deterministic).
+const attempts = Math.max(1, +(flag("--attempts", "2") as string));
 if (!bun || !inFile || !outFile) {
   console.error("usage: genmin.ts --bun <bun.exe> --in <program.js> --out <tiny.js> [--timeout 15] [--class ...]");
   process.exit(2);
@@ -29,7 +32,7 @@ const cand = join(workDir, "genmin-cand.js");
 
 async function crashes(lines: string[]): Promise<boolean> {
   await Bun.write(cand, lines.join("\n") + "\n");
-  for (let k = 0; k < 2; k++) {
+  for (let k = 0; k < attempts; k++) {
     const proc = Bun.spawn([bun, cand], { stdout: "pipe", stderr: "pipe", env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" } });
     const timer = setTimeout(() => {
       try {

@@ -9142,14 +9142,16 @@ describe("registry/token env var priority", () => {
     expect(received[0]).toBe("Bearer from-bun");
   });
 
-  test("NPM_CONFIG_TOKEN wins over npm_config_token when BUN_CONFIG_TOKEN is empty", async () => {
+  test("empty BUN_CONFIG_TOKEN falls through to NPM_CONFIG_TOKEN", async () => {
+    // npm_config_token is intentionally omitted: on Windows env vars are
+    // case-insensitive, so NPM_CONFIG_TOKEN and npm_config_token are the
+    // same key in the child and their relative priority is unobservable.
     const received = await installAndCaptureAuth({
       BUN_CONFIG_TOKEN: "",
-      NPM_CONFIG_TOKEN: "from-npm-upper",
-      npm_config_token: "from-npm-lower",
+      NPM_CONFIG_TOKEN: "from-npm",
     });
     expect(received.length).toBeGreaterThan(0);
-    expect(received[0]).toBe("Bearer from-npm-upper");
+    expect(received[0]).toBe("Bearer from-npm");
   });
 
   test("BUN_CONFIG_REGISTRY wins over NPM_CONFIG_REGISTRY", async () => {

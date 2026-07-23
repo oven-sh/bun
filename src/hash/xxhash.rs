@@ -1,9 +1,9 @@
-//! XxHash32 / XxHash64 / XxHash3.
+//! XxHash32 / XxHash64.
 //!
 //! Thin wrappers over the C++/Highway xxHash kernel in
-//! `src/jsc/bindings/xxhash3.cpp` (exposed by `bun_highway`). XXH3's long-input
-//! stripe loop is runtime-dispatched to the widest SIMD ISA the CPU supports;
-//! XXH32/XXH64 are scalar (no SIMD form exists in the reference). Output is
+//! `src/jsc/bindings/xxhash3.cpp` (exposed by `bun_highway`).
+//! XXH32/XXH64 are scalar (no SIMD form exists in the reference);
+//! `HashObject.rs` calls `bun_highway::xxhash3_64` directly for XXH3. Output is
 //! bit-identical to the xxHash
 //! reference test vectors — verified against the reference (and across every
 //! dispatch target) by `test/js/bun/util/hash.test.js`, which runs in CI.

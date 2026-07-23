@@ -29,4 +29,7 @@ export default {
   // tests that inspect socket[kTimeout].
   kTimeout: Symbol.for("::buntimeout::"),
   getTimerDuration,
+  // Node v26.3.0 lib/internal/timers.js:134 — exported because ported tests
+  // (test-runner-mock-timers.js) destructure it under --expose-internals.
+  TIMEOUT_MAX,
 };

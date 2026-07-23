@@ -113,8 +113,11 @@ function removeWorker(worker) {
 function removeHandlesForWorker(worker) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
-  handles.forEach((handle, key) => {
-    if (handle.remove(worker)) handles.delete(key);
+  handles.forEach(function removeOneHandle(handle, key) {
+    // Worker death drops every claim it held at once; the per-server
+    // refcount in ReusePortHandle only matters for orderly close().
+    const removed = typeof handle.removeWorker === "function" ? handle.removeWorker(worker) : handle.remove(worker);
+    if (removed) handles.delete(key);
   });
 }
 
@@ -343,6 +346,15 @@ function queryServer(worker, message) {
 // node:http cluster workers self-bind with SO_REUSEPORT, which never collides
 // with a foreign process at bind time. The primary arbitrates instead: known
 // keys belong to this cluster; new ones get a one-shot test bind.
+function destroyProbeConnection(probeConnection) {
+  probeConnection.destroy();
+}
+
+function onReusePortClaim(worker, key, seq, errno) {
+  if (errno) handles.delete(key); // Gives other workers a chance to retry.
+  send(worker, { errno, key, ack: seq });
+}
+
 class ReusePortHandle {
   key;
   port;
@@ -364,10 +376,7 @@ class ReusePortHandle {
       const ownedPending = owned.pending;
       if (ownedPending) {
         this.pending = [];
-        ownedPending.push(errno => {
-          this.errno = errno;
-          this.#settle();
-        });
+        ownedPending.push(this.#onOwnedSettled.bind(this));
       } else {
         this.errno = owned.errno;
       }
@@ -378,15 +387,24 @@ class ReusePortHandle {
     // A stray client connecting inside the probe window would otherwise be
     // accepted and never destroyed, blocking server.close() (and with it
     // every parked probePort reply) until that client goes away.
-    const server = (this.server = netForProbe.createServer(probeConnection => probeConnection.destroy()));
-    server.once("error", err => {
-      const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
-      this.errno = raw != null ? uvTranslateSysError(raw) : einvalErrorCode();
-      this.#settle();
-    });
-    server.listen({ port: this.port, host: this.address || undefined }, () => {
-      server.close(() => this.#settle());
-    });
+    const server = (this.server = netForProbe.createServer(destroyProbeConnection));
+    server.once("error", this.#onProbeError.bind(this));
+    server.listen({ port: this.port, host: this.address || undefined }, this.#onProbeListening.bind(this, server));
+  }
+
+  #onOwnedSettled(errno) {
+    this.errno = errno;
+    this.#settle();
+  }
+
+  #onProbeError(err) {
+    const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
+    this.errno = raw != null ? uvTranslateSysError(raw) : einvalErrorCode();
+    this.#settle();
+  }
+
+  #onProbeListening(server) {
+    server.close(this.#settle.bind(this));
   }
 
   #settle() {
@@ -403,6 +421,15 @@ class ReusePortHandle {
     const { pending } = this;
     if (pending) pending.push(send);
     else send(this.errno);
+  }
+
+  // Dead workers cannot close their servers one by one: collapse the
+  // refcount so a single call drops everything the worker held.
+  removeWorker(worker) {
+    const { workers } = this;
+    const { id } = worker;
+    if (workers.has(id)) workers.set(id, 1);
+    return this.remove(worker);
   }
 
   remove(worker) {
@@ -493,10 +520,9 @@ function probePort(worker, message) {
     handles.set(key, handle);
   }
 
-  handle.add(worker, errno => {
-    if (errno) handles.delete(key); // Gives other workers a chance to retry.
-    send(worker, { errno, key, ack: message.seq });
-  });
+  // Reply shape mirrors Node v26.3.0 lib/internal/cluster/primary.js
+  // queryServer's handle.add callback (errno-first, delete-on-error).
+  handle.add(worker, onReusePortClaim.bind(null, worker, key, message.seq));
 }
 
 function listening(worker, message) {

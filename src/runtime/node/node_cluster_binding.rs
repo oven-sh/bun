@@ -253,6 +253,23 @@ pub(crate) fn handle_internal_message_primary(
 //
 
 #[bun_jsc::host_fn]
+pub(crate) fn channel_fd(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    // Node parity: `process.channel.fd` is the raw IPC descriptor while the
+    // channel is open, `undefined` otherwise (v26.3.0
+    // lib/internal/child_process.js Control#fd).
+    let vm = global.bun_vm().as_mut();
+    let Some(instance) = vm.get_ipc_instance() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: get_ipc_instance returns the VM-owned live heap pointer.
+    let fd = unsafe { (*instance).data.channel_fd() };
+    Ok(match fd {
+        Some(fd) => JSValue::from(fd.native() as i32),
+        None => JSValue::UNDEFINED,
+    })
+}
+
+#[bun_jsc::host_fn]
 pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>().ptr;
 

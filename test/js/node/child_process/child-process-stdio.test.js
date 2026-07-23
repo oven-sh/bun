@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { Readable, Writable } from "node:stream";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -169,7 +170,6 @@ describe("child.stdin", () => {
 
 describe("stream stdio entries without an fd (post-spawn pump)", () => {
   it("emits 'close' when the wrapped stdout destination dies mid-flow", async () => {
-    const { Writable } = require("node:stream");
     const { promise: firstChunk, resolve: gotFirstChunk } = Promise.withResolvers();
     const dest = new Writable({
       write(chunk, encoding, cb) {
@@ -198,7 +198,6 @@ describe("stream stdio entries without an fd (post-spawn pump)", () => {
   });
 
   it("EOFs the child's stdin when the wrapped source dies without ending", async () => {
-    const { Readable } = require("node:stream");
     // autoDestroy/emitClose off: the source dies emitting only 'error',
     // the shape that used to leave the child's stdin open forever.
     const source = new Readable({ read() {}, autoDestroy: false, emitClose: false });

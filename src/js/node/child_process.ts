@@ -1335,7 +1335,7 @@ class ChildProcess extends EventEmitter {
         // Hold 'close' until the pump drained what the child wrote, then
         // pump into the user stream; it may be shared, so never end it here.
         this.#closesNeeded++;
-        readable.once("close", () => this.#maybeClose());
+        readable.once("close", this.#maybeClose.bind(this));
         readable.pipe(stream, { end: false });
         // Every pipe-cleanup path (dest error/close, source end) funnels
         // through src.unpipe(dest); destroy the pump there so its 'close'

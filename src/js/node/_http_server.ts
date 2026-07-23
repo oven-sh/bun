@@ -666,29 +666,13 @@ Server.prototype.listen = function () {
         // Descriptor passing over IPC is not implemented on Windows; fail
         // like the direct listen({fd}) path does (Node skips these tests).
         const UV_EINVAL_WIN = -4071;
-        process.nextTick(() => server.emit("error", new ExceptionWithHostPort(UV_EINVAL_WIN, "listen", null, 0)));
+        process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(UV_EINVAL_WIN, "listen", null, 0));
         return this;
       }
-      cluster._sendInternal({ act: "shareListenFd", fd, addressType: 4 }, (reply, _handle) => {
-        // The IPC wire surfaces a received SCM_RIGHTS descriptor as $fd on
-        // the message itself (see ipc.rs $hasHandle receive path).
-        const received = reply["$fd"];
-        const sharedFd = typeof received === "number" && received >= 0 ? received : undefined;
-        const replyErrno = reply.errno;
-        if (replyErrno || sharedFd === undefined) {
-          if (sharedFd !== undefined) closeSharedFd(sharedFd);
-          server.emit("error", new ExceptionWithHostPort(replyErrno || -9, "listen", null, 0));
-          return;
-        }
-        try {
-          server[kRealListen](tls, port, host, socketPath, true, onListen, sharedFd);
-        } catch (err) {
-          // Adoption failed before the listener took ownership; the received
-          // dup would otherwise leak (and pin the port) in this worker.
-          closeSharedFd(sharedFd);
-          server.emit("error", err);
-        }
-      });
+      cluster._sendInternal(
+        { act: "shareListenFd", fd, addressType: 4 },
+        onShareListenFdReply.bind(null, server, tls, port, host, socketPath, onListen),
+      );
       return this;
     }
 
@@ -697,22 +681,10 @@ Server.prototype.listen = function () {
     // primary to arbitrate the port first, like Node's bind-in-primary does.
     const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
     if (askPrimary) {
-      cluster._sendInternal({ act: "probePort", address: host ?? null, port, addressType: 4 }, reply => {
-        const replyErrno = reply.errno;
-        if (replyErrno) {
-          server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
-          return;
-        }
-        // Remember the primary's cache key: close() reports it back so the
-        // primary drops the claim and a later listen on this port gets a
-        // fresh test bind instead of the stale cached verdict.
-        server[kClusterProbeKey] = reply.key;
-        try {
-          server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
-        } catch (err) {
-          server.emit("error", err);
-        }
-      });
+      cluster._sendInternal(
+        { act: "probePort", address: host ?? null, port, addressType: 4 },
+        onProbePortReply.bind(null, server, tls, port, host, socketPath, onListen, fd),
+      );
     } else {
       server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
     }
@@ -729,7 +701,50 @@ function closeSharedFd(fd) {
   } catch {}
 }
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen, fd) {
+// Same shape as Node v26.3.0 lib/net.js emitErrorNT.
+function emitListenErrorNT(server, err) {
+  server.emit("error", err);
+}
+
+function onShareListenFdReply(server, tls, port, host, socketPath, onListen, reply, _handle) {
+  // The IPC wire surfaces a received SCM_RIGHTS descriptor as $fd on
+  // the message itself (see ipc.rs $hasHandle receive path).
+  const received = reply["$fd"];
+  const sharedFd = typeof received === "number" && received >= 0 ? received : undefined;
+  const replyErrno = reply.errno;
+  if (replyErrno || sharedFd === undefined) {
+    if (sharedFd !== undefined) closeSharedFd(sharedFd);
+    server.emit("error", new ExceptionWithHostPort(replyErrno || -9, "listen", null, 0));
+    return;
+  }
+  try {
+    server[kRealListen](tls, port, host, socketPath, true, onListen, sharedFd);
+  } catch (err) {
+    // Adoption failed before the listener took ownership; the received
+    // dup would otherwise leak (and pin the port) in this worker.
+    closeSharedFd(sharedFd);
+    server.emit("error", err);
+  }
+}
+
+function onProbePortReply(server, tls, port, host, socketPath, onListen, fd, reply) {
+  const replyErrno = reply.errno;
+  if (replyErrno) {
+    server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
+    return;
+  }
+  // Remember the primary's cache key: close() reports it back so the
+  // primary drops the claim and a later listen on this port gets a
+  // fresh test bind instead of the stale cached verdict.
+  server[kClusterProbeKey] = reply.key;
+  try {
+    server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
+  } catch (err) {
+    server.emit("error", err);
+  }
+}
+
+Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath, reusePort, onListen, fd) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;

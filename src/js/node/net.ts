@@ -3498,13 +3498,16 @@ Server.prototype.close = function close(callback) {
   }
 
   if (this._usingWorkers) {
+    // Port of Node v26.3.0 lib/net.js Server.prototype.close (onWorkerClose),
+    // with the closure hoisted to a named function.
     let left = this._workers.length;
-    const onWorkerClose = () => {
+    const self = this;
+    function onWorkerClose() {
       if (--left !== 0) return;
 
-      this._connections = 0;
-      this._emitCloseIfDrained();
-    };
+      self._connections = 0;
+      self._emitCloseIfDrained();
+    }
 
     // Increment connections to be sure that, even if all sockets will be closed
     // during polling of workers, `close` event will be emitted only once.
@@ -3585,14 +3588,17 @@ Server.prototype.getConnections = function getConnections(callback) {
   return this;
 };
 
+// Port of Node v26.3.0 lib/net.js Server.prototype._setupWorker.
 Server.prototype._setupWorker = function _setupWorker(socketList) {
   this._usingWorkers = true;
   this._workers.push(socketList);
-  socketList.once("exit", socketList => {
-    const index = this._workers.indexOf(socketList);
-    this._workers.splice(index, 1);
-  });
+  socketList.once("exit", onSocketListExit.bind(this));
 };
+
+function onSocketListExit(socketList) {
+  const index = this._workers.indexOf(socketList);
+  this._workers.splice(index, 1);
+}
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;

@@ -231,6 +231,11 @@ export function serialize(message, handle, options, target) {
  */
 export function parseHandle(target, serialized, fd) {
   const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
+  // Builtins codegen requires top-level functions to be exported, so this
+  // named helper lives here instead of module scope.
+  function emitReceivedHandle(boundEmit, target, msg, handle) {
+    boundEmit(target, msg, handle);
+  }
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {
@@ -274,9 +279,7 @@ export function parseHandle(target, serialized, fd) {
       const socket = dgram.createSocket(serialized.dgramType);
       // exclusive: the SCM_RIGHTS descriptor is local; without it a cluster
       // worker's bind({ fd }) would resolve fd in the primary's fd space.
-      socket.bind({ fd, exclusive: true }, () => {
-        emit(target, serialized.msg, socket);
-      });
+      socket.bind({ fd, exclusive: true }, emitReceivedHandle.bind(null, emit, target, serialized.msg, socket));
       return;
     }
     default: {

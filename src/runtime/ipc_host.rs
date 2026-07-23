@@ -279,6 +279,12 @@ pub(crate) fn do_send(
             let raw = bun_jsc::cpp::NodeHTTP__getServerSocketFd(handle);
             if raw >= 0 {
                 log!("got node:http server socket fd");
+                if !keep_open {
+                    // Same park-until-ack contract as the TCPSocket branch;
+                    // the pause itself happens natively after the send (this
+                    // wrapper has no JS pause()).
+                    pause_target = handle;
+                }
                 #[cfg(not(windows))]
                 match Handle::init_dup(bun_sys::Fd::from_native(raw as i32), handle, !keep_open) {
                     Ok(h) => zig_handle = Some(h),
@@ -330,7 +336,11 @@ pub(crate) fn do_send(
                     global_object.report_active_exception_as_unhandled(e);
                 }
             }
-            Ok(_) => {}
+            // node:http server sockets carry no JS pause(); stop the
+            // sender's uSockets read loop natively so bytes arriving before
+            // the NODE_HANDLE_ACK are not drained on this side (no-op for
+            // any other handle shape via the downcast).
+            Ok(_) => bun_jsc::cpp::NodeHTTP__pauseServerSocket(pause_target),
             Err(e) => global_object.report_active_exception_as_unhandled(e),
         }
     }

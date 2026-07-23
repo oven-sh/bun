@@ -1578,6 +1578,26 @@ impl SendQueue {
         }
     }
 
+    /// Raw descriptor of the live IPC channel, mirroring Node's `Control#fd`
+    /// getter (v26.3.0 lib/internal/child_process.js:596): `None` once the
+    /// channel is gone. Windows has no meaningful raw descriptor for the uv
+    /// pipe here; callers surface that as `undefined`, like a closed channel.
+    pub fn channel_fd(&self) -> Option<Fd> {
+        #[cfg(not(windows))]
+        {
+            let socket = self.get_socket()?;
+            // SAFETY: `get()` is Some only for a live connected socket owned
+            // by this queue; the pointer is valid for the duration of the
+            // synchronous read below.
+            let raw = socket.socket.get()?;
+            Some(unsafe { (*raw).get_fd() })
+        }
+        #[cfg(windows)]
+        {
+            None
+        }
+    }
+
     #[cfg(windows)]
     pub fn ipc_peer_pid(&self) -> u32 {
         match &self.socket {

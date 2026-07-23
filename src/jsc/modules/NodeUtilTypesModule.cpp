@@ -4,6 +4,11 @@
 #include "node/crypto/JSKeyObject.h"
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSMapIterator.h>
+#include <JavaScriptCore/BigIntObject.h>
+#include <JavaScriptCore/BooleanObject.h>
+#include <JavaScriptCore/JSWrapperObject.h>
+#include <JavaScriptCore/NumberObject.h>
+#include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/ObjectPrototype.h>
@@ -643,6 +648,18 @@ static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBu
     return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
+static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)
+{
+    if (!value.isCell())
+        return nullptr;
+    JSC::JSCell* cell = value.asCell();
+    if (cell->inherits<JSC::NumberObject>() || cell->inherits<JSC::BooleanObject>()
+        || cell->inherits<JSC::BigIntObject>() || cell->inherits<JSC::SymbolObject>()
+        || cell->inherits<JSC::StringObject>())
+        return uncheckedDowncast<JSC::JSWrapperObject>(cell);
+    return nullptr;
+}
+
 static bool isSpecialValue(JSValue value)
 {
     // `typeof x !== "object"`: primitives, null, and callables are decided
@@ -800,6 +817,24 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         bool lastIndexEqual = JSC::sameValue(globalObject, actualRegExp->getLastIndex(), expectedRegExp->getLastIndex());
         RETURN_IF_EXCEPTION(scope, false);
         if (!lastIndexEqual)
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
+    // Boxed primitives (Number/Boolean/BigInt/Symbol/String objects): the
+    // internal value compares with Object.is semantics, then own enumerable
+    // properties as a subset — node unwraps the [[*Data]] slot before the
+    // property walk, which the plain-object fallback below never sees.
+    // Concrete classes only: JSWrapperObject itself has no discriminating
+    // ClassInfo, so a base-class downcast would match every object.
+    auto* actualWrapper = asBoxedPrimitive(actual);
+    auto* expectedWrapper = asBoxedPrimitive(expected);
+    if (actualWrapper || expectedWrapper) {
+        if (!actualWrapper || !expectedWrapper)
+            return false;
+        bool internalEqual = JSC::sameValue(globalObject, actualWrapper->internalValue(), expectedWrapper->internalValue());
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!internalEqual)
             return false;
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }

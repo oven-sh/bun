@@ -783,17 +783,22 @@ class LambdaWebSocket implements ServerWebSocket {
     this.readyState = 3; // WebSocket.CLOSED;
   }
 
-  subscribe(topic: string): void {
+  subscribe(topic: string): boolean {
+    if (this.readyState === 3) {
+      return false;
+    }
     if (this.#topics === null) {
       this.#topics = new Set();
     }
     this.#topics.add(topic);
+    return true;
   }
 
-  unsubscribe(topic: string): void {
-    if (this.#topics !== null) {
-      this.#topics.delete(topic);
+  unsubscribe(topic: string): boolean {
+    if (this.readyState === 3) {
+      return false;
     }
+    return this.#topics?.delete(topic) ?? false;
   }
 
   isSubscribed(topic: string): boolean {

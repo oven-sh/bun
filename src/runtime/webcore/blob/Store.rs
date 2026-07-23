@@ -242,6 +242,7 @@ impl FileExt for File {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },
                     global_this.bun_vm().as_mut(),
+                    node_fs::FsCompletion::init(global_this, None),
                 ))
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(

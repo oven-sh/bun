@@ -14,6 +14,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -5764,5 +5765,160 @@ describe("fs.close on stdio descriptors", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("EBADF");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("callback ordering", () => {
+  // node drains the process.nextTick queue before the microtask queue. An fs
+  // completion callback must therefore run from the event-loop task, not from a
+  // promise reaction (which is itself a microtask, and inverts the two).
+  const orderingFixture = String.raw`
+    const fs = require("fs");
+    const path = require("path");
+    const order = [];
+    function record(name) {
+      Promise.resolve().then(() => order.push(name + ":microtask"));
+      process.nextTick(() => order.push(name + ":nextTick"));
+    }
+    const dir = __dirname;
+    const file = path.join(dir, "input.txt");
+    fs.readFile(file, () => record("readFile"));
+    fs.stat(file, () => record("stat"));
+    fs.access(file, () => record("access"));
+    fs.readdir(dir, () => record("readdir"));
+    fs.readdir(dir, { recursive: true }, () => record("readdirRecursive"));
+    fs.open(file, "r", (err, fd) => {
+      record("open");
+      fs.close(fd, () => record("close"));
+    });
+    fs.rm(path.join(dir, "doomed.txt"), () => record("rm"));
+    fs.cp(path.join(dir, "sub"), path.join(dir, "copy"), { recursive: true }, () => record("cp"));
+    fs.readFile(path.join(dir, "missing.txt"), err => record("readFileError:" + err.code));
+    process.on("exit", () => console.log(JSON.stringify(order)));
+  `;
+
+  it("runs process.nextTick before microtasks inside fs callbacks", async () => {
+    using dir = tempDir("fs-nexttick-ordering", {
+      "index.js": orderingFixture,
+      "input.txt": "hello",
+      "doomed.txt": "bye",
+      "sub/nested.txt": "nested",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const names = [
+      "readFile",
+      "stat",
+      "access",
+      "readdir",
+      "readdirRecursive",
+      "open",
+      "close",
+      "rm",
+      "cp",
+      "readFileError:ENOENT",
+    ];
+    const order: string[] = stdout.trim() ? JSON.parse(stdout.trim()) : [];
+    // Completion order across operations belongs to the thread pool, but within
+    // each callback the tick has to come before the microtask.
+    const perCallback = Object.fromEntries(names.map(name => [name, order.filter(e => e.startsWith(name + ":"))]));
+    expect({ perCallback, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      perCallback: Object.fromEntries(names.map(name => [name, [`${name}:nextTick`, `${name}:microtask`]])),
+      exitCode: 0,
+      stderr: "",
+    });
+  });
+
+  // fs.rm's non-recursive path starts the native rm from inside an lstat
+  // callback, where a throw from the native option parser would become an
+  // uncaught exception rather than reaching the caller.
+  it("hands invalid fs.rm options to the callback instead of throwing uncaught", async () => {
+    using dir = tempDir("fs-rm-bad-options", {
+      "input.txt": "hello",
+      "index.js": String.raw`
+        const fs = require("fs");
+        const path = require("path");
+        const file = path.join(__dirname, "input.txt");
+        const seen = [];
+        // The recursive fast path reaches the native rm in this frame, so node and
+        // bun both throw synchronously there.
+        try {
+          fs.rm(file, { recursive: true, force: "yes" }, () => seen.push("recursive:called"));
+        } catch (e) {
+          seen.push("recursive:" + e.name);
+        }
+        fs.rm(file, { force: "yes" }, err => seen.push("force:" + err?.name));
+        fs.rm(file, { retryDelay: "nope" }, err => seen.push("retryDelay:" + err?.name));
+        fs.rm(file, null, err => seen.push("null:" + err?.name));
+        process.on("exit", () => {
+          seen.push("survived:" + fs.existsSync(file));
+          console.log(JSON.stringify(seen.sort()));
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const seen: string[] = stdout.trim() ? JSON.parse(stdout.trim()) : [];
+    expect({ seen, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      seen: ["force:TypeError", "null:TypeError", "recursive:TypeError", "retryDelay:TypeError", "survived:true"],
+      exitCode: 0,
+      stderr: "",
+    });
+  });
+
+  it("restores the AsyncLocalStorage context of the call site", async () => {
+    using dir = tempDir("fs-als", { "input.txt": "hello" });
+    const file = join(String(dir), "input.txt");
+    const als = new AsyncLocalStorage<number>();
+
+    const seen = await new Promise<(number | undefined)[]>(resolve => {
+      als.run(1, () => {
+        fs.readFile(file, () => {
+          const outer = als.getStore();
+          als.run(2, () => {
+            fs.stat(file, () => resolve([outer, als.getStore()]));
+          });
+        });
+      });
+    });
+    expect(seen).toEqual([1, 2]);
+  });
+
+  it("passes null, not undefined, as the error of a successful callback", async () => {
+    using dir = tempDir("fs-null-error", { "input.txt": "hello" });
+    const file = join(String(dir), "input.txt");
+    const starters = [
+      (cb: any) => fs.access(file, cb),
+      (cb: any) => fs.copyFile(file, join(String(dir), "copy.txt"), cb),
+      (cb: any) => fs.utimes(file, new Date(), new Date(), cb),
+      // Same callback shape, but creating a symlink needs a privilege on Windows.
+      ...(isWindows ? [] : [(cb: any) => fs.symlink(file, join(String(dir), "link.txt"), cb)]),
+    ];
+    const args = await Promise.all(
+      starters.map(
+        start =>
+          new Promise<unknown[]>(resolve =>
+            start(function () {
+              // node calls back with exactly one argument for value-less ops.
+              resolve(Array.prototype.slice.call(arguments));
+            }),
+          ),
+      ),
+    );
+    expect(args).toEqual(starters.map(() => [null]));
   });
 });

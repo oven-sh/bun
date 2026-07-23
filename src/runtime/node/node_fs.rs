@@ -524,6 +524,189 @@ pub enum Flavor {
 mod _async_tasks {
     use super::*;
 
+    /// How an async fs task hands its result back to JavaScript.
+    ///
+    /// `node:fs`'s callback APIs invoke the user callback from the event-loop
+    /// task that completes them. Running it from a promise reaction instead
+    /// would make it a microtask, and a `process.nextTick()` scheduled inside a
+    /// microtask only runs once the whole microtask queue drains — inverting
+    /// node's documented "nextTick before microtasks" ordering.
+    ///
+    /// `node:fs/promises` keeps the promise: its await chain is what
+    /// `to_js_with_async_stack` walks to recover async frames.
+    #[derive(Default)]
+    pub enum FsCompletion {
+        /// The result is reported out-of-band (the shell `cp` builtin), or the
+        /// task has already settled and been torn down.
+        #[default]
+        Detached,
+        Promise(JSPromiseStrong),
+        Callback(bun_jsc::Strong),
+    }
+
+    impl FsCompletion {
+        /// `callback` is the trailing function argument of a `node:fs` callback
+        /// API; `None` creates the promise `node:fs/promises` returns.
+        pub fn init(global_object: &JSGlobalObject, callback: Option<JSValue>) -> Self {
+            match callback {
+                // Snapshot the AsyncLocalStorage context, the way the
+                // `.then(callback)` this replaced captured it at registration.
+                Some(callback) => Self::Callback(bun_jsc::Strong::create(
+                    callback.with_async_context_if_needed(global_object),
+                    global_object,
+                )),
+                None => Self::Promise(JSPromiseStrong::init(global_object)),
+            }
+        }
+
+        /// The value the binding hands back to its JS caller: the promise, or
+        /// `undefined` when a callback will be invoked instead.
+        pub fn value(&self) -> JSValue {
+            match self {
+                Self::Promise(promise) => promise.value(),
+                Self::Callback(_) | Self::Detached => JSValue::UNDEFINED,
+            }
+        }
+
+        /// A `Copy` handle that stays usable after `destroy()` has dropped the
+        /// owning `Strong` — the JS cell survives because the returned handle
+        /// keeps it on the stack (see [`FsCompletionRef::ensure_still_alive`]).
+        pub fn detach(&self) -> FsCompletionRef {
+            match self {
+                Self::Promise(promise) => FsCompletionRef::Promise(promise.get()),
+                Self::Callback(callback) => FsCompletionRef::Callback(callback.get()),
+                Self::Detached => FsCompletionRef::Detached,
+            }
+        }
+    }
+
+    /// A finished operation, rendered into the JS values it reports.
+    #[derive(Clone, Copy)]
+    pub struct FsOutcome {
+        success: bool,
+        /// What the promise settles with (the error on failure).
+        value: JSValue,
+        /// The callback's second argument. `None` reports `cb(null)` — node's
+        /// shape for an operation that produces no value.
+        callback_value: Option<JSValue>,
+    }
+
+    impl FsOutcome {
+        pub fn error(value: JSValue) -> Self {
+            Self {
+                success: false,
+                value,
+                callback_value: None,
+            }
+        }
+
+        /// `is_void` comes from [`FsReturn::IS_VOID`]; `mkdir` is the one op whose
+        /// void-ness is per-call (only `recursive: true` yields a path), so an
+        /// `undefined` value also means "no value".
+        pub fn value(value: JSValue, is_void: bool) -> Self {
+            let callback_value = (!is_void && !value.is_undefined()).then_some(value);
+            Self {
+                success: true,
+                value,
+                callback_value,
+            }
+        }
+    }
+
+    /// Borrowed view of [`FsCompletion`]; see [`FsCompletion::detach`].
+    #[derive(Clone, Copy)]
+    pub enum FsCompletionRef {
+        Detached,
+        Promise(*mut bun_jsc::JSPromise),
+        Callback(JSValue),
+    }
+
+    impl FsCompletionRef {
+        /// Keep the JS cell alive across a `destroy()` that drops the owning
+        /// `Strong`: JSC scans the stack conservatively, so the copy held here
+        /// roots the cell for the rest of the frame.
+        #[inline]
+        pub fn ensure_still_alive(self) {
+            match self {
+                Self::Promise(promise) => {
+                    core::hint::black_box(promise);
+                }
+                Self::Callback(callback) => callback.ensure_still_alive(),
+                Self::Detached => {}
+            }
+        }
+
+        /// Render a syscall error as the JS value to report. A promise's await
+        /// chain carries async frames; a callback has none to walk (node's
+        /// callback-form fs errors carry no stack either).
+        pub fn error_to_js(
+            self,
+            global_object: &JSGlobalObject,
+            err: &sys::Error,
+        ) -> JsResult<JSValue> {
+            match self {
+                Self::Promise(promise) => {
+                    // SAFETY: the cell is GC-rooted for this frame (see `ensure_still_alive`).
+                    let promise = unsafe { &*promise };
+                    err.to_js_with_async_stack(global_object, promise)
+                }
+                Self::Callback(_) | Self::Detached => err.to_js(global_object),
+            }
+        }
+
+        /// Resolve/reject the promise, or invoke the callback as `cb(err)` /
+        /// `cb(null, value)` / `cb(null)`.
+        pub fn settle(
+            self,
+            global_object: &JSGlobalObject,
+            outcome: FsOutcome,
+        ) -> Result<(), bun_jsc::JsTerminated> {
+            match self {
+                Self::Promise(promise) => {
+                    // SAFETY: GC-rooted JS heap cell, valid for this frame.
+                    let promise = unsafe { &mut *promise };
+                    if outcome.success {
+                        promise.resolve(global_object, outcome.value)
+                    } else {
+                        promise.reject(global_object, Ok(outcome.value))
+                    }
+                }
+                Self::Callback(callback) => {
+                    let event_loop = global_object.bun_vm().event_loop_mut();
+                    let this = JSValue::UNDEFINED;
+                    let arguments: &[JSValue] = match (outcome.success, outcome.callback_value) {
+                        (false, _) => &[outcome.value],
+                        (true, Some(value)) => &[JSValue::NULL, value],
+                        (true, None) => &[JSValue::NULL],
+                    };
+                    event_loop.run_callback(callback, global_object, this, arguments);
+                    Ok(())
+                }
+                Self::Detached => Ok(()),
+            }
+        }
+    }
+
+    /// Turn a finished op's payload into the [`FsOutcome`] it reports.
+    /// `Err(exception)` means the conversion itself threw; the caller reports
+    /// that exception as the failure.
+    fn fs_result_to_js<R: FsReturn>(
+        result: &mut Maybe<R>,
+        global_object: &JSGlobalObject,
+        completion: FsCompletionRef,
+    ) -> Result<FsOutcome, JSValue> {
+        match result {
+            Err(err) => match completion.error_to_js(global_object, err) {
+                Ok(value) => Ok(FsOutcome::error(value)),
+                Err(exception) => Err(global_object.take_exception(exception)),
+            },
+            Ok(res) => match FsReturn::fs_to_js(res, global_object) {
+                Ok(value) => Ok(FsOutcome::value(value, R::IS_VOID)),
+                Err(exception) => Err(global_object.take_exception(exception)),
+            },
+        }
+    }
+
     pub mod async_ {
         use super::*;
 
@@ -663,7 +846,7 @@ mod _async_tasks {
 
     #[cfg(windows)]
     pub struct UVFSRequest<R, A: Unprotect, const F: NodeFSFunctionEnum> {
-        pub promise: JSPromiseStrong,
+        pub completion: FsCompletion,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
@@ -692,9 +875,10 @@ mod _async_tasks {
             binding: &Binding,
             task_args: A,
             vm: &mut VirtualMachine,
+            completion: FsCompletion,
         ) -> JSValue {
             let task = Box::new(Self {
-                promise: JSPromiseStrong::init(global_object),
+                completion,
                 args: task_args.into_thread_safe(),
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
@@ -874,7 +1058,7 @@ mod _async_tasks {
                             .bun_vm()
                             .event_loop_mut()
                             .enqueue_task(Task::init(task_ptr));
-                        return task.promise.value();
+                        return task.completion.value();
                     }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
@@ -922,7 +1106,7 @@ mod _async_tasks {
                 _ => unreachable!("UVFSRequest type not implemented"),
             }
 
-            task.promise.value()
+            task.completion.value()
         }
 
         extern "C" fn uv_callback(req: *mut uv::fs_t) {
@@ -975,33 +1159,18 @@ mod _async_tasks {
             // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
             let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
             let global_object = self.global_object();
-            let success = matches!(result, Ok(_));
-            let promise_value = self.promise.value();
-            let promise = self.promise.get();
-            let result = match &mut result {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                },
+            let completion = self.completion.detach();
+            let outcome = match fs_result_to_js(&mut result, global_object, completion) {
+                Ok(outcome) => outcome,
+                Err(exception) => {
+                    return completion.settle(global_object, FsOutcome::error(exception));
+                }
             };
-            promise_value.ensure_still_alive();
+            completion.ensure_still_alive();
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            completion.settle(global_object, outcome)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -1011,7 +1180,7 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
+            this_ref.completion = FsCompletion::Detached;
             // SAFETY: paired with Box::leak in create()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -1138,6 +1307,10 @@ mod _async_tasks {
     /// Convert an async-FS result payload to a `JSValue`.
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
+        /// The operation reports no value, so its node callback is `cb(null)`
+        /// rather than `cb(null, value)`. (`ret::Access` still resolves its
+        /// promise with `null`, hence a type-level flag rather than sniffing.)
+        const IS_VOID: bool = false;
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     }
     impl FsReturn for JSValue {
@@ -1147,6 +1320,7 @@ mod _async_tasks {
         }
     }
     impl FsReturn for () {
+        const IS_VOID: bool = true;
         #[inline]
         fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(JSValue::UNDEFINED)
@@ -1159,6 +1333,7 @@ mod _async_tasks {
         }
     }
     impl FsReturn for Null {
+        const IS_VOID: bool = true;
         #[inline]
         fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(JSValue::NULL)
@@ -1239,7 +1414,7 @@ mod _async_tasks {
     }
 
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
-        pub promise: JSPromiseStrong,
+        pub completion: FsCompletion,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
@@ -1277,9 +1452,10 @@ mod _async_tasks {
             _binding: &Binding,
             args: A,
             vm: &mut VirtualMachine,
+            completion: FsCompletion,
         ) -> JSValue {
             let mut task = Box::new(Self {
-                promise: JSPromiseStrong::init(global_object),
+                completion,
                 args: args.into_thread_safe(),
                 // Sentinel — overwritten by `work_pool_callback` before any read on
                 // the JS thread. `Maybe<R>` is `Result<R, sys::Error>` and may be
@@ -1295,9 +1471,9 @@ mod _async_tasks {
             task.r#ref.ref_(bun_io::js_vm_ctx());
             let _ = vm;
             task.tracker.did_schedule(global_object);
-            let promise = task.promise.value();
+            let result = task.completion.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
-            promise
+            result
         }
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
@@ -1334,39 +1510,24 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            let success = result.is_ok();
-            let promise_value = self.promise.value();
-            let promise = self.promise.get();
-            let result = match &mut result {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return promise.reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                },
+            let completion = self.completion.detach();
+            let outcome = match fs_result_to_js(&mut result, global_object, completion) {
+                Ok(outcome) => outcome,
+                Err(exception) => {
+                    return completion.settle(global_object, FsOutcome::error(exception));
+                }
             };
-            promise_value.ensure_still_alive();
+            completion.ensure_still_alive();
 
             if Self::HAVE_ABORT_SIGNAL {
                 if let Some(signal) = self.args.signal() {
                     if let Some(abort_error) = signal.node_abort_error_if_aborted(global_object) {
-                        return promise.reject(global_object, Ok(abort_error));
+                        return completion.settle(global_object, FsOutcome::error(abort_error));
                     }
                 }
             }
 
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            completion.settle(global_object, outcome)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -1377,7 +1538,7 @@ mod _async_tasks {
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
-            this_ref.promise = JSPromiseStrong::default();
+            this_ref.completion = FsCompletion::Detached;
             // SAFETY: paired with Box::leak in create()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -1396,7 +1557,7 @@ mod _async_tasks {
     pub(crate) type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
 
     pub struct NewAsyncCpTask<const IS_SHELL: bool> {
-        pub promise: JSPromiseStrong,
+        pub completion: FsCompletion,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Cp>,
         pub evtloop: EventLoopHandle,
@@ -1555,16 +1716,17 @@ mod _async_tasks {
             _binding: &Binding,
             cp_args: args::Cp,
             vm: &mut VirtualMachine,
+            completion: FsCompletion,
         ) -> JSValue {
             let task = Self::create_with_shell_task(
                 global_object,
                 cp_args,
                 vm,
                 core::ptr::null_mut(),
-                true,
+                completion,
             );
             // SAFETY: create_with_shell_task returns a Box::leak'd pointer; valid until destroy()
-            unsafe { &*task }.promise.value()
+            unsafe { &*task }.completion.value()
         }
 
         pub fn create_with_shell_task(
@@ -1572,14 +1734,10 @@ mod _async_tasks {
             cp_args: args::Cp,
             vm: &mut VirtualMachine,
             shelltask: *mut ShellCpTask,
-            enable_promise: bool,
+            completion: FsCompletion,
         ) -> *mut Self {
             let mut task = Box::new(Self {
-                promise: if enable_promise {
-                    JSPromiseStrong::init(global_object)
-                } else {
-                    JSPromiseStrong::default()
-                },
+                completion,
                 args: cp_args.into_thread_safe(),
                 has_result: AtomicBool::new(false),
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
@@ -1613,7 +1771,7 @@ mod _async_tasks {
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
             let mut task = Box::new(Self {
-                promise: JSPromiseStrong::default(),
+                completion: FsCompletion::Detached,
                 args: cp_args.into_thread_safe(),
                 has_result: AtomicBool::new(false),
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
@@ -1742,48 +1900,21 @@ mod _async_tasks {
             }
             // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
-            let success = (*self.result.get_mut()).is_ok();
-            let promise_value = self.promise.value();
-            // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
-            // resolve/reject. The `JSPromise` itself lives on the JS heap
-            // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
-            let promise: *mut bun_jsc::JSPromise = self.promise.get();
-            let result = match self.result.get_mut() {
-                // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-                Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                },
+            // Detached up front because `Self::destroy(self)` runs *before* the settle;
+            // the JS cell outlives the dropped `Strong` via `ensure_still_alive()`.
+            let completion = self.completion.detach();
+            // A conversion that throws settles too, so it must not skip `destroy`.
+            let outcome = match fs_result_to_js(self.result.get_mut(), global_object, completion) {
+                Ok(outcome) => outcome,
+                Err(exception) => FsOutcome::error(exception),
             };
-            promise_value.ensure_still_alive();
+            completion.ensure_still_alive();
 
             let _dispatch = self.tracker.dispatch(global_object);
 
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
-            // valid after `destroy` dropped only the `Strong` wrapper.
-            let promise = unsafe { &mut *promise };
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            completion.settle(global_object, outcome)
         }
 
         /// SAFETY: `this` must be the pointer returned by Box::leak in
@@ -1801,7 +1932,7 @@ mod _async_tasks {
             // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.
-            this_ref.promise = JSPromiseStrong::default();
+            this_ref.completion = FsCompletion::Detached;
             // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -2164,7 +2295,7 @@ mod _async_tasks {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct AsyncReaddirRecursiveTask {
-        pub promise: JSPromiseStrong,
+        pub completion: FsCompletion,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Readdir>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
@@ -2339,6 +2470,7 @@ mod _async_tasks {
             global_object: &JSGlobalObject,
             args: args::Readdir,
             vm: &mut VirtualMachine,
+            completion: FsCompletion,
         ) -> JSValue {
             let result_list = match args.tag() {
                 ret::ReaddirTag::Files => ResultListEntryValue::Files(Vec::new()),
@@ -2359,7 +2491,7 @@ mod _async_tasks {
                 owned.into_boxed_slice()
             };
             let mut task = Self::new(AsyncReaddirRecursiveTask {
-                promise: JSPromiseStrong::init(global_object),
+                completion,
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
@@ -2377,9 +2509,9 @@ mod _async_tasks {
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(global_object);
-            let promise = task.promise.value();
+            let result = task.completion.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
-            promise
+            result
         }
 
         pub fn perform_work(&mut self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
@@ -2582,23 +2714,14 @@ mod _async_tasks {
             // BackRef is `Copy`; copy it to a local so the borrow is detached from `self`.
             let global_object = self.global_object;
             let global_object = global_object.get();
-            let success = self.pending_err.is_none();
-            let promise_value = self.promise.value();
-            // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
-            // `Self::destroy` must run before resolve/reject, and the `JSPromise` cell
-            // outlives the `Strong` wrapper via `promise_value.ensure_still_alive()`.
-            let promise: *mut bun_jsc::JSPromise = self.promise.get();
-            let result = if let Some(err) = &mut self.pending_err {
-                // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-                match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                }
+            // Detached up front: `Self::destroy` must run before the settle, and the
+            // JS cell outlives the dropped `Strong` via `ensure_still_alive()`.
+            let completion = self.completion.detach();
+            // A conversion that throws settles too, so it must not skip `destroy`.
+            let converted = if let Some(err) = &mut self.pending_err {
+                completion
+                    .error_to_js(global_object, err)
+                    .map(FsOutcome::error)
             } else {
                 let res = match core::mem::replace(
                     &mut self.result_list,
@@ -2610,30 +2733,20 @@ mod _async_tasks {
                     ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
                     ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
                 };
-                match res.to_js(global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }
-                            .reject(global_object, Ok(global_object.take_exception(e)));
-                    }
-                }
+                res.to_js(global_object)
+                    .map(|v| FsOutcome::value(v, ret::Readdir::IS_VOID))
             };
-            promise_value.ensure_still_alive();
+            let outcome = match converted {
+                Ok(outcome) => outcome,
+                Err(exception) => FsOutcome::error(global_object.take_exception(exception)),
+            };
+            completion.ensure_still_alive();
 
             let _dispatch = self.tracker.dispatch(global_object);
 
             // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
-            let promise = unsafe { &mut *promise };
-            if success {
-                promise.resolve(global_object, result)?;
-            } else {
-                promise.reject(global_object, Ok(result))?;
-            }
-            Ok(())
+            completion.settle(global_object, outcome)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -2649,7 +2762,7 @@ mod _async_tasks {
             // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
             this_ref.free_root_path();
             this_ref.clear_result_list();
-            // `JSPromiseStrong` releases on Drop (via heap::take below).
+            // `FsCompletion` releases its `Strong` on Drop (via heap::take below).
             // SAFETY: paired with Box::leak in create()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -2707,9 +2820,9 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub use _async_tasks::{
-    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
-    IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
-    UVFSRequest, async_,
+    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsCompletion,
+    FsCompletionRef, FsOutcome, FsReturn, IntoResultListEntry, NewAsyncCpTask, ResultListEntry,
+    ResultListEntryValue, ShellAsyncCpTask, UVFSRequest, async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -2788,45 +2788,49 @@ describe("bundler", () => {
   // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this
   // guards that the pass stays O(V+E). Plain fs writes because itBundled's
   // fixture pipeline is too slow at this scale under debug+ASAN.
-  test.concurrent("edgecase/DeepImportDiamondDAG", async () => {
-    const N = 20000;
-    using dir = tempDir("deep-import-dag", {});
-    const root = String(dir);
-    for (let i = 0; i < N; i++) {
-      const deps: number[] = [];
-      if (i + 1 < N) deps.push(i + 1);
-      if (2 * i + 3 < N) deps.push(2 * i + 3);
-      writeFileSync(
-        join(root, `m${i}.js`),
-        deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
-          `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
-      );
-    }
-    writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
+  test.concurrent(
+    "edgecase/DeepImportDiamondDAG",
+    async () => {
+      const N = 20000;
+      using dir = tempDir("deep-import-dag", {});
+      const root = String(dir);
+      for (let i = 0; i < N; i++) {
+        const deps: number[] = [];
+        if (i + 1 < N) deps.push(i + 1);
+        if (2 * i + 3 < N) deps.push(2 * i + 3);
+        writeFileSync(
+          join(root, `m${i}.js`),
+          deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
+            `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
+        );
+      }
+      writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
 
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
-      cwd: root,
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 60_000,
-    });
-    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 60_000,
+      });
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
 
-    await using run = Bun.spawn({
-      cmd: [bunExe(), "out.js"],
-      cwd: root,
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const [stdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-    expect({ stdout, stderr: runStderr, exitCode: runExit }).toEqual({
-      stdout: "number\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  }, 120_000);
+      await using run = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect({ stdout, stderr: runStderr, exitCode: runExit }).toEqual({
+        stdout: "number\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

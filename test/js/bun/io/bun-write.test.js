@@ -127,6 +127,85 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(
+    "Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
+    basename => {
+      it("rejects instead of crashing", async () => {
+        using dir = tempDir("bun-write-missing-src", {});
+        const fixture = `
+          const { join } = require("path");
+          const dir = ${JSON.stringify(String(dir))};
+          const src = Bun.file(join(dir, ${JSON.stringify(basename)}));
+          try {
+            await Bun.write(join(dir, "dest.txt"), src);
+            console.log("UNEXPECTED: write resolved");
+          } catch (e) {
+            console.log("CODE=" + e.code);
+            console.log("PATH_IS_SRC=" + (e.path === src.name));
+          }
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain("CODE=ENOENT");
+        if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
+          expect(stdout).toContain("PATH_IS_SRC=true");
+        }
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      it("with destination directory that does not exist", async () => {
+        using dir = tempDir("bun-write-missing-src-dest", {});
+        const fixture = `
+          const { join } = require("path");
+          const dir = ${JSON.stringify(String(dir))};
+          const src = Bun.file(join(dir, ${JSON.stringify(basename)}));
+          try {
+            await Bun.write(join(dir, "sub", "dir", "dest.txt"), src);
+            console.log("UNEXPECTED: write resolved");
+          } catch (e) {
+            console.log("CODE=" + e.code);
+          }
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain("CODE=ENOENT");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    },
+  );
+
+  it("Bun.write(dest, Bun.file(src)) creates missing destination directory", async () => {
+    using dir = tempDir("bun-write-mkdirp-dest", {
+      "src.txt": "copy me",
+    });
+    const fixture = `
+      const { join } = require("path");
+      const dir = ${JSON.stringify(String(dir))};
+      const dest = join(dir, "a", "b", "dest.txt");
+      await Bun.write(dest, Bun.file(join(dir, "src.txt")));
+      console.log(await Bun.file(dest).text());
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("copy me");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("Bun.write('out.txt', 'string')", async () => {
     using tmpbase = tempDir("bun-write-string", {});
     const outpath = path.join(tmpbase, "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");

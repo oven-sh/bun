@@ -298,6 +298,60 @@ describe("Server", () => {
     expect(subscriptions).toStrictEqual([]);
   });
 
+  it.concurrent("subscribe/unsubscribe return false on a closed socket", async () => {
+    const { promise, resolve } = Promise.withResolvers<ServerWebSocket<unknown>>();
+    const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers<void>();
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Not a websocket");
+      },
+      websocket: {
+        open(ws) {
+          expect({
+            subscribe: ws.subscribe("ghost"),
+            isSubscribed: ws.isSubscribed("ghost"),
+            unsubscribe: ws.unsubscribe("ghost"),
+            unsubscribeAgain: ws.unsubscribe("ghost"),
+          }).toEqual({
+            subscribe: true,
+            isSubscribed: true,
+            unsubscribe: true,
+            unsubscribeAgain: false,
+          });
+          resolve(ws);
+          ws.close();
+        },
+        close() {
+          onClose();
+        },
+        message() {},
+      },
+    });
+
+    const client = new WebSocket(`ws://localhost:${server.port}`);
+    const [ws] = await Promise.all([promise, onClosePromise]);
+    client.close();
+
+    expect({
+      readyState: ws.readyState,
+      subscribe: ws.subscribe("ghost"),
+      isSubscribed: ws.isSubscribed("ghost"),
+      subscriberCount: server.subscriberCount("ghost"),
+      unsubscribe: ws.unsubscribe("ghost"),
+      send: ws.send("x"),
+    }).toEqual({
+      readyState: WebSocket.CLOSED,
+      subscribe: false,
+      isSubscribed: false,
+      subscriberCount: 0,
+      unsubscribe: false,
+      send: 0,
+    });
+  });
+
   it.concurrent("subscriptions - duplicate subscriptions", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();

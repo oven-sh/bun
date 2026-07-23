@@ -296,14 +296,13 @@ impl ServerWebSocket {
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
     /// arg-count guard, closed short-circuit, string-type guard, UTF-8 slice,
     /// non-empty guard, then dispatch to the uWS topic op. Only the JS-visible
-    /// name, the closed-socket return value, and the terminal op differ.
+    /// name and the terminal op differ.
     #[inline]
     fn topic_dispatch(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         fn_name: &'static str,
-        closed_ret: JSValue,
         op: impl FnOnce(AnyWebSocket, &[u8]) -> bool,
     ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<1>();
@@ -312,7 +311,7 @@ impl ServerWebSocket {
         }
 
         if self.is_closed() {
-            return Ok(closed_ret);
+            return Ok(JSValue::FALSE);
         }
 
         if !args.ptr[0].is_string() {
@@ -1394,13 +1393,7 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.topic_dispatch(
-            global_this,
-            callframe,
-            "subscribe",
-            JSValue::TRUE,
-            AnyWebSocket::subscribe,
-        )
+        self.topic_dispatch(global_this, callframe, "subscribe", AnyWebSocket::subscribe)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1413,7 +1406,6 @@ impl ServerWebSocket {
             global_this,
             callframe,
             "unsubscribe",
-            JSValue::TRUE,
             AnyWebSocket::unsubscribe,
         )
     }
@@ -1428,7 +1420,6 @@ impl ServerWebSocket {
             global_this,
             callframe,
             "isSubscribed",
-            JSValue::FALSE,
             AnyWebSocket::is_subscribed,
         )
     }

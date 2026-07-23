@@ -76,7 +76,6 @@ impl Default for Options {
 }
 
 impl Options {
-    /// NOTE: assumes options object has been normalized and validated by JS code.
     pub fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
         // Node's `validateObject` also rejects arrays and callables.
         global.validate_object("options", obj, Default::default())?;
@@ -309,10 +308,6 @@ impl SocketAddress {
 
 impl SocketAddress {
     /// `new SocketAddress([options])`
-    ///
-    /// ## Safety
-    /// Constructor assumes that options object has already been sanitized and validated
-    /// by JS wrapper.
     ///
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)

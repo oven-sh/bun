@@ -98,13 +98,17 @@ console.log(`wide: ${files.length} test file(s) across ${roots.length} root(s), 
 // mask, but shared across the whole pass. Persisted beside the queue so a
 // later pass reuses it (a fresh census also runs when the binary changed).
 type Site = { sysName: string; key: string; seen: number };
-const censusPath = join(queueDir, "wide-census.json");
+// Per-binary census cache: two passes on different binaries (debug and
+// release) must not overwrite each other's site sets - the callsite RVAs
+// differ per build. The binary tag names the cache file.
+const censusBunTag = ((await Bun.file(bun!).exists()) ? String((await Bun.file(bun!).stat()).size) : "0") + "-" + basename(bun!);
+const censusPath = join(queueDir, `wide-census-${censusBunTag.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
 const startupKeys = new Set<string>();
 const siteMap = new Map<string, Site>();
 {
   const maskDir = join(workRoot, "runs", "census");
   ensureDir(maskDir);
-  const bunTag = await Bun.file(bun!).exists() ? String((await Bun.file(bun!).stat()).size) + ":" + basename(bun!) : basename(bun!);
+  const bunTag = censusBunTag;
   let cached: { bunTag?: string; startup?: string[]; sites?: Site[] } | null = null;
   try {
     cached = await Bun.file(censusPath).json();

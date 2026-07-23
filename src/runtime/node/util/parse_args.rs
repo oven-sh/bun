@@ -618,6 +618,54 @@ fn tokenize_args(
                     if option_type != OptionValueType::String || idx_in_optgroup == arg_len - 1 {
                         // Boolean option, or last short in group. Well formed.
 
+                        // This branch expands the char to "-<c>". When <c> is '-' that
+                        // yields '--', the option terminator: remaining group chars and
+                        // all remaining args become positionals.
+                        if arg.char_at(idx_in_optgroup) == u16::from(b'-') {
+                            ctx.handle_token(&Token::OptionTerminator {
+                                index: original_arg_idx,
+                            })?;
+                            let mut positional_index = original_arg_idx;
+                            let mut rest_idx = idx_in_optgroup + 1;
+                            while rest_idx < arg_len {
+                                let rest_short = arg.substring_with_len(rest_idx, rest_idx + 1);
+                                let rest_option_idx =
+                                    find_option_by_short_name(&rest_short, options);
+                                let rest_type: OptionValueType = rest_option_idx
+                                    .map_or(OptionValueType::Boolean, |i| options[i].r#type);
+                                positional_index += 1;
+                                let value = if rest_type != OptionValueType::String
+                                    || rest_idx == arg_len - 1
+                                {
+                                    let owned = OwnedString::new(String::create_format(
+                                        format_args!("-{rest_short}"),
+                                    ));
+                                    rest_idx += 1;
+                                    owned.to_js(global)?
+                                } else {
+                                    let owned = OwnedString::new(String::create_format(
+                                        format_args!("-{}", arg.substring(rest_idx)),
+                                    ));
+                                    rest_idx = arg_len;
+                                    owned.to_js(global)?
+                                };
+                                ctx.handle_token(&Token::Positional {
+                                    index: positional_index,
+                                    value: ValueRef::Jsvalue(value),
+                                })?;
+                            }
+                            index += 1;
+                            while index < num_args {
+                                positional_index += 1;
+                                ctx.handle_token(&Token::Positional {
+                                    index: positional_index,
+                                    value: ValueRef::Jsvalue(args.get(global, index)?),
+                                })?;
+                                index += 1;
+                            }
+                            return Ok(());
+                        }
+
                         // Immediately process as a lone_short_option (e.g. from input -abc, process -a -b -c)
                         let mut value = ValueRef::Jsvalue(JSValue::UNDEFINED);
                         let mut has_inline_value = true;

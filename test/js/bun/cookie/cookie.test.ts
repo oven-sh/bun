@@ -160,10 +160,34 @@ describe("Bun.Cookie.parse Expires (RFC 6265bis §5.1.1 cookie-date)", () => {
     expect(parseExpires("0 Oct 2015 07:28:00 GMT")).toBeUndefined();
   });
 
+  test("non-existent calendar dates are rejected (§5.1.1 step 6)", () => {
+    expect(parseExpires("31 Feb 2025 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("31 Apr 2025 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("29 Feb 2023 07:28:00 GMT")).toBeUndefined();
+    expect(parseExpires("29 Feb 2024 07:28:00 GMT")).toBe("2024-02-29T07:28:00.000Z");
+  });
+
   test("round-trips its own serialized Expires", () => {
     const date = new Date(Date.UTC(2031, 5, 9, 4, 5, 6));
     const header = new Bun.Cookie("a", "b", { expires: date }).toString();
     expect(Bun.Cookie.parse(header).expires?.toISOString()).toBe(date.toISOString());
+  });
+
+  test("constructor / setter string path agrees with parse", () => {
+    // The JS-API string path (new Bun.Cookie({ expires: str }) / cookie.expires = str)
+    // applies the same cookie-date algorithm, then falls back to the general
+    // HTTP-date parser for inputs §5.1.1 rejects.
+    const viaCtor = (d: string) => new Bun.Cookie("a", "v", { expires: d }).expires?.toISOString();
+    expect(viaCtor("21 Oct 65 07:28:00 GMT")).toBe("2065-10-21T07:28:00.000Z");
+    expect(viaCtor("21 Oct 2015 07:28:00 CET")).toBe("2015-10-21T07:28:00.000Z");
+    expect(viaCtor("21 Oct 2015 07:28:00 +0500")).toBe("2015-10-21T07:28:00.000Z");
+    // §5.1.1 rejects a date with no time component; the fallback keeps accepting it.
+    expect(viaCtor("Wed, 21 Oct 2015")).toBe("2015-10-21T00:00:00.000Z");
+    expect(() => new Bun.Cookie("a", "v", { expires: "tomorrow" })).toThrow("Invalid cookie expiration date");
+
+    const cookie = new Bun.Cookie("a", "v");
+    cookie.expires = "21 Oct 65 07:28:00 GMT";
+    expect(cookie.expires?.toISOString()).toBe("2065-10-21T07:28:00.000Z");
   });
 });
 

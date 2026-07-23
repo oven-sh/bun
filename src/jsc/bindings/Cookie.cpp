@@ -16,7 +16,7 @@ namespace WebCore {
 // delimiter set, matches tokens order-independently, uses a 0-69 => 20xx /
 // 70-99 => 19xx two-digit-year rule, and ignores unrecognized tokens (including
 // timezone suffixes). Returns milliseconds since the Unix epoch in UTC.
-static std::optional<int64_t> parseCookieDate(std::span<const Latin1Character> input)
+std::optional<int64_t> parseCookieDate(std::span<const Latin1Character> input)
 {
     auto isDelimiter = [](Latin1Character c) {
         // delimiter = %x09 / %x20-2F / %x3B-40 / %x5B-60 / %x7B-7E
@@ -113,6 +113,11 @@ static std::optional<int64_t> parseCookieDate(std::span<const Latin1Character> i
         year += 2000;
 
     if (day < 1 || day > 31 || year < 1601 || hour > 23 || minute > 59 || second > 59)
+        return std::nullopt;
+
+    // Step 6: "If no such date exists, abort these steps and fail to parse."
+    int daysInMonth = WTF::daysInMonths[month] + (month == 1 && WTF::isLeapYear(year) ? 1 : 0);
+    if (day > daysInMonth)
         return std::nullopt;
 
     double ms = WTF::dateToDaysFrom1970(year, month, day) * WTF::msPerDay

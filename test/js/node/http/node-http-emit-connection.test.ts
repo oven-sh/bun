@@ -150,6 +150,27 @@ test.concurrent("'upgrade' hands the adopted socket to the listener", async () =
   await ctx.reader.until("echo:ping");
 });
 
+test.concurrent("upgrade request with a body spanning packets hands off after the body completes", async () => {
+  using ctx = await setup();
+  ctx.httpServer.on("upgrade", async (req, socket, head) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+    // Like Node, the request body is parsed into req and stays out of the
+    // tunnel byte stream. (Node v26 delivers the first tunnel bytes as the
+    // socket's first 'data' event via its UpgradeStream; here they arrive in
+    // `head` instead. Either way, tunnel bytes = head + data events.)
+    socket.write("B:" + body + "|H:" + head.toString());
+    socket.on("data", d => socket.write("D:" + d));
+  });
+  ctx.client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: tcp\r\nContent-Length: 5\r\n\r\nhel");
+  // Rest of the request body plus the first tunnel bytes in a second packet.
+  ctx.client.write("loWORLD");
+  await ctx.reader.until("B:hello|H:WORLD");
+  ctx.client.write("ping");
+  await ctx.reader.until("D:ping");
+});
+
 test.concurrent("CONNECT hands the adopted socket to the 'connect' listener with bodyHead", async () => {
   using ctx = await setup();
   const connectEvent = new Promise<{ method: string | undefined; head: string }>(resolve => {

@@ -1587,8 +1587,12 @@ function socketOnDrain(socket, state) {
     socket.resume();
   }
 
+  // Like Node v26: only emit 'drain' once the message has no data pending
+  // anywhere. socketOnDrain runs synchronously from updateOutgoingData during
+  // _flushOutput, when the bytes just handed to the socket mean the message
+  // is not actually drained yet; wait for the socket's own 'drain' instead.
   const msg = socket._httpMessage;
-  if (msg && !msg.finished && msg[kNeedDrain]) {
+  if (msg && !msg.finished && msg[kNeedDrain] && msg.writableLength === 0) {
     msg[kNeedDrain] = false;
     msg.emit("drain");
   }
@@ -1654,8 +1658,14 @@ function onParserExecuteCommon(server, socket, parser, state, ret, d) {
   if (ret instanceof Error) {
     prepareError(ret, parser, d);
     socketOnError.$call(socket, ret);
-  } else if (incoming?.upgrade) {
-    // Upgrade or CONNECT
+  } else if (incoming?.upgrade && incoming.complete) {
+    // Upgrade or CONNECT. The upgrade verdict sticks at headers-complete, but
+    // the handoff must wait for llhttp to finish the request body (it pauses
+    // with the upgrade flag at message end): freeing the parser mid-body
+    // would leave req without its body and spill the remaining body bytes
+    // into the tunnel stream. Node v26 emits early through an UpgradeStream
+    // wrapper instead; without it, the first tunnel bytes arrive in bodyHead
+    // rather than as the socket's first 'data' event.
     const req = incoming;
     const bytesParsed = ret;
 

@@ -417,30 +417,27 @@ describe("Response body errors reach error() until the first body byte is writte
   test.concurrent.each([
     ["iter-yield-then-throw", ["", "8\r\nAAAABBBB\r\n"], "boom-fast"],
     ["iter-yield-slow-then-throw", ["4\r\nAAAA\r\n"], "boom-mid"],
-  ] as const)(
-    "%s: error() is not invoked and the body is not terminated",
-    async (route, bodies, message) => {
-      const { result, stderr, exitCode } = await run(route);
-      expect({
-        errorCalls: result.errorCalls,
-        unhandled: result.unhandled,
-        xErr: result.xErr,
-        terminated: result.body.endsWith("0\r\n\r\n"),
-        bodyIsExpected: bodies.includes(result.body),
-        body: result.body,
-        exitCode,
-      }).toEqual({
-        errorCalls: [],
-        unhandled: 0,
-        xErr: false,
-        terminated: false,
-        bodyIsExpected: true,
-        body: result.body,
-        exitCode: 0,
-      });
-      expect(stderr).toContain(message);
-    },
-  );
+  ] as const)("%s: error() is not invoked and the body is not terminated", async (route, bodies, message) => {
+    const { result, stderr, exitCode } = await run(route);
+    expect({
+      errorCalls: result.errorCalls,
+      unhandled: result.unhandled,
+      xErr: result.xErr,
+      terminated: result.body.endsWith("0\r\n\r\n"),
+      bodyIsExpected: bodies.includes(result.body),
+      body: result.body,
+      exitCode,
+    }).toEqual({
+      errorCalls: [],
+      unhandled: 0,
+      xErr: false,
+      terminated: false,
+      bodyIsExpected: true,
+      body: result.body,
+      exitCode: 0,
+    });
+    expect(stderr).toContain(message);
+  });
 
   // Deferring the status write must not lose a successful empty body's own
   // status/headers: on_first_write fires from the sink's empty-end paths

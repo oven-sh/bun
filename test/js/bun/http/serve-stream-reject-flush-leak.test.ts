@@ -25,9 +25,7 @@ test.skipIf(isWindows)(
 
     // The fixture's stream rejects after a body chunk reached uWS, so the
     // failure is reported to stderr; only unexpected output is a failure.
-    const unexpected = stderr
-      .split("\n")
-      .filter(l => l && !l.includes("boom") && !l.match(/^(\s|at |[0-9]+ \|)/));
+    const unexpected = stderr.split("\n").filter(l => l && !l.includes("boom") && !l.match(/^(\s|at |[0-9]+ \|)/));
     expect(unexpected).toEqual([]);
     const result = JSON.parse(stdout.trim());
     // Sanity: we actually hit the backpressure → pending_flush path.

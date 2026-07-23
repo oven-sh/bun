@@ -147,12 +147,20 @@ describe("deciding whether a build generates its own order file", () => {
   it("a pull request inherits the base branch's, so its artifact is comparable to main", () => {
     const pr = ctx({ pullRequest: true, inheritBranch: "main" });
     expect(orderFileEligible(cfg(), pr)).toBe(true);
-    // Never traces: the commit-message tag is the only opt-in, and a PR that
-    // inherits nothing ships unordered rather than pay a second link. PRs are
-    // not part of the inheritance chain, so there is nothing to seed.
+    // A PR that inherits nothing ships unordered rather than pay a second link:
+    // PRs are not part of the inheritance chain, so there is nothing to seed.
     expect(shouldGenerateOrderFile(cfg(), pr)).toBe(false);
     expect(mustGenerateOrderFile(cfg(), pr, true)).toBe(false);
     expect(mustGenerateOrderFile(cfg(), pr, false)).toBe(false);
+  });
+
+  it("a pull request only traces on explicit opt-in", () => {
+    const pr = ctx({ pullRequest: true, inheritBranch: "main" });
+    // `[release]` on a PR dry-runs the release pipeline, and tracing is part of
+    // that pipeline; `[generate symbol order]` is for testing tracer changes.
+    // Both are deliberate, so the second link they cost is asked for.
+    expect(shouldGenerateOrderFile(cfg({ canary: false }), pr)).toBe(true);
+    expect(shouldGenerateOrderFile(cfg(), ctx({ ...pr, commitMessage: "x [generate symbol order]" }))).toBe(true);
   });
 
   it("a target that cannot run on the host never does", () => {

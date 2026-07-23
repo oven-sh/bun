@@ -80,6 +80,7 @@
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
+#include "IntlSegmentsContaining.h"
 #include "JS2Native.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
@@ -3156,6 +3157,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "prepareStackTrace"_s), JSC::CustomGetterSetter::create(vm, errorConstructorPrepareStackTraceGetter, errorConstructorPrepareStackTraceSetter), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+
+    Bun::installIntlSegmentsContainingFix(this, vm);
+    scope.assertNoExceptionExceptTermination();
 
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     scope.assertNoExceptionExceptTermination();

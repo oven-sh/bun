@@ -38,7 +38,9 @@ pub use s3_stat::S3Stat;
 // `JSGlobalObject` as a raw pointer (the FFI boundary cannot carry a Rust
 // lifetime), so the type aliases are lifetime-free and re-exported directly.
 pub use cookie_map::{CookieMap, CookieMapRef};
-pub use resumable_sink::{ResumableFetchSink, ResumableS3UploadSink, ResumableSinkBackpressure};
+pub use resumable_sink::{
+    ResumableFetchSink, ResumableHTMLRewriterSink, ResumableS3UploadSink, ResumableSinkBackpressure,
+};
 pub use s3_client::S3Client;
 pub use streams::{
     H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,

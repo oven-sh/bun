@@ -12,19 +12,6 @@ pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
 crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
 
-impl JSSink<ArrayBufferSink> {
-    /// Unprotects the controller cell stashed in `signal.ptr`
-    /// and tells C++ to drop its back-pointer. Called from
-    /// `Body::ValueBufferer` Drop / reject paths.
-    // Renamed from `detach` to avoid colliding with the generic
-    // `JSSink<T: JsSinkAbi>::detach(signal, global)` associated fn — Rust
-    // forbids same-name items across impl blocks for the same type even with
-    // different signatures (E0592).
-    pub fn detach_self(&mut self, global: &JSGlobalObject) {
-        JSSink::<ArrayBufferSink>::detach(&mut self.sink.signal, global);
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // JSSink
 //

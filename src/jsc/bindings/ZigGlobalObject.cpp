@@ -4028,10 +4028,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
-    } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
-    } else if (handler == Bun__BodyValueBufferer__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onRejectStream;
     } else if (handler == Bun__onResolveEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {

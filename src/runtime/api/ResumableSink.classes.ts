@@ -32,4 +32,8 @@ function generate(name) {
     values: ["ondrain", "oncancel", "stream"],
   });
 }
-export default [generate("ResumableFetchSink"), generate("ResumableS3UploadSink")];
+export default [
+  generate("ResumableFetchSink"),
+  generate("ResumableS3UploadSink"),
+  generate("ResumableHTMLRewriterSink"),
+];

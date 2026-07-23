@@ -633,25 +633,31 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
-    if (!propertyName.isSymbol() && uid && !normalizeEnvKey(String(uid)))
+    if (propertyName.isSymbol() || !uid)
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+
+    auto keyOpt = normalizeEnvKey(String(uid));
+    if (!keyOpt)
         return true;
-    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
+    String keyStr = *keyOpt;
+    Identifier truncated = keyStr.length() == uid->length() ? Identifier() : Identifier::fromString(vm, keyStr);
+    PropertyName effectiveName = truncated.isNull() ? propertyName : PropertyName(truncated);
+
+    if (!descriptor.isDataDescriptor() || !descriptor.value()) {
         // The descriptor lands on the Base object, but getOwnPropertySlot reads the
         // store first, so a store entry would shadow it. Move the entry onto Base as
         // an enumerable data property first: a partial descriptor then keeps that
         // enumerability, exactly as it does on the regular process.env. (Node rejects
         // accessors on process.env outright — on both maps — so match bun's own map.)
-        if (!propertyName.isSymbol() && uid) {
-            if (auto* store = sharedEnvStoreFor(object)) {
-                String existing = store->get(String(uid));
-                if (!existing.isNull()) {
-                    syncWindowsEnv(store, String(uid), nullptr);
-                    store->remove(String(uid));
-                    object->putDirect(vm, propertyName, jsString(vm, existing), 0);
-                }
+        if (auto* store = sharedEnvStoreFor(object)) {
+            String existing = store->get(keyStr);
+            if (!existing.isNull()) {
+                syncWindowsEnv(store, keyStr, nullptr);
+                store->remove(keyStr);
+                object->putDirect(vm, effectiveName, jsString(vm, existing), 0);
             }
         }
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, effectiveName, descriptor, shouldThrow));
     }
 
     String stringValue = descriptor.value().toWTFString(globalObject);
@@ -660,13 +666,9 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     auto* store = sharedEnvStoreFor(object);
     if (!store) [[unlikely]] {
         ASSERT_NOT_REACHED();
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, effectiveName, descriptor, shouldThrow));
     }
 
-    auto keyOpt = normalizeEnvKey(String(uid));
-    if (!keyOpt)
-        return true;
-    String keyStr = *keyOpt;
     stringValue = truncateEnvValueAtNul(stringValue);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     syncWindowsEnv(store, keyStr, &stringValue);

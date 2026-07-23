@@ -253,6 +253,11 @@ it("process.env rejects invalid keys and NUL like node", async () => {
     try { Object.defineProperty(process.env, "E=F", { get: () => "v", enumerable: true, configurable: true }); } catch {}
     out.dpAccEqStored = "E=F" in process.env;
 
+    // process.env is no longer a JSFinalObject on POSIX; structuredClone must
+    // still treat it as a plain object. (Windows wraps it in a Proxy, which
+    // structured clone rejects there regardless of this change.)
+    try { out.clone = structuredClone(process.env).NULVAL; } catch (e) { out.clone = e.name; }
+
     const r = spawnSync(process.execPath, ["-e",
       "process.stdout.write(JSON.stringify({A: process.env.A ?? null, NULKEY: process.env.NULKEY ?? null}))"
     ], { encoding: "utf8" });
@@ -280,12 +285,13 @@ it("process.env rejects invalid keys and NUL like node", async () => {
     dpEqStored: false,
     dpNulVal: "a",
     dpAccEqStored: false,
+    clone: isWindows ? "DataCloneError" : "a",
     child: { A: null, NULKEY: "x" },
     childStatus: 0,
     childErr: null,
   });
   expect(exitCode).toBe(0);
-}, 20000);
+});
 
 it("process.env is spreadable and editable", () => {
   process.env["LOL SMILE UTF16 😂"] = "😂";

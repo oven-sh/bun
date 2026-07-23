@@ -544,8 +544,9 @@ export function windowsEnv(
       if (k.length === 0 || k.indexOf("=") !== -1) return true;
       p = k;
       k = k.toUpperCase();
+      let v: string | undefined;
       if ("value" in attributes) {
-        let v = String(attributes.value);
+        v = String(attributes.value);
         const valNul = v.indexOf("\0");
         if (valNul !== -1) v = v.slice(0, valNul);
         attributes = { ...attributes, value: v };
@@ -553,7 +554,7 @@ export function windowsEnv(
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
+      if (v !== undefined) editWindowsEnvVar(k, v);
       return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {

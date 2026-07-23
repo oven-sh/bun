@@ -233,6 +233,33 @@ pub(crate) fn get_credentials_with_options(
                     new_credentials.options.retry = retry as u8;
                 }
             }
+
+            // timeout: number (ms) | false — same semantics as fetch()'s `timeout`
+            // option: `0`/`false`/`Infinity`/`NaN` disable the idle timer; finite
+            // negatives fall through to the inherited default.
+            if let Some(timeout_value) = opts.get(global_object, "timeout")? {
+                if timeout_value.is_boolean() {
+                    if !timeout_value.as_boolean() {
+                        new_credentials.options.idle_timeout_seconds = Some(0);
+                    }
+                } else if timeout_value.is_number() {
+                    let ms = timeout_value.as_number();
+                    if ms.is_finite() && ms > 0.0 {
+                        new_credentials.options.idle_timeout_seconds =
+                            Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
+                                as core::ffi::c_uint);
+                    } else if !ms.is_finite() || timeout_value.to_int32() == 0 {
+                        new_credentials.options.idle_timeout_seconds = Some(0);
+                    }
+                } else if !timeout_value.is_empty_or_undefined_or_null() {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"timeout",
+                        b"number or boolean",
+                        timeout_value,
+                    ));
+                }
+            }
+
             if let Some(acl) =
                 opts.get_optional_enum_from_map(global_object, "acl", &ACL::MAP, ACL_ONE_OF)?
             {

@@ -385,6 +385,7 @@ impl ReadableStream {
                     },
                     proxy_url,
                     s3.request_payer,
+                    s3.options.idle_timeout_seconds,
                     global_this,
                 )
             }

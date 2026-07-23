@@ -4703,6 +4703,24 @@ pub mod formatter {
                 }
             }
 
+            // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,
+            // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
+            // Ordered before the generic custom-inspect probe so Bun's native
+            // `toJSON`-driven rendering keeps priority (same as the runtime hook
+            // does for Response/Headers above).
+            if crate::DOMFormData::from_js(value).is_some() {
+                if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
+                    let prev_quote_keys = self.quote_keys;
+                    self.quote_keys = true;
+                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
+
+                    let result = to_json_function
+                        .call(self.global_this, value, &[])
+                        .unwrap_or_else(|err| self.global_this.take_exception(err));
+                    return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
+                }
+            }
+
             // The runtime hook declined. `get_tag` sends DOMWrapper values here
             // unconditionally so the hook above retains priority; any
             // `[nodejs.util.inspect.custom]` the value carries is consulted now,
@@ -4723,28 +4741,7 @@ pub mod formatter {
                 }
             }
 
-            // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,
-            // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
-            if crate::DOMFormData::from_js(value).is_some() {
-                if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
-                    let prev_quote_keys = self.quote_keys;
-                    self.quote_keys = true;
-                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-
-                    let result = to_json_function
-                        .call(self.global_this, value, &[])
-                        .unwrap_or_else(|err| self.global_this.take_exception(err));
-                    return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
-                }
-
-                // this case should never happen
-                return self.print_as::<C>(
-                    Tag::Undefined,
-                    writer_,
-                    JSValue::UNDEFINED,
-                    jsc::JSType::Cell,
-                );
-            } else if js_type != jsc::JSType::DOMWrapper {
+            if js_type != jsc::JSType::DOMWrapper {
                 if *remove_before_recurse {
                     *remove_before_recurse = false;
                     let _ = self.map.remove(&value);

@@ -346,7 +346,12 @@ pub(crate) fn validate_object(
         return if options.allow_nullable() {
             Ok(())
         } else {
-            Err(throw_err_invalid_arg_type(global_this, name, "object", value))
+            Err(throw_err_invalid_arg_type(
+                global_this,
+                name,
+                "object",
+                value,
+            ))
         };
     }
     if (!options.allow_array() && value.js_type().is_array())

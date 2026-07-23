@@ -408,7 +408,11 @@ pub(super) fn convert_utf8_bytes_into_utf16_with_length(
     }
 }
 
-// This variation matches WebKit behavior.
+/// Decode one UTF-8 sequence at `bytes[0..]` with WHATWG maximal-subpart
+/// replacement, matching WebKit's `TextCodecUTF8`.
+///
+/// Preconditions: `bytes` is non-empty and `bytes[0] >= 0x80`. ASCII must be
+/// handled by the caller.
 // fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8, remaining_len: usize) UTF16Replacement {
 pub fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     let sequence: [u8; 4] = match bytes.len() {

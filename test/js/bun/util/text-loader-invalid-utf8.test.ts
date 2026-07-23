@@ -25,8 +25,9 @@ describe("text loader decodes ill-formed UTF-8 as U+FFFD", () => {
       const name = process.argv[2];
       const { default: loaded } = await import("./" + name + ".txt");
       const read = readFileSync("./" + name + ".txt", "utf8");
+      const blob = await Bun.file("./" + name + ".txt").text();
       const cps = (s: string) => [...s].map(c => c.codePointAt(0));
-      console.log(JSON.stringify({ loaded: cps(loaded), read: cps(read), same: loaded === read }));
+      console.log(JSON.stringify({ loaded: cps(loaded), read: cps(read), blob: cps(blob) }));
     `,
   };
   for (let i = 0; i < cases.length; i++) {
@@ -45,8 +46,9 @@ describe("text loader decodes ill-formed UTF-8 as U+FFFD", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
       const expected = [...new TextDecoder().decode(Uint8Array.from(bytes))].map(c => c.codePointAt(0));
-      expect({ stderr, ...JSON.parse(stdout) }).toEqual({ stderr: "", loaded: expected, read: expected, same: true });
+      expect(JSON.parse(stdout)).toEqual({ loaded: expected, read: expected, blob: expected });
       expect(exitCode).toBe(0);
     });
   }

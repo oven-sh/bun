@@ -315,7 +315,7 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     detail = "no exit before timeout";
   } else {
     const crash = rr.crashSig ?? (rr.stdout || rr.stderr ? detectCrash(rr.stdout, rr.stderr) : null);
-    if (crash && !/oom|debug-only/.test(crash.kind) && crash.boundary !== "system-module") {
+    if (crash && !/oom|debug-only|intentional-fatal/.test(crash.kind) && crash.boundary !== "system-module") {
       outcome = "CRASH";
       // Keep the UNFOLDED matched text (real index/size values are the
       // diagnosis); the folded signature is only the dedupe key below.

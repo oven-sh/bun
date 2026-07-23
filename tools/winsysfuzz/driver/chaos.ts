@@ -185,7 +185,7 @@ function classify(rr: ReplayResult): string {
   // Crash-on-OOM is by design (only oom-large - an absurd request - is a
   // real bug); a system-DLL top frame is sabotaged system code, not bun.
   if (rr.outcome === "CRASH") {
-    if (rr.crashSig?.kind === "oom" || rr.crashSig?.kind === "debug-only") return "expected-abort";
+    if (rr.crashSig?.kind && /^(oom|debug-only|intentional-fatal)$/.test(rr.crashSig.kind)) return "expected-abort";
     return rr.crashSig?.boundary === "system-module" ? "system-crash" : "CRASH";
   }
   if (rr.fired === 0) return "no-fire";

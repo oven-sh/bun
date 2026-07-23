@@ -183,6 +183,10 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // hot_reloader's watcher error handler logs "Watcher crashed" and
       // panics ONLY under debug_assertions - release continues.
       if (/panic: Watcher crash\b/.test(detail)) k = "debug-only";
+      // --hot/--watch die-with-message: the reloader cannot function without
+      // its watcher, so init/start failure routes to Output::panic by design
+      // (hot_reloader.rs Failed to enable/start File Watcher). Not a bug.
+      if (/Failed to (enable|start) File Watcher/.test(detail)) k = "intentional-fatal";
       // The bake DevServer hashes its own exe's mtime into a debug-only
       // cache-bust key (guarded by IS_DEBUG) and panics if that stat fails:
       // "unhandled EINVAL: <bun>: ... (stat())" on the running binary.

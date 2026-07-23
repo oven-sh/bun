@@ -2287,8 +2287,10 @@ Reo=
 
     it("closes a connection whose server certificate is not trusted", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT });
+      // A rejecting client reports the failed verdict at the callback, like
+      // node v26.3.0 (secureConnect never fires; socket.authorized is false).
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2301,8 +2303,10 @@ Reo=
 
     it("closes an untrusted connection with tls: true", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
+      // Same node v26.3.0 contract as above: the rejected handshake reports
+      // authorized=false at the callback.
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2412,7 +2416,10 @@ Reo=
             handshake.resolve({
               authorized: socket.authorized,
               error: authorizationError?.message ?? null,
-              // The raw twin shares the fd: its writes must refuse too.
+              // The raw twin accepts the bytes into its queue (node v26.3.0
+              // never refuses raw-side writes) but the rejected connection is
+              // torn down before anything reaches the wire, so `received`
+              // below must stay empty.
               rawWrite: raw.write("must-not-reach-the-peer"),
             });
           },
@@ -2428,7 +2435,11 @@ Reo=
       using _raw = raw;
       using _secure = secure;
 
-      expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, rawWrite: -1 });
+      expect(await handshake.promise).toEqual({
+        authorized: false,
+        error: UNTRUSTED_MESSAGE,
+        rawWrite: "must-not-reach-the-peer".length,
+      });
       await closed.promise;
       expect(received).toEqual([]);
     });
@@ -2496,7 +2507,7 @@ Reo=
       expect(received).toEqual([]);
     });
 
-    it("refuses writes issued from the handshake callback of a rejected connection", async () => {
+    it("never delivers writes issued from the handshake callback of a rejected connection", async () => {
       const serverReceived: string[] = [];
       const handshake = Promise.withResolvers<number>();
       const closed = Promise.withResolvers<void>();
@@ -2523,6 +2534,9 @@ Reo=
         socket: {
           open() {},
           handshake(socket) {
+            // node v26.3.0 accepts writes on the failed socket into the dying
+            // stream without an error sentinel; the bytes never reach the
+            // peer (serverReceived stays empty below).
             handshake.resolve(socket.write("token-that-must-never-reach-a-mitm"));
           },
           data() {},
@@ -2540,7 +2554,7 @@ Reo=
           },
         },
       });
-      expect(await handshake.promise).toBe(-1);
+      expect(await handshake.promise).toBe("token-that-must-never-reach-a-mitm".length);
       await closed.promise;
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);

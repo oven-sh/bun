@@ -779,7 +779,7 @@ async function runTests() {
         const registersTests = /(?:^|[^.\w])(?:test|it|describe|suite)\s*[.(]/m.test(testContent);
         const guardsOnTestContext = testContent.includes("NODE_TEST_CONTEXT");
         const isRunDriver = importsRun && !registersAtColumnZero && (!registersTests || guardsOnTestContext);
-        // The explicit opt-ins above win over this heuristic.
+        // The needs-test filename opt-in wins over this heuristic.
         if (isRunDriver && !title.includes("needs-test")) runWithBunTest = false;
         const subcommand = runWithBunTest ? "test" : "run";
         const env = {

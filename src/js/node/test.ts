@@ -58,20 +58,19 @@ let TestsStreamClass: ReturnType<typeof getTestsStreamClass> | undefined;
 
 function getTestsStreamClass() {
   const { Readable } = require("node:stream");
+  // Mirrors node lib/internal/test_runner/tests_stream.js: a plain-array
+  // buffer plus one public method per event type delegating to #emit.
   return class TestsStream extends (Readable as typeof import("node:stream").Readable) {
-    #buffer;
+    #buffer: unknown[] = [];
     #canPush = true;
 
     constructor() {
-      super({ objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
-      // $createFIFO cannot appear in a class-field initializer: the builtin
-      // bundler mis-emits the intrinsic there.
-      this.#buffer = $createFIFO();
+      super({ __proto__: null, objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
     }
 
     _read() {
       this.#canPush = true;
-      while (!this.#buffer.isEmpty()) {
+      while (this.#buffer.length > 0) {
         const obj = this.#buffer.shift();
         if (!this.#tryPush(obj)) return;
       }
@@ -81,14 +80,48 @@ function getTestsStreamClass() {
       if (this.#canPush) {
         this.#canPush = this.push(message);
       } else {
-        this.#buffer.push(message);
+        $arrayPush(this.#buffer, message);
       }
       return this.#canPush;
     }
 
-    emitMessage(type: string, data?: unknown) {
+    #emit(type: string, data?: unknown) {
       this.emit(type, data);
       this.#tryPush({ __proto__: null, type, data });
+    }
+
+    enqueue(data: unknown) {
+      this.#emit("test:enqueue", data);
+    }
+    dequeue(data: unknown) {
+      this.#emit("test:dequeue", data);
+    }
+    complete(data: unknown) {
+      this.#emit("test:complete", data);
+    }
+    pass(data: unknown) {
+      this.#emit("test:pass", data);
+    }
+    fail(data: unknown) {
+      this.#emit("test:fail", data);
+    }
+    plan(data: unknown) {
+      this.#emit("test:plan", data);
+    }
+    diagnostic(data: unknown) {
+      this.#emit("test:diagnostic", data);
+    }
+    stderr(data: unknown) {
+      this.#emit("test:stderr", data);
+    }
+    stdout(data: unknown) {
+      this.#emit("test:stdout", data);
+    }
+    summary(data: unknown) {
+      this.#emit("test:summary", data);
+    }
+    republish(type: string, data: unknown) {
+      this.#emit(type, data);
     }
 
     endStream() {
@@ -245,6 +278,7 @@ function validateRunOptions(options: Record<string, unknown>) {
 
   return {
     files,
+    forceExit,
     setup,
     cwd,
     env,
@@ -290,6 +324,8 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
+  if (opts.forceExit) throwNotImplemented("run({ forceExit: true })", 5090);
+  if (opts.files == null) throwNotImplemented("run() default file discovery", 5090, "Pass { files: [...] } explicitly.");
 
   runFiles(opts, reporter);
   return reporter;
@@ -314,14 +350,14 @@ function addRunCounts(into: Record<string, number>, from: Record<string, number>
 }
 
 function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number>, durationMs: number) {
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `tests ${counts.tests}` });
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `suites ${counts.suites}` });
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `pass ${counts.passed}` });
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `fail ${counts.failed}` });
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `cancelled ${counts.cancelled}` });
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `skipped ${counts.skipped}` });
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `todo ${counts.todo}` });
-  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `duration_ms ${durationMs}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `tests ${counts.tests}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `suites ${counts.suites}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `pass ${counts.passed}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `fail ${counts.failed}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `cancelled ${counts.cancelled}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `skipped ${counts.skipped}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `todo ${counts.todo}` });
+  reporter.diagnostic({ __proto__: null, nesting: 0, message: `duration_ms ${durationMs}` });
 }
 
 // Runs each file in its own `bun test` child and republishes the child's events
@@ -343,10 +379,10 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       await runOneFile(files[i], opts, reporter, counts);
     }
 
-    reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
+    reporter.plan({ __proto__: null, nesting: 0, count: counts.topLevel });
     const durationMs = Date.now() - started;
     emitRunDiagnostics(reporter, counts, durationMs);
-    reporter.emitMessage("test:summary", {
+    reporter.summary({
       __proto__: null,
       success: counts.failed === 0,
       counts,
@@ -388,8 +424,8 @@ async function runOneFile(
     column: 1,
     file: absolute,
   };
-  reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
-  reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
+  reporter.enqueue({ __proto__: null, ...fileNode });
+  reporter.dequeue({ __proto__: null, ...fileNode });
 
   const proc = Bun.spawn({
     cmd: args,
@@ -401,37 +437,59 @@ async function runOneFile(
 
   let stderrText = "";
   const drainStderr = (async () => {
-    stderrText = await new Response(proc.stderr).text();
-    for (const line of stderrText.split("\n")) {
-      if (line.length > 0)
-        reporter.emitMessage("test:stderr", { __proto__: null, file: absolute, message: line + "\n" });
+    const decoder = new TextDecoder();
+    let carry = "";
+    for await (const chunk of proc.stderr as any) {
+      const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      stderrText += text;
+      carry += text;
+      let nl;
+      while ((nl = carry.indexOf("\n")) !== -1) {
+        const line = carry.slice(0, nl);
+        carry = carry.slice(nl + 1);
+        if (line.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: line + "\n" });
+      }
     }
+    if (carry.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: carry + "\n" });
   })();
 
-  const stdout = await new Response(proc.stdout).text();
-  for (const line of stdout.split("\n")) {
-    if (line.length === 0) continue;
+  const handleStdoutLine = (line: string) => {
+    if (line.length === 0) return;
     // bun:test's own reporter can leave an unterminated line, so the marker is
     // not always at column 0; take everything from the marker on.
     const marker = line.indexOf(kRunEventPrefix);
     if (marker === -1) {
-      reporter.emitMessage("test:stdout", { __proto__: null, file: absolute, message: line + "\n" });
-      continue;
+      reporter.stdout({ __proto__: null, file: absolute, message: line + "\n" });
+      return;
     }
     if (marker > 0) {
       const before = line.slice(0, marker).trimEnd();
       if (before.length > 0) {
-        reporter.emitMessage("test:stdout", { __proto__: null, file: absolute, message: before + "\n" });
+        reporter.stdout({ __proto__: null, file: absolute, message: before + "\n" });
       }
     }
     let event;
     try {
       event = JSON.parse(line.slice(marker + kRunEventPrefix.length));
     } catch {
-      continue;
+      return;
     }
+    if (event == null || typeof event.data !== "object" || event.data === null) return;
     republishChildEvent(event, absolute, reporter, fileCounts);
+  };
+
+  const decoder = new TextDecoder();
+  let carry = "";
+  for await (const chunk of proc.stdout as any) {
+    carry += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    let nl;
+    while ((nl = carry.indexOf("\n")) !== -1) {
+      const line = carry.slice(0, nl);
+      carry = carry.slice(nl + 1);
+      handleStdoutLine(line);
+    }
   }
+  if (carry.length > 0) handleStdoutLine(carry);
 
   await drainStderr;
   const exitCode = await proc.exited;
@@ -450,7 +508,8 @@ async function runOneFile(
   }
 
   if (!fileFailed) {
-    reporter.emitMessage("test:summary", {
+    fileCounts.topLevel++;
+    reporter.summary({
       __proto__: null,
       success: fileCounts.failed === 0,
       counts: fileCounts,
@@ -466,7 +525,7 @@ async function runOneFile(
 
   // node emits the file node's completion before its verdict, and a failed
   // completion carries the error too.
-  reporter.emitMessage("test:complete", {
+  reporter.complete({
     __proto__: null,
     ...fileNode,
     type: undefined,
@@ -480,7 +539,7 @@ async function runOneFile(
     },
   });
   if (fileFailed) {
-    reporter.emitMessage("test:fail", {
+    reporter.fail({
       __proto__: null,
       ...fileNode,
       type: undefined,
@@ -489,6 +548,16 @@ async function runOneFile(
     });
   }
   addRunCounts(counts, fileCounts);
+}
+
+function rebuildError(serialized: any): Error {
+  const error = new Error(serialized.message);
+  error.stack = serialized.stack;
+  if (serialized.name !== undefined && serialized.name !== "Error") error.name = serialized.name;
+  if (serialized.code !== undefined) (error as any).code = serialized.code;
+  if (serialized.failureType !== undefined) (error as any).failureType = serialized.failureType;
+  if (serialized.cause !== undefined) (error as any).cause = rebuildError(serialized.cause);
+  return error;
 }
 
 function republishChildEvent(
@@ -500,9 +569,9 @@ function republishChildEvent(
   const { type, data } = event;
   Object.setPrototypeOf(data, null);
   data.file = file;
+  data.nesting = (data.nesting ?? 0) + 1;
   if (type === "test:pass" || type === "test:fail") {
     const isSuite = data.type === "suite";
-    if (data.nesting === 0) counts.topLevel++;
     // node counts a suite in `suites` and stops there: a skipped or todo suite
     // never lands in skipped/todo/passed/tests (countCompletedTest, test.js).
     if (isSuite) counts.suites++;
@@ -517,21 +586,18 @@ function republishChildEvent(
     const detailType = isSuite ? "suite" : "test";
     const serialized = data.error;
     if (serialized !== undefined) {
-      const { message, stack, code, failureType, name } = serialized;
-      const error = new Error(message);
-      error.stack = stack;
-      if (name !== undefined && name !== "Error") error.name = name;
-      if (code !== undefined) (error as any).code = code;
-      if (failureType !== undefined) (error as any).failureType = failureType;
-      data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
+      data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error: rebuildError(serialized) };
     } else {
       data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType };
     }
     delete data.error;
     delete data.duration_ms;
     delete data.type;
+    if (type === "test:pass") reporter.pass(data);
+    else reporter.fail(data);
+    return;
   }
-  reporter.emitMessage(type, data);
+  reporter.republish(type, data);
 }
 
 // Child side: with kRunChildEnv set, stream one JSON event per line so the
@@ -554,13 +620,15 @@ function nestingOf(node: TestNode) {
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
 function serializeRunError(error: unknown) {
   if (Error.isError(error)) {
+    const cause = (error as { cause?: unknown }).cause;
     return {
       __proto__: null,
-      message: error.message,
-      stack: error.stack,
+      message: (error as Error).message,
+      stack: (error as Error).stack,
       code: (error as { code?: string }).code,
       failureType: (error as { failureType?: string }).failureType,
-      name: error.name,
+      name: (error as Error).name,
+      cause: cause !== undefined ? serializeRunError(cause) : undefined,
     };
   }
   return { __proto__: null, message: String(error), stack: undefined, code: undefined, name: "Error" };
@@ -579,8 +647,8 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
     nesting: nestingOf(node),
     testNumber: 0,
     duration_ms: 0,
-    skip: skipped ? true : undefined,
-    todo: !skipped ? true : undefined,
+    skip: skipped ? (node.message ?? true) : undefined,
+    todo: !skipped ? (node.message ?? true) : undefined,
     type: node.isSuite ? "suite" : "test",
     tags: node.tags,
     error: undefined,
@@ -602,8 +670,8 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
     nesting: nestingOf(node),
     testNumber: 0,
     duration_ms: performance.now() - startedAt,
-    skip: skipped ? true : undefined,
-    todo: !skipped && todoFlag ? true : undefined,
+    skip: skipped ? (node.message ?? true) : undefined,
+    todo: !skipped && todoFlag ? (node.message ?? true) : undefined,
     expectFailure: xfail,
     tags: node.tags,
     error: node.passed ? undefined : serializeRunError(node.error),
@@ -1404,6 +1472,7 @@ class TestNode {
   mockTracker: MockTracker | null = null;
   skipped = false;
   todoFlag = false;
+  message: string | undefined = undefined;
   expectFailure: ExpectFailure = false;
   started = false;
   finished = false;
@@ -1438,6 +1507,8 @@ class TestNode {
     this.filePath = parent !== undefined && parent.parent !== undefined ? parent.filePath : Bun.main;
     this.skipped = !!options.skip;
     this.todoFlag = !!options.todo || (parent?.todoFlag ?? false);
+    if (typeof options.skip === "string") this.message = options.skip;
+    else if (typeof options.todo === "string") this.message = options.todo;
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
   }
 
@@ -1604,12 +1675,14 @@ class TestContext {
     throwNotImplemented("runOnly()", 5090, "Use `bun:test` in the interim.");
   }
 
-  skip(_message?: string) {
+  skip(message?: string) {
     this.#node.skipped = true;
+    if (typeof message === "string") this.#node.message = message;
   }
 
-  todo(_message?: string) {
+  todo(message?: string) {
     this.#node.todoFlag = true;
+    if (typeof message === "string") this.#node.message = message;
   }
 
   before(arg0: unknown, arg1: unknown) {
@@ -2194,7 +2267,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
     const { failedSubtests, firstSubtestError } = node;
     if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`);
+      const error = makeTestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed");
       if (firstSubtestError !== undefined) {
         (error as { cause?: unknown }).cause = firstSubtestError;
       }
@@ -2202,13 +2275,15 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
+  const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
+  const acceptedXfail = bodyFailure !== undefined && failure === undefined;
 
   // Node sets passed/error before running afterEach/after so hooks can
   // introspect the outcome (nodejs/node lib/internal/test_runner/test.js
   // pass()/fail() precede afterEach).
   node.passed = failure === undefined;
-  node.error = failure ?? null;
+  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   // Mark finished before hooks so a late t.test() from an after/afterEach
   // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
   node.finished = true;
@@ -2219,7 +2294,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       try {
         await runHook(hook, ancestor, ctx);
       } catch (err) {
-        failure ??= err;
+        if (!acceptedXfail) failure ??= err;
       }
     }
   }
@@ -2228,18 +2303,18 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     try {
       await runHook(hook, node, ctx);
     } catch (err) {
-      failure ??= err;
+      if (!acceptedXfail) failure ??= err;
     }
   }
 
   try {
     node.mockTracker?.reset();
   } catch (err) {
-    failure ??= err;
+    if (!acceptedXfail) failure ??= err;
   }
 
   node.passed = failure === undefined;
-  node.error = failure ?? null;
+  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   reportNodeToRunParent(node, started);
   return failure;
 }
@@ -2319,6 +2394,25 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown)
     }
     suite.finished = true;
     suite.passed = suite.failedSubtests === 0;
+    if (runChildReporterEnabled) {
+      emitRunChildEvent(suite.passed ? "test:pass" : "test:fail", {
+        __proto__: null,
+        name: suite.name,
+        nesting: nestingOf(suite),
+        testNumber: 0,
+        duration_ms: 0,
+        type: "suite",
+        tags: suite.tags,
+        error: suite.passed
+          ? undefined
+          : serializeRunError(
+              makeTestFailure(
+                `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
+                "subtestsFailed",
+              ),
+            ),
+      });
+    }
     // A todo suite's failures do not fail the owning test (Node).
     if (suite.failedSubtests > 0 && !suite.todoFlag) {
       parent.failedSubtests++;
@@ -2430,6 +2524,18 @@ function addTest(
   const effectiveMode = mode ?? (options.skip ? "skip" : options.todo ? "todo" : undefined);
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
+    // Under a run() child, register skip as an ordinary test so its directive
+    // event fires in execution order (not at collection time).
+    if (runChildReporterEnabled && effectiveMode === "skip") {
+      const runner = function (done: (err?: unknown) => void) {
+        reportDirectiveOnlyNode(node, "skip");
+        markCurrentResult(false, done);
+        done(undefined);
+      };
+      if (passOptions !== undefined) test(name, runner, passOptions);
+      else test(name, runner);
+      return Promise.resolve(undefined);
+    }
     // Node runs a todo body, so `t.skip()` inside one still changes the
     // directive it reports. bun:test only runs todo bodies under --todo, so a
     // run() child registers them as ordinary tests and marks the result at the
@@ -2547,7 +2653,7 @@ function addSuite(
 
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;
-  else if (effectiveMode === "todo") register = describe.todo;
+  else if (effectiveMode === "todo") register = runChildReporterEnabled ? describe : describe.todo;
   if (effectiveMode !== undefined) reportDirectiveOnlyNode(suiteNode, effectiveMode);
 
   if (passOptions !== undefined) {

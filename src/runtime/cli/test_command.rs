@@ -3385,11 +3385,10 @@ impl TestCommand {
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
 
-                // Node parity: a node test file exits only when the event loop
-                // drains, so in-flight async work (fs I/O, workers, sockets)
-                // completes before process 'exit' handlers verify mustCall()
-                // counts. on_before_exit() drains and dispatches 'beforeExit',
-                // matching `bun run`. Opt-in so bun suites keep exit-after-tests.
+                // Node parity: a node test file exits only when its loop drains.
+                // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
+                // it early-returns when unhandled_error_counter > 0, which is fine
+                // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }

@@ -2000,6 +2000,35 @@ impl<'a> Resolver<'a> {
                     import_path
                 };
 
+                // `external: ["node:zlib"]` also covers a bare `import "zlib"`
+                // that would otherwise resolve to the builtin's polyfill. The
+                // prefixed spelling of the import was already checked above.
+                if !had_node_prefix
+                    && self.opts.external.node_modules.count() > 0
+                    && NodeFallbackModules::map().contains_key(import_path_without_node_prefix)
+                {
+                    let mut prefixed =
+                        Vec::with_capacity(b"node:".len() + import_path_without_node_prefix.len());
+                    prefixed.extend_from_slice(b"node:");
+                    prefixed.extend_from_slice(import_path_without_node_prefix);
+                    if self.opts.external.node_modules.contains(&prefixed) {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "The path \"{}\" was marked as external by the user",
+                                bstr::BStr::new(import_path)
+                            ));
+                        }
+                        return ResultUnion::Success(Result {
+                            path_pair: PathPair {
+                                primary: Path::init(import_path),
+                                secondary: None,
+                            },
+                            flags: ResultFlags::IS_EXTERNAL,
+                            ..Default::default()
+                        });
+                    }
+                }
+
                 if let Some(fallback_module) =
                     NodeFallbackModules::map().get(import_path_without_node_prefix)
                 {

@@ -240,6 +240,23 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("browser/NodePolyfillExternalNodePrefixBareImport#2701", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { timingSafeEqual } from "crypto";
+        console.log(timingSafeEqual(Buffer.from("abc"), Buffer.from("abc")));
+      `,
+    },
+    target: "browser",
+    external: ["node:crypto"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([{ kind: "import-statement", path: "crypto" }]);
+    },
+  });
+
   itBundled("browser/NodePolyfillExternalNodePrefix#35210", {
     files: {
       "/entry.js": /* js */ `

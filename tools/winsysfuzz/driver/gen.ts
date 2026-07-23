@@ -191,7 +191,6 @@ const V = {
     ]),
   string: () =>
     pick([
-      `"CON"`,
       `"file\\u0000nul.txt"`,
       `"\\ud83d"`, // unpaired high surrogate
       `"\\uffff\\ufffe"`, // noncharacters

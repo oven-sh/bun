@@ -276,6 +276,26 @@ async function worker(w: number) {
     // program and key by its call set, so distinct causes queue separately
     // and one bug queues once however it faults.
     let minimalText = "";
+    // Pre-check: if the RAW program already contains every call of a KNOWN
+    // cause, this is almost surely that cause again - skip the (expensive,
+    // solo-locked) minimization and let the engine keep finding.
+    if (j.kind === "crash") {
+      const rawCalls = new Set(callSetOf(await Bun.file(program).text()).split(" ; "));
+      let matched = "";
+      for (const key of knownKeys) {
+        const m = /^gencrash\{(.+)\}$/.exec(key);
+        if (!m) continue;
+        const need = m[1].split(" ; ");
+        if (need.length && need.every(c => rawCalls.has(c))) {
+          matched = key;
+          break;
+        }
+      }
+      if (matched) {
+        console.log(`   raw program covers known cause ${matched.slice(0, 60)} - skipping`);
+        continue;
+      }
+    }
     if (j.kind === "crash") {
       // Minimize SOLO (hold the verify lock: siblings pause) - a reduction
       // runs the target hundreds of times and must not compete with 24

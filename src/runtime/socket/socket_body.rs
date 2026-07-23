@@ -4707,6 +4707,34 @@ pub fn js_is_named_pipe_socket(
     Ok(JSValue::FALSE)
 }
 
+/// node:net-internal setsockopt(TCP_NODELAY) bypassing the handle's `setNoDelay`
+/// slot, so net.ts can undo uSockets' forced TCP_NODELAY=1 while keeping the
+/// Node-compat call count on `_handle.setNoDelay` (test-net-*-nodelay.js).
+#[bun_jsc::host_fn]
+pub fn js_native_set_no_delay(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let arguments = callframe.arguments_old::<2>();
+    if arguments.len < 1 {
+        return Ok(JSValue::FALSE);
+    }
+    let socket = arguments.ptr[0];
+    let enabled = if arguments.len >= 2 {
+        arguments.ptr[1].to_boolean()
+    } else {
+        true
+    };
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return Ok(JSValue::from(this.socket.get().set_no_delay(enabled)));
+    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return Ok(JSValue::from(this.socket.get().set_no_delay(enabled)));
+    }
+    Ok(JSValue::FALSE)
+}
+
 #[bun_jsc::host_fn]
 pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();

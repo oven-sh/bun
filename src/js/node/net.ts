@@ -117,6 +117,10 @@ const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgra
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+// Direct setsockopt(TCP_NODELAY) that bypasses the handle's prototype slot;
+// used to undo uSockets' forced TCP_NODELAY without disturbing the Node-compat
+// call count on `_handle.setNoDelay` (upstream tests monkey-patch that slot).
+const nativeSetNoDelay = $newRustFunction("runtime/socket/socket.rs", "jsNativeSetNoDelay", 2);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -432,6 +436,9 @@ const SocketHandlers: SocketHandler = {
 
     if (self[kSetNoDelay]) {
       socket.setNoDelay(true);
+    } else {
+      // Undo uSockets' forced TCP_NODELAY; see nativeSetNoDelay.
+      nativeSetNoDelay(socket, false);
     }
 
     if (self[kSetKeepAlive]) {
@@ -1862,6 +1869,9 @@ Socket.prototype[kAttach] = function (port, socket) {
 
   if (this[kSetNoDelay]) {
     socket.setNoDelay(true);
+  } else {
+    // Undo uSockets' forced TCP_NODELAY; see nativeSetNoDelay.
+    nativeSetNoDelay(socket, false);
   }
 
   if (this[kSetKeepAlive]) {
@@ -3347,6 +3357,9 @@ function afterConnect(status, handle, req, readable, writable) {
     }
     if (self[kSetNoDelay] && self._handle.setNoDelay) {
       self._handle.setNoDelay(true);
+    } else if (!self[kSetNoDelay]) {
+      // Undo uSockets' forced TCP_NODELAY; see nativeSetNoDelay.
+      nativeSetNoDelay(self._handle, false);
     }
 
     if (self[kSetKeepAlive] && self._handle.setKeepAlive) {

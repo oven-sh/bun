@@ -5568,6 +5568,8 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
+      // Node's setupHandle unconditionally disables Nagle on every h2 session.
+      socket.setNoDelay?.();
 
       if (socket.connecting || socket.secureConnecting) {
         const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
@@ -5584,11 +5586,15 @@ class ClientHttp2Session extends Http2Session {
               port: String(port),
               ALPNProtocols: ["h2"],
               ...options,
+              // Node's setupHandle unconditionally calls socket.setNoDelay()
+              // on every h2 session; keep Nagle off regardless of user options.
+              noDelay: true,
             }
           : {
               host,
               port: String(port),
               ALPNProtocols: ["h2"],
+              noDelay: true,
             },
         onConnect.bind(this),
       );
@@ -6588,6 +6594,9 @@ function closeIdleHttp1Connections(server) {
 }
 
 function connectionListener(socket: Socket) {
+  // Node's setupHandle disables Nagle per session regardless of how the
+  // socket arrived (including server.emit('connection', sock)).
+  socket.setNoDelay?.();
   const options = this[bunSocketServerOptions] || {};
   if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
     if (options.allowHTTP1 === true) {
@@ -6674,6 +6683,9 @@ function initializeOptions(options) {
 
   options.Http2ServerRequest ||= Http2ServerRequest;
   options.Http2ServerResponse ||= Http2ServerResponse;
+  // Node's setupHandle unconditionally calls socket.setNoDelay() on every h2
+  // session; keep Nagle off on accepted sockets regardless of user options.
+  options.noDelay = true;
   return options;
 }
 

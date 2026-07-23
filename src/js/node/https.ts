@@ -277,6 +277,7 @@ function createConnection(...args) {
     socket = tls.connect(options);
   } else {
     const connectOptions = {
+      noDelay: true,
       ...this[kProxyConfig].proxyConnectionOptions,
     };
     $debug("Create proxy socket", connectOptions);

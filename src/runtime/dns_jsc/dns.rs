@@ -2542,6 +2542,7 @@ pub mod internal {
         Socket(*mut ConnectingSocket),           // FFI
         Prefetch(*mut Loop),                     // FFI
         Quic(*mut bun_http::H3::PendingConnect), // BORROW_PARAM
+        JsLookup(*mut CachedLookup),             // OWNED (freed by `run_from_js`)
     }
 
     impl DNSRequestOwner {
@@ -2562,6 +2563,9 @@ pub mod internal {
                 DNSRequestOwner::Quic(pc) => unsafe {
                     bun_http::H3::PendingConnect::on_dns_resolved_threadsafe(*pc)
                 },
+                // Holds its own refcount on `req` and frees it after reading the
+                // result on the JS thread.
+                DNSRequestOwner::JsLookup(lookup) => CachedLookup::on_dns_resolved(*lookup),
             }
         }
 
@@ -2582,6 +2586,9 @@ pub mod internal {
                 DNSRequestOwner::Quic(pc) => unsafe {
                     bun_http::H3::PendingConnect::on_dns_resolved(*pc)
                 },
+                // Holds its own refcount on `req` and frees it after reading the
+                // result on the JS thread.
+                DNSRequestOwner::JsLookup(lookup) => CachedLookup::on_dns_resolved(*lookup),
             }
         }
     }
@@ -3025,17 +3032,13 @@ pub mod internal {
             .unwrap_or(false)
         {
             if let Some(entry) = guard.get(&key, &mut timestamp_to_store) {
-                if preload {
-                    drop(guard);
-                    return None;
-                }
-
-                // SAFETY: `entry` is a live cache slot; refcount is only mutated under the held lock.
-                unsafe { (*entry).refcount += 1 };
-
                 // SAFETY: `entry` is a live cache slot; `result` is only mutated under the held lock.
-                if unsafe { (*entry).result.is_some() } {
-                    *is_cache_hit.unwrap() = true;
+                let completed = unsafe { (*entry).result.is_some() };
+
+                // Counted before the `preload` early return so that
+                // `cacheHitsCompleted + cacheHitsInflight + cacheMisses` always
+                // equals `totalCount`: `prefetch()` already counts its misses.
+                if completed {
                     bun_output::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache hit",
@@ -3049,6 +3052,18 @@ pub mod internal {
                         bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_INFLIGHT.fetch_add(1, Ordering::Relaxed);
+                }
+
+                if preload {
+                    drop(guard);
+                    return None;
+                }
+
+                // SAFETY: `entry` is a live cache slot; refcount is only mutated under the held lock.
+                unsafe { (*entry).refcount += 1 };
+
+                if completed {
+                    *is_cache_hit.unwrap() = true;
                 }
 
                 drop(guard);
@@ -3187,6 +3202,280 @@ pub mod internal {
             Some(unsafe { ZStr::from_raw(hostname, len) })
         };
         prefetch(loop_.cast::<Loop>(), host, port);
+    }
+
+    // ───────────── cached lookup (node:net / node:tls / node:http) ─────────────
+
+    /// One `cachedLookup()` call: resolves `hostname` through the process-wide
+    /// DNS cache — the same entries `fetch()`, `Bun.connect` and
+    /// `dns.prefetch()` share — and settles `promise` with the addresses.
+    ///
+    /// Owns a `+1` refcount on `request`, released by `freeaddrinfo` once the
+    /// result has been read on the JS thread.
+    pub struct CachedLookup {
+        global_this: bun_ptr::BackRef<JSGlobalObject>,
+        event_loop: *mut jsc::event_loop::EventLoop,
+        promise: JSPromiseStrong,
+        poll_ref: KeepAlive,
+        request: *mut Request,
+        hostname: Box<[u8]>,
+    }
+
+    impl CachedLookup {
+        fn init(global_this: &JSGlobalObject, request: *mut Request, hostname: &[u8]) -> *mut Self {
+            let mut poll_ref = KeepAlive::init();
+            poll_ref.ref_(js_event_loop_ctx());
+            bun_core::heap::into_raw(Box::new(Self {
+                global_this: bun_ptr::BackRef::new(global_this),
+                // SAFETY: `bun_vm()` is non-null for a Bun-owned global. The
+                // `KeepAlive` above keeps the loop drained-open, so the VM
+                // outlives the lookup under normal teardown. `worker.terminate()`
+                // frees the VM regardless of KeepAlive — the same outstanding
+                // work-pool-task gap every `WorkTask` consumer shares (fs, napi,
+                // `dns.lookup`); a fix belongs in that shared contract.
+                event_loop: global_this.bun_vm().event_loop(),
+                promise: JSPromiseStrong::init(global_this),
+                poll_ref,
+                request,
+                hostname: Box::<[u8]>::from(hostname),
+            }))
+        }
+
+        /// Hop onto the owning JS thread to settle the promise. Called from
+        /// `after_result` on the work pool, or inline when the entry was already
+        /// resolved — `enqueue_task_concurrent` is safe from either.
+        ///
+        /// # Safety
+        /// `this` must be the live allocation from `init`, not yet dispatched.
+        // `this` is forwarded to the event loop, which hands it to `run_from_js`;
+        // forming `&mut *this` here would invalidate the allocation's provenance.
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
+        fn on_dns_resolved(this: *mut Self) {
+            // SAFETY: caller contract; `event_loop` was captured on the JS thread
+            // that created `this` and outlives it. Ownership of `this` transfers
+            // to the event loop here.
+            unsafe {
+                (*(*this).event_loop).enqueue_task_concurrent(
+                    bun_jsc::ConcurrentTask::ConcurrentTask::from_callback(
+                        this,
+                        CachedLookup::run_from_js,
+                    ),
+                );
+            }
+        }
+
+        // `ConcurrentTask::from_callback` takes `fn(*mut T) -> bun_event_loop::JsResult<()>`.
+        fn run_from_js(this: *mut Self) -> bun_event_loop::JsResult<()> {
+            // SAFETY: the event loop hands sole ownership of `this` to this callback.
+            let this = unsafe { bun_core::heap::take(this) };
+            let CachedLookup {
+                global_this,
+                mut promise,
+                mut poll_ref,
+                request,
+                hostname,
+                ..
+            } = *this;
+            let global_this = global_this.get();
+            poll_ref.unref(js_event_loop_ctx());
+
+            // SAFETY: `request` is pinned by the refcount this struct owns.
+            // `result` is written once, under the cache lock, before the notify
+            // that scheduled us; it is never mutated afterwards.
+            let (err, info) = unsafe {
+                let result = (*request)
+                    .result
+                    .as_ref()
+                    .expect("DNS cache entry notified without a result");
+                (result.err, result.info)
+            };
+
+            let error = c_ares::Error::init_eai(err);
+            let addresses = match (error, info) {
+                (None, Some(info)) => {
+                    // SAFETY: `info` borrows `Request.result_buf[0]`, kept alive by
+                    // our refcount until `freeaddrinfo` below.
+                    Some(unsafe {
+                        crate::dns_jsc::options_jsc::addr_info_to_js_array(
+                            &(*info.as_ptr()).info,
+                            global_this,
+                        )
+                    })
+                }
+                _ => None,
+            };
+
+            // Releases our refcount; `err != 0` evicts the entry, matching what the
+            // usockets connect path does with a failed resolution.
+            freeaddrinfo(request, (err != 0) as c_int);
+
+            match addresses {
+                Some(Ok(array)) => {
+                    let _ = promise.resolve_task(global_this, array);
+                }
+                // Building the array threw. Reject with that exception rather than
+                // leaving the caller's promise pending forever.
+                Some(Err(e)) => {
+                    let _ = promise.reject(global_this, Err(e));
+                }
+                None => error_to_deferred(
+                    error.unwrap_or(c_ares::Error::ENOTFOUND),
+                    b"getaddrinfo",
+                    Some(&hostname[..]),
+                    &mut promise,
+                )
+                .reject_later(global_this),
+            }
+            Ok(())
+        }
+    }
+
+    /// Arrange for `lookup` to be notified when `request` resolves. Runs on the
+    /// JS thread, before the promise is handed back to the caller.
+    ///
+    /// # Safety
+    /// `request` must be the live cache entry whose `+1` refcount `lookup` owns;
+    /// `lookup` must be the allocation returned by `CachedLookup::init`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn register_cached_lookup(request: *mut Request, lookup: *mut CachedLookup) {
+        let guard = global_cache().lock();
+        // SAFETY: `request` is a live cache entry; `result`/`notify` are only
+        // touched under `global_cache().lock()`, which is held here.
+        unsafe {
+            if (*request).result.is_some() {
+                // Already resolved. `on_dns_resolved` only enqueues, so the promise
+                // still settles asynchronously, but do not hold the lock across it.
+                drop(guard);
+                CachedLookup::on_dns_resolved(lookup);
+                return;
+            }
+            (*request).notify.push(DNSRequestOwner::JsLookup(lookup));
+        }
+        drop(guard);
+    }
+
+    /// `node:net`'s default `lookup`. Unlike `dns.lookup`, this goes through the
+    /// process-wide DNS cache, so `dns.prefetch()` warms it and simultaneous
+    /// lookups for one hostname are coalesced into a single resolution.
+    ///
+    /// Resolves to the same `[{ address, family, ttl }]` shape as `Bun.dns.lookup`.
+    #[host_fn]
+    pub(crate) fn cached_lookup(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+
+        if arguments.len() < 1 {
+            return Err(global_this.throw_not_enough_arguments("lookup", 1, arguments.len()));
+        }
+
+        if !arguments[0].is_string() {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
+            );
+        }
+        let hostname_slice = arguments[0].to_slice(global_this)?;
+        let hostname = hostname_slice.slice();
+        let hostname_z = bun::ZBox::from_bytes(hostname);
+
+        let port: u16 = if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
+            global_this.validate_integer_range::<u16>(
+                arguments[1],
+                0,
+                jsc::IntegerRange {
+                    field_name: b"port",
+                    always_allow_zero: true,
+                    ..Default::default()
+                },
+            )?
+        } else {
+            0
+        };
+
+        // SAFETY: `VirtualMachine::get()` returns the live thread-local VM (panics if absent).
+        let loop_ = VirtualMachine::get().as_mut().uws_loop();
+        // `Some(..)` marks this as a real consumer rather than a preload, so the
+        // entry is refcounted for us; only the usockets path reads the flag back.
+        let mut is_cache_hit = false;
+        let request = getaddrinfo(
+            loop_,
+            Some(hostname_z.as_zstr()),
+            port,
+            Some(&mut is_cache_hit),
+        )
+        .expect("getaddrinfo only returns None when preloading");
+
+        let lookup = CachedLookup::init(global_this, request, hostname);
+        // SAFETY: `lookup` is the fresh allocation from `init`; nothing else aliases it.
+        let promise = unsafe { (*lookup).promise.value() };
+        register_cached_lookup(request, lookup);
+        Ok(promise)
+    }
+
+    /// Drop `host`'s cache entry the way a refused connect does on the usockets
+    /// path, where `us_connecting_socket_close` ends with
+    /// `Bun__addrinfo_freeRequest(req, error == ECONNREFUSED)`: the addresses may
+    /// be stale, so the next lookup has to re-resolve.
+    ///
+    /// A `cached_lookup` consumer connects to an address the cache already handed
+    /// it, so it holds no `addrinfo_request` by the time the connect fails and has
+    /// to invalidate by hostname instead. An entry somebody else still references
+    /// stays allocated but is skipped by `GlobalCache::get` from here on; its last
+    /// holder frees it in `freeaddrinfo`.
+    pub(crate) fn invalidate(host: Option<&ZStr>) {
+        // `RequestKeyOwned::matches` compares the hostname's hash and bytes only,
+        // so the port is not part of the lookup.
+        let key = RequestKey::init(host, 0);
+        let mut guard = global_cache().lock();
+        // One failed connection, counted whether or not an entry is still around
+        // to drop, the same way `freeaddrinfo` counts it.
+        DNS_CACHE_ERRORS.fetch_add(1, Ordering::Relaxed);
+
+        let mut timestamp_to_store: u32 = 0;
+        let Some(entry) = guard.get(&key, &mut timestamp_to_store) else {
+            return;
+        };
+
+        bun_output::scoped_log!(
+            dns,
+            "invalidate({})",
+            bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+        );
+
+        // SAFETY: `entry` is a live cache slot; `valid`/`refcount` are only mutated
+        // under `global_cache().lock()`, which is held here.
+        unsafe {
+            (*entry).valid = false;
+            if (*entry).refcount == 0 {
+                guard.remove(entry);
+                Request::deinit(entry);
+            }
+        }
+    }
+
+    /// `node:net`'s counterpart to the usockets connect path's cache eviction.
+    #[host_fn]
+    pub(crate) fn invalidate_cached_lookup(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+
+        if arguments.len() < 1 {
+            return Err(global_this.throw_not_enough_arguments("invalidate", 1, arguments.len()));
+        }
+
+        if !arguments[0].is_string() {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
+            );
+        }
+        let hostname_slice = arguments[0].to_slice(global_this)?;
+        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
+
+        invalidate(Some(hostname_z.as_zstr()));
+        Ok(JSValue::UNDEFINED)
     }
 
     extern "C" fn us_getaddrinfo(
@@ -6105,4 +6394,12 @@ export_host_fn!(
 export_host_fn!(
     Resolver::get_runtime_default_result_order_option,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption"
+);
+export_host_fn!(
+    internal::cached_lookup,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_cachedLookup"
+);
+export_host_fn!(
+    internal::invalidate_cached_lookup,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_invalidateCachedLookup"
 );

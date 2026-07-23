@@ -46,12 +46,23 @@ const { kArmHandshakeTimeout, kVerifyError } = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeMap = Array.prototype.map;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSort = Array.prototype.sort;
 const MathMax = Math.max;
 const MathMin = Math.min;
 
 const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
+
+/**
+ * Resolves a hostname through the process-wide DNS cache — the same entries
+ * `fetch()`, `Bun.connect` and `Bun.dns.prefetch()` use. Resolves to
+ * `[{ address, family, ttl }]`, like `Bun.dns.lookup`.
+ */
+const cachedDnsLookup = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.cachedLookup", 2);
+/** Drops a hostname's entry from that cache, so the next lookup re-resolves. */
+const invalidateCachedDnsLookup = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.invalidateCachedLookup", 1); // prettier-ignore
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
 const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
@@ -133,6 +144,8 @@ const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::")
 const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
+/** Hostname whose addresses the in-flight connect took from the DNS cache, if any. */
+const kDnsCacheHost = Symbol("kDnsCacheHost");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
@@ -1498,6 +1511,7 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kDnsCacheHost] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -2018,6 +2032,10 @@ Socket.prototype.connect = function connect(...args) {
     this._peername = null;
     this._sockname = null;
   }
+  // Per-connect state: a prior connect may have left this set (e.g. destroyed
+  // mid-flight), and this connect may never overwrite it (IP literal, pipe,
+  // custom lookup). Reset so a failure can't evict the wrong host's entry.
+  this[kDnsCacheHost] = undefined;
 
   this.connecting = true;
 
@@ -2775,7 +2793,13 @@ function lookupAndConnect(self, options) {
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
-  const lookup = optionsLookup || dns.lookup;
+  // The shared cache stores addresses in a v6-first interleave, not the
+  // resolver's order, so it only matches `verbatim` semantics on the
+  // autoSelectFamily path where Happy Eyeballs tries every address anyway. The
+  // single-address path takes the first result verbatim, so keep it on
+  // dns.lookup to preserve the resolver's ordering.
+  const usesDnsCache = !optionsLookup && canLookupViaDnsCache(dnsopts) && autoSelectFamily && !localAddress;
+  const lookup = optionsLookup || (usesDnsCache ? dnsCacheLookupFor(port) : dns.lookup);
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
     $debug("connect: autodetecting", host, port);
@@ -2791,6 +2815,7 @@ function lookupAndConnect(self, options) {
       localAddress,
       localPort,
       autoSelectFamilyAttemptTimeout,
+      usesDnsCache,
     );
     return;
   }
@@ -2813,6 +2838,17 @@ function lookupAndConnect(self, options) {
   });
 }
 
+// Drop the hostname's shared-DNS-cache entry after every address we got from it
+// failed to connect, mirroring the usockets connect path's eviction on a refused
+// connection. Reads and clears the marker so it fires at most once per connect.
+function evictDnsCacheHostOnConnectFailure(self) {
+  const host = self[kDnsCacheHost];
+  if (host !== undefined) {
+    self[kDnsCacheHost] = undefined;
+    invalidateCachedDnsLookup(host);
+  }
+}
+
 function socketToDnsFamily(family) {
   switch (family) {
     case "IPv4": return 4; // prettier-ignore
@@ -2821,7 +2857,75 @@ function socketToDnsFamily(family) {
   return family;
 }
 
-function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, localAddress, localPort, timeout) {
+// The DNS cache is keyed on hostname alone and always resolves with AF_UNSPEC +
+// SOCK_STREAM (+ AI_ADDRCONFIG off Windows), which is exactly what `fetch()` and
+// `Bun.connect` ask for. Anything else (an explicit family, extra hints) has to
+// go through `dns.lookup`, or we would hand back addresses resolved under the
+// wrong hints.
+function canLookupViaDnsCache(dnsopts) {
+  return (dnsopts.family === 0 || dnsopts.family === undefined) && dnsopts.hints === (isWindows ? 0 : dns.ADDRCONFIG);
+}
+
+const byFamilyAscending = (a, b) => a.family - b.family;
+const byFamilyDescending = (a, b) => b.family - a.family;
+const toLookupAddress = ({ address, family }) => ({ address, family });
+
+// The shape `node:dns` gives an empty resolution.
+function noRecordsFoundError(hostname) {
+  const err = new Error(`getaddrinfo ENODATA ${hostname}`);
+  err.name = "DNSException";
+  err.code = "ENODATA";
+  // Hardcoded errno, matching `node:dns`.
+  err.errno = 1;
+  err.syscall = "getaddrinfo";
+  err.hostname = hostname;
+  return err;
+}
+
+function dnsCacheLookupFor(port) {
+  return function lookupViaDnsCache(hostname, options, callback) {
+    cachedDnsLookup(hostname, port).$then(
+      res => {
+        if (res.length === 0) {
+          callback(noRecordsFoundError(hostname), undefined, undefined);
+          return;
+        }
+        const order = dns.getDefaultResultOrder();
+        if (order === "ipv4first") {
+          ArrayPrototypeSort.$call(res, byFamilyAscending);
+        } else if (order === "ipv6first") {
+          ArrayPrototypeSort.$call(res, byFamilyDescending);
+        }
+        if (options.all) {
+          callback(null, ArrayPrototypeMap.$call(res, toLookupAddress));
+        } else {
+          const { address, family } = res[0];
+          callback(null, address, family);
+        }
+      },
+      err => {
+        // `Bun.dns` reports DNS failures as `DNS_ENOTFOUND` etc; `node:dns`
+        // strips the prefix. The hostname and message are set natively.
+        if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+        callback(err, undefined, undefined);
+      },
+    );
+  };
+}
+
+function lookupAndConnectMultiple(
+  self,
+  lookup,
+  host,
+  options,
+  dnsopts,
+  port,
+  localAddress,
+  localPort,
+  timeout,
+  usesDnsCache,
+) {
+  // prettier-ignore
   lookup(host, dnsopts, function emitLookup(err, addresses) {
     if (!self.connecting) {
       return;
@@ -2879,6 +2983,10 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
         ArrayPrototypePush.$call(toAttempt, validAddresses[1][i]);
       }
     }
+
+    // The addresses came from the shared cache; a failed connect has to evict the
+    // entry so the next attempt re-resolves. Cleared on a successful connect.
+    if (usesDnsCache) self[kDnsCacheHost] = host;
 
     if (toAttempt.length === 1) {
       $debug("connect/multiple: only one address found, switching back to single connection");
@@ -3017,6 +3125,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
   }
 
   if (err) {
+    evictDnsCacheHostOnConnectFailure(self);
     const ex = new ExceptionWithHostPort(err, "connect", address, port);
     self.destroy(ex);
   }
@@ -3033,6 +3142,7 @@ function internalConnectMultiple(context, canceled?) {
 
   // All connections have been tried without success, destroy with error
   if (canceled || context.current === context.addresses.length) {
+    evictDnsCacheHostOnConnectFailure(self);
     if (context.errors.length === 0) {
       self.destroy($ERR_SOCKET_CONNECTION_TIMEOUT());
       return;
@@ -3221,6 +3331,8 @@ function afterConnect(status, handle, req, readable, writable) {
   self._sockname = null;
 
   if (status === 0) {
+    // The cached addresses worked; don't evict the entry.
+    self[kDnsCacheHost] = undefined;
     if (self.readable && !readable) {
       self.push(null);
       self.read();
@@ -3264,6 +3376,7 @@ function afterConnect(status, handle, req, readable, writable) {
       ex.localPort = req.localPort;
     }
 
+    evictDnsCacheHostOnConnectFailure(self);
     self.emit("connectionAttemptFailed", req.address, req.port, req.addressType, ex);
     self.destroy(ex);
   }

@@ -69,6 +69,7 @@ impl EAI {
     #[cfg(not(target_os = "linux"))]
     pub const ADDRFAMILY: Self = Self(1);
 
+    pub const AGAIN: Self = Self(libc::EAI_AGAIN);
     pub const BADFLAGS: Self = Self(libc::EAI_BADFLAGS);
     pub const FAIL: Self = Self(libc::EAI_FAIL);
     pub const FAMILY: Self = Self(libc::EAI_FAMILY);
@@ -1903,6 +1904,8 @@ impl Error {
             }
             match eai {
                 EAI::ADDRFAMILY => Some(Error::EBADFAMILY),
+                // "Temporary failure in name resolution", same as the Windows arm.
+                EAI::AGAIN => Some(Error::ETIMEOUT),
                 EAI::BADFLAGS => Some(Error::EBADFLAGS), // Invalid hints
                 EAI::FAIL => Some(Error::EBADRESP),
                 EAI::FAMILY => Some(Error::EBADFAMILY),

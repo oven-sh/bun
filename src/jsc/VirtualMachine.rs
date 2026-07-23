@@ -950,6 +950,21 @@ impl VirtualMachine {
         }
     }
 
+    /// Returns a mutable reference to the per-VM `RareData`.
+    ///
+    /// # Caller invariants
+    ///
+    /// The returned `&mut RareData` points into a **separate heap allocation**
+    /// (the `Box<RareData>` stored in `self.rare_data`), NOT into `self` or any
+    /// inline field of `VirtualMachine`. Callers such as
+    /// `WebSocket::new()` in `websocket_client.rs` rely on this property to
+    /// perform raw-pointer borrow-splitting — forming a shared `&VirtualMachine`
+    /// alongside the `&mut RareData` without aliasing, because the two references
+    /// occupy disjoint allocations under Stacked Borrows / Tree Borrows.
+    ///
+    /// If the `RareData` storage is ever changed from `Box` to an inline field,
+    /// those callers would silently become UB. Keep this invariant documented
+    /// and consider a Miri regression test.
     #[inline]
     pub fn rare_data(&mut self) -> &mut RareData {
         if self.rare_data.is_none() {

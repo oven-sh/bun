@@ -1627,6 +1627,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // reads `vm.uws_loop()` / `vm.event_loop_handle` and never touches
             // `vm.rare_data`, so the shared `&VirtualMachine` argument cannot
             // observe or invalidate the `&mut RareData` receiver.
+            // See also: VirtualMachine::rare_data() # Caller invariants doc.
             unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
         };
         if !Socket::<SSL>::adopt_group(

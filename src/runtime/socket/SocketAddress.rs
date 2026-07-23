@@ -78,8 +78,11 @@ impl Default for Options {
 impl Options {
     /// NOTE: assumes options object has been normalized and validated by JS code.
     pub fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
-        // Node's `validateObject` rejects arrays and functions in addition to non-objects.
+        // Node's `validateObject` also rejects arrays and callables.
         global.validate_object("options", obj, Default::default())?;
+        if obj.is_callable() {
+            return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
+        }
 
         let address_str: Option<BunString> = if let Some(a) = obj.get(global, "address")? {
             if !a.is_string() {

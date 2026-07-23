@@ -90,7 +90,7 @@ describe("SocketAddress constructor", () => {
     },
   );
 
-  it.each([[["1.2.3.4"]], [[]], [null], ["127.0.0.1"], [0]])(
+  it.each([[["1.2.3.4"]], [[]], [() => {}], [null], ["127.0.0.1"], [0]])(
     "given %p as options, throws ERR_INVALID_ARG_TYPE",
     (options: any) => {
       expect(() => new SocketAddress(options)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");

@@ -303,6 +303,15 @@ struct HttpResponseData;
             bool seenAnyCoding = false;
             for (Header *h = headers; (++h)->key.length();) {
                 if (h->key.length() == 17 && !strncasecmp(h->key.data(), "transfer-encoding", 17)) {
+                    /* An earlier Transfer-Encoding field already named "chunked": any
+                     * later TE field (even one with an empty value) is invalid. The
+                     * per-token guard below handles the non-empty case too; this catches
+                     * the empty one so the change is strictly tightening. */
+                    if (te.chunked) [[unlikely]] {
+                        te.invalid = true;
+                        return te;
+                    }
+
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;

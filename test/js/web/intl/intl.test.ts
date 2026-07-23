@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against (Linux); macOS uses Apple's libicucore and
@@ -306,4 +306,44 @@ describe("exhaustive locale sweep (every compressed item)", () => {
       expect(a).toBe(b);
     }
   });
+});
+
+// The IANA timezone table and host-zone display-name cache are filled lazily on
+// first Date / Intl access rather than inside VM::VM, so the first access can
+// race across Workers that each construct their own VM. Exercise that race in a
+// fresh process where nothing has warmed the cache yet: every Worker plus the
+// main thread must observe the same resolved zone, the same supportedValuesOf
+// count, and the same Date.prototype.toString output.
+test.concurrent("timezone lazy-init is consistent across concurrent Workers", async () => {
+  const script = `
+    const probe = () => ({
+      zone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+      count: Intl.supportedValuesOf("timeZone").length,
+      date: new Date(0).toString(),
+    });
+    const body = "postMessage((" + probe.toString() + ")())";
+    const url = URL.createObjectURL(new Blob([body]));
+    const workers = Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
+      const w = new Worker(url);
+      w.onmessage = e => { resolve(e.data); w.terminate(); };
+      w.onerror = reject;
+    }));
+    const results = [probe(), ...await Promise.all(workers)];
+    for (const r of results)
+      if (r.zone !== results[0].zone || r.count !== results[0].count || r.date !== results[0].date)
+        throw new Error("inconsistent: " + JSON.stringify(r) + " vs " + JSON.stringify(results[0]));
+    console.log(JSON.stringify(results[0]));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, TZ: "America/New_York" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout.trim());
+  expect(result.zone).toBe("America/New_York");
+  expect(result.count).toBeGreaterThan(400);
+  expect(result.date).toContain("Eastern Standard Time");
+  expect(exitCode).toBe(0);
 });

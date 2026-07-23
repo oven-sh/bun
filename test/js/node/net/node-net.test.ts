@@ -751,6 +751,13 @@ describe("IPv6 scoped address literals (`%zone`)", () => {
     await using udp = await Bun.udpSocket({ hostname: host!, port: 0, socket: { data() {} } });
     expect(udp.port).toBeGreaterThan(0);
 
+    await using udp2 = await Bun.udpSocket({
+      hostname: "::",
+      connect: { hostname: host!, port: udp.port },
+      socket: { data() {} },
+    });
+    expect((udp2.remoteAddress as any).address).toContain("::1");
+
     await using srv = Bun.listen({
       hostname: "::1",
       port: 0,

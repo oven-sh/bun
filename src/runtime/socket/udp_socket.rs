@@ -2285,32 +2285,18 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
         // Numeric literals only — the JS layer resolves names before calling.
         let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
 
-        // SAFETY: storage is large enough for sockaddr_in; src is NUL-terminated.
-        let addr4 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in>() };
-        // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
-        let parsed_v4 = unsafe {
-            inet_pton(
-                inet::AF_INET as c_int,
+        // SAFETY: address_z is NUL-terminated; storage is sockaddr_storage-sized.
+        let family = unsafe {
+            uws::udp::raw::bsd_parse_ip_address(
                 address_z.as_ptr(),
-                (&raw mut addr4.addr).cast::<c_void>(),
+                c_int::from(port),
+                std::ptr::from_mut(&mut storage).cast::<c_void>(),
             )
         };
-        let socklen: libc::socklen_t = if parsed_v4 == 1 {
-            addr4.family = inet::AF_INET as inet::sa_family_t;
-            addr4.port = htons(port);
-            size_of::<sockaddr_in>() as libc::socklen_t
-        } else {
-            // SAFETY: storage is large enough for sockaddr_in6.
-            let addr6 = unsafe { &mut *std::ptr::from_mut(&mut storage).cast::<sockaddr_in6>() };
-            // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in6_addr-sized storage.
-            let parsed_v6 = unsafe {
-                inet_pton(
-                    inet::AF_INET6 as c_int,
-                    address_z.as_ptr(),
-                    (&raw mut addr6.addr).cast::<c_void>(),
-                )
-            };
-            if parsed_v6 != 1 {
+        let socklen: libc::socklen_t = match family {
+            f if f == inet::AF_INET as c_int => size_of::<sockaddr_in>() as libc::socklen_t,
+            f if f == inet::AF_INET6 as c_int => size_of::<sockaddr_in6>() as libc::socklen_t,
+            _ => {
                 return Err(global.throw_value(
                     bun_sys::Error::from_code_int(
                         SystemErrno::EINVAL as c_int,
@@ -2319,9 +2305,6 @@ pub fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
                     .to_js(global),
                 ));
             }
-            addr6.family = inet::AF_INET6 as inet::sa_family_t;
-            addr6.port = htons(port);
-            size_of::<sockaddr_in6>() as libc::socklen_t
         };
 
         // IPV6_V6ONLY, SO_REUSEADDR/SO_REUSEPORT and bind(2) go through bsd.c

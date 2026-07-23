@@ -350,6 +350,21 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
+        /// Like `abs_buf_checked`, but uses host-native absolute semantics
+        /// (`platform::Auto`) rather than `Loose`. `Loose` treats a Windows
+        /// drive prefix (`C:/…`) as absolute on every host, which would leave a
+        /// non-native-absolute path unchanged on POSIX; `Auto` matches
+        /// `bun_paths::is_absolute`, so a native-relative part is always
+        /// anchored at `top_level_dir`.
+        pub fn abs_buf_checked_native<'b>(
+            &self,
+            parts: &[&[u8]],
+            buf: &'b mut [u8],
+        ) -> Option<&'b [u8]> {
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            join_abs_string_buf_checked::<platform::Auto>(self.top_level_dir, buf, parts)
+        }
+
         /// Like `abs_buf` but writes a
         /// NUL sentinel and returns a `ZStr` borrowing `buf`.
         pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {

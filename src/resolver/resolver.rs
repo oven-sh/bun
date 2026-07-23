@@ -1921,14 +1921,24 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
+                let mut custom_abs_buf = bun_paths::path_buffer_pool::get();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
-                    match self.check_relative_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    // As in the package-path loop below, anchor a relative entry
+                    // at cwd so `check_relative_path` joins against an absolute
+                    // source dir (matching Node's `path.resolve`).
+                    let source_dir: &[u8] = if bun_paths::is_absolute(custom_utf8.slice()) {
+                        custom_utf8.slice()
+                    } else {
+                        match self
+                            .fs_ref()
+                            .abs_buf_checked_native(&[custom_utf8.slice()], &mut custom_abs_buf[..])
+                        {
+                            Some(abs) => abs,
+                            None => continue,
+                        }
+                    };
+                    match self.check_relative_path(source_dir, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
@@ -2040,14 +2050,23 @@ impl<'a> Resolver<'a> {
 
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
+                let mut custom_abs_buf = bun_paths::path_buffer_pool::get();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    // Node resolves relative `paths` entries against the cwd; do
+                    // the same so `check_package_path` gets an absolute source dir.
+                    let source_dir: &[u8] = if bun_paths::is_absolute(custom_utf8.slice()) {
+                        custom_utf8.slice()
+                    } else {
+                        match self
+                            .fs_ref()
+                            .abs_buf_checked_native(&[custom_utf8.slice()], &mut custom_abs_buf[..])
+                        {
+                            Some(abs) => abs,
+                            None => continue,
+                        }
+                    };
+                    match self.check_package_path(source_dir, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
@@ -4066,7 +4085,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        assert!(
+        // Debug-only: a non-absolute path here is a caller bug, but it is
+        // user-reachable in release (e.g. `options.paths` before the
+        // absolutization above landed), and falling through yields a
+        // recoverable MODULE_NOT_FOUND rather than anything unsafe.
+        debug_assert!(
             bun_paths::is_absolute(input_path),
             "cannot resolve DirInfo for non-absolute path: {}",
             bstr::BStr::new(input_path)

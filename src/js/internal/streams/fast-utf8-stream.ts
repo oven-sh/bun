@@ -179,7 +179,11 @@ class Utf8Stream extends EventEmitter {
     });
 
     if (this.#periodicFlush !== 0) {
-      this.#periodicFlushTimer = setInterval(() => this.flush(), this.#periodicFlush);
+      // Call #flush(undefined) so the periodic tick only drains the in-memory
+      // buffer to the fd (no drain/error listeners registered, no fsync),
+      // matching SonicBoom's periodic timer. The public flush() defaults cb to
+      // a no-op so user calls keep their fsync-on-drain contract.
+      this.#periodicFlushTimer = setInterval(() => this.#flush(undefined), this.#periodicFlush);
       this.#periodicFlushTimer.unref();
     }
   }
@@ -684,7 +688,7 @@ class Utf8Stream extends EventEmitter {
   }
 
   #flushBuffer(cb) {
-    validateFunction(cb, "cb");
+    if (cb !== undefined) validateFunction(cb, "cb");
 
     if (this.#destroyed) {
       const error = $ERR_INVALID_STATE("Utf8Stream is destroyed");
@@ -718,7 +722,7 @@ class Utf8Stream extends EventEmitter {
   }
 
   #flushUtf8(cb) {
-    validateFunction(cb, "cb");
+    if (cb !== undefined) validateFunction(cb, "cb");
 
     if (this.#destroyed) {
       const error = $ERR_INVALID_STATE("Utf8Stream is destroyed");

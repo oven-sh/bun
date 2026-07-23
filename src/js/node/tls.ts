@@ -22,7 +22,7 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -886,7 +886,10 @@ TLSSocket.prototype._final = function _final(callback) {
   // no-handle fast path, otherwise the deferred callback would never fire.
   if (!this._handle) return callback();
   if (this.secureConnecting) {
-    return this.once("secureConnect", NetSocket.prototype._final.bind(this, callback));
+    // kSecureConnectDone rather than 'secureConnect': server-side sockets
+    // never emit the user event (node parity), but every handshake table
+    // emits the internal signal when secureConnecting clears.
+    return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
   return NetSocket.prototype._final.$call(this, callback);
 };

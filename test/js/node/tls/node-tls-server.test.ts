@@ -293,7 +293,10 @@ describe("tls.createServer", () => {
     let timeout: Timer;
     let client: TLSSocket | null = null;
     const server: Server = createServer(COMMON_CERT, socket => {
-      socket.on("secure", () => {
+      // The handshake is complete by the time the connection listener runs;
+      // accepted server sockets emit no 'secure' in node (its socket-level
+      // 'secure' fires before the user can hold the socket).
+      {
         try {
           expect(socket).toBeDefined();
           const cert = socket.getCertificate() as PeerCertificate;
@@ -346,7 +349,7 @@ describe("tls.createServer", () => {
           server.close();
           done(err);
         }
-      });
+      }
     });
 
     const closeAndFail = (err: any) => {
@@ -2176,5 +2179,75 @@ describe("throwing 'secureConnection' listener", () => {
       socketError: null,
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("deferred spill-close", () => {
+  // A close issued while sealed ciphertext is still spilled (peer applying
+  // backpressure) is deferred until the spill drains; peer bytes arriving in
+  // that window must be delivered normally and the close must still complete.
+  it("delivers late peer data during the deferred window and completes the close", async () => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, "s");
+    const serverGot: Buffer[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    const clientClosed = Promise.withResolvers<void>();
+    const clientEnded = Promise.withResolvers<void>();
+    const serverConn = Promise.withResolvers<import("node:tls").TLSSocket>();
+
+    const server = tls.createServer(cert1, function onConn(sock) {
+      sock.on("data", function onData(c: Buffer) {
+        serverGot.push(c);
+      });
+      sock.on("close", function onClose() {
+        serverClosed.resolve();
+      });
+      sock.on("error", function onErr(e) {
+        serverClosed.reject(e);
+      });
+      serverConn.resolve(sock);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const received: Buffer[] = [];
+      const client = tls.connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+      });
+      await once(client, "secureConnect");
+      // Stop reading before the server writes so the payload backs up and
+      // (past the kernel buffers) spills on the server side.
+      client.pause();
+      client.on("data", function onData(c: Buffer) {
+        received.push(c);
+      });
+      client.on("end", function onEnd() {
+        clientEnded.resolve();
+      });
+      client.on("close", function onClose() {
+        clientClosed.resolve();
+      });
+      client.on("error", function onErr(e) {
+        clientClosed.reject(e);
+      });
+
+      const sock = await serverConn.promise;
+      sock.write(payload);
+      sock.end();
+      // Late peer data while the server-side close is deferred on the spill.
+      client.write("late-peer-data");
+      client.resume();
+
+      await clientEnded.promise;
+      client.end();
+      await Promise.all([serverClosed.promise, clientClosed.promise]);
+
+      const got = Buffer.concat(received);
+      expect(got.length).toBe(payload.length);
+      expect(got.equals(payload)).toBe(true);
+      expect(Buffer.concat(serverGot).toString()).toBe("late-peer-data");
+    } finally {
+      server.close();
+    }
   });
 });

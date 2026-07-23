@@ -1,4 +1,4 @@
-use core::ffi::c_int;
+use core::ffi::{CStr, c_char, c_int, c_uint, c_ulong, c_void};
 
 // #define Z_BINARY   0
 // #define Z_TEXT     1
@@ -59,19 +59,6 @@ pub enum FlushValue {
     Trees = 6,
 }
 
-// ---------------------------------------------------------------------------
-// z_stream — single source of truth for both POSIX and Windows.
-//
-// zlib (and zlib-ng compat) typedef `uLong` as `unsigned long`, so one
-// `c_ulong`-based definition is ABI-correct on LP64 (8-byte) *and* LLP64
-// (4-byte) targets. The two per-platform copies in posix.rs / win32.rs were
-// already field-for-field identical; win32.rs had even normalized its
-// `struct_internal_state` to match posix so rustc's
-// `clashing_extern_declarations` lint saw the extern fns as compatible. This
-// hoist makes that the actual single definition.
-// ---------------------------------------------------------------------------
-use core::ffi::{c_char, c_uint, c_ulong, c_void};
-
 // typedef voidpf (*alloc_func)(voidpf opaque, uInt items, uInt size);
 // typedef void   (*free_func) (voidpf opaque, voidpf address);
 pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
@@ -86,10 +73,8 @@ pub type z_free_func = free_func;
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
 //
-// Previously duplicated in win32.rs and bun_zlib::lib.rs.
-// All resolve to ABI-identical primitives on every
-// target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
-// Unix) for the same reason zStream_struct above uses `c_ulong` directly.
+// All resolve to ABI-identical primitives on every target Bun ships; `uLong`
+// = `unsigned long` (4B on LLP64 Windows, 8B on LP64 Unix).
 // ---------------------------------------------------------------------------
 pub type Byte = u8;
 pub type Bytef = u8;
@@ -126,34 +111,63 @@ pub struct struct_internal_state {
 }
 pub type internal_state = struct_internal_state;
 
+// ---------------------------------------------------------------------------
+// z_stream — single source of truth for both POSIX and Windows.
+//
+// zlib (and zlib-ng compat) typedef `uLong` as `unsigned long`, so one
+// `c_ulong`-based definition is ABI-correct on LP64 (8-byte) *and* LLP64
+// (4-byte) targets.
+//
+// Type invariants (enforced by field privacy; see the `safe fn` FFI decls
+// below for what they discharge):
+//
+//   (S1) `internal_state` is null, or points to a live state allocated by
+//        zlib for *this* stream (only zlib itself ever writes this field).
+//   (S2) `alloc_func`/`free_func` are `None` (= null → zlib installs its
+//        defaults) or `Some(valid fn ptr)`. `Option<extern fn>` already
+//        makes an invalid non-null value unconstructible in safe Rust.
+//   (B)  `next_in` is null or readable for `avail_in` bytes; `next_out` is
+//        null or writable for `avail_out` bytes. Established by
+//        [`set_input`]/[`set_output`]; the caller's `unsafe` promise there
+//        is what makes [`inflate`]/[`deflate`]/[`deflate_params`]/
+//        [`input`] safe methods.
+//
+// [`set_input`]: zStream_struct::set_input
+// [`set_output`]: zStream_struct::set_output
+// [`inflate`]: zStream_struct::inflate
+// [`deflate`]: zStream_struct::deflate
+// [`deflate_params`]: zStream_struct::deflate_params
+// [`input`]: zStream_struct::input
+// ---------------------------------------------------------------------------
+
 // https://zlib.net/manual.html#Stream
 #[repr(C)]
 pub struct zStream_struct {
     /// next input byte
-    pub next_in: *const u8,
+    next_in: *const u8,
     /// number of bytes available at next_in
-    pub avail_in: c_uint,
+    avail_in: c_uint,
     /// total number of input bytes read so far
     pub total_in: c_ulong,
 
     /// next output byte will go here
-    pub next_out: *mut u8,
+    next_out: *mut u8,
     /// remaining free space at next_out
-    pub avail_out: c_uint,
+    avail_out: c_uint,
     /// total number of bytes output so far
     pub total_out: c_ulong,
 
     /// last error message, NULL if no error
-    pub err_msg: *const c_char,
+    err_msg: *const c_char,
     /// not visible by applications
-    pub internal_state: *mut struct_internal_state,
+    internal_state: *mut struct_internal_state,
 
     /// used to allocate the internal state
-    pub alloc_func: alloc_func,
+    alloc_func: alloc_func,
     /// used to free the internal state
-    pub free_func: free_func,
+    free_func: free_func,
     /// private data object passed to zalloc and zfree
-    pub user_data: *mut c_void,
+    user_data: *mut c_void,
 
     /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
     pub data_type: DataType,
@@ -161,7 +175,7 @@ pub struct zStream_struct {
     /// Adler-32 or CRC-32 value of the uncompressed data
     pub adler: c_ulong,
     /// reserved for future use
-    pub reserved: c_ulong,
+    reserved: c_ulong,
 }
 
 pub type z_stream = zStream_struct;
@@ -172,5 +186,251 @@ pub type z_stream_s = zStream_struct;
 
 // SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
 // allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
-// is the documented pre-`inflateInit`/`deflateInit` state (S021).
+// is the documented pre-`inflateInit`/`deflateInit` state and satisfies
+// invariants (S1)/(S2)/(B).
 unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
+
+impl Default for zStream_struct {
+    #[inline]
+    fn default() -> Self {
+        bun_core::ffi::zeroed()
+    }
+}
+
+impl zStream_struct {
+    /// A zeroed stream with the given allocator thunks. `None`/`None` leaves
+    /// them null so zlib installs its own defaults at `*Init*` time.
+    #[inline]
+    pub fn with_allocator(alloc: alloc_func, free: free_func) -> Self {
+        Self { alloc_func: alloc, free_func: free, ..Default::default() }
+    }
+
+    #[inline(always)]
+    pub fn avail_in(&self) -> uInt {
+        self.avail_in
+    }
+
+    #[inline(always)]
+    pub fn avail_out(&self) -> uInt {
+        self.avail_out
+    }
+
+    /// The unconsumed input window `next_in[..avail_in]`. Safe by invariant
+    /// (B); empty when no input is set.
+    #[inline(always)]
+    pub fn input(&self) -> &[u8] {
+        if self.avail_in == 0 || self.next_in.is_null() {
+            return &[];
+        }
+        // SAFETY: invariant (B) — `next_in` readable for `avail_in` bytes.
+        unsafe { core::slice::from_raw_parts(self.next_in, self.avail_in as usize) }
+    }
+
+    /// zlib's `msg`: a NUL-terminated static string on error, null otherwise.
+    #[inline]
+    pub fn err_msg(&self) -> Option<&CStr> {
+        if self.err_msg.is_null() {
+            return None;
+        }
+        // SAFETY: zlib only ever stores pointers to its own static string
+        // table (`z_errmsg[]`) or literals here; never caller-owned memory.
+        Some(unsafe { CStr::from_ptr(self.err_msg) })
+    }
+
+    /// Point the input window at `ptr[..len]`.
+    ///
+    /// # Safety
+    /// `ptr` must be readable for `len` bytes and remain so until the stream
+    /// has consumed it (`avail_in() == 0`), the window is replaced by another
+    /// `set_input`, or the stream is dropped. This is the *only* place a
+    /// caller vouches for invariant (B) on the input side; every method that
+    /// reads the window ([`inflate`](Self::inflate),
+    /// [`deflate`](Self::deflate), [`deflate_params`](Self::deflate_params),
+    /// [`input`](Self::input)) relies on it.
+    #[inline(always)]
+    pub unsafe fn set_input(&mut self, ptr: *const u8, len: uInt) {
+        self.next_in = ptr;
+        self.avail_in = len;
+    }
+
+    /// Point the output window at `ptr[..len]`.
+    ///
+    /// # Safety
+    /// `ptr` must be writable for `len` bytes and remain so until the stream
+    /// has filled it (`avail_out() == 0`), the window is replaced by another
+    /// `set_output`, or the stream is dropped.
+    #[inline(always)]
+    pub unsafe fn set_output(&mut self, ptr: *mut u8, len: uInt) {
+        self.next_out = ptr;
+        self.avail_out = len;
+    }
+
+    /// `inflateInit2(strm, windowBits)` — the version/stream_size stamp that
+    /// zlib's `_` suffix wants is supplied here.
+    #[inline(always)]
+    pub fn inflate_init2(&mut self, window_bits: c_int) -> ReturnCode {
+        raw::inflateInit2_(self, window_bits, raw::zlibVersion(), Z_STREAM_SIZE)
+    }
+
+    /// `deflateInit2(strm, level, Z_DEFLATED, windowBits, memLevel, strategy)`.
+    #[inline(always)]
+    pub fn deflate_init2(
+        &mut self,
+        level: c_int,
+        window_bits: c_int,
+        mem_level: c_int,
+        strategy: c_int,
+    ) -> ReturnCode {
+        raw::deflateInit2_(
+            self,
+            level,
+            Z_DEFLATED,
+            window_bits,
+            mem_level,
+            strategy,
+            raw::zlibVersion(),
+            Z_STREAM_SIZE,
+        )
+    }
+
+    #[inline(always)]
+    pub fn inflate_end(&mut self) -> ReturnCode {
+        raw::inflateEnd(self)
+    }
+
+    #[inline(always)]
+    pub fn deflate_end(&mut self) -> ReturnCode {
+        raw::deflateEnd(self)
+    }
+
+    #[inline(always)]
+    pub fn inflate_reset(&mut self) -> ReturnCode {
+        raw::inflateReset(self)
+    }
+
+    #[inline(always)]
+    pub fn deflate_reset(&mut self) -> ReturnCode {
+        raw::deflateReset(self)
+    }
+
+    #[inline(always)]
+    pub fn deflate_bound(&mut self, source_len: uLong) -> uLong {
+        raw::deflateBound(self, source_len)
+    }
+
+    #[inline(always)]
+    pub fn inflate_set_dictionary(&mut self, dict: &[u8]) -> ReturnCode {
+        // SAFETY: `dict` is a valid slice; zlib reads exactly `dict.len()`
+        // bytes and does not retain the pointer.
+        unsafe { raw::inflateSetDictionary(self, dict.as_ptr(), clamp_uint(dict.len())) }
+    }
+
+    #[inline(always)]
+    pub fn deflate_set_dictionary(&mut self, dict: &[u8]) -> ReturnCode {
+        // SAFETY: as above. `deflateSetDictionary` saves/restores
+        // `next_in`/`avail_in` internally without dereferencing the saved
+        // values, so invariant (B) is not exercised.
+        unsafe { raw::deflateSetDictionary(self, dict.as_ptr(), clamp_uint(dict.len())) }
+    }
+
+    /// `inflate(strm, flush)`. Safe by invariants (S1)/(S2)/(B).
+    #[inline(always)]
+    pub fn inflate(&mut self, flush: FlushValue) -> ReturnCode {
+        // SAFETY: invariant (B) — established by `set_input`/`set_output`.
+        unsafe { raw::inflate(self, flush) }
+    }
+
+    /// `deflate(strm, flush)`. Safe by invariants (S1)/(S2)/(B).
+    #[inline(always)]
+    pub fn deflate(&mut self, flush: FlushValue) -> ReturnCode {
+        // SAFETY: invariant (B) — established by `set_input`/`set_output`.
+        unsafe { raw::deflate(self, flush) }
+    }
+
+    /// `deflateParams(strm, level, strategy)`. May flush pending input via an
+    /// internal `deflate(Z_BLOCK)`, so invariant (B) applies.
+    #[inline(always)]
+    pub fn deflate_params(&mut self, level: c_int, strategy: c_int) -> ReturnCode {
+        // SAFETY: invariant (B) — established by `set_input`/`set_output`.
+        unsafe { raw::deflateParams(self, level, strategy) }
+    }
+}
+
+#[inline(always)]
+fn clamp_uint(n: usize) -> uInt {
+    n.min(uInt::MAX as usize) as uInt
+}
+
+const Z_DEFLATED: c_int = 8;
+const Z_STREAM_SIZE: c_int = core::mem::size_of::<zStream_struct>() as c_int;
+
+/// Direct `extern "C"` declarations.
+///
+/// Every `safe fn` below is total given `z_stream`'s type invariants
+/// (S1)/(S2): zlib-ng's `inflateStateCheck`/`deflateStateCheck` null-check
+/// `strm`, `zalloc`/`zfree`, and `state` before dereferencing, so a stream
+/// whose `internal_state` is null-or-zlib-owned cannot fault there. `&mut
+/// z_stream` is ABI-identical to a non-null `z_streamp`. Functions that read
+/// `next_in`/`next_out` (invariant (B)) stay `unsafe fn` and are fronted by
+/// the safe methods above.
+pub mod raw {
+    use super::*;
+
+    unsafe extern "C" {
+        pub safe fn zlibVersion() -> *const c_char;
+        pub safe fn compressBound(sourceLen: uLong) -> uLong;
+        pub safe fn zError(err: c_int) -> *const u8;
+
+        // -- init / end / reset: (S1)+(S2) only ---------------------------
+        pub safe fn inflateInit2_(
+            strm: &mut z_stream,
+            windowBits: c_int,
+            version: *const c_char,
+            stream_size: c_int,
+        ) -> ReturnCode;
+        pub safe fn deflateInit2_(
+            strm: &mut z_stream,
+            level: c_int,
+            method: c_int,
+            windowBits: c_int,
+            memLevel: c_int,
+            strategy: c_int,
+            version: *const c_char,
+            stream_size: c_int,
+        ) -> ReturnCode;
+        pub safe fn inflateEnd(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn deflateEnd(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn inflateReset(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn deflateReset(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn deflateBound(strm: &mut z_stream, sourceLen: uLong) -> uLong;
+
+        // -- read next_in / write next_out: (B) required ------------------
+        pub unsafe fn inflate(strm: &mut z_stream, flush: FlushValue) -> ReturnCode;
+        pub unsafe fn deflate(strm: &mut z_stream, flush: FlushValue) -> ReturnCode;
+        pub unsafe fn deflateParams(
+            strm: &mut z_stream,
+            level: c_int,
+            strategy: c_int,
+        ) -> ReturnCode;
+
+        // -- ptr+len → &[u8] wrappers above -------------------------------
+        pub unsafe fn inflateSetDictionary(
+            strm: &mut z_stream,
+            dictionary: *const Bytef,
+            dictLength: uInt,
+        ) -> ReturnCode;
+        pub unsafe fn deflateSetDictionary(
+            strm: &mut z_stream,
+            dictionary: *const Bytef,
+            dictLength: uInt,
+        ) -> ReturnCode;
+        pub unsafe fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
+        pub unsafe fn compress2(
+            dest: *mut Bytef,
+            destLen: *mut uLongf,
+            source: *const Bytef,
+            sourceLen: uLong,
+            level: c_int,
+        ) -> ReturnCode;
+    }
+}

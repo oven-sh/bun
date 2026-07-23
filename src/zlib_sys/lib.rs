@@ -3,3 +3,5 @@
 pub mod posix;
 pub mod shared;
 pub mod win32;
+
+pub use shared::*;

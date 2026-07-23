@@ -78,7 +78,6 @@ inline bool hasDuplicateJwkKeyOps(const std::optional<Vector<CryptoKeyUsage>>& k
     return false;
 }
 
-
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

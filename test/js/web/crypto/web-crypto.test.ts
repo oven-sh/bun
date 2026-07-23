@@ -402,7 +402,12 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     const k = Buffer.alloc(32, 1).toString("base64url");
     const cases: [Record<string, unknown>, AlgorithmIdentifier | HmacImportParams, KeyUsage[], string][] = [
       [{ kty: "oct", k, key_ops: ["encrypt", "encrypt"] }, "ChaCha20-Poly1305", ["encrypt"], "Duplicate key operation"],
-      [{ kty: "oct", k, key_ops: ["sign", "sign"] }, { name: "HMAC", hash: "SHA-256" }, ["sign"], "Duplicate key operation"],
+      [
+        { kty: "oct", k, key_ops: ["sign", "sign"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        "Duplicate key operation",
+      ],
       [
         { kty: "oct", k, key_ops: ["verify", "verify"] },
         { name: "HMAC", hash: "SHA-256" },

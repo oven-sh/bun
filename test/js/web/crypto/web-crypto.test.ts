@@ -105,6 +105,41 @@ describe("Web Crypto", () => {
     expect(isSigValid).toBe(true);
   });
 
+  // W3C WebCrypto: JsonWebKey.kty is not a required dictionary member; each
+  // algorithm's import key operation rejects a missing or wrong kty with DataError.
+  describe("importKey jwk kty validation rejects with DataError", () => {
+    // Well-formed 32-byte x coordinate so the kty is the only invalid member.
+    const x32 = Buffer.alloc(32).toString("base64url");
+    const cases: Array<[string, object, object, KeyUsage[]]> = [
+      ["AES-GCM", { k: "AAECAwQFBgcICQoLDA0ODw" }, { name: "AES-GCM" }, ["encrypt"]],
+      ["HMAC", { k: "AAECAwQFBgcICQoLDA0ODw" }, { name: "HMAC", hash: "SHA-256" }, ["sign"]],
+      ["RSA-OAEP", { n: "AQAB", e: "AQAB" }, { name: "RSA-OAEP", hash: "SHA-256" }, ["encrypt"]],
+      ["ECDSA", { crv: "P-256", x: "", y: "" }, { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
+      ["Ed25519", { crv: "Ed25519", x: x32 }, { name: "Ed25519" }, ["verify"]],
+      ["X25519", { crv: "X25519", x: x32 }, { name: "X25519" }, []],
+    ];
+    it.each(cases)("missing kty: %s", async (_name, jwk, alg, usages) => {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, usages).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
+    });
+
+    // X25519 import key, step 2.2: if the kty field of jwk is not "OKP", throw a DataError.
+    it("wrong kty: X25519", async () => {
+      const err = await crypto.subtle
+        .importKey("jwk", { kty: "EC", crv: "X25519", x: x32 }, { name: "X25519" }, true, [])
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
+    });
+  });
+
   describe("unwrapKey JWK error handling", () => {
     // Setup: AES-GCM key that can encrypt arbitrary bytes and also unwrap keys.
     // We encrypt payloads that decrypt to invalid JWK data so the JWK parse path
@@ -134,9 +169,8 @@ describe("Web Crypto", () => {
       expect(err.name).toBe("DataError");
     });
 
-    // Previously this promise never settled: the TypeError from JsonWebKey
-    // dictionary conversion escaped as an uncaught exception and the
-    // DeferredPromise was left in m_pendingPromises forever.
+    // An object with no recognized members (including no kty) is a valid
+    // JsonWebKey dictionary; the per-algorithm import key operation rejects it.
     it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ foo: "bar" })));
       const err = await crypto.subtle
@@ -145,16 +179,33 @@ describe("Web Crypto", () => {
           () => null,
           e => e,
         );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
+    });
+
+    // Previously this promise never settled: the exception from JsonWebKey
+    // dictionary conversion escaped as an uncaught exception and the
+    // DeferredPromise was left in m_pendingPromises forever.
+    it("rejects when the JWK dictionary conversion throws", async () => {
+      const { key, iv, wrapped } = await setup(
+        new TextEncoder().encode(JSON.stringify({ kty: "oct", key_ops: ["bogus"] })),
+      );
+      const err = await crypto.subtle
+        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+        .then(
+          () => null,
+          e => e,
+        );
       expect(err).toBeInstanceOf(TypeError);
-      expect(err.message).toContain("kty");
+      expect(err.message).toContain("enumeration");
     });
 
     it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {
       // Each leaked entry in m_pendingPromises holds a Ref<DeferredPromise>. On
-      // the dictionary-conversion error path the promise was never rejected, so
-      // DeferredPromise never removed itself from JSDOMGlobalObject's
-      // guardedObjects set and the JSPromise stayed alive. Count live Promise
-      // cells in the JSC heap to detect the leak.
+      // the dictionary-conversion error path (here, an invalid key_ops enum
+      // value) the promise was never rejected, so DeferredPromise never removed
+      // itself from JSDOMGlobalObject's guardedObjects set and the JSPromise
+      // stayed alive. Count live Promise cells in the JSC heap to detect the leak.
       const fixture = /* js */ `
         const { heapStats } = require("bun:jsc");
         const keyData = new Uint8Array(32).fill(1);
@@ -165,7 +216,7 @@ describe("Web Crypto", () => {
         const wrapped = await crypto.subtle.encrypt(
           { name: "AES-GCM", iv },
           key,
-          new TextEncoder().encode(JSON.stringify({ foo: "bar" })),
+          new TextEncoder().encode(JSON.stringify({ kty: "oct", key_ops: ["bogus"] })),
         );
         async function once() {
           await crypto.subtle

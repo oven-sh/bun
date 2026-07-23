@@ -124,6 +124,9 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
     if (!isPlatformSupportedCurve(namedCurve))
         return nullptr;
 
+    if (keyData.kty != "OKP"_s)
+        return nullptr;
+
     switch (namedCurve) {
     case NamedCurve::Ed25519:
         if (!keyData.d.isEmpty() && !onlyPublic) {
@@ -133,8 +136,6 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
             if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey))
                 return nullptr;
         }
-        if (keyData.kty != "OKP"_s)
-            return nullptr;
         if (keyData.crv != "Ed25519"_s)
             return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "sig"_s)

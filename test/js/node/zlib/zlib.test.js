@@ -765,4 +765,21 @@ describe("crc32", () => {
     expect(() => zlib.crc32(String.prototype)).toThrow(TypeError);
     expect(zlib.crc32("abc")).toBe(891568578);
   });
+
+  it("handles missing and undefined arguments", () => {
+    // No data argument: ERR_INVALID_ARG_TYPE (not a crash, not a different error).
+    expect(() => zlib.crc32()).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // Explicit undefined behaves the same as no argument.
+    expect(() => zlib.crc32(undefined)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // Omitted second arg defaults to value=0.
+    expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+    // Explicit undefined second arg is rejected (not treated as the default).
+    expect(() => zlib.crc32("hello", undefined)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
 });

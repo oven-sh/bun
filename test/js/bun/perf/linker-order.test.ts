@@ -49,7 +49,7 @@ const darwinArm64 = { linux: false, darwin: true, abi: undefined, arm64: true } 
 const ctx = (overrides: Partial<OrderFileContext> = {}): OrderFileContext => ({
   buildkite: true,
   buildUrl: "https://buildkite.com/bun/bun/builds/68425",
-  branch: "main",
+  inheritBranch: "main",
   buildNumber: 68425,
   commitMessage: "some ordinary commit",
   pullRequest: false,
@@ -144,10 +144,14 @@ describe("deciding whether a build generates its own order file", () => {
     expect(shouldGenerateOrderFile(cfg(), ctx({ commitMessage: "perf: x [generate symbol order]" }))).toBe(true);
   });
 
-  it("a pull request never does, and never publishes", () => {
-    const pr = ctx({ pullRequest: true });
-    expect(orderFileEligible(cfg(), pr)).toBe(false);
-    expect(shouldGenerateOrderFile(cfg({ canary: false }), pr)).toBe(false);
+  it("a pull request inherits the base branch's, so its artifact is comparable to main", () => {
+    const pr = ctx({ pullRequest: true, inheritBranch: "main" });
+    expect(orderFileEligible(cfg(), pr)).toBe(true);
+    // Never traces: the commit-message tag is the only opt-in, and a PR that
+    // inherits nothing ships unordered rather than pay a second link. PRs are
+    // not part of the inheritance chain, so there is nothing to seed.
+    expect(shouldGenerateOrderFile(cfg(), pr)).toBe(false);
+    expect(mustGenerateOrderFile(cfg(), pr, true)).toBe(false);
     expect(mustGenerateOrderFile(cfg(), pr, false)).toBe(false);
   });
 

@@ -1219,8 +1219,9 @@ int bsd_parse_ip_address(const char *host, int port, struct sockaddr_storage *st
 #endif
             if (scope_id == 0) {
                 char *end;
+                errno = 0;
                 unsigned long n = strtoul(zone, &end, 10);
-                if (end != zone && *end == '\0' && n <= 0xffffffffUL) scope_id = (unsigned int)n;
+                if (end != zone && *end == '\0' && errno != ERANGE && n <= 0xffffffffUL) scope_id = (unsigned int)n;
             }
         }
         addr6->sin6_scope_id = scope_id;

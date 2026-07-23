@@ -259,6 +259,62 @@ test.concurrent("'end' is not emitted when the buffer is never drained, and the 
   expect(await stdioResult(proc)).toEqual({ stdout: "EXIT 8\n", exitCode: 0 });
 });
 
+test.concurrent("pausing inside a 'data' handler with EOF already buffered still delivers 'end'", async () => {
+  // Producer writes all lines + closes in one go; child pauses on the first chunk.
+  // The EOF queued behind that chunk must still reach push(null) and emit 'end'.
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const out = [];
+      process.stdin.on("data", d => { out.push("data:" + d.length); process.stdin.pause(); });
+      process.stdin.on("end", () => out.push("end"));
+      process.stdin.resume();
+      process.on("exit", () => console.log(JSON.stringify({ out, readableEnded: process.stdin.readableEnded })));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("a\nb\nc\n");
+  proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ out: ["data:6", "end"], readableEnded: true }) + "\n",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("readline close() inside a 'line' handler with piped EOF still lets stdin emit 'end'", async () => {
+  // rl.close() pauses process.stdin; the remaining lines still drain, and the
+  // already-buffered pipe EOF must reach 'end' + readableEnded rather than
+  // being parked behind the paused stream.
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const readline = require("node:readline");
+      const out = [];
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.on("line", l => { out.push("line:" + l); if (out.length === 1) rl.close(); });
+      process.stdin.on("end", () => out.push("end"));
+      process.on("exit", () => console.log(JSON.stringify({ out, readableEnded: process.stdin.readableEnded })));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("a\nb\nc\n");
+  proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ out: ["line:a", "line:b", "line:c", "end"], readableEnded: true }) + "\n",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("stdin should allow process to exit when paused", async () => {
   const proc = Bun.spawn({
     cmd: [

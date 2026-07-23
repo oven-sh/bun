@@ -167,6 +167,7 @@ export function getStdinStream(
 
   let stream_destroyed = false;
   let stream_reachedEof = false;
+  let hasReceivedData = false;
   stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -215,9 +216,9 @@ export function getStdinStream(
   const originalRead = stream.read;
   stream.read = function (size) {
     const ret = originalRead.$call(this, size);
-    // An explicit read() must acquire the native reader: _read() without one only
-    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
-    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
+    // An explicit sized read() must acquire the native reader when _read() did
+    // not (buffer already satisfied it, or hasReceivedData is false). Owning
+    // after originalRead so a throwing size never refs stdin; read(0) defers.
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }
@@ -252,6 +253,7 @@ export function getStdinStream(
 
     try {
       if (value) {
+        hasReceivedData = true;
         stream.push(value);
       } else {
         // EOF. Nothing is left to read, so release the native reader before
@@ -263,6 +265,10 @@ export function getStdinStream(
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
         stream.push(null);
+        // push(null) only marks the state ended; endReadable() runs on the next
+        // read(). Node's onStreamRead issues read(0) here so 'end' fires even
+        // when pause() has stopped flow() and nothing else will call read().
+        stream.read(0);
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);
@@ -281,7 +287,14 @@ export function getStdinStream(
       needsInternalReadRefresh = true;
     }
   }
-  stream._read = triggerRead;
+  // Node's Socket._read calls readStart(): Readable asking for data re-arms the
+  // native read after pause()'s readStop(), so a queued pipe EOF is delivered
+  // via maybeReadMore() -> _read(). TTY stays disowned so a child can inherit.
+  function triggerReadOwning(size) {
+    if (!reader && hasReceivedData && !isTTY && !stream_reachedEof && !stream_destroyed) own();
+    triggerRead.$call(this, size);
+  }
+  stream._read = triggerReadOwning;
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume

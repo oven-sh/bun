@@ -3205,8 +3205,8 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 // storage the worker is reading.
 //
 //   0  Detached/null — nothing to read.
-//   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
-//      should dupe `out_ptr[0..out_len]`; no unpin.
+//   1  Caller must dupe `out_ptr[0..out_len]` synchronously; no unpin.
+//      (FastTypedArray — GC-movable; or resizable non-shared — can shrink.)
 //   2  Everything else — `pin()`ed via `possiblySharedBuffer()`; caller
 //      MUST `unpinArrayBuffer(v)` when done.
 //
@@ -3228,19 +3228,25 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         // contract allows it).
         auto* buf = view->possiblySharedBuffer();
         if (!buf) return 0;
-        if (!buf->isShared())
-            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
+        // pin() blocks transfer(), not resize(); a resizable non-shared buffer
+        // can shrink and decommit under the reader. Caller dupes instead.
+        if (buf->isResizableNonShared())
+            return 1;
+        if (!buf->isShared())
+            buf->pin();
         return 2;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
         if (!buf || buf->isDetached()) return 0;
-        if (!buf->isShared())
-            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();
+        if (buf->isResizableNonShared())
+            return 1;
+        if (!buf->isShared())
+            buf->pin();
         return 2;
     }
     return 0;

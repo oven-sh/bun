@@ -353,7 +353,7 @@ impl Value {
                     return match JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len) {
                         // detached / null
                         0 => Ok(Value::Bytes(Bytes::default())),
-                        // FastTypedArray — tiny, GC-movable vector; dupe.
+                        // FastTypedArray or resizable non-shared — dupe; no unpin.
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
                             // duration of this call; init_dupe copies immediately.
@@ -836,8 +836,8 @@ unsafe extern "C" {
     /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
+    /// 0 = detached/null, 1 = caller must dupe synchronously (FastTypedArray or
+    /// resizable non-shared — no unpin), 2 = pinned (caller must `unpinArrayBuffer`).
     /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
     /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(

@@ -156,9 +156,31 @@ const V = {
       `P("out-" + $i() + ".txt")`, // fresh writable target
       `P("../escape.txt")`, // relative escape
       `P("a".repeat(300))`, // over-long component
+      // Windows-hostile paths: reserved device names, alternate data
+      // streams, trailing dots/spaces (stripped by Win32), drive-relative,
+      // extended-length and device namespaces, forward/back mixes, and a
+      // lone surrogate in a filename (WTF-16, invalid UTF-16).
+      `"CON"`,
+      `"NUL"`,
+      `"COM1"`,
+      `P("aux.txt")`,
+      `P("stream.txt:ads:$DATA")`,
+      `P("trailingdot.")`,
+      `P("trailingspace ")`,
+      `"C:relative-to-cwd.txt"`,
+      `P("surro-\\ud800-gate.txt")`,
+      `P("a".repeat(255)) + "/" + "b".repeat(200)`,
+      `"\\\\\\\\?\\\\C:\\\\Windows"`,
+      `"\\\\\\\\.\\\\PhysicalDrive0"`,
+      `"\\\\\\\\localhost\\\\c\$\\\\Windows"`,
+      `"//./nul"`,
     ]),
   string: () =>
     pick([
+      `"CON"`,
+      `"file\\u0000nul.txt"`,
+      `"\\ud83d"`, // unpaired high surrogate
+      `"\\uffff\\ufffe"`, // noncharacters
       `""`,
       `"x"`,
       `"hello world"`,

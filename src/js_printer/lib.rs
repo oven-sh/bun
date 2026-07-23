@@ -2716,36 +2716,13 @@ pub mod __gated_printer {
         }
 
         pub fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
-            // WTF-8 = UTF-8 plus surrogate code points (U+D800..U+DFFF as
-            // `ED A0 80`..`ED BF BF`), so validate UTF-8 shape minus the
-            // surrogate exclusion.
-            fn is_valid_wtf8(mut s: &[u8]) -> bool {
-                while let Some(&b0) = s.first() {
-                    let len = match b0 {
-                        0x00..=0x7F => 1,
-                        0xC2..=0xDF => 2,
-                        0xE0..=0xEF => 3,
-                        0xF0..=0xF4 => 4,
-                        _ => return false,
-                    };
-                    if s.len() < len {
-                        return false;
-                    }
-                    let cont_ok = s[1..len].iter().all(|&b| b & 0xC0 == 0x80);
-                    if !cont_ok {
-                        return false;
-                    }
-                    match (len, b0) {
-                        (3, 0xE0) if s[1] < 0xA0 => return false, // overlong
-                        (4, 0xF0) if s[1] < 0x90 => return false, // overlong
-                        (4, 0xF4) if s[1] > 0x8F => return false, // > U+10FFFF
-                        _ => {}
-                    }
-                    s = &s[len..];
-                }
-                true
-            }
-            debug_assert!(is_valid_wtf8(str));
+            // The `Encoding::Utf8` path below does a strict WHATWG decode, so
+            // callers must pass well-formed UTF-8. This entry point is only used
+            // for parser-derived text (aliases, property keys, `path.pretty`,
+            // directives); raw file bytes from the text loader reach the printer
+            // via `print_string_characters_e_string` without this assert and are
+            // handled by the U+FFFD replacement branch there.
+            debug_assert!(strings::is_valid_utf8(str));
 
             let quote = if !IS_JSON {
                 best_quote_char_for_string(str, allow_backtick)

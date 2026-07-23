@@ -273,7 +273,9 @@ impl zStream_struct {
     /// zlib's `_` suffix wants is supplied here.
     #[inline(always)]
     pub fn inflate_init2(&mut self, window_bits: c_int) -> ReturnCode {
-        raw::inflateInit2_(self, window_bits, raw::zlibVersion(), Z_STREAM_SIZE)
+        // SAFETY: `zlibVersion()` returns zlib's own static NUL-terminated
+        // version string; (S1)/(S2) hold by construction.
+        unsafe { raw::inflateInit2_(self, window_bits, raw::zlibVersion(), Z_STREAM_SIZE) }
     }
 
     /// `deflateInit2(strm, level, Z_DEFLATED, windowBits, memLevel, strategy)`.
@@ -285,16 +287,20 @@ impl zStream_struct {
         mem_level: c_int,
         strategy: c_int,
     ) -> ReturnCode {
-        raw::deflateInit2_(
-            self,
-            level,
-            Z_DEFLATED,
-            window_bits,
-            mem_level,
-            strategy,
-            raw::zlibVersion(),
-            Z_STREAM_SIZE,
-        )
+        // SAFETY: `zlibVersion()` returns zlib's own static NUL-terminated
+        // version string; (S1)/(S2) hold by construction.
+        unsafe {
+            raw::deflateInit2_(
+                self,
+                level,
+                Z_DEFLATED,
+                window_bits,
+                mem_level,
+                strategy,
+                raw::zlibVersion(),
+                Z_STREAM_SIZE,
+            )
+        }
     }
 
     #[inline(always)]
@@ -385,14 +391,21 @@ pub mod raw {
         pub safe fn compressBound(sourceLen: uLong) -> uLong;
         pub safe fn zError(err: c_int) -> *const u8;
 
-        // -- init / end / reset: (S1)+(S2) only ---------------------------
-        pub safe fn inflateInit2_(
+        // -- end / reset / bound: (S1)+(S2) only --------------------------
+        pub safe fn inflateEnd(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn deflateEnd(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn inflateReset(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn deflateReset(strm: &mut z_stream) -> ReturnCode;
+        pub safe fn deflateBound(strm: &mut z_stream, sourceLen: uLong) -> uLong;
+
+        // -- init: `version` is dereferenced when non-null ----------------
+        pub unsafe fn inflateInit2_(
             strm: &mut z_stream,
             windowBits: c_int,
             version: *const c_char,
             stream_size: c_int,
         ) -> ReturnCode;
-        pub safe fn deflateInit2_(
+        pub unsafe fn deflateInit2_(
             strm: &mut z_stream,
             level: c_int,
             method: c_int,
@@ -402,11 +415,6 @@ pub mod raw {
             version: *const c_char,
             stream_size: c_int,
         ) -> ReturnCode;
-        pub safe fn inflateEnd(strm: &mut z_stream) -> ReturnCode;
-        pub safe fn deflateEnd(strm: &mut z_stream) -> ReturnCode;
-        pub safe fn inflateReset(strm: &mut z_stream) -> ReturnCode;
-        pub safe fn deflateReset(strm: &mut z_stream) -> ReturnCode;
-        pub safe fn deflateBound(strm: &mut z_stream, sourceLen: uLong) -> uLong;
 
         // -- read next_in / write next_out: (B) required ------------------
         pub unsafe fn inflate(strm: &mut z_stream, flush: FlushValue) -> ReturnCode;

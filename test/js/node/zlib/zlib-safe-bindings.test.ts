@@ -46,8 +46,11 @@ describe("zlib safe-binding behavior preservation", () => {
     const comp = zlib.deflateSync(data, { dictionary: dict });
     const decomp = zlib.inflateSync(comp, { dictionary: dict });
     expect(decomp).toEqual(data);
-    // wrong dictionary must fail
-    expect(() => zlib.inflateSync(comp, { dictionary: Buffer.from("wrong") })).toThrow();
+    // wrong dictionary must fail with Z_NEED_DICT (inflateSetDictionary
+    // returns Z_DATA_ERROR on Adler-32 mismatch, remapped to NeedDict)
+    expect(() => zlib.inflateSync(comp, { dictionary: Buffer.from("wrong") })).toThrow(
+      expect.objectContaining({ code: "Z_NEED_DICT" }),
+    );
   });
 
   test("node:zlib deflateRaw/inflateRaw with dictionary", () => {

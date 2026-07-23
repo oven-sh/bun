@@ -65,14 +65,17 @@ pub fn compress2_into(
     source: &[u8],
     level: c_int,
 ) -> core::result::Result<usize, ReturnCode> {
-    let mut dest_len: uLong = dest.len() as uLong;
+    // `uLong` is 32-bit on LLP64 Windows; refuse rather than silently
+    // compressing a truncated prefix.
+    let source_len = uLong::try_from(source.len()).map_err(|_| ReturnCode::BufError)?;
+    let mut dest_len = uLong::try_from(dest.len()).map_err(|_| ReturnCode::BufError)?;
     // SAFETY: `dest`/`source` are valid slices; `dest_len` is a local.
     let rc = unsafe {
         bun_zlib_sys::raw::compress2(
             dest.as_mut_ptr(),
             &raw mut dest_len,
             source.as_ptr(),
-            source.len() as uLong,
+            source_len,
             level,
         )
     };
@@ -249,7 +252,6 @@ impl<'a> ZlibReaderArrayList<'a> {
 pub struct Options {
     pub gzip: bool,
     pub level: c_int,
-    pub method: c_int,
     pub window_bits: c_int,
     pub mem_level: c_int,
     pub strategy: c_int,
@@ -260,7 +262,6 @@ impl Default for Options {
         Self {
             gzip: false,
             level: 6,
-            method: 8,
             window_bits: 15,
             mem_level: 8,
             strategy: 0,

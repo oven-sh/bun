@@ -1658,33 +1658,16 @@ function Socket(options?) {
         }
       }
     } else if (options.readable === undefined && options.writable === undefined && fd > 0) {
-      // Bare `new net.Socket({ fd })`: node's constructor adopts the fd right
-      // away (createHandle + read start), so the socket is live without the
-      // caller having to call connect(). This is how a child reads an extra
-      // stdio pipe it inherited, e.g. `new net.Socket({ fd: 4 })`.
-      //
-      // Only pipes and sockets are adopted. An fd we cannot fstat, or one that
-      // is a file/tty, keeps the previous construct-but-stay-inert behavior:
-      // routing those through connect() surfaces a misleading ECONNREFUSED
-      // rather than node's ERR_INVALID_FD_TYPE, and turning a previously
-      // silent construction into a throw is a bigger behavior change than the
-      // gap being fixed. fd 0 is excluded for the same non-regression reason:
-      // connect()'s fd handling (and the native listener's `get_truthy("fd")`)
-      // both test the fd for truthiness, so adopting 0 here would fall through
-      // to the host/port path and throw ERR_MISSING_ARGS.
+      // Bare `new net.Socket({ fd })`: adopt pipes/sockets like Node's createHandle.
+      // Other fd types and fd 0 stay inert (non-regression with connect()'s truthy check).
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L424-L441
       let stats;
       try {
         stats = require("node:fs").fstatSync(fd);
       } catch {
         stats = undefined;
       }
-      // Record the fd and adopt at the very end of the constructor, not here:
-      // attaching a native handle before the remaining option validation would
-      // leak the fd (and the handle) if a later check throws.
-      // Note the `onread` option is still not honored for an adopted fd -
-      // connect()'s fd branch attaches the module-level SocketHandlers rather
-      // than this[khandlers]. That gap predates this branch (a bare { fd } used
-      // to attach nothing at all), so it is left alone here.
+      // Adopt after option validation so a later throw can't leak the handle.
       if (stats !== undefined && (stats.isFIFO() || stats.isSocket())) adoptFd = fd;
     }
   }
@@ -1817,16 +1800,8 @@ function Socket(options?) {
     this.blockList = optsBlockList;
   }
 
-  // Attach the inherited fd only once every option has been validated: an
-  // attach before the `signal`/`onread`/`blockList` checks would leak the fd
-  // (and its native handle) if one of them threw. kAdoptedFd stops a following
-  // createConnection()-style connect() from attaching the same fd twice.
-  //
-  // `adoptFd` carries the fd validated above rather than re-reading
-  // `options.fd`, so an options object with an `fd` getter cannot return a
-  // different descriptor than the one validateInt32/fstatSync approved.
-  // pauseOnConnect is passed explicitly because connect() assigns it
-  // unconditionally and would otherwise reset it to undefined.
+  // Adopt after every option is validated; use the captured fd (not options.fd,
+  // whose getter could change) and forward pauseOnConnect since connect() resets it.
   if (adoptFd !== -1) {
     Socket.prototype.connect.$call(this, { fd: adoptFd, pauseOnConnect: this.pauseOnConnect });
   }
@@ -4244,11 +4219,7 @@ function listenInCluster(
           true,
         );
         handle.adopted = true;
-        // Node v26.3.0: SharedHandle ignores readableAll/writableAll and the
-        // worker's sync uv_pipe_chmod path in Server.prototype.listen returns
-        // early because _handle is null when listenInCluster returns async, so
-        // SCHED_NONE workers do not apply the mode. Matched here.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js#L13-L29
+        // Node's SCHED_NONE workers don't apply readableAll/writableAll either.
         // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2200-L2218
       } catch (err) {
         server[kClusterHandle] = null;

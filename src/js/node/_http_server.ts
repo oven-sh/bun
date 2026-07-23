@@ -512,9 +512,7 @@ Server.prototype.close = function (optionalCallback?) {
   if (probeKey !== undefined) {
     this[kClusterProbeKey] = undefined;
     if (process.connected && cluster?.worker) {
-      // Drop the primary's ReusePortHandle claim, mirroring net.ts's
-      // handle.close() message, so re-listening on this port test-binds
-      // afresh instead of reusing the cached errno.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L142-L161
       cluster._sendInternal({ act: "close", key: probeKey });
     }
   }
@@ -621,9 +619,7 @@ Server.prototype.listen = function () {
     }
   }
 
-  // Node validates the port synchronously in listen() (net.Server.listen ->
-  // validatePort), before any cluster round-trip: an out-of-range port must
-  // throw ERR_SOCKET_BAD_PORT in the caller, not travel to the primary.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2159 (validatePort before listenInCluster)
   if (typeof port === "number" && !socketPath) {
     validatePort(port);
   }
@@ -659,12 +655,10 @@ Server.prototype.listen = function () {
       cluster._sendInternal(message);
     });
 
-    // listen({fd}): the descriptor was inherited by the primary, not this
-    // worker — ask the primary to share it over IPC, then adopt the copy.
+    // listen({fd}) in a worker: share the primary-inherited fd over SCM_RIGHTS.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2065-L2096 (listenInCluster)
     if (typeof fd === "number" && fd >= 0 && process.connected) {
       if (process.platform === "win32") {
-        // Descriptor passing over IPC is not implemented on Windows; fail
-        // like the direct listen({fd}) path does (Node skips these tests).
         const UV_EINVAL_WIN = -4071;
         process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(UV_EINVAL_WIN, "listen", null, 0));
         return this;
@@ -676,9 +670,8 @@ Server.prototype.listen = function () {
       return this;
     }
 
-    // Workers self-bind with SO_REUSEPORT (no handle passing yet), which
-    // cannot collide with a foreign process's socket at bind time. Ask the
-    // primary to arbitrate the port first, like Node's bind-in-primary does.
+    // Bun-specific: workers self-bind with SO_REUSEPORT; the primary probe-binds
+    // to surface EADDRINUSE like Node's listenInCluster->queryServer path.
     const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
     if (askPrimary) {
       cluster._sendInternal(
@@ -701,14 +694,12 @@ function closeSharedFd(fd) {
   } catch {}
 }
 
-// Same shape as Node v26.3.0 lib/net.js emitErrorNT.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2043-L2045
 function emitListenErrorNT(server, err) {
   server.emit("error", err);
 }
 
 function onShareListenFdReply(server, tls, port, host, socketPath, onListen, reply, receivedFd) {
-  // A received SCM_RIGHTS descriptor is delivered through the
-  // (message, handle) slot like Node's handle argument.
   const sharedFd = typeof receivedFd === "number" && receivedFd >= 0 ? receivedFd : undefined;
   const replyErrno = reply.errno;
   if (replyErrno || sharedFd === undefined) {
@@ -719,8 +710,6 @@ function onShareListenFdReply(server, tls, port, host, socketPath, onListen, rep
   try {
     server[kRealListen](tls, port, host, socketPath, true, onListen, sharedFd);
   } catch (err) {
-    // Adoption failed before the listener took ownership; the received
-    // dup would otherwise leak (and pin the port) in this worker.
     closeSharedFd(sharedFd);
     server.emit("error", err);
   }
@@ -732,16 +721,12 @@ function onProbePortReply(server, tls, port, host, socketPath, onListen, fd, rep
     server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
     return;
   }
-  // Remember the primary's cache key: close() reports it back so the
-  // primary drops the claim and a later listen on this port gets a
-  // fresh test bind instead of the stale cached verdict.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L75-L114 (indexesKey/handles)
   server[kClusterProbeKey] = reply.key;
   try {
     server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
   } catch (err) {
-    // The listen never took effect: release the primary's claim now rather
-    // than waiting for a close() nobody is obligated to call on a server
-    // that failed to start.
+    // Release the primary's claim now; a server that never listened owes no close().
     server[kClusterProbeKey] = undefined;
     cluster._sendInternal({ act: "close", key: reply.key });
     server.emit("error", err);

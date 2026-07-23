@@ -114,7 +114,7 @@ if (process.argv[2] === 'child') {
     }
     connected += 1;
 
-    // TODO(@jasnell): This is not actually being called.
+    // Note(@jasnell): This is not actually being called.
     // It is not clear if it is needed.
     socket.once('close', () => {
       debug(`[m] socket closed, total ${++closed}`);

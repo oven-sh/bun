@@ -4,7 +4,7 @@ import { EOL } from 'node:os';
 import assert from 'node:assert';
 import cp from 'node:child_process';
 
-// TODO(LiviaMedeiros): test on different platforms
+// Note(LiviaMedeiros): test on different platforms
 if (!common.isLinux)
   common.skip();
 

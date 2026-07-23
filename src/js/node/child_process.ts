@@ -1774,10 +1774,8 @@ const INTERNAL_IPC_PREFIX = "NODE_";
 
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;
-  // Own property only, matching the child end in Process__emitMessageEvent.
-  // Node reads `message.cmd` through the prototype chain here; a deserialized
-  // message never carries `cmd` there, and refusing to look means a polluted
-  // Object.prototype.cmd cannot reroute a caller's messages.
+  // Own-property only so a polluted Object.prototype.cmd can't reroute messages.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L980-L987
   if (!ObjectHasOwn(message, "cmd")) return false;
   const cmd = message.cmd;
   if (typeof cmd !== "string" || cmd.length <= INTERNAL_IPC_PREFIX.length) return false;
@@ -1788,10 +1786,8 @@ function isInternalIpcMessage(message) {
 // subprocess's `.stdin` carries no `fd`, but it is a WriteStream over a
 // FileSink that knows the pipe's write end.
 function streamFdOf(item): number | undefined {
-  // Negative fds are "no fd" sentinels, not descriptors: libuv-backed stdio
-  // reports fd -1 on Windows (uv pipe/socket handles carry no usable CRT
-  // fd) and on any platform once the handle is closed. Fall through so the
-  // stream gets pumped instead of inheriting a bogus descriptor.
+  // fd -1 is the "no usable CRT fd" sentinel (Windows uv handles, closed
+  // streams); fall through to pumping rather than inheriting it.
   const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
   if (typeof itemFd === "number" && itemFd >= 0) return itemFd;
 
@@ -1799,10 +1795,8 @@ function streamFdOf(item): number | undefined {
   const handleFd = handle ? handle.fd : undefined;
   if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
 
-  // A destroyed stream's sink keeps reporting the descriptor it was created
-  // with, even though the owning subprocess has closed it and the kernel may
-  // have handed the number to something else. Refuse it rather than inherit
-  // whatever now sits there.
+  // A destroyed stream's sink still reports its original fd number even
+  // though the kernel may have reassigned it.
   if (item.destroyed) return undefined;
 
   const sink = item[require("internal/fs/streams").kWriteStreamFastPath];

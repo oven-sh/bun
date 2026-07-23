@@ -277,11 +277,8 @@ export function parseHandle(target, serialized, fd) {
     case "dgram.Socket": {
       const dgram = require("node:dgram");
       const socket = dgram.createSocket(serialized.dgramType);
-      // Adoption failure (a stale or closed descriptor) must fail as loudly
-      // as the dgram.Native path's throw. Without a listener the async bind
-      // error would surface as a bare 'error' event on a socket nobody holds
-      // yet - an uncaught exception with no context and a silently dropped
-      // message.
+      // Without a listener an async bind failure surfaces as a bare 'error'
+      // on a socket nobody holds; throw loudly like the dgram.Native path.
       function throwOnAdoptionFailure(err) {
         throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`);
       }

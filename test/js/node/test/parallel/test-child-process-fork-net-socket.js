@@ -57,7 +57,7 @@ if (process.argv[2] === 'child') {
     // but the socket will be handled by the child.
     const server = net.createServer();
     server.on('connection', mustCall((socket) => {
-      // TODO(@jasnell): Close does not seem to actually be called.
+      // Note(@jasnell): Close does not seem to actually be called.
       // It is not clear if it is needed.
       socket.on('close', () => {
         debug('CLIENT: socket closed');

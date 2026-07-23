@@ -115,11 +115,8 @@ function removeWorker(worker) {
 function removeHandlesForWorker(worker) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
-  handles.forEach(function removeOneHandle(handle, key) {
-    // Worker death drops every claim it held at once; the per-server
-    // refcount in ReusePortHandle only matters for orderly close().
-    const removed = typeof handle.removeWorker === "function" ? handle.removeWorker(worker) : handle.remove(worker);
-    if (removed) handles.delete(key);
+  handles.forEach((handle, key) => {
+    if (handle.remove(worker)) handles.delete(key);
   });
 }
 
@@ -179,16 +176,11 @@ cluster.fork = function (env) {
   });
 
   onInternalMessage(worker.process[kHandle], worker, onmessage);
-  // Node's primary receives cluster commands as ordinary 'internalMessage'
-  // events. The native hook above only sees internal-framed wire messages,
-  // so a cluster command whose '$internal' send option was lost (a user
-  // wrapper around process.send that truncates arguments) arrives external
-  // and is classified by cmd on the receive side - route it like node does.
+  // Cluster commands whose '$internal' framing was lost arrive as plain
+  // 'internalMessage' events; route them by cmd like Node does.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L31-L51
   worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
     if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
-      // {ack: N} replies settle per-seq callbacks parked in the native
-      // internal-frame queue; act-bearing traffic dispatches through the JS
-      // method table like the Internal-framed path does.
       if (message.ack !== undefined && settleClusterAck(worker.process[kHandle], message)) {
         return;
       }
@@ -348,108 +340,58 @@ function queryServer(worker, message) {
   });
 }
 
-// Node's primary binds for workers, so a foreign EADDRINUSE surfaces from that
-// bind; Bun's http workers self-bind with SO_REUSEPORT (never collides), so the
-// primary test-binds once to recover the same error.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/round_robin_handle.js#L30-L61
-function destroyProbeConnection(probeConnection) {
-  probeConnection.destroy();
-}
-
-function onReusePortClaim(worker, key, seq, errno) {
-  if (errno) handles.delete(key); // Gives other workers a chance to retry.
-  send(worker, { errno, key, ack: seq });
-}
-
+// Bun-specific: http.Server workers self-bind with SO_REUSEPORT, so the primary
+// probe-binds once per key to surface EADDRINUSE the way Node's SharedHandle does.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js
 class ReusePortHandle {
   key;
-  port;
-  address;
-  workers = new Map();
-  errno = 0;
-  pending = null;
-  server = null;
+  workers;
+  handle;
+  errno;
+  #pending;
 
-  constructor(key, message, owned) {
+  constructor(key, address, { port }) {
     this.key = key;
-    this.port = message.port;
-    this.address = message.address ?? null;
-    if (!(this.port > 0)) return; // Port 0 is kernel-assigned; nothing can collide.
-    if (owned !== undefined) {
-      // Port already claimed by this cluster under an overlapping host key:
-      // mirror it; a test bind would collide with our own REUSEPORT sockets.
-      const ownedPending = owned.pending;
-      if (ownedPending) {
-        this.pending = [];
-        ownedPending.push(this.#onOwnedSettled.bind(this));
-      } else {
-        this.errno = owned.errno;
-      }
-      return;
-    }
+    this.workers = new Map();
+    this.handle = null;
+    this.errno = 0;
+    this.#pending = null;
+
+    if (!(port > 0)) return;
     netForProbe ??= require("node:net");
-    this.pending = [];
-    // Destroy stray clients landing in the probe window: an accepted idle
-    // connection would block server.close() and every parked reply.
-    const server = (this.server = netForProbe.createServer(destroyProbeConnection));
-    server.once("error", this.#onProbeError.bind(this));
-    server.listen({ port: this.port, host: this.address || undefined }, this.#onProbeListening.bind(this, server));
-  }
-
-  #onOwnedSettled(errno) {
-    this.errno = errno;
-    this.#settle();
-  }
-
-  #onProbeError(err) {
-    const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
-    this.errno = raw != null ? uvTranslateSysError(raw) : einvalErrorCode();
-    this.#settle();
-  }
-
-  #onProbeListening(server) {
-    server.close(this.#settle.bind(this));
+    this.#pending = [];
+    const server = (this.handle = netForProbe.createServer(conn => conn.destroy()));
+    server.once("error", err => {
+      this.errno = typeof err?.errno === "number" && err.errno !== 0 ? uvTranslateSysError(err.errno) : einvalErrorCode();
+      this.#settle();
+    });
+    server.listen({ port, host: address || undefined }, () => server.close(() => this.#settle()));
   }
 
   #settle() {
-    this.server = null;
-    const pending = this.pending;
-    this.pending = null;
-    if (pending) for (const send of pending) send(this.errno);
+    this.handle = null;
+    const pending = this.#pending;
+    this.#pending = null;
+    if (pending) for (const cb of pending) cb(this.errno, null, null);
   }
 
   add(worker, send) {
-    // Refcount per server, not per worker: N http.Servers from one worker on
-    // the same port must each hold the claim until their own close.
-    this.workers.set(worker.id, (this.workers.get(worker.id) ?? 0) + 1);
-    const { pending } = this;
-    if (pending) pending.push(send);
-    else send(this.errno);
+    $assert(!this.workers.has(worker.id));
+    this.workers.set(worker.id, worker);
+    if (this.#pending) this.#pending.push(send);
+    else send(this.errno, null, null);
   }
 
-  // Dead workers cannot close their servers one by one: collapse the
-  // refcount so a single call drops everything the worker held.
-  removeWorker(worker) {
-    const { workers } = this;
-    const { id } = worker;
-    if (workers.has(id)) workers.set(id, 1);
-    return this.remove(worker);
+  has(worker) {
+    return this.workers.has(worker.id);
   }
 
   remove(worker) {
-    const count = this.workers.get(worker.id);
-    if (count === undefined) return this.workers.size === 0;
-    if (count > 1) {
-      this.workers.set(worker.id, count - 1);
-      return false;
-    }
+    if (!this.workers.has(worker.id)) return false;
     this.workers.delete(worker.id);
     if (this.workers.size !== 0) return false;
-    this.server?.close();
-    this.server = null;
-    if (this.pending !== null) {
-      // close() suppressed the probe's 'listening' callback (#settle's only
-      // trigger): settle the parked repliers so no listen() waits forever.
+    if (this.handle) {
+      this.handle.close();
       this.#settle();
     }
     return true;
@@ -464,8 +406,6 @@ function shareListenFd(worker, message) {
 
   const fd = message.fd;
   if (process.platform === "win32") {
-    // Descriptor passing over IPC is not implemented on Windows; reply with
-    // the same EINVAL the direct listen({fd}) path reports there.
     send(worker, { errno: einvalErrorCode(), ack: message.seq });
     return;
   }
@@ -474,58 +414,37 @@ function shareListenFd(worker, message) {
     return;
   }
   try {
-    // sendHelper dups the descriptor for the wire; null means the dup or
-    // serialize failed and no reply reached the worker.
     const sent = send(worker, { errno: 0, ack: message.seq }, { fd });
     if (sent === null) send(worker, { errno: einvalErrorCode(), ack: message.seq });
   } catch {
-    // A native send failure must not take down the primary's dispatch loop.
     send(worker, { errno: einvalErrorCode(), ack: message.seq });
   }
 }
 
-function hostCoversAll(host) {
-  return host == null || host === "" || host === "::" || host === "0.0.0.0";
-}
-
-// An existing claim on the same port whose host overlaps the requested one
-// (wildcards overlap everything) belongs to this cluster, not a foreigner.
-function findOwnReusePort(port, address) {
-  for (const handle of handles.values()) {
-    if (
-      handle instanceof ReusePortHandle &&
-      handle.port === port &&
-      (hostCoversAll(handle.address) || hostCoversAll(address) || handle.address === address)
-    ) {
-      return handle;
-    }
-  }
-  return undefined;
-}
-
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/primary.js#L268-L330 (queryServer)
 function probePort(worker, message) {
-  // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
 
   const key = `${message.address}:${message.port}:${message.addressType}:reuseport`;
-  let handle = handles.get(key);
+  const cachedHandle = handles.get(key);
+  let handle;
+  if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
 
   if (handle === undefined) {
     try {
-      handle = new ReusePortHandle(key, message, findOwnReusePort(message.port, message.address ?? null));
+      handle = new ReusePortHandle(key, message.address, message);
     } catch {
-      // A malformed probe (an out-of-range port reaching net.Server.listen's
-      // synchronous validation, for example) must fail the worker's listen,
-      // never unwind the primary's message dispatch.
-      send(worker, { errno: einvalErrorCode(), ack: message.seq });
+      send(worker, { errno: einvalErrorCode(), key, ack: message.seq });
       return;
     }
-    handles.set(key, handle);
+    if (!cachedHandle) handles.set(key, handle);
   }
 
-  // Reply shape mirrors Node v26.3.0 lib/internal/cluster/primary.js
-  // queryServer's handle.add callback (errno-first, delete-on-error).
-  handle.add(worker, onReusePortClaim.bind(null, worker, key, message.seq));
+  handle.add(worker, errno => {
+    if (errno && !cachedHandle) handles.delete(key);
+    send(worker, { errno, key, ack: message.seq });
+    if (cachedHandle && handle !== cachedHandle && !errno) handle.remove(worker);
+  });
 }
 
 function listening(worker, message) {
@@ -551,8 +470,7 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
-  // Node marks every cluster-internal message; workers re-emit these as
-  // process 'internalMessage' events keyed on this cmd.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L16-L29
   message.cmd = "NODE_CLUSTER";
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }

@@ -66,8 +66,9 @@ describe("isArray + Proxy crash fixes", () => {
   });
 
   test("new Bun.CookieMap does not crash with Proxy-wrapped array", () => {
-    // Before: debug assertion in jsCast<JSArray*>. Now: falls through to record path.
-    // A Proxy wrapping [] has no own enumerable string keys, so this yields an empty map.
+    // Before: debug assertion in jsCast<JSArray*>. Now: the WebIDL union
+    // converter sees @@iterator (forwarded from Array.prototype via the
+    // default get trap) and iterates the empty array as a sequence.
     const map = new Bun.CookieMap(new Proxy([], {}));
     expect(map.size).toBe(0);
   });

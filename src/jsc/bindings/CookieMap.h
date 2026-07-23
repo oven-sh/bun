@@ -3,7 +3,7 @@
 
 #include "Cookie.h"
 #include "ExceptionOr.h"
-#include <wtf/HashMap.h>
+#include <wtf/KeyValuePair.h>
 #include <wtf/Vector.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>

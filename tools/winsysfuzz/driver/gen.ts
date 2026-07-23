@@ -123,7 +123,7 @@ if (DEPTH_MODE && fnCalls.length) {
   }
   const usable = [...families.entries()].filter(([, v]) => v.length >= 2);
   if (usable.length) {
-    const [famName, famCalls] = usable[Math.floor(rnd() * usable.length)];
+    const [famName, famCalls] = usable[Math.abs(Number(seedArg) * 2654435761 >>> 0) % usable.length];
     fnCalls.length = 0;
     fnCalls.push(...famCalls);
     emitComment = `depth-family: ${famName} (${famCalls.length} callables)`;

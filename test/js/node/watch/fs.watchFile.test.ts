@@ -165,6 +165,48 @@ describe("fs.watchFile", () => {
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
 
+  test("options.interval is validated as a uint32", () => {
+    const file = path.join(testDir, "watch.txt");
+    const listener = () => {};
+    const cases = [
+      { interval: -5, code: "ERR_OUT_OF_RANGE" },
+      { interval: 1e12, code: "ERR_OUT_OF_RANGE" },
+      { interval: 3.5, code: "ERR_OUT_OF_RANGE" },
+      { interval: 4294967296, code: "ERR_OUT_OF_RANGE" },
+      { interval: Infinity, code: "ERR_OUT_OF_RANGE" },
+      { interval: NaN, code: "ERR_OUT_OF_RANGE" },
+      { interval: "100" as any, code: "ERR_INVALID_ARG_TYPE" },
+      { interval: {} as any, code: "ERR_INVALID_ARG_TYPE" },
+    ];
+    for (const { interval, code } of cases) {
+      let thrown: any;
+      try {
+        fs.watchFile(file, { interval, persistent: false }, listener);
+        fs.unwatchFile(file, listener);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown, `interval=${interval} should throw ${code}`).toBeDefined();
+      expect({ interval, code: thrown?.code, name: thrown?.name }).toEqual({
+        interval,
+        code,
+        name: code === "ERR_OUT_OF_RANGE" ? "RangeError" : "TypeError",
+      });
+    }
+
+    expect(() => {
+      fs.watchFile(file, { persistent: false }, listener);
+      fs.unwatchFile(file, listener);
+    }, "omitted interval should use the default").not.toThrow();
+
+    for (const interval of [0, 100, 4294967295]) {
+      expect(() => {
+        fs.watchFile(file, { interval, persistent: false }, listener);
+        fs.unwatchFile(file, listener);
+      }, `interval=${interval} should be accepted`).not.toThrow();
+    }
+  });
+
   test("watchFile returns a shared StatWatcher and unwatchFile stops it", async () => {
     const file = path.join(testDir, "watch.txt");
     const listener1 = () => {};

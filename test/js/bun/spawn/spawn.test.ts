@@ -446,6 +446,31 @@ for (let [gcTick, label] of [
         await proc.exited;
       });
 
+      it("stdin.end() rejects with EPIPE when the child exits before consuming the write", async () => {
+        // Child reads a single byte and exits; the parent queues 16MB on stdin
+        // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
+        // named-pipe buffer on Windows) so end() is still draining when the
+        // read end closes. On Windows libuv previously surfaced that as code
+        // "EOF" because uv__process_pipe_write_req used the read-side error
+        // translator.
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", `const b = Buffer.alloc(1); require("fs").readSync(0, b); process.exit(0);`],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+        let caught: any;
+        try {
+          await proc.stdin!.end();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught?.code).toBe("EPIPE");
+        await proc.exited;
+      });
+
       describe("pipe", () => {
         function huge() {
           return spawn({

@@ -124,7 +124,6 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // the real handler's anchor accompanies them (see hasCrashAnchor).
       if (!hasCrashAnchor && /panic|assert|unreachable|crash-banner/.test(kind)) continue;
       const detail = m[1].trim();
-      const traceToken = traceUrl ? traceUrl[1].slice(0, 120) : undefined;
       // Fold volatile addresses/counts so identical crashes dedupe:
       // "Segmentation fault at address 0x24" keeps the low offset (a
       // struct-field null deref reads identically), thread ids and
@@ -138,6 +137,7 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // every wild-pointer segfault one key; the trace URL keeps distinct
       // crashes distinct. Use it as the signature when the report has one.
       const traceUrl = /https?:\/\/bun\.report\/[^\s\/]+\/([A-Za-z0-9_+\-\/=]+)/.exec(text);
+      const traceToken = traceUrl ? traceUrl[1].slice(0, 120) : undefined;
       // The bun.report token is a symbolization payload, NOT a fingerprint:
       // frame data is interleaved with per-run ASLR bits throughout, so no
       // substring is stable. Fingerprint on the fault ADDRESS CLASS instead

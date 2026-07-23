@@ -125,9 +125,9 @@ impl Drop for HeadersRef {
 /// errored on abort (the `ByteBlobLoader` store is only released by GC).
 pub(crate) struct BodyAbortListener {
     signal: AbortSignalRef,
-    /// Owning backref: the `Box<Self>` lives in `Response.abort_listener`, so
-    /// `response` is live for as long as `self` is.
-    response: *mut Response,
+    /// The owning `Response` holds this `Box<Self>`, so a ref-counted pointer
+    /// here would cycle; [`ParentRef`] encodes the owned-by-parent invariant.
+    response: bun_ptr::ParentRef<Response>,
     global: GlobalRef,
 }
 
@@ -142,27 +142,24 @@ impl BodyAbortListener {
         // which may destroy the Response (and this box) mid-call.
         let (response, global) =
             unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
-        // SAFETY: owning-backref invariant; `ref_count >= 1` while this box
-        // exists. The guard releases it last so a re-entrant unref cannot
-        // free the Response until we return.
-        Response::ref_(response);
-        let _keepalive = scopeguard::guard((), move |()| Response::unref(response));
-        // SAFETY: live for this scope via the ref taken above.
-        let response_ref = unsafe { &*response };
+        // `ParentRef` invariant: `ref_count >= 1` while this box exists. The
+        // guard keeps it there so a re-entrant unref cannot free the Response
+        // until we return.
+        Response::ref_(response.as_mut_ptr());
+        let _keepalive =
+            scopeguard::guard((), move |()| Response::unref(response.as_mut_ptr()));
         // R-2: re-derive `get_body_value()` per statement; the calls between
         // project their own `&mut BodyValue` / run JS.
         if !matches!(
-            response_ref.get_body_value(),
+            response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
-            if let Some(readable) = response_ref.get_body_readable_stream(&global) {
+            if let Some(readable) = response.get_body_readable_stream(&global) {
                 readable.value.ensure_still_alive();
                 readable.error(&global, reason);
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
-            let _ = response_ref
-                .get_body_value()
-                .to_error_instance(err, &global);
+            let _ = response.get_body_value().to_error_instance(err, &global);
         }
     }
 }
@@ -521,7 +518,7 @@ impl Response {
     ///
     /// # Safety
     /// `this` must be a live heap `Response` allocated via `heap::into_raw`
-    /// (the `Box<BodyAbortListener>` stores it as a raw backref).
+    /// (the `Box<BodyAbortListener>` stores it as a [`ParentRef`]).
     pub(crate) unsafe fn attach_abort_signal(
         this: *mut Response,
         global: &JSGlobalObject,
@@ -533,7 +530,8 @@ impl Response {
         signal.pending_activity_ref();
         let mut listener = Box::new(BodyAbortListener {
             signal: signal_ref,
-            response: this,
+            // SAFETY: caller contract; `this` is live and owns the box.
+            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
             global: GlobalRef::new(global),
         });
         signal.add_listener(

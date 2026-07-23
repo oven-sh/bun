@@ -4807,9 +4807,13 @@ impl VirtualMachine {
                 formatter.depth = formatter.depth.saturating_add(1);
                 if formatter.depth > formatter.max_depth {
                     let _ = if ctx.allow_ansi_color {
-                        writer.write_all(bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", true).as_bytes())
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", true).as_bytes(),
+                        )
                     } else {
-                        writer.write_all(bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", false).as_bytes())
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", false).as_bytes(),
+                        )
                     };
                 } else {
                     vm.print_errorlike_object(

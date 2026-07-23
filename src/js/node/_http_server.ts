@@ -706,11 +706,10 @@ function emitListenErrorNT(server, err) {
   server.emit("error", err);
 }
 
-function onShareListenFdReply(server, tls, port, host, socketPath, onListen, reply, _handle) {
-  // The IPC wire surfaces a received SCM_RIGHTS descriptor as $fd on
-  // the message itself (see ipc.rs $hasHandle receive path).
-  const received = reply["$fd"];
-  const sharedFd = typeof received === "number" && received >= 0 ? received : undefined;
+function onShareListenFdReply(server, tls, port, host, socketPath, onListen, reply, receivedFd) {
+  // A received SCM_RIGHTS descriptor is delivered through the
+  // (message, handle) slot like Node's handle argument.
+  const sharedFd = typeof receivedFd === "number" && receivedFd >= 0 ? receivedFd : undefined;
   const replyErrno = reply.errno;
   if (replyErrno || sharedFd === undefined) {
     if (sharedFd !== undefined) closeSharedFd(sharedFd);

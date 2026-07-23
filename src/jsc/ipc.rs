@@ -110,16 +110,7 @@ impl InternalMsgHolder {
 
         let event_loop = global.bun_vm().event_loop_mut();
 
-        let _ = handle;
-        event_loop.run_callback(
-            cb,
-            global,
-            worker,
-            &[
-                message,
-                JSValue::NULL, // handle
-            ],
-        );
+        event_loop.run_callback(cb, global, worker, &[message, handle]);
         Ok(())
     }
 
@@ -2149,6 +2140,13 @@ fn handle_ipc_message(
             }
         }
     } else {
+        // Node's child_process materializes the received handle and passes it
+        // as the second arg to the internalMessage listener; cluster's
+        // onmessage/onInternalMessage then see (message, handle):
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
+        // Pass the raw descriptor through the same slot so cluster/child.ts
+        // can wrap it, instead of writing it onto the message object.
+        let mut handle_js = JSValue::UNDEFINED;
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
@@ -2182,7 +2180,7 @@ fn handle_ipc_message(
                         let fd = imported.unwrap();
                         #[cfg(not(windows))]
                         let fd = send_queue.incoming_fd.take().unwrap();
-                        msg_data.put(global_this, b"$fd", received_fd_to_js(fd));
+                        handle_js = received_fd_to_js(fd);
                     }
                     Ok(_) => {}
                     Err(_) => {
@@ -2194,7 +2192,7 @@ fn handle_ipc_message(
             }
         }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-        unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
+        unsafe { (*send_queue.owner).handle_ipc_message(message, handle_js) };
     }
 }
 

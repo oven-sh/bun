@@ -1713,8 +1713,9 @@ pub struct RuntimeHooks {
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
-    /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
-    pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
+    /// `node_cluster_binding.handleInternalMessageChild(global, data, handle)`.
+    pub handle_ipc_internal_child:
+        unsafe fn(global: *mut JSGlobalObject, data: JSValue, handle: JSValue),
     /// `node_cluster_binding.child_singleton.deinit()`.
     pub ipc_child_singleton_deinit: fn(),
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
@@ -2835,7 +2836,7 @@ impl IPCInstance {
                 if let Some(hooks) = runtime_hooks() {
                     // SAFETY: hook fn is supplied by `bun_runtime` at startup;
                     // `global_this` is the live VM global.
-                    unsafe { (hooks.handle_ipc_internal_child)(global_this, data) };
+                    unsafe { (hooks.handle_ipc_internal_child)(global_this, data, handle) };
                 }
                 event_loop.exit();
             }

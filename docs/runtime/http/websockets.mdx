@@ -270,7 +270,7 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 
 - `-1` — The message was enqueued but there is backpressure
 - `0` — The message was dropped due to a connection issue
-- `1+` — The number of bytes sent
+- `1+` — The number of bytes sent, including the WebSocket frame header. An empty payload still writes a 2-byte frame, so a successful send is always greater than zero.
 
 ### Timeouts and limits
 

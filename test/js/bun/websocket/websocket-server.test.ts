@@ -448,7 +448,8 @@ describe("Server", () => {
 
       const [aReceived, bReceived] = await Promise.all([aDone.promise, bDone.promise]);
       // publish() reported the message as queued for every call
-      expect(publishResults).toEqual([4, 4, 4, 4, 4]);
+      // (4-byte payload + 2-byte frame header)
+      expect(publishResults).toEqual([6, 6, 6, 6, 6]);
       // A never unsubscribed; it must receive the full batch.
       expect(aReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4"]);
       // B unsubscribed in the same tick; it must still receive the batch
@@ -546,7 +547,7 @@ describe("Server", () => {
       backpressureLimit: 1,
       open(ws) {
         const data = new Uint8Array(1 * 1024 * 1024);
-        expect(ws.send(data.slice(0, 1))).toBe(1); // sent
+        expect(ws.send(data.slice(0, 1))).toBe(3); // sent: 2-byte header + 1-byte payload
         let backpressure;
         for (let i = 0; i < 10; i++) {
           if (ws.send(data) === -1) {
@@ -994,7 +995,8 @@ describe("ServerWebSocket", () => {
         pub.onerror = pub.onclose = fail("publisher");
 
         const ret = await published.promise;
-        expect(ret).toBe(Buffer.byteLength(payload));
+        const len = Buffer.byteLength(payload);
+        expect(ret).toBe((len < 126 ? 2 : len <= 0xffff ? 4 : 10) + len);
         const got = await received.promise;
         if (typeof payload === "string") {
           expect(got).toBe(payload);
@@ -1528,6 +1530,94 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
       });
     });
   });
+});
+
+// https://github.com/oven-sh/bun/issues/2955
+it.concurrent("send/publish with an empty payload returns the frame size, not 0", async () => {
+  let srvWs: ServerWebSocket<unknown>;
+  const opened = Promise.withResolvers<void>();
+  using server = serve({
+    port: 0,
+    fetch(req, srv) {
+      if (srv.upgrade(req)) return;
+      return new Response("no upgrade", { status: 400 });
+    },
+    websocket: {
+      publishToSelf: true,
+      open(ws) {
+        srvWs = ws;
+        ws.subscribe("T");
+        opened.resolve();
+      },
+      message() {},
+    },
+  });
+
+  const received: string[] = [];
+  const gotFour = Promise.withResolvers<void>();
+  const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+  client.binaryType = "arraybuffer";
+  client.onmessage = ev => {
+    received.push(
+      typeof ev.data === "string" ? `text(${ev.data.length})` : `binary(${(ev.data as ArrayBuffer).byteLength})`,
+    );
+    if (received.length === 4) gotFour.resolve();
+  };
+  {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    client.onopen = () => resolve();
+    client.onerror = e => reject(e);
+    await promise;
+  }
+  await opened.promise;
+
+  // Every empty-payload send/publish writes a 2-byte frame (RFC 6455 header,
+  // no extended length, no mask). The return value reports that, so 0 is
+  // reserved for the dropped/closed cases below.
+  expect({
+    send: srvWs!.send(""),
+    sendText: srvWs!.sendText(""),
+    sendBinary: srvWs!.sendBinary(new Uint8Array(0)),
+    sendA: srvWs!.send("a"),
+    ping: srvWs!.ping(),
+    pong: srvWs!.pong(),
+    wsPublishText: srvWs!.publish("T", ""),
+    wsPublishBinary: srvWs!.publish("T", new Uint8Array(0)),
+    serverPublishText: server.publish("T", ""),
+    serverPublishBinary: server.publish("T", new Uint8Array(0)),
+  }).toEqual({
+    send: 2,
+    sendText: 2,
+    sendBinary: 2,
+    sendA: 3,
+    ping: 2,
+    pong: 2,
+    wsPublishText: 2,
+    wsPublishBinary: 2,
+    serverPublishText: 2,
+    serverPublishBinary: 2,
+  });
+
+  // The empty frames were delivered, not dropped: the four direct ws.send*
+  // calls above arrive in order.
+  await gotFour.promise;
+  expect(received.slice(0, 4)).toEqual(["text(0)", "text(0)", "binary(0)", "text(1)"]);
+
+  // 0 still means dropped: once the socket is closed every variant returns 0.
+  srvWs!.close();
+  expect({
+    send: srvWs!.send(""),
+    sendText: srvWs!.sendText(""),
+    sendBinary: srvWs!.sendBinary(new Uint8Array(0)),
+    ping: srvWs!.ping(),
+  }).toEqual({
+    send: 0,
+    sendText: 0,
+    sendBinary: 0,
+    ping: 0,
+  });
+
+  client.close();
 });
 
 // https://github.com/oven-sh/bun/issues/34158

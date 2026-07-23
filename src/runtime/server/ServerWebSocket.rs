@@ -159,13 +159,29 @@ fn throw_control_frame_too_large(global: &JSGlobalObject, len: usize) -> JsError
     global.throw_value(err)
 }
 
+/// Server-to-client WebSocket frame size for a payload of `len` bytes
+/// (RFC 6455 §5.2, unmasked). Matches uWS `protocol::messageFrameSize`.
+#[inline]
+const fn message_frame_size(len: usize) -> usize {
+    if len < 126 {
+        2 + len
+    } else if len <= u16::MAX as usize {
+        4 + len
+    } else {
+        10 + len
+    }
+}
+
 /// Maps a uWS `SendStatus` to the JS-visible number contract shared by every
-/// `ServerWebSocket` send-ish method (Backpressure → -1, Success → byte_len,
-/// Dropped → 0) and emits the matching `WebSocketServer` debug log.
+/// `ServerWebSocket` send-ish method (Backpressure → -1, Dropped → 0,
+/// Success → frame bytes written) and emits the matching `WebSocketServer`
+/// debug log.
 ///
-/// `len` is the **byte** length actually written — callers holding an
-/// `ArrayBuffer` view must pass `buffer.slice().len()`, not the typed-array
-/// element count. `suffix` is `"bytes"` or `"bytes string"`.
+/// `len` is the payload **byte** length — callers holding an `ArrayBuffer`
+/// view must pass `buffer.slice().len()`, not the typed-array element count.
+/// On Success the returned number is the framed size (header + payload), so a
+/// zero-length payload yields `2`, keeping `0` unambiguous for "dropped".
+/// `suffix` is `"bytes"` or `"bytes string"`.
 #[inline]
 pub(super) fn send_status_to_js(
     status: SendStatus,
@@ -186,7 +202,7 @@ pub(super) fn send_status_to_js(
         }
         SendStatus::Success => {
             bun_output::scoped_log!(WebSocketServer, "{}() success ({} {})", op, len, suffix);
-            JSValue::js_number(len as f64)
+            JSValue::js_number(message_frame_size(len) as f64)
         }
         SendStatus::Dropped => {
             bun_output::scoped_log!(WebSocketServer, "{}() dropped ({} {})", op, len, suffix);

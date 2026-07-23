@@ -4,7 +4,9 @@ declare module "bun" {
    *
    * - if **0**, the message was **dropped**.
    * - if **-1**, there is **backpressure** of messages.
-   * - if **>0**, it represents the **number of bytes sent**.
+   * - if **>0**, it represents the **number of bytes sent**, including the
+   *   WebSocket frame header. An empty payload still sends a 2-byte frame,
+   *   so a successful send is always greater than zero.
    *
    * @example
    * ```js
@@ -1001,7 +1003,7 @@ declare module "bun" {
      * @param data The data to send
      * @param compress Should the data be compressed? Ignored if the client does not support compression.
      *
-     * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent.
+     * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent including the WebSocket frame header.
      *
      * @example
      *

@@ -607,7 +607,7 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
         expect(e).toBeInstanceOf(RangeError);
         expect((e as Error).message).toContain("must not be greater than 125 bytes");
       }
-      expect(ok125).toBe(125);
+      expect(ok125).toBe(127);
 
       // the server's 125-byte ping reaches the client intact; no protocol error
       const ping = await gotPing;

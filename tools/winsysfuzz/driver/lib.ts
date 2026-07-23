@@ -136,7 +136,12 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // every wild-pointer segfault one key; the trace URL keeps distinct
       // crashes distinct. Use it as the signature when the report has one.
       const traceUrl = /https?:\/\/bun\.report\/[^\s\/]+\/([A-Za-z0-9_+\-\/=]+)/.exec(text);
-      const signature = traceUrl ? `${kind}@trace:${traceUrl[1].slice(0, 100)}` : detail
+      // The token's LEADING characters encode the version/build and the
+      // stable top frames; the tail encodes ASLR-randomized addresses that
+      // differ every process. Fingerprint on the stable prefix so the same
+      // crash keys identically across runs while distinct stacks still
+      // differ (their prefixes diverge within the first ~18 chars).
+      const signature = traceUrl ? `${kind}@trace:${traceUrl[1].slice(0, 18)}` : detail
         .replace(/0x[0-9a-fA-F]{9,}/g, m => (/^0x[fF]{9,}$/.test(m) ? "0xFFFF(-1)" : "0xPTR"))
         .replace(/\bthread \d+\b/g, "thread N")
         // fold Win32/errno codes: the same die-with-message site with a

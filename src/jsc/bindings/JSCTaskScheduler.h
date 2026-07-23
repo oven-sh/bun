@@ -33,7 +33,7 @@ public:
     // successful register() and release it once both its live and dead lists
     // are empty so cleanup callbacks for already-registered targets still run.
     //
-    // Retention is bound to the shortest-lived target, which over-corrects past
+    // Retention is bound to the longest-lived target, which over-corrects past
     // V8 for the case of a registry that is dropped while still holding a
     // registration for a target that never dies (e.g. globalThis): such a
     // registry, its callback closure and every held value are kept until VM

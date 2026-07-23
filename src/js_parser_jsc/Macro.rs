@@ -621,22 +621,25 @@ impl<'a> Run<'a> {
             T::Double => self.coerce(T::Double, value),
             T::String => self.coerce(T::String, value),
             T::Promise => self.coerce(T::Promise, value),
-            _ => {
-                let name = value.get_class_info_name().unwrap_or(b"unknown");
-
-                self.log.add_error_fmt(
-                    Some(self.source),
-                    self.caller.loc,
-                    // `JSType` derives `Debug` (not `IntoStaticStr`).
-                    format_args!(
-                        "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
-                        bstr::BStr::new(name),
-                        value.js_type(),
-                    ),
-                );
-                Err(MacroError::MacroFailed)
-            }
+            _ => Err(self.unsupported_value_error(value)),
         }
+    }
+
+    /// docs/bundler/macros.mdx ("Serializability"): a return value the
+    /// transpiler cannot inline is a build error, never a silent placeholder.
+    fn unsupported_value_error(&mut self, value: JSValue) -> MacroError {
+        let name = value.get_class_info_name().unwrap_or(b"unknown");
+        self.log.add_error_fmt(
+            Some(self.source),
+            self.caller.loc,
+            // `JSType` derives `Debug` (not `IntoStaticStr`).
+            format_args!(
+                "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
+                bstr::BStr::new(name),
+                value.js_type(),
+            ),
+        );
+        MacroError::MacroFailed
     }
 
     // Runtime `tag` param — every call site in `run` already matches once.
@@ -701,7 +704,10 @@ impl<'a> Run<'a> {
                         .map_err(|_| MacroError::MacroFailed);
                 }
 
-                return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
+                // `URL`, `Headers`, and every other platform object:
+                // only `Response`/`Request`/`Blob` (handled above) have an
+                // AST representation.
+                return Err(self.unsupported_value_error(value));
             }
 
             T::Boolean => {
@@ -895,16 +901,7 @@ impl<'a> Run<'a> {
             _ => {}
         }
 
-        self.log.add_error_fmt(
-            Some(self.source),
-            self.caller.loc,
-            // `JSType` derives `Debug` (not `IntoStaticStr`).
-            format_args!(
-                "cannot coerce {:?} to Bun's AST. Please return a simpler type",
-                value.js_type(),
-            ),
-        );
-        Err(MacroError::MacroFailed)
+        Err(self.unsupported_value_error(value))
     }
 }
 
@@ -1087,10 +1084,21 @@ fn expr_from_blob(
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
+    // Only the MIME essence picks the serialization: `Content-Type` values
+    // usually carry parameters (`application/json;charset=utf-8`) and the
+    // type/subtype match is ASCII case-insensitive (RFC 2045, section 5.1).
+    let essence: &[u8] = match strings::index_of_char(mime_type, b';') {
+        Some(semicolon) => &mime_type[..semicolon as usize],
+        None => mime_type,
+    }
+    .trim_ascii();
+    let essence: &[u8] =
+        strings::copy_lowercase_if_needed(essence, bump.alloc_slice_fill_copy(essence.len(), 0u8));
+
     // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
-    let is_json = mime_type == b"application/json"
-        || mime_type.ends_with(b"+json")
-        || mime_type.ends_with(b"/json");
+    let is_json = essence == b"application/json"
+        || essence.ends_with(b"+json")
+        || essence.ends_with(b"/json");
 
     if is_json {
         let source = &Source::init_path_string(b"fetch.json", bytes);
@@ -1108,11 +1116,11 @@ fn expr_from_blob(
     }
 
     // MimeType::Category::isTextLike — text/*, application/javascript-ish, xml.
-    let is_text_like = mime_type.starts_with(b"text/")
-        || mime_type == b"application/javascript"
-        || mime_type == b"application/x-javascript"
-        || mime_type == b"application/ecmascript"
-        || mime_type == b"application/xml";
+    let is_text_like = essence.starts_with(b"text/")
+        || essence == b"application/javascript"
+        || essence == b"application/x-javascript"
+        || essence == b"application/ecmascript"
+        || essence == b"application/xml";
 
     if is_text_like {
         let mut output = bun_core::MutableString::init_empty();

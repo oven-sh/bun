@@ -68,11 +68,19 @@ pub trait FdExt: Copy + Sized {
 }
 
 impl FdExt for Fd {
+    #[track_caller]
     fn close(self) {
         let err = self.close_allowing_bad_file_descriptor(None);
-        debug_assert!(err.is_none()); // use after close!
+        // use after close!
+        debug_assert!(
+            err.is_none(),
+            "close({self}) = {} at {}",
+            err.as_ref().unwrap(),
+            core::panic::Location::caller(),
+        );
     }
 
+    #[track_caller]
     fn close_allowing_bad_file_descriptor(
         self,
         return_address: Option<usize>,
@@ -84,6 +92,7 @@ impl FdExt for Fd {
         self.close_allowing_standard_io(return_address)
     }
 
+    #[track_caller]
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error> {
         debug_assert!(self.is_valid()); // probably a UAF
 

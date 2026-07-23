@@ -2145,4 +2145,3 @@ fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Optio
     };
     Some(JSPromise::rejected_promise(global_object, err.to_js(global_object)).to_js())
 }
-

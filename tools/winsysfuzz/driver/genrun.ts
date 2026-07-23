@@ -98,10 +98,18 @@ let iter = 0;
 let crashes = 0;
 let hangs = 0;
 let runs = 0;
+// While one worker verifies, the rest pause between runs so the replay
+// executes SOLO: these crashes reproduce 6/6 alone and 0/6 under 24-way
+// sibling load (they need a resource concurrent runs occupy).
+let verifying = 0;
+const waitQuiet = async () => {
+  while (verifying > 0) await Bun.sleep(200);
+};
 const t0 = Date.now();
 const qfile = join(queueDir, "queue.jsonl");
 async function worker(w: number) {
   while (iter < iterations) {
+    await waitQuiet();
     const n = ++iter;
     const seed = seedNext++;
     const dir = join(workRoot, `s${seed}`);
@@ -140,10 +148,17 @@ async function worker(w: number) {
     // verified. (Requiring the very next run to crash discarded ~all of
     // the intermittent - i.e. concurrency - findings.)
     let verified = false;
-    for (let a = 0; a < 4 && !verified; a++) {
-      const r2 = await runProgram(vprogram, vdir);
-      const j2 = judge(r2);
-      verified = j2.kind === j.kind && (j.kind !== "crash" || j2.sig === j.sig);
+    verifying++;
+    try {
+      // let in-flight sibling runs drain so the replay is truly solo
+      await Bun.sleep(1500);
+      for (let a = 0; a < 4 && !verified; a++) {
+        const r2 = await runProgram(vprogram, vdir);
+        const j2 = judge(r2);
+        verified = j2.kind === j.kind && (j.kind !== "crash" || j2.sig === j.sig);
+      }
+    } finally {
+      verifying--;
     }
     if (j.kind === "crash") crashes++;
     else hangs++;

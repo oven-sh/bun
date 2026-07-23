@@ -1090,8 +1090,7 @@ impl Response {
                     // headers/statusText. `status` is read once inside
                     // `init_with_default_status` (default 302 when absent) and
                     // validated as a redirect status below.
-                    if let Some(init) =
-                        Init::init_with_default_status(global_this, arg_init, 302)?
+                    if let Some(init) = Init::init_with_default_status(global_this, arg_init, 302)?
                     {
                         // cleanup is handled by Init's drop glue on `?` below
                         response.init.set(init);

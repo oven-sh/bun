@@ -267,6 +267,8 @@ function objectFromShape(t: string, depth: number): string | null {
 // stream/array/cmd argument undefined - that only exercises validation).
 function argList(c: Callable): string {
   const args = c.params.filter(p => !p.optional || chance(0.5)).map(p => valueFor(p.type, p.name));
+  // (source steering below runs before the self-alias rewrite so it sees
+  // the raw $pool draw)
   // Known-reported: any Bun.write whose SOURCE file does not exist (or is
   // unopenable: trailing-space/dot names, path-through-a-file, invalid
   // UTF-16) segfaults on Windows via the on_copy_file ENOENT retry loop.
@@ -276,7 +278,7 @@ function argList(c: Callable): string {
   // Any BunFile source - inline OR pooled (a pooled BunFile may name a
   // hostile/missing/ADS path built earlier in the program) - is redrawn
   // from files the preamble created; the missing-source family is reported.
-  if (c.path === "Bun.write" && args.length >= 2 && /Bun\.file\(|\$pool\("BunFile"\)/.test(args[1])) {
+  if (c.path === "Bun.write" && args.length >= 2 && /Bun\.file\(|\$pool2?\("BunFile"\)/.test(args[1])) {
     args[1] = pick([`Bun.file(P("data.txt"))`, `Bun.file(P("big.bin"))`, `Bun.file(P("empty.txt"))`]);
   }
   // Known-reported: Bun.write(x, x) with one pooled object as both

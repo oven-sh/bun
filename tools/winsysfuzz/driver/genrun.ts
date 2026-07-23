@@ -214,6 +214,16 @@ async function worker(w: number) {
     knownKeys.add(j.sig);
     await Bun.write(join(dir, "stdout.txt"), r.stdout);
     await Bun.write(join(dir, "stderr.txt"), r.stderr);
+    // The PROGRAM TEXT is the reproducer, not the seed: a generator change
+    // shifts every random draw, so a seed only regenerates the crashing
+    // program under the exact generator build that produced it. Preserve
+    // the program itself with the finding.
+    const programCopy = join(queueDir, "programs");
+    ensureDir(programCopy);
+    const savedProgram = join(programCopy, `gen-${seed}.js`);
+    try {
+      await Bun.write(savedProgram, await Bun.file(program).text());
+    } catch {}
     const entry = {
       queuedAt: stamp,
       dedupeKey: j.sig,
@@ -231,7 +241,7 @@ async function worker(w: number) {
       lastStage: null,
       termChain: null,
       stacks: null,
-      findings: program,
+      findings: savedProgram,
       workDir: dir,
     };
     appendFileSync(qfile, JSON.stringify(entry) + "\n");

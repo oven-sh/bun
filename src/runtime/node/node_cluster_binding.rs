@@ -6,9 +6,9 @@
 
 use bun_core::String as BunString;
 use bun_jsc::ipc::{Handle, IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
-use crate::api::bun::subprocess::Subprocess;
+use crate::api::bun::subprocess::{Subprocess, js as subprocess_js};
 
 // Struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
@@ -74,17 +74,22 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
     let singleton = child_singleton();
+    let seq = singleton.seq;
     if callback.is_function() {
-        // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
-        // These sequence numbers shouldn't exist from JavaScript's perspective at all.
-        let _ = singleton
-            .callbacks
-            .put(singleton.seq, StrongOptional::create(callback, global));
+        let map = match singleton.callbacks.get() {
+            Some(m) => m,
+            None => {
+                let m = bun_jsc::JSMap::create(global);
+                singleton.callbacks.set(global, m);
+                m
+            }
+        };
+        InternalMsgHolder::put_callback(map, global, seq, callback)?;
     }
 
     // sequence number for InternalMsgHolder
-    message.put(global, b"seq", JSValue::js_number(singleton.seq as f64));
-    singleton.seq = singleton.seq.wrapping_add(1);
+    message.put(global, b"seq", JSValue::js_number(seq as f64));
+    singleton.seq = seq.wrapping_add(1);
 
     // similar code as Bun__Process__send
     #[cfg(debug_assertions)]
@@ -146,9 +151,8 @@ pub(crate) fn on_internal_message_child(
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_old::<2>().ptr;
     let singleton = child_singleton();
-    // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(arguments[0], global);
-    singleton.cb = StrongOptional::create(arguments[1], global);
+    singleton.worker.set(global, arguments[0]);
+    singleton.cb.set(global, arguments[1]);
     singleton.flush(global)?;
     Ok(JSValue::UNDEFINED)
 }
@@ -232,20 +236,25 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         }
     };
 
+    let seq = ipc_data.internal_msg_queue.seq;
     if callback.is_function() {
-        let _ = ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
-        );
+        // Ack callbacks live in a JS Map held by the Subprocess wrapper's
+        // WriteBarrier slot: one GC edge regardless of how many are in flight,
+        // and not a GC root, so the Subprocess stays collectable.
+        let map = match subprocess_js::ipc_ack_callbacks_get_cached(arguments[0]) {
+            Some(m) => m,
+            None => {
+                let m = bun_jsc::JSMap::create(global);
+                subprocess_js::ipc_ack_callbacks_set_cached(arguments[0], global, m);
+                m
+            }
+        };
+        InternalMsgHolder::put_callback(map, global, seq, callback)?;
     }
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
-    );
-    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
+    message.put(global, b"seq", JSValue::js_number(seq as f64));
+    ipc_data.internal_msg_queue.seq = seq.wrapping_add(1);
 
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
@@ -279,12 +288,14 @@ pub(crate) fn on_internal_message_primary(
     let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let Some(ipc_data) = subprocess.ipc() else {
+    if subprocess.ipc().is_none() {
         return Ok(JSValue::UNDEFINED);
-    };
-    // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments[1], global);
-    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments[2], global);
+    }
+    // Stored in the Subprocess wrapper's WriteBarrier slots: visited by GC but
+    // not a root, so a finished worker's whole object graph is collectable once
+    // user code releases it.
+    subprocess_js::ipc_worker_set_cached(arguments[0], global, arguments[1]);
+    subprocess_js::ipc_internal_callback_set_cached(arguments[0], global, arguments[2]);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -296,10 +307,18 @@ pub(crate) fn handle_internal_message_primary(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
-
-    if !ipc_data.internal_msg_queue.is_ready() {
+    let this_jsvalue = ipc_data.owner_this_jsvalue();
+    let _keep = bun_jsc::EnsureStillAlive(this_jsvalue);
+    if this_jsvalue.is_empty() {
         return Ok(());
     }
+
+    let (Some(worker), Some(cb)) = (
+        subprocess_js::ipc_worker_get_cached(this_jsvalue),
+        subprocess_js::ipc_internal_callback_get_cached(this_jsvalue),
+    ) else {
+        return Ok(());
+    };
 
     let event_loop = global.bun_vm().event_loop_mut();
 
@@ -307,39 +326,15 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            // Peek the JSValue first (ending the immutable borrow), then
-            // swap_remove (which drops the Strong).
-            let entry = ipc_data
-                .internal_msg_queue
-                .callbacks
-                .get(&ack)
-                .map(|s| s.get());
-            if let Some(callback_opt) = entry {
-                ipc_data.internal_msg_queue.callbacks.swap_remove(&ack);
-                let cb = callback_opt.unwrap();
-                event_loop.run_callback(
-                    cb,
-                    global,
-                    ipc_data.internal_msg_queue.worker.get().unwrap(),
-                    &[
-                        message,
-                        JSValue::NULL, // handle
-                    ],
-                );
-                return Ok(());
+            if let Some(map) = subprocess_js::ipc_ack_callbacks_get_cached(this_jsvalue) {
+                if let Some(callback) = InternalMsgHolder::take_callback(map, global, ack)? {
+                    event_loop.run_callback(callback, global, worker, &[message, JSValue::NULL]);
+                    return Ok(());
+                }
             }
         }
     }
-    let cb = ipc_data.internal_msg_queue.cb.get().unwrap();
-    event_loop.run_callback(
-        cb,
-        global,
-        ipc_data.internal_msg_queue.worker.get().unwrap(),
-        &[
-            message,
-            JSValue::NULL, // handle
-        ],
-    );
+    event_loop.run_callback(cb, global, worker, &[message, JSValue::NULL]);
     Ok(())
 }
 

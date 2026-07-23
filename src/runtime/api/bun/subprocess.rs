@@ -73,7 +73,10 @@ pub mod js {
         exitedPromise,
         onExitCallback,
         onDisconnectCallback,
-        ipcCallback
+        ipcCallback,
+        ipcWorker,
+        ipcInternalCallback,
+        ipcAckCallbacks
     );
 }
 
@@ -1466,6 +1469,11 @@ impl Subprocess<'_> {
         if !this_jsvalue.is_empty() {
             // Avoid keeping the callback alive longer than necessary
             js::ipc_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
+            // No further internal message can arrive or be acked once the
+            // channel is gone; drop the cluster-internal references.
+            js::ipc_worker_set_cached(this_jsvalue, global_this, JSValue::ZERO);
+            js::ipc_internal_callback_set_cached(this_jsvalue, global_this, JSValue::ZERO);
+            js::ipc_ack_callbacks_set_cached(this_jsvalue, global_this, JSValue::ZERO);
 
             // Call the onDisconnectCallback if it exists and prevent it from being kept alive longer than necessary
             if let Some(callback) =

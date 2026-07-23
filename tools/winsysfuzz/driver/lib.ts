@@ -241,6 +241,7 @@ export interface Trace {
   attached: number;
   modules: { base: bigint; size: bigint; name: string }[]; // '# mod' map for o:-key naming
   termStacks: string[][]; // one 'T' record per traced process: terminating thread's bun.exe frame RVAs
+  malformed?: string; // first malformed X line seen (truncated/interleaved write), if any
   leaks: string[]; // 'L' records: named handles still open at process exit ("<kind> <name-tail>")
   leaksByProc: string[][]; // the same, kept per traced process (one array per trace file)
 }
@@ -268,7 +269,7 @@ export function keyName(t: Trace, key: string): string {
 // counting all). Injection runs need "did it fire, and where" - not a
 // 200k-record array for a 20MB trace of a big test file.
 export function parseTrace(text: string, faultsOnly = false): Trace {
-  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0, modules: [], termStacks: [], leaks: [], leaksByProc: [] };
+  const t: Trace = { notes: [], recs: [], recCount: 0, bunBase: "0", cleanEnd: false, attached: 0, modules: [], termStacks: [], leaks: [], leaksByProc: [], malformed: undefined };
   const bySeq = new Map<number, Rec>();
   for (const line of text.split("\n")) {
     if (!line) continue;
@@ -285,6 +286,18 @@ export function parseTrace(text: string, faultsOnly = false): Trace {
     }
     const p = line.split(" ");
     if (p[0] === "X") {
+      // 'X seq tid sys status key rvas [!fault]' = at least 7 fields. A
+      // short line is a truncated/interleaved write (the runtime appends
+      // per-thread); count it, report it once, never build a keyless
+      // record from it.
+      if (p.length < 7) {
+        t.recCount++;
+        if (!t.malformed) {
+          t.malformed = line.slice(0, 200);
+          console.error(`readTraceDir: malformed X record skipped: ${JSON.stringify(t.malformed)}`);
+        }
+        continue;
+      }
       t.recCount++;
       const fault: Rec["fault"] =
         p[7] === "!P" ? "P" : p[7] === "!Q" ? "Q" : p[7] === "!M" ? "M" : p[7] === "!D" ? "D" : "";

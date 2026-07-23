@@ -692,7 +692,8 @@ if (SERVE_MODE) {
     `fetch(req) { return Response.redirect("http://" + req.headers.get("host") + "/loop", 302); }`,
   ];
   const wsHandlers = `websocket: { open(ws) { ws.send("x".repeat(1024)); if (${rnd() < 0.5}) ws.close(); }, message(ws, m) { try { ws.send(m); ws.publish?.("t", m); } catch {} if (${rnd() < 0.3}) ws.terminate?.(); }, close() {}, drain() {}, ping() {}, pong() {} },`;
-  emit(`const $S = Bun.serve({ port: 0, development: false, ${pick(handlers)}, ${wsHandlers} error(e) { return new Response("err", { status: 500 }); } });`);
+  emit(`let $reqs = 0;`);
+  emit(`const $S = Bun.serve({ port: 0, development: false, ${pick(handlers).replace("fetch(req", "fetch(req").replace(/fetch\(req(, srv)?\) \{/, m => m + " $reqs++;")}, ${wsHandlers} error(e) { return new Response("err", { status: 500 }); } });`);
   emit(`const CRLF = String.fromCharCode(13, 10);`);
   emit(`const $U = "http://127.0.0.1:" + $S.port + "/p";`);
   const nClients = int(6, 26);
@@ -715,7 +716,8 @@ if (SERVE_MODE) {
     `Promise.resolve()`,
   ];
   emit(`$clients.push(${pick(midOps)});`);
-  emit(`await Promise.race([Promise.allSettled($clients), Bun.sleep(2500)]);`);
+  emit(`const $settled = await Promise.race([Promise.allSettled($clients), Bun.sleep(2500)]);`);
+  emit(`console.log("SERVE-STATS " + JSON.stringify({ reqs: $reqs, clients: $clients.length, settled: Array.isArray($settled) ? $settled.length : "timeout" }));`);
   emit(`try { $S.stop(true); } catch {}`);
   emit(`await Bun.sleep(30);`);
 }

@@ -770,7 +770,26 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
     resp_rx.recv().ok().flatten()
 }
 
-fn persist_locked(state: &mut CacheState) {
+/// One unit of persist work, snapshotted out of `STATE` so bytecode
+/// generation can run with the lock dropped. `code` is moved (not cloned)
+/// out of the entry; a concurrent `fetch` of the same key sees `code: None`
+/// and skips scheduling, which also makes overlapping persist passes
+/// naturally exclusive per entry. The key is content-derived, so any
+/// re-populated code is byte-identical to what was taken.
+struct PersistJob {
+    key: u32,
+    format: Format,
+    code: Box<[u8]>,
+    filename: Box<[u8]>,
+    is_cjs: bool,
+    code_size: u32,
+    code_hash: u32,
+}
+
+/// Phase 1 (locked): decide what needs persisting and move the source code
+/// out of the entries.
+fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
+    let mut jobs = Vec::new();
     for (&key, entry) in state.entries.iter_mut() {
         let tname = type_name(entry.is_cjs);
         let name = display_name(&entry.filename, entry.is_cjs);
@@ -785,112 +804,172 @@ fn persist_locked(state: &mut CacheState) {
             cclog!("[compile cache] skip persisting {tname} {name} because cache was the same\n");
             continue;
         }
-        if entry.code.is_none() {
+        let Some(code) = entry.code.take() else {
             cclog!(
                 "[compile cache] skip persisting {tname} {name} because the cache was not initialized\n"
             );
             continue;
-        }
-        let Some(code) = entry.code.as_deref() else {
-            continue;
         };
+        jobs.push(PersistJob {
+            key,
+            format: if entry.is_cjs { Format::Cjs } else { Format::Esm },
+            code,
+            filename: entry.filename.clone(),
+            is_cjs: entry.is_cjs,
+            code_size: entry.code_size,
+            code_hash: entry.code_hash,
+        });
+    }
+    jobs
+}
 
-        let format = if entry.is_cjs {
-            Format::Cjs
-        } else {
-            Format::Esm
-        };
-        let Some(blob) = generate_bytecode(format, code, &entry.filename) else {
+/// Phase 3 (locked): write one generated blob to disk and update the entry.
+/// Returns the code buffer when the entry should keep it (write failed and a
+/// later pass may retry).
+fn write_persist_job_locked(
+    state: &mut CacheState,
+    job: &PersistJob,
+    blob: &[u8],
+) -> Result<(), ()> {
+    let tname = type_name(job.is_cjs);
+    let name = display_name(&job.filename, job.is_cjs);
+
+    let cache_size = blob.len() as u32;
+    let cache_hash = hash32(blob);
+    let headers: [u32; HEADER_COUNT] = [
+        MAGIC,
+        job.code_size,
+        cache_size,
+        job.code_hash,
+        cache_hash,
+    ];
+
+    let basename = cache_basename(job.key);
+    let mut tmpname_buf = PathBuffer::uninit();
+    let tmpname_zstr: &ZStr = match bun_resolver::fs::FileSystem::tmpname(
+        &basename,
+        &mut tmpname_buf[..],
+        u64::from(job.key),
+    ) {
+        Ok(z) => z,
+        Err(_) => return Err(()),
+    };
+
+    cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
+
+    let mut tmpfile = match sys::Tmpfile::create(state.dir_handle.fd(), tmpname_zstr) {
+        Ok(t) => t,
+        Err(e) => {
+            cclog!("failed. {}\n", errno_name(&e));
+            return Err(());
+        }
+    };
+    let _close = sys::CloseOnDrop::new(tmpfile.fd);
+
+    let tmp_display = format!(
+        "{}{}{}",
+        state.dir.as_bstr(),
+        SEP as char,
+        tmpname_zstr.as_bytes().as_bstr()
+    );
+    cclog!(" -> {tmp_display}\n");
+    cclog!(
+        "[compile cache] writing cache for {tname} {name} to temporary file {tmp_display} [{} {} {} {} {}]...",
+        headers[0],
+        headers[1],
+        headers[2],
+        headers[3],
+        headers[4]
+    );
+
+    let mut header_bytes = [0u8; HEADER_SIZE];
+    for (i, h) in headers.iter().enumerate() {
+        header_bytes[i * 4..i * 4 + 4].copy_from_slice(&h.to_le_bytes());
+    }
+    // ManuallyDrop: the fd is owned by `_close` above.
+    let file = core::mem::ManuallyDrop::new(sys::File::from_fd(tmpfile.fd));
+    let write_all = || -> sys::Maybe<()> {
+        file.pwrite_all(&header_bytes, 0)?;
+        file.pwrite_all(&job.code, HEADER_SIZE as i64)?;
+        file.pwrite_all(blob, (HEADER_SIZE + job.code.len()) as i64)?;
+        Ok(())
+    };
+    if let Err(e) = write_all() {
+        cclog!("failed: {}\n", errno_name(&e));
+        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
+        return Err(());
+    }
+    cclog!("success\n");
+
+    let mut dest_z = [0u8; 9];
+    dest_z[..8].copy_from_slice(&basename);
+    let dest_zstr = ZStr::from_buf(&dest_z, 8);
+    let final_display = format!(
+        "{}{}{}",
+        state.dir.as_bstr(),
+        SEP as char,
+        core::str::from_utf8(&basename).expect("hex")
+    );
+    cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
+    if let Err(e) = tmpfile.finish(dest_zstr) {
+        cclog!("failed: {}\n", errno_name(&e));
+        let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
+        return Err(());
+    }
+    cclog!("success\n");
+    Ok(())
+}
+
+/// Full persist pass. `STATE` is held only for the snapshot and the
+/// file-write/bookkeeping phases; the expensive bytecode generation (a
+/// blocking round-trip to the BunCompileCache worker per entry) runs with
+/// the lock dropped so concurrent module loads — Workers included — are not
+/// stalled behind it.
+fn persist_pass() {
+    // Phase 1: snapshot under the lock.
+    let jobs = {
+        let mut guard = STATE.lock();
+        let Some(state) = guard.as_mut() else { return };
+        collect_persist_jobs(state)
+    };
+
+    // Phase 2: generate bytecode, unlocked.
+    let mut generated: Vec<(PersistJob, Option<Box<[u8]>>)> = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        let blob = generate_bytecode(job.format, &job.code, &job.filename);
+        if blob.is_none() {
+            let tname = type_name(job.is_cjs);
+            let name = display_name(&job.filename, job.is_cjs);
             cclog!("[compile cache] generating cache for {tname} {name} failed, skipping\n");
+        }
+        generated.push((job, blob));
+    }
+
+    // Phase 3: write files and update entries under the lock.
+    let mut guard = STATE.lock();
+    let Some(state) = guard.as_mut() else { return };
+    for (job, blob) in generated {
+        let Some(blob) = blob else {
             // Do not retry on the next persist pass.
-            entry.persisted = true;
-            continue;
-        };
-
-        let cache_size = blob.len() as u32;
-        let cache_hash = hash32(&blob);
-        let headers: [u32; HEADER_COUNT] = [
-            MAGIC,
-            entry.code_size,
-            cache_size,
-            entry.code_hash,
-            cache_hash,
-        ];
-
-        let basename = cache_basename(key);
-        let mut tmpname_buf = PathBuffer::uninit();
-        let tmpname_zstr: &ZStr = match bun_resolver::fs::FileSystem::tmpname(
-            &basename,
-            &mut tmpname_buf[..],
-            u64::from(key),
-        ) {
-            Ok(z) => z,
-            Err(_) => continue,
-        };
-
-        cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
-
-        let mut tmpfile = match sys::Tmpfile::create(state.dir_handle.fd(), tmpname_zstr) {
-            Ok(t) => t,
-            Err(e) => {
-                cclog!("failed. {}\n", errno_name(&e));
-                continue;
+            if let Some(entry) = state.entries.get_mut(&job.key) {
+                entry.persisted = true;
             }
-        };
-        let _close = sys::CloseOnDrop::new(tmpfile.fd);
-
-        let tmp_display = format!(
-            "{}{}{}",
-            state.dir.as_bstr(),
-            SEP as char,
-            tmpname_zstr.as_bytes().as_bstr()
-        );
-        cclog!(" -> {tmp_display}\n");
-        cclog!(
-            "[compile cache] writing cache for {tname} {name} to temporary file {tmp_display} [{} {} {} {} {}]...",
-            headers[0],
-            headers[1],
-            headers[2],
-            headers[3],
-            headers[4]
-        );
-
-        let mut header_bytes = [0u8; HEADER_SIZE];
-        for (i, h) in headers.iter().enumerate() {
-            header_bytes[i * 4..i * 4 + 4].copy_from_slice(&h.to_le_bytes());
-        }
-        // ManuallyDrop: the fd is owned by `_close` above.
-        let file = core::mem::ManuallyDrop::new(sys::File::from_fd(tmpfile.fd));
-        let write_all = || -> sys::Maybe<()> {
-            file.pwrite_all(&header_bytes, 0)?;
-            file.pwrite_all(code, HEADER_SIZE as i64)?;
-            file.pwrite_all(&blob, (HEADER_SIZE + code.len()) as i64)?;
-            Ok(())
-        };
-        if let Err(e) = write_all() {
-            cclog!("failed: {}\n", errno_name(&e));
-            let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
             continue;
-        }
-        cclog!("success\n");
-
-        let mut dest_z = [0u8; 9];
-        dest_z[..8].copy_from_slice(&basename);
-        let dest_zstr = ZStr::from_buf(&dest_z, 8);
-        let final_display = format!(
-            "{}{}{}",
-            state.dir.as_bstr(),
-            SEP as char,
-            core::str::from_utf8(&basename).expect("hex")
-        );
-        cclog!("[compile cache] Renaming {tmp_display} to {final_display}...");
-        if let Err(e) = tmpfile.finish(dest_zstr) {
-            cclog!("failed: {}\n", errno_name(&e));
-            let _ = sys::unlinkat(state.dir_handle.fd(), tmpname_zstr);
+        };
+        let wrote = write_persist_job_locked(state, &job, &blob);
+        let Some(entry) = state.entries.get_mut(&job.key) else {
             continue;
+        };
+        match wrote {
+            Ok(()) => entry.persisted = true,
+            // Keep the source so a later pass can retry, matching the old
+            // in-place behavior for failed writes.
+            Err(()) => {
+                if entry.code.is_none() {
+                    entry.code = Some(job.code);
+                }
+            }
         }
-        cclog!("success\n");
-        entry.persisted = true;
     }
 
     cclog!("[compile cache] Clear deserialized cache.\n");
@@ -909,12 +988,7 @@ pub fn flush() {
         return;
     }
     cclog!("[compile cache] module.flushCompileCache() requested.\n");
-    {
-        let mut guard = STATE.lock();
-        if let Some(state) = guard.as_mut() {
-            persist_locked(state);
-        }
-    }
+    persist_pass();
     cclog!("[compile cache] module.flushCompileCache() finished.\n");
 }
 
@@ -936,10 +1010,7 @@ pub fn persist_now() {
     if !is_enabled() {
         return;
     }
-    let mut guard = STATE.lock();
-    if let Some(state) = guard.as_mut() {
-        persist_locked(state);
-    }
+    persist_pass();
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -2,9 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // `import "./file.txt"` must agree with `Bun.file(f).text()`, `fs.readFileSync(f, "utf8")`
-// and `TextDecoder` on files that are not valid UTF-8. Previously the loader widened
-// invalid lead bytes to their Latin-1 code point and emitted NUL for other ill-formed
-// sequences (over-advancing past following bytes) instead of U+FFFD.
+// and `TextDecoder` on files that are not valid UTF-8.
+// https://github.com/oven-sh/bun/issues/12981
 describe("text loader decodes ill-formed UTF-8 as U+FFFD", () => {
   const cases: { name: string; bytes: number[] }[] = [
     { name: "invalid lead bytes", bytes: [0x61, 0xff, 0xfe, 0x62] },

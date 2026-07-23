@@ -25,6 +25,7 @@
 
 #include "URLDecomposition.h"
 
+#include "BunIDNA.h"
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
@@ -38,7 +39,9 @@ String URLDecomposition::origin() const
     if (fullURL.protocolIsBlob()) {
         const String& path = fullURL.path().toString();
         const URL subUrl { URL {}, path };
-        if (subUrl.isValid()) {
+        // An inner host with an invalid Punycode label makes this parse fail
+        // per the spec, which yields an opaque ("null") origin.
+        if (subUrl.isValid() && Bun::urlHostIsValidIDNA(subUrl)) {
             if (subUrl.protocolIsInHTTPFamily() or subUrl.protocolIsInFTPFamily() or subUrl.protocolIs("ws"_s) or subUrl.protocolIs("wss"_s) or subUrl.protocolIsFile())
                 return subUrl.protocolHostAndPort();
         }

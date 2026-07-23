@@ -283,6 +283,7 @@ it.skipIf(!isPosix)(
   "a backpressured write() rejects with EPIPE when the reader closes before the deferred flush",
   async () => {
     const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
     const sink = Bun.file(writeFd).writer();
     const size = 4 * 1024 * 1024;
 
@@ -293,6 +294,7 @@ it.skipIf(!isPosix)(
       // Close the reader before the first await: the deferred auto-flush fires
       // as part of that await's microtask drain, and its flush() now sees EPIPE.
       fs.closeSync(readFd);
+      readFdOpen = false;
 
       let caught: any;
       try {
@@ -302,15 +304,23 @@ it.skipIf(!isPosix)(
       }
       expect(caught?.code).toBe("EPIPE");
 
+      // The Err arm also moves the sink to its terminal state: further writes
+      // short-circuit to Writable::Done (=> true).
+      expect(sink.write("x")).toBe(true);
+
       // end() after the error reports the bytes that actually reached the fd;
       // the point is it doesn't claim the full chunk was delivered.
-      const endRes = await Promise.resolve(sink.end()).catch(e => e);
-      expect(endRes).not.toBe(size);
+      const endRes = await sink.end();
+      expect(typeof endRes).toBe("number");
+      expect(endRes).toBeLessThan(size);
     } finally {
-      await Promise.resolve(sink.end()).catch(() => {});
+      try {
+        await sink.end();
+      } catch {}
       try {
         fs.closeSync(writeFd);
       } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
     }
   },
 );

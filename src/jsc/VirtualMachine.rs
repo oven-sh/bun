@@ -362,7 +362,7 @@ unsafe extern "C" {
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
-    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8, drain_microtasks: bool);
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -497,9 +497,9 @@ impl ExitHandler {
     /// parent via `container_of` would escape the provenance of `&mut self`
     /// (which only covers the `ExitHandler` field). Callers pass the VM
     /// reference instead; the body re-enters JS so no `&mut` is held.
-    pub fn dispatch_on_exit(vm: &VirtualMachine) {
+    pub fn dispatch_on_exit(vm: &VirtualMachine, drain_microtasks: bool) {
         let exit_code = vm.exit_handler.exit_code;
-        Process__dispatchOnExit(vm.global(), exit_code);
+        Process__dispatchOnExit(vm.global(), exit_code, drain_microtasks);
         if vm.worker.is_none() {
             Bun__closeAllSQLiteDatabasesForTermination();
             Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
@@ -1456,7 +1456,7 @@ impl VirtualMachine {
         }
     }
 
-    pub fn on_exit(&mut self) {
+    pub fn on_exit(&mut self, natural: bool) {
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
@@ -1477,7 +1477,9 @@ impl VirtualMachine {
             }
         }
 
-        ExitHandler::dispatch_on_exit(self);
+        // Node drains microtasks after 'exit' only on a natural event-loop
+        // drain: callers on explicit/fatal paths pass `natural = false`.
+        ExitHandler::dispatch_on_exit(self, natural && self.unhandled_error_counter == 0);
         self.is_shutting_down = true;
 
         // Make sure we run new cleanup hooks introduced by running cleanup

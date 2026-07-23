@@ -281,7 +281,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
+static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode, bool drainMicrotasks)
 {
     if (process->m_isExiting)
         return;
@@ -301,6 +301,14 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
     emitter.emit(event, arguments);
+
+    // Node performs a final microtask checkpoint after emitting 'exit' on a
+    // natural drain (not process.exit() or fatal exception); process.nextTick
+    // is not drained.
+    if (drainMicrotasks && !vm.hasTerminationRequest()) {
+        vm.drainMicrotasks();
+        defaultGlobalObject(globalObject)->handleRejectedPromises();
+    }
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -843,7 +851,7 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
-extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode, bool drainMicrotasks)
 {
     if (!globalObject->hasProcessObject()) {
         return;
@@ -852,7 +860,7 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     auto* process = globalObject->processObject();
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
-    dispatchExitInternal(globalObject, process, exitCode);
+    dispatchExitInternal(globalObject, process, exitCode, drainMicrotasks);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -875,7 +883,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto exitCode = Bun__getExitCode(bunVM(zigGlobal));
-    Process__dispatchOnExit(zigGlobal, exitCode);
+    Process__dispatchOnExit(zigGlobal, exitCode, false);
 
     // process.reallyExit(exitCode);
     auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));

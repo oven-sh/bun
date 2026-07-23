@@ -1258,7 +1258,7 @@ impl WebWorker {
             // re-sets it for the JSC VM teardown.
             vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
-            vm.on_exit();
+            vm.on_exit(!self.has_requested_terminate());
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);
                 // Drain `TimeoutObject`s from this worker's timer heap before
@@ -1586,7 +1586,7 @@ fn on_unhandled_rejection(
     // they may change process.exitCode). Run them before arming termination — a pending
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
-    virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    virtual_machine::ExitHandler::dispatch_on_exit(vm, false);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

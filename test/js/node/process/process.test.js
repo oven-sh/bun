@@ -2152,3 +2152,73 @@ it("process.throwDeprecation is per-Worker, not process-global", async () => {
   expect(stderr).toContain("DeprecationWarning: hi");
   expect(exitCode).toBe(0);
 });
+
+it("getActiveResourcesInfo reports a listening http.Server like node", async () => {
+  // node v26.3.0 transcript for the same script:
+  //   {"listening":1,"handleWhileListening":true,"unrefed":0,"refed":1,"closed":0,"handleAfterClose":true}
+  // (listening server = one "TCPServerWrap"; unref() removes it, ref()
+  // restores it; _handle nulls in the close callback and the entry drops
+  // once the close settles — node keeps the closing wrap listed until uv's
+  // OnClose, so "closed" is sampled after a short settle, where both
+  // runtimes report 0.)
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("http");
+       const server = http.createServer((req, res) => res.end("ok"));
+       server.listen(0, "127.0.0.1", () => {
+         const tcp = () => process.getActiveResourcesInfo().filter(x => x === "TCPServerWrap").length;
+         const out = { listening: tcp() };
+         out.handleWhileListening = server._handle != null && process._getActiveHandles().includes(server);
+         server.unref();
+         out.unrefed = tcp();
+         server.ref();
+         out.refed = tcp();
+         server.close(() => {
+           setTimeout(() => {
+             out.closed = tcp();
+             out.handleAfterClose = server._handle === null && !process._getActiveHandles().includes(server);
+             console.log(JSON.stringify(out));
+           }, 50);
+         });
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(
+    '{"listening":1,"handleWhileListening":true,"unrefed":0,"refed":1,"closed":0,"handleAfterClose":true}',
+  );
+  expect(exitCode).toBe(0);
+});
+
+it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like node", async () => {
+  // node v26.3.0: http server on a unix path reports ["PipeWrap"].
+  using dir = tempDir("http-pipewrap", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("http");
+       const server = http.createServer(() => {});
+       server.listen(process.argv[1], () => {
+         const info = process.getActiveResourcesInfo();
+         console.log(JSON.stringify({
+           pipe: info.filter(x => x === "PipeWrap").length,
+           tcp: info.filter(x => x === "TCPServerWrap").length,
+         }));
+         server.close();
+       });`,
+      `${dir}/s.sock`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"pipe":1,"tcp":0}');
+  expect(exitCode).toBe(0);
+});

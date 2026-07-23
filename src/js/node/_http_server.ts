@@ -84,6 +84,20 @@ const {
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+
+// node's http.Server owns a real TCP/Pipe listen handle, so it appears in
+// process.getActiveResourcesInfo()/_getActiveHandles() ("TCPServerWrap", or
+// "PipeWrap" for unix sockets; verified on node v26.3.0). Bun's http.Server
+// rides Bun.serve with no net.Server backend, so it registers with the shared
+// handle registry directly; `_unref` mirrors ref()/unref() like net.Server.
+let activeHandles;
+function registerServerHandle(server, kind) {
+  (activeHandles ??= require("internal/active_handles")).registerHandle(server, kind, "_unref");
+}
+function unregisterServerHandle(server) {
+  if (activeHandles) activeHandles.unregisterHandle(server);
+}
+const kServerHandleKind = Symbol("http.server.handleKind");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -302,6 +316,7 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  this._handle = null;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
@@ -478,6 +493,8 @@ Server.prototype.closeAllConnections = function () {
   this[serverSymbol] = undefined;
   clearInterval(this[kConnectionsCheckingInterval]);
   this.listening = false;
+  this._handle = null;
+  unregisterServerHandle(this);
 
   server.stop(true);
 };
@@ -510,6 +527,8 @@ Server.prototype.close = function (optionalCallback?) {
   this[serverSymbol] = undefined;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
+  this._handle = null;
+  unregisterServerHandle(this);
   server.closeIdleConnections();
   server.stop();
   return this;
@@ -670,6 +689,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
+    this[kServerHandleKind] = socketPath ? "PipeWrap" : "TCPServerWrap";
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
@@ -1147,6 +1167,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     });
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
+    // node's http.Server carries `_handle` (the listen wrap) while listening
+    // and nulls it on close; the registry's liveness walk keys off it too.
+    this._handle = this[serverSymbol];
+    registerServerHandle(this, this[kServerHandleKind]);
     isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);
 

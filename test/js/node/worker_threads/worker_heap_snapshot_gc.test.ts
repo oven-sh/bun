@@ -24,8 +24,29 @@ test.skipIf(isWindows || isIntelMacOS)(
   async () => {
     const slow = isDebug || isASAN;
     const attempts = slow ? 1 : 15;
-    const iters = isDebug ? "5" : slow ? "100" : "300";
+    const iters = isDebug ? 5 : slow ? 100 : 300;
+    // The first SNAPSHOT_ITERS round-trips use getHeapSnapshot(); the rest use
+    // getHeapStatistics(), which shares the same registerCrossVMRequest path
+    // and lambda structure but is ~400x cheaper per call, so the 15x300
+    // race-window count is unchanged without 4500 full worker-heap GCs.
+    const snapshotIters = slow ? iters : 20;
     const fixture = join(import.meta.dir, "heap-snapshot-gc-race-fixture.js");
+    // The fixture additionally parses its first snapshot/stats and reports the
+    // top-level keys, so this also guards the V8 heap-snapshot and
+    // getHeapStatistics() shapes.
+    const expected: Record<string, unknown> = {
+      iters,
+      snapshotIters,
+      snapshotKeys: "edges,locations,nodes,samples,snapshot,strings,trace_function_infos,trace_tree",
+    };
+    if (snapshotIters < iters) {
+      expected.heapStatsKeys =
+        "does_zap_garbage,external_memory,heap_size_limit,malloced_memory,number_of_detached_contexts," +
+        "number_of_native_contexts,peak_malloced_memory,total_allocated_bytes,total_available_size," +
+        "total_global_handles_size,total_heap_size,total_heap_size_executable,total_physical_size," +
+        "used_global_handles_size,used_heap_size";
+    }
+    const expectedStdout = JSON.stringify(expected) + "\n";
 
     // The attempts are independent processes with no shared state, so run them
     // all concurrently; the race being guarded is intra-process.
@@ -33,7 +54,7 @@ test.skipIf(isWindows || isIntelMacOS)(
       Array.from({ length: attempts }, async (_, i) => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), fixture],
-          env: { ...bunEnv, ITERS: iters },
+          env: { ...bunEnv, ITERS: String(iters), SNAPSHOT_ITERS: String(snapshotIters) },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -45,7 +66,7 @@ test.skipIf(isWindows || isIntelMacOS)(
       // One assertion per attempt so a crash shows stdout/stderr/signal together.
       expect(result).toEqual({
         attempt: result.attempt,
-        stdout: "ok\n",
+        stdout: expectedStdout,
         stderr: "",
         exitCode: 0,
         signalCode: null,

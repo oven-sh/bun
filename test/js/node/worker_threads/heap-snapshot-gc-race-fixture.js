@@ -26,11 +26,27 @@ async function makeWorker() {
 
 let worker = await makeWorker();
 
+// getHeapSnapshot() and getHeapStatistics() share the same cross-VM round-trip
+// (Worker::registerCrossVMRequest + postTaskToWorkerGlobalScope + postTaskTo),
+// so their lambda capture/destruction against the parent VM's HandleSet is
+// identical. The first SNAPSHOT_ITERS iterations use getHeapSnapshot() to
+// guard its specific capture list and the snapshot output; the remainder use
+// getHeapStatistics(), which round-trips ~400x faster, so the total round-trip
+// count (and thus race windows) is preserved without paying a full worker GC
+// and V8-JSON serialization per iteration.
 const iters = Number(process.env.ITERS);
+const snapshotIters = Math.min(iters, Number(process.env.SNAPSHOT_ITERS ?? iters));
+let firstSnapshotKeys;
+let heapStatsKeys;
 for (let i = 0; i < iters; i++) {
   let stream;
   try {
-    stream = await worker.getHeapSnapshot();
+    if (i < snapshotIters) {
+      stream = await worker.getHeapSnapshot();
+    } else {
+      const stats = await worker.getHeapStatistics();
+      heapStatsKeys ??= Object.keys(stats).sort().join(",");
+    }
   } catch (e) {
     // On some CI platforms the worker has been observed to exit on its own
     // after a few hundred heap snapshots — that surfaces here as a clean
@@ -51,9 +67,19 @@ for (let i = 0; i < iters; i++) {
   // synchronous full GC so the "Sh" constraint walks m_strongList while
   // the worker would have been removing a node from it.
   Bun.gc(true);
-  stream.on("data", () => {});
-  await new Promise(resolve => stream.once("end", resolve));
+  if (stream) {
+    if (firstSnapshotKeys === undefined) {
+      // Once per process: read the stream and verify it is a structurally
+      // valid V8 heap snapshot, so this fixture also guards
+      // getHeapSnapshot()'s output rather than only its crash-freedom.
+      let json = "";
+      for await (const chunk of stream) json += chunk;
+      firstSnapshotKeys = Object.keys(JSON.parse(json)).sort().join(",");
+    } else {
+      stream.destroy();
+    }
+  }
 }
 
 await worker.terminate();
-console.log("ok");
+console.log(JSON.stringify({ iters, snapshotIters, snapshotKeys: firstSnapshotKeys, heapStatsKeys }));

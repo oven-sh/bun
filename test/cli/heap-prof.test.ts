@@ -12,20 +12,15 @@ async function readProfile(dir: string, file: string) {
   return JSON.parse(content);
 }
 
-function expectV8SamplingProfileShape(profile: any) {
-  // V8 sampling heap profile: { head: { callFrame, selfSize, id, children }, samples }
-  expect(profile).toHaveProperty("head");
-  expect(profile).toHaveProperty("samples");
-  expect(profile.head.callFrame).toEqual({
-    functionName: "(root)",
-    scriptId: "0",
-    url: "",
-    lineNumber: -1,
-    columnNumber: -1,
-  });
-  expect(typeof profile.head.selfSize).toBe("number");
-  expect(Array.isArray(profile.head.children)).toBe(true);
-  expect(Array.isArray(profile.samples)).toBe(true);
+function expectV8HeapSnapshotShape(profile: any) {
+  // V8 heap snapshot: { snapshot: { meta, node_count, edge_count }, nodes, edges, strings }
+  expect(profile).toHaveProperty("snapshot");
+  expect(profile.snapshot).toHaveProperty("meta");
+  expect(typeof profile.snapshot.node_count).toBe("number");
+  expect(profile.snapshot.node_count).toBeGreaterThan(0);
+  expect(Array.isArray(profile.nodes)).toBe(true);
+  expect(Array.isArray(profile.edges)).toBe(true);
+  expect(Array.isArray(profile.strings)).toBe(true);
 }
 
 test("--heap-prof writes a .heapprofile with node's filename format on exit", async () => {
@@ -50,9 +45,9 @@ test("--heap-prof writes a .heapprofile with node's filename format on exit", as
   expect(files[0]).toMatch(nodeFilenameRe);
 
   const profile = await readProfile(String(dir), files[0]);
-  expectV8SamplingProfileShape(profile);
-  // The live-heap size is real, so it is never zero.
-  expect(profile.head.selfSize).toBeGreaterThan(0);
+  expectV8HeapSnapshotShape(profile);
+  // The snapshot is real, so it always carries node data.
+  expect(profile.nodes.length).toBeGreaterThan(0);
 });
 
 test("--heap-prof writes the profile when the script calls process.exit", async () => {
@@ -73,7 +68,7 @@ test("--heap-prof writes the profile when the script calls process.exit", async 
   const files = Array.from(glob.scanSync({ cwd: String(dir) }));
   expect(files.length).toBe(1);
   const profile = await readProfile(String(dir), files[0]);
-  expectV8SamplingProfileShape(profile);
+  expectV8HeapSnapshotShape(profile);
 });
 
 test.skipIf(process.platform === "win32")(
@@ -97,7 +92,7 @@ test.skipIf(process.platform === "win32")(
     const files = Array.from(glob.scanSync({ cwd: String(dir) }));
     expect(files.length).toBe(1);
     const profile = await readProfile(String(dir), files[0]);
-    expectV8SamplingProfileShape(profile);
+    expectV8HeapSnapshotShape(profile);
   },
 );
 
@@ -230,7 +225,7 @@ test("--heap-prof-name specifies output filename", async () => {
   expect(exitCode).toBe(0);
 
   const profile = await readProfile(String(dir), "my-profile.heapprofile");
-  expectV8SamplingProfileShape(profile);
+  expectV8HeapSnapshotShape(profile);
 });
 
 test("--heap-prof-name and --heap-prof-dir work together", async () => {
@@ -261,7 +256,7 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   expect(exitCode).toBe(0);
 
   const profile = await readProfile(join(String(dir), "output"), "custom.heapprofile");
-  expectV8SamplingProfileShape(profile);
+  expectV8HeapSnapshotShape(profile);
 });
 
 // Node parity: heap-profiler-scoped flags without --heap-prof exit 9 with

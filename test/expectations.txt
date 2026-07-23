@@ -96,21 +96,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close (FIN) handling
 [ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # named-pipe connect errors are not mapped to ENOENT/EACCES on Windows yet
 [ WINDOWS ] test/js/node/test/parallel/test-net-server-listen-path.js [ FAIL ] # EADDRINUSE not reported for a second listen on the same pipe path
-[ WINDOWS ] test/js/node/test/parallel/test-pipe-unref.js [ FAIL ] # unref() on a named-pipe server does not release the event loop, so the child never exits
-
-# Advanced (structured) IPC serialization goes through JSC's serializer, which
-# has no host-object hook, so a Buffer arrives as a plain Uint8Array. Node
-# preserves the Buffer prototype via ChildProcessSerializer._writeHostObject
-# (lib/internal/child_process/serialization.js). Deterministic everywhere; on
-# most lanes the failure is masked because the rejection from the test's async
-# IIFE is swallowed by the runner, but the asan lane surfaces it.
-test/js/node/test/parallel/test-child-process-advanced-serialization.js [ FAIL ] # advanced IPC does not preserve Buffer prototype (no _writeHostObject equivalent)
-
-# The raw UDP descriptor surface behind internal/dgram's _createSocketHandle
-# (newSocketFd/bindFd/getSockNameFd in udp_socket.rs) is POSIX-only; on
-# Windows bindFd reports ENOTSUP, matching how Node's cluster treats shared
-# dgram handles, so the bound-handle blocks of this test cannot pass there.
-[ WINDOWS ] test/js/node/test/parallel/test-dgram-create-socket-handle.js [ FAIL ] # raw dgram descriptor surface is POSIX-only
 
 # Same Windows half-close + client-RST gap over a node:http server: the server
 # half-closes (res.socket.end()) mid-upload, the fetch client RSTs the cut-short

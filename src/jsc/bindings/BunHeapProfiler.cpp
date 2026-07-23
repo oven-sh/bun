@@ -936,16 +936,14 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     return output.toString();
 }
 
-WTF::String generateHeapProfileV8Sampling(JSC::VM& vm)
+WTF::String generateHeapSnapshotV8(JSC::VM& vm)
 {
-    // JSC has no allocation-site sampling, so live bytes cannot be attributed
-    // to allocating call frames. Report the real live-heap size on the (root)
-    // frame — the node V8 uses for unattributable allocations — no samples.
-    WTF::StringBuilder output;
-    output.append("{\"head\":{\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"selfSize\":"_s);
-    output.append(WTF::String::number(vm.heap.size()));
-    output.append(",\"id\":1,\"children\":[]},\"samples\":[]}"_s);
-    return output.toString();
+    vm.ensureHeapProfiler();
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
+
+    JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+    return builder.json();
 }
 
 } // namespace Bun
@@ -956,8 +954,8 @@ extern "C" BunString Bun__generateHeapProfile(JSC::VM* vm)
     return Bun::toStringRef(result);
 }
 
-extern "C" BunString Bun__generateHeapProfileV8Sampling(JSC::VM* vm)
+extern "C" BunString Bun__generateHeapSnapshotV8(JSC::VM* vm)
 {
-    WTF::String result = Bun::generateHeapProfileV8Sampling(*vm);
+    WTF::String result = Bun::generateHeapSnapshotV8(*vm);
     return Bun::toStringRef(result);
 }

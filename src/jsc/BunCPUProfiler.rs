@@ -198,8 +198,23 @@ fn generate_default_filename(
     buf: &mut PathBuffer,
     md_format: bool,
 ) -> Result<&[u8], ProfilerError> {
-    // Node's DiagnosticFilename format (local time, main-thread tid 0, 3-digit
-    // per-process sequence): CPU.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.cpuprofile
+    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    write_diagnostic_filename(&mut cursor, "CPU", extension)
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
+    let len = usize::try_from(cursor.position()).expect("int cast");
+    Ok(&buf[..len])
+}
+
+/// Node's DiagnosticFilename format (src/util.cc MakeFilename): local time,
+/// main-thread tid 0, and one 3-digit sequence shared by every diagnostic
+/// filename in the process (CPU and Heap draw from the same counter):
+/// `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
+pub(crate) fn write_diagnostic_filename(
+    cursor: &mut dyn std::io::Write,
+    prefix: &str,
+    extension: &str,
+) -> std::io::Result<()> {
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
     #[cfg(not(windows))]
@@ -211,16 +226,10 @@ fn generate_default_filename(
     static SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
 
-    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
-
-    let mut cursor = std::io::Cursor::new(&mut buf[..]);
     write!(
         cursor,
-        "CPU.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
+        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
     )
-    .map_err(|_| ProfilerError::FilenameTooLong)?;
-    let len = usize::try_from(cursor.position()).expect("int cast");
-    Ok(&buf[..len])
 }
 
 #[cfg(not(windows))]

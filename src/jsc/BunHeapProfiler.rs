@@ -19,7 +19,7 @@ unsafe extern "C" {
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is ABI-identical
     // to a non-null `*mut VM` and C++ mutation is interior to the opaque cell.
     safe fn Bun__generateHeapProfile(vm: &mut VM) -> BunString;
-    safe fn Bun__generateHeapProfileV8Sampling(vm: &mut VM) -> BunString;
+    safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> BunString;
 }
 
 pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> Result<(), Error> {
@@ -28,7 +28,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
     let profile_string = OwnedString::new(if config.text_format {
         Bun__generateHeapProfile(vm)
     } else {
-        Bun__generateHeapProfileV8Sampling(vm)
+        Bun__generateHeapSnapshotV8(vm)
     });
 
     if profile_string.is_empty() {
@@ -118,32 +118,10 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
 }
 
 fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<&[u8], Error> {
-    // Node's DiagnosticFilename format (local time, main-thread tid 0, 3-digit
-    // per-process sequence): Heap.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.heapprofile
-    #[cfg(windows)]
-    let pid: core::ffi::c_uint = bun_sys::windows::GetCurrentProcessId();
-    #[cfg(not(windows))]
-    // SAFETY: getpid() is always safe to call.
-    let pid: core::ffi::c_int = unsafe { libc::getpid() };
-
-    let (year, month, day, hour, minute, second) = crate::bun_cpu_profiler::local_time_now();
-
-    static SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-    let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
-
     let extension: &str = if text_format { ".md" } else { ".heapprofile" };
-
-    // Write into the fixed buffer, then return the written slice
-    use std::io::Write;
-    let buf_slice = buf.as_mut_slice();
-    let total = buf_slice.len();
-    let mut cursor: &mut [u8] = buf_slice;
-    write!(
-        &mut cursor,
-        "Heap.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
-    )
-    .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
-    let remaining = cursor.len();
-    let written = total - remaining;
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    crate::bun_cpu_profiler::write_diagnostic_filename(&mut cursor, "Heap", extension)
+        .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
+    let written = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf.as_slice()[..written])
 }

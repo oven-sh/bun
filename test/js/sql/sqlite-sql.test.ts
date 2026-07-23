@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { isDebug, tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1144,6 +1144,194 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  test("outer queries do not interleave with an open transaction", async () => {
+    // A write issued on the outer handle while begin()'s callback is running
+    // must be serialized after the transaction, not swept up by its rollback.
+    const txnUpdated = Promise.withResolvers<void>();
+    const releaseTxn = Promise.withResolvers<void>();
+
+    const txn = sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        txnUpdated.resolve();
+        // Hold the transaction open until the outer write has been issued.
+        await releaseTxn.promise;
+        throw new Error("business-logic rollback");
+      })
+      .catch(() => {});
+
+    await txnUpdated.promise;
+
+    // This awaited, fulfilled write must survive the transaction's rollback,
+    // and must not run while the transaction holds the connection.
+    let outerRan = false;
+    const outer = sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`.then(() => {
+      outerRan = true;
+    });
+    // Macrotask barrier: drain the whole microtask chain so an unfixed build
+    // (where the UPDATE runs immediately) would have flipped outerRan by now.
+    await Bun.sleep(0);
+    try {
+      expect(outerRan).toBe(false);
+    } finally {
+      releaseTxn.resolve();
+    }
+
+    await txn;
+    await outer;
+
+    const accounts = await sql`SELECT balance FROM accounts ORDER BY id`;
+    expect(accounts.map(r => r.balance)).toEqual([1000, 507]);
+  });
+
+  test("a second begin() queues behind the first instead of erroring", async () => {
+    const order: string[] = [];
+
+    const first = sql.begin(async tx => {
+      order.push("first:start");
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      order.push("first:end");
+    });
+
+    const second = sql.begin(async tx => {
+      order.push("second:start");
+      await tx`UPDATE accounts SET balance = balance + 100 WHERE id = 2`;
+      order.push("second:end");
+    });
+
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(["first:start", "first:end", "second:start", "second:end"]);
+
+    const accounts = await sql`SELECT * FROM accounts ORDER BY id`;
+    expect(accounts[0].balance).toBe(900);
+    expect(accounts[1].balance).toBe(600);
+  });
+
+  test("reserve() inside a transaction rejects instead of hanging", async () => {
+    // SQLite has a single connection held by the open transaction, so a nested
+    // reserve can never get a second one. It must reject, not deadlock.
+    let reserveError: Error | undefined;
+    await sql.begin(async tx => {
+      try {
+        await tx.reserve();
+      } catch (err) {
+        reserveError = err as Error;
+      }
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+    });
+
+    expect(reserveError).toBeInstanceOf(Error);
+    expect(reserveError?.message).toBe("This adapter doesn't support connection reservation");
+
+    const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
+    expect(accounts[0].balance).toBe(900);
+  });
+
+  test("outer-handle query from inside the transaction callback participates in it", async () => {
+    // A helper closing over the outer handle, called from inside begin(), runs
+    // on the single connection inside the open transaction instead of
+    // deadlocking.
+    const getBalance = async (id: number) => (await sql`SELECT balance FROM accounts WHERE id = ${id}`)[0].balance;
+
+    let seenInside: number | undefined;
+    await sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      seenInside = await getBalance(1);
+    });
+
+    expect(seenInside).toBe(900);
+
+    const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
+    expect(accounts[0].balance).toBe(900);
+  });
+
+  test("outer-handle begin() from inside the transaction callback rejects instead of hanging", async () => {
+    let innerError: Error | undefined;
+    await sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        await sql.begin(async tx2 => {
+          await tx2`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        });
+      })
+      .catch(err => {
+        innerError = err as Error;
+      });
+
+    expect(innerError).toBeInstanceOf(Error);
+    expect(innerError?.message).toBe(
+      "A transaction is already open on this connection. Use savepoint() for nested transactions.",
+    );
+
+    // The outer transaction rolled back because of the rejection.
+    const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
+    expect(accounts[0].balance).toBe(1000);
+  });
+
+  test("context leaked past a transaction is not treated as nested in a later one", async () => {
+    // A fire-and-forget continuation scheduled inside txn A that fires while a
+    // later txn B holds the connection must queue behind B, not run inside it.
+    let leaked: Promise<unknown> | undefined;
+    await sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      leaked = new Promise(resolve => setImmediate(resolve)).then(
+        () => sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`,
+      );
+    });
+
+    const txnBRunning = Promise.withResolvers<void>();
+    const releaseTxnB = Promise.withResolvers<void>();
+    const txnB = sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+        txnBRunning.resolve();
+        await releaseTxnB.promise;
+        throw new Error("rollback B");
+      })
+      .catch(() => {});
+
+    await txnBRunning.promise;
+    // Let the leaked continuation fire while B holds the connection.
+    await new Promise(resolve => setImmediate(resolve));
+    releaseTxnB.resolve();
+    await txnB;
+    await leaked;
+
+    const accounts = await sql`SELECT balance FROM accounts ORDER BY id`;
+    // A committed (-100 on id=1). B rolled back. The leaked write queued behind
+    // B and ran afterwards, so it survives.
+    expect(accounts.map(r => r.balance)).toEqual([900, 507]);
+  });
+
+  test("a queued begin that is synchronously rejected drains cleanly", async () => {
+    // beginDistributed() and begin('readonly', cb) queue a reserved acquisition
+    // behind an open transaction, then hit pool.release() synchronously in
+    // onTransactionConnected's error path. The drain must not recurse.
+    const hold = Promise.withResolvers<void>();
+    const txn = sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
+      await hold.promise;
+    });
+
+    const dist = sql.beginDistributed("x", async () => {}).catch(e => e);
+    const ro = sql.begin("readonly", async () => {}).catch(e => e);
+    // .execute() issues the query eagerly so it enters the drain queue.
+    const after = sql`UPDATE accounts SET balance = balance + 7 WHERE id = 2`.execute();
+
+    hold.resolve();
+    await txn;
+
+    expect((await dist)?.message).toBe("This adapter doesn't support distributed transactions.");
+    expect((await ro)?.message).toBe(
+      "SQLite doesn't support 'readonly' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.",
+    );
+    await after;
+
+    const accounts = await sql`SELECT balance FROM accounts ORDER BY id`;
+    expect(accounts.map(r => r.balance)).toEqual([900, 507]);
+  });
 });
 
 describe("SQLite-specific features", () => {
@@ -2014,7 +2202,8 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    // Scaled down for debug+ASAN where each awaited query is 10-100x slower.
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

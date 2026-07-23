@@ -376,11 +376,11 @@ impl SocketAddress {
     }
 
     pub fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
-
-        // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
-        // copy the string.
-        // PERF: could use a small stack buffer with heap fallback.
+        // Whether a caller-supplied address string was parsed. When true the
+        // presentation is left `.Dead` so the `address` getter derives the
+        // canonical form from the parsed bytes via `ntop`, rather than echoing
+        // the raw input back (node canonicalizes).
+        let mut had_address = false;
 
         let addr: sockaddr = match options.family {
             AF::INET => {
@@ -391,15 +391,14 @@ impl SocketAddress {
                     ..inet::sockaddr_in::ZEROED
                 };
                 if let Some(address_str) = options.address {
-                    presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
-                    // Box<ZStr> drops at scope exit
-                    pton(
-                        global,
-                        inet::AF_INET,
-                        &slice,
-                        (&raw mut sin.addr).cast::<c_void>(),
-                    )?;
+                    let owned = address_str.to_owned_slice_z();
+                    // Presentation is derived from the parsed bytes, so the
+                    // caller's +1 is not retained; release it here.
+                    address_str.deref();
+                    let bytes = parse_ipv4_strict(owned.as_bytes())
+                        .ok_or_else(|| throw_invalid_address(global))?;
+                    sin.addr = u32::from_ne_bytes(bytes);
+                    had_address = true;
                 } else {
                     sin.addr = sockaddr::LOOPBACK_V4.as_sin().unwrap().addr;
                 }
@@ -415,14 +414,11 @@ impl SocketAddress {
                     ..inet::sockaddr_in6::ZEROED
                 };
                 if let Some(address_str) = options.address {
-                    presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
-                    pton(
-                        global,
-                        inet::AF_INET6,
-                        &slice,
-                        (&raw mut sin6.addr).cast::<c_void>(),
-                    )?;
+                    let owned = address_str.to_owned_slice_z();
+                    address_str.deref();
+                    sin6.addr = parse_ipv6_strict(owned.as_bytes())
+                        .ok_or_else(|| throw_invalid_address(global))?;
+                    had_address = true;
                 } else {
                     sin6.addr = inet::IN6ADDR_ANY_INIT;
                 }
@@ -432,7 +428,11 @@ impl SocketAddress {
 
         Ok(SocketAddress {
             _addr: addr,
-            _presentation: Cell::new(presentation),
+            _presentation: Cell::new(if had_address {
+                BunString::dead()
+            } else {
+                BunString::empty()
+            }),
         })
     }
 }
@@ -708,32 +708,176 @@ impl SocketAddress {
     }
 }
 
-fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
-    use bun_jsc::js_global_object::SysErrOptions;
-    // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
-    match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
-        0 => Err(global.throw_sys_error(
-            &SysErrOptions {
-                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                errno: None,
-                name: None,
-            },
+/// Throws node's `ERR_INVALID_ADDRESS` ("Invalid socket address"), raised when
+/// a caller-supplied address string is not a canonical IPv4/IPv6 literal.
+fn throw_invalid_address(global: &JSGlobalObject) -> bun_jsc::JsError {
+    global
+        .err(
+            bun_jsc::ErrorCode::INVALID_ADDRESS,
             format_args!("Invalid socket address"),
-        )),
+        )
+        .throw()
+}
 
-        // Open question: the proper way to
-        // convert a C errno into a JS exception.
-        -1 => Err(global.throw_sys_error(
-            &SysErrOptions {
-                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                errno: Some(bun_sys::last_errno()),
-                name: None,
-            },
-            format_args!("Invalid socket address"),
-        )),
-        1 => Ok(()),
-        _ => unreachable!(),
+/// Strict canonical IPv4 text parser, a port of libuv's `inet_pton4` (the
+/// parser node's `net.SocketAddress`/`BlockList` use). Returns the 4 address
+/// bytes in network order, or `None`. Rejects leading zeros (`010.1.2.3`), hex
+/// (`0x0a000001`) and short forms (`1.2.3`) that the lenient c-ares
+/// `inet_net_pton` path accepts.
+fn parse_ipv4_strict(src: &[u8]) -> Option<[u8; 4]> {
+    let mut tmp = [0u8; 4];
+    let mut tp = 0usize;
+    let mut octets = 0usize;
+    let mut saw_digit = false;
+    for &ch in src {
+        match ch {
+            b'0'..=b'9' => {
+                let nw = tmp[tp] as u32 * 10 + (ch - b'0') as u32;
+                if saw_digit && tmp[tp] == 0 {
+                    return None; // leading zero
+                }
+                if nw > 255 {
+                    return None;
+                }
+                tmp[tp] = nw as u8;
+                if !saw_digit {
+                    octets += 1;
+                    if octets > 4 {
+                        return None;
+                    }
+                    saw_digit = true;
+                }
+            }
+            b'.' if saw_digit => {
+                if octets == 4 {
+                    return None;
+                }
+                tp += 1;
+                tmp[tp] = 0;
+                saw_digit = false;
+            }
+            _ => return None,
+        }
     }
+    if octets < 4 {
+        return None;
+    }
+    Some(tmp)
+}
+
+#[inline]
+fn hex_digit(ch: u8) -> Option<u8> {
+    match ch {
+        b'0'..=b'9' => Some(ch - b'0'),
+        b'a'..=b'f' => Some(ch - b'a' + 10),
+        b'A'..=b'F' => Some(ch - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Strict canonical IPv6 text parser, a port of libuv's `uv_inet_pton` +
+/// `inet_pton6`. A trailing zone id (`%eth0`, `%1`) is stripped and accepted
+/// (node does the same); the embedded-IPv4 tail is parsed with the strict
+/// IPv4 parser above. Returns the 16 address bytes, or `None`.
+fn parse_ipv6_strict(src: &[u8]) -> Option<[u8; 16]> {
+    // Strip the zone id like `uv_inet_pton` does before `inet_pton6`.
+    let src = match src.iter().position(|&b| b == b'%') {
+        Some(p) => &src[..p],
+        None => src,
+    };
+
+    const ENDP: usize = 16;
+    let mut tmp = [0u8; ENDP];
+    let mut tp = 0usize;
+    let mut colonp: Option<usize> = None;
+    let mut saw_xdigit = false;
+    let mut group_digits = 0usize;
+    let mut val: u32 = 0;
+    let n = src.len();
+
+    // Leading "::" requires special handling.
+    let mut i = 0usize;
+    if n > 0 && src[0] == b':' {
+        if n < 2 || src[1] != b':' {
+            return None;
+        }
+        i = 1;
+    }
+    let mut curtok = i;
+
+    while i < n {
+        let ch = src[i];
+        i += 1;
+
+        if let Some(hx) = hex_digit(ch) {
+            // libuv's inet_pton6 rejects more than 4 hex digits per group, even
+            // when leading zeros keep the value in range (e.g. `::00001`).
+            group_digits += 1;
+            if group_digits > 4 {
+                return None;
+            }
+            val = (val << 4) | hx as u32;
+            saw_xdigit = true;
+            continue;
+        }
+        if ch == b':' {
+            curtok = i;
+            if !saw_xdigit {
+                if colonp.is_some() {
+                    return None;
+                }
+                colonp = Some(tp);
+                continue;
+            } else if i == n {
+                return None; // trailing single colon
+            }
+            if tp + 2 > ENDP {
+                return None;
+            }
+            tmp[tp] = ((val >> 8) & 0xff) as u8;
+            tmp[tp + 1] = (val & 0xff) as u8;
+            tp += 2;
+            saw_xdigit = false;
+            group_digits = 0;
+            val = 0;
+            continue;
+        }
+        if ch == b'.' && tp + 4 <= ENDP {
+            if let Some(v4) = parse_ipv4_strict(&src[curtok..n]) {
+                tmp[tp..tp + 4].copy_from_slice(&v4);
+                tp += 4;
+                saw_xdigit = false;
+                break; // v4 consumed the rest of the string
+            }
+        }
+        return None;
+    }
+
+    if saw_xdigit {
+        if tp + 2 > ENDP {
+            return None;
+        }
+        tmp[tp] = ((val >> 8) & 0xff) as u8;
+        tmp[tp + 1] = (val & 0xff) as u8;
+        tp += 2;
+    }
+
+    if let Some(cp) = colonp {
+        if tp == ENDP {
+            return None;
+        }
+        let cnt = tp - cp;
+        for j in 1..=cnt {
+            tmp[ENDP - j] = tmp[cp + cnt - j];
+            tmp[cp + cnt - j] = 0;
+        }
+        tp = ENDP;
+    }
+
+    if tp != ENDP {
+        return None;
+    }
+    Some(tmp)
 }
 
 /// Non-throwing `ares_inet_pton` wrapper used by `SocketAddress::parse` (which

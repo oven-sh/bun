@@ -1713,12 +1713,16 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.event_loop.ref_concurrently();
-        node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
+        // `AsyncMkdirp::new` returns a `Box<Self>` whose `schedule()` only
+        // stashes `*mut task` into the work pool; without `Box::leak` the Box
+        // drops at end of statement and the worker dereferences freed memory.
+        // Ownership is handed to the work-pool/completion path.
+        Box::leak(node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
             path,
             ..Default::default()
-        })
+        }))
         .schedule();
     }
 
@@ -1749,34 +1753,45 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
     if let Some(errno) = rc.err_enum_e() {
-        if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT {
+        // ENOENT from uv_fs_copyfile can mean either the source file or the
+        // destination directory is missing. Disambiguate so a missing source
+        // rejects directly instead of entering the mkdirp+retry path.
+        let source_missing = errno == bun_sys::E::ENOENT
+            && match &this.source_file_store.data.as_file().pathlike {
+                PathOrFileDescriptor::Path(p) => !bun_sys::exists(p.slice()),
+                PathOrFileDescriptor::Fd(_) => false,
+            };
+
+        if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT && !source_missing {
             this.io_request.deinit();
             this.mkdirp();
             return;
-        } else {
-            let mut err = bun_sys::Error::from_code(
-                // #6336
-                if errno == bun_sys::E::EPERM {
-                    bun_sys::E::ENOENT
-                } else {
-                    errno
-                },
-                bun_sys::Tag::copyfile,
-            );
-            let destination = &this.destination_file_store.data.as_file();
-
-            // we don't really know which one it is
-            match &destination.pathlike {
-                PathOrFileDescriptor::Path(p) => {
-                    err = err.with_path(p.slice());
-                }
-                PathOrFileDescriptor::Fd(fd) => {
-                    err = err.with_fd(*fd);
-                }
-            }
-
-            this.throw(err);
         }
+
+        let mut err = bun_sys::Error::from_code(
+            // #6336
+            if errno == bun_sys::E::EPERM {
+                bun_sys::E::ENOENT
+            } else {
+                errno
+            },
+            bun_sys::Tag::copyfile,
+        );
+        let store = if source_missing {
+            &this.source_file_store
+        } else {
+            &this.destination_file_store
+        };
+        match &store.data.as_file().pathlike {
+            PathOrFileDescriptor::Path(p) => {
+                err = err.with_path(p.slice());
+            }
+            PathOrFileDescriptor::Fd(fd) => {
+                err = err.with_fd(*fd);
+            }
+        }
+
+        this.throw(err);
         return;
     }
 

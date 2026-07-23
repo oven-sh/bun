@@ -113,6 +113,12 @@ const fnCalls = [
   ...nodeFns.filter(c => (!FS_MODE || FS_KEEP.test(c.container)) && !WRITE_MODE),
 ];
 let emitComment = "";
+if (process.argv.includes("--list-families")) {
+  const fam = new Map<string, number>();
+  for (const c of fnCalls) { const f = c.container === "Bun" ? "Bun." + c.name.replace(/(Sync|Async)$/, "") : c.container; fam.set(f, (fam.get(f) ?? 0) + 1); }
+  for (const [f, n] of [...fam].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1])) console.log(`${n}\t${f}`);
+  process.exit(0);
+}
 // Depth mode: restrict the whole program to a single family chosen by seed.
 if (DEPTH_MODE && fnCalls.length) {
   const families = new Map<string, typeof fnCalls>();
@@ -124,7 +130,9 @@ if (DEPTH_MODE && fnCalls.length) {
   }
   const usable = [...families.entries()].filter(([, v]) => v.length >= 2);
   if (usable.length) {
-    const [famName, famCalls] = usable[Math.abs(Number(seedArg) * 2654435761 >>> 0) % usable.length];
+    const wanted = process.env.WSF_GEN_FAMILY;
+    const chosen = (wanted && usable.find(([n]) => n === wanted)) || usable[Math.abs(Number(seedArg) * 2654435761 >>> 0) % usable.length];
+    const [famName, famCalls] = chosen;
     fnCalls.length = 0;
     fnCalls.push(...famCalls);
     emitComment = `depth-family: ${famName} (${famCalls.length} callables)`;

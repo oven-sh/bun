@@ -43,11 +43,19 @@ class TestTCPWrap {
 // node's internalBinding('util').isInsideNodeModules: walk the call stack via
 // Error.prepareStackTrace CallSites and test the first frame that carries a
 // real user filename (skipping node:/internal:/native frames).
+function safeGetenv(name: string) {
+  return process.env[name];
+}
+
+function returnStackFrames(_err: unknown, frames: unknown[]) {
+  return frames;
+}
+
 function isInsideNodeModules() {
   const oldPrepareStackTrace = Error.prepareStackTrace;
   const oldStackTraceLimit = Error.stackTraceLimit;
   Error.stackTraceLimit = Infinity;
-  Error.prepareStackTrace = (_err, frames) => frames;
+  Error.prepareStackTrace = returnStackFrames;
   const target: { stack?: unknown } = {};
   Error.captureStackTrace(target, isInsideNodeModules);
   const frames = target.stack as { getFileName(): string | null }[];
@@ -102,7 +110,7 @@ function internalBinding(name: string) {
     // node's credentials binding: without setuid/setgid mismatch handling,
     // safeGetenv degenerates to a plain env read (same as node run normally).
     case "credentials":
-      return { safeGetenv: (name: string) => process.env[name] };
+      return { safeGetenv };
     case "buffer": {
       const { kMaxLength, kStringMaxLength } = require("node:buffer");
       return { kMaxLength, kStringMaxLength };

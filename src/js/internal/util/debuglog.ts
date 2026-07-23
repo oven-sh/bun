@@ -1,5 +1,6 @@
-// Timing formatter shared by console.timeEnd/timeLog; node exposes it from
-// internal/util/debuglog.
+// Timing formatter shared by console.timeEnd/timeLog. Port of node v26.3.0
+// lib/internal/util/debuglog.js formatTime, with the prototype methods
+// captured at module load for tamper resistance.
 const kSecond = 1000;
 const kMinute = 60 * kSecond;
 const kHour = 60 * kMinute;

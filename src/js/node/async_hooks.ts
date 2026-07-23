@@ -353,15 +353,17 @@ if (IS_BUN_DEVELOPMENT) {
   };
 }
 
-// GC-tracked destroy: an undestroyed resource emits destroy when collected.
+// GC-tracked destroy, mirroring node v26.3.0 lib/internal/async_hooks.js
+// registerDestroyHook: an undestroyed resource emits destroy when collected.
 // The record's flag lets emitDestroy() suppress the GC emission, and the hook
 // count is re-checked at emit time so disabled hooks stop GC destroys.
-const destroyRegistry = new FinalizationRegistry((rec: any) => {
+function onAsyncResourceCollected(rec: any) {
   if (!rec.destroyed && hooksHub.destroyHooks.length !== 0) {
     rec.destroyed = true;
     hooksHub.queueDestroy(rec.asyncId);
   }
-});
+}
+const destroyRegistry = new FinalizationRegistry(onAsyncResourceCollected);
 
 class AsyncResource {
   type;
@@ -533,6 +535,9 @@ const createHookNotImpl = createWarning(
 );
 
 const kHookEnabled = Symbol("kHookEnabled");
+// Port of node v26.3.0 lib/async_hooks.js createHook/AsyncHook: same
+// validation and enable/disable bookkeeping; events are delivered from Bun's
+// dispatch in internal/async_hooks_tick rather than V8 PromiseHooks.
 function createHook(hook) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
@@ -546,30 +551,38 @@ function createHook(hook) {
   // Per-instance wrappers: two hooks registered with the same callback must
   // stay independently removable (removal is by identity).
   let registered;
+  function initHookWrapper(asyncId, type, triggerAsyncId, resource) {
+    return init(asyncId, type, triggerAsyncId, resource);
+  }
+  function beforeHookWrapper(asyncId) {
+    return before(asyncId);
+  }
+  function afterHookWrapper(asyncId) {
+    return after(asyncId);
+  }
+  function destroyHookWrapper(asyncId) {
+    return destroy(asyncId);
+  }
   return {
     enable() {
       if (this[kHookEnabled]) return this;
       this[kHookEnabled] = true;
       registered = [];
       if (init !== undefined) {
-        const wrapper = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
-        hooksHub.initHooks.push(wrapper);
-        registered.push(hooksHub.initHooks, wrapper);
+        hooksHub.initHooks.push(initHookWrapper);
+        registered.push(hooksHub.initHooks, initHookWrapper);
       }
       if (before !== undefined) {
-        const wrapper = asyncId => before(asyncId);
-        hooksHub.beforeHooks.push(wrapper);
-        registered.push(hooksHub.beforeHooks, wrapper);
+        hooksHub.beforeHooks.push(beforeHookWrapper);
+        registered.push(hooksHub.beforeHooks, beforeHookWrapper);
       }
       if (after !== undefined) {
-        const wrapper = asyncId => after(asyncId);
-        hooksHub.afterHooks.push(wrapper);
-        registered.push(hooksHub.afterHooks, wrapper);
+        hooksHub.afterHooks.push(afterHookWrapper);
+        registered.push(hooksHub.afterHooks, afterHookWrapper);
       }
       if (destroy !== undefined) {
-        const wrapper = asyncId => destroy(asyncId);
-        hooksHub.destroyHooks.push(wrapper);
-        registered.push(hooksHub.destroyHooks, wrapper);
+        hooksHub.destroyHooks.push(destroyHookWrapper);
+        registered.push(hooksHub.destroyHooks, destroyHookWrapper);
       }
       if (promiseResolve !== undefined) {
         createHookNotImpl(hook);

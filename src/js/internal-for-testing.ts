@@ -465,7 +465,7 @@ function nodeGetValidStdio(stdio, sync?) {
 
   while (stdio.length < 3) stdio.push(undefined);
 
-  stdio = stdio.reduce((acc, stdio, i) => {
+  stdio = stdio.reduce(function reduceStdioEntry(acc, stdio, i) {
     function cleanup() {
       for (let i = 0; i < acc.length; i++) {
         if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle.close();

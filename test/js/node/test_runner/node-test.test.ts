@@ -1,24 +1,36 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
 
-describe("node:test", () => {
-  test("should run basic tests", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+// 01-harness.js alone runs 32 fixture tests in a debug+ASAN subprocess; the
+// 5s default is not enough headroom for the three tests that drive it.
+const heavyFixtureTimeout = isASAN ? 20_000 : 5_000;
 
-  test("should run hooks in the right order", async () => {
-    const { exitCode, stderr } = await runTests(["02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+describe("node:test", () => {
+  test(
+    "should run basic tests",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    heavyFixtureTimeout,
+  );
+
+  test(
+    "should run hooks in the right order",
+    async () => {
+      const { exitCode, stderr } = await runTests(["02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    heavyFixtureTimeout,
+  );
 
   test("should run tests with different variations", async () => {
     const { exitCode, stderr } = await runTests(["03-test-variations.js"]);
@@ -36,14 +48,18 @@ describe("node:test", () => {
     });
   });
 
-  test("should run all tests from multiple files", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      // 32 from 01-harness + 3 from 02-hooks
-      stderr: expect.stringContaining("35 pass"),
-    });
-  });
+  test(
+    "should run all tests from multiple files",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        // 32 from 01-harness + 3 from 02-hooks
+        stderr: expect.stringContaining("35 pass"),
+      });
+    },
+    heavyFixtureTimeout,
+  );
 
   test("should run test() and describe() called inside another test() as subtests", async () => {
     const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);
@@ -253,6 +269,21 @@ describe("node:test", () => {
     const { exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, ["-t", "should resolve"]);
     expect(stderr).not.toContain("timed out");
     expect(stderr).toContain("1 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should run the callback when the name arg is undefined/null/number/boolean/Symbol", async () => {
+    // Node's createSubtest only reinterprets a positional when its declared
+    // slot's type matches, so a non-string name still lets options/fn flow
+    // through. Bun previously replaced fn with a noop and registered a
+    // body-less always-passing <anonymous> test.
+    const { exitCode, stderr } = await runTests(["25-non-string-name.js"]);
+    expect(stderr).toContain("11 pass");
+    // The internal default function's inferred name must not leak as a test name.
+    expect(stderr).not.toContain("kDefaultFunction");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),

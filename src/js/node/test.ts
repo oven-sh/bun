@@ -1182,50 +1182,36 @@ type HookOptions = {
 };
 
 function parseTestArgs(arg0: unknown, arg1: unknown, arg2: unknown) {
-  let name: string;
-  let options: TestOptions;
-  let fn: TestFn;
+  // Node's createSubtest (lib/internal/test_runner/test.js) shifts each
+  // positional only when its declared slot's type does not match, so a
+  // `name` that is neither string nor function nor object still lets
+  // `options`/`fn` flow through from arg1/arg2.
+  let name: unknown = arg0;
+  let options: unknown = arg1;
+  let fn: unknown = arg2;
 
-  if (typeof arg0 === "function") {
-    name = arg0.name || kDefaultName;
-    fn = arg0 as TestFn;
-    if (typeof arg1 === "object") {
-      options = (arg1 ?? kDefaultOptions) as TestOptions;
-    } else {
-      options = kDefaultOptions;
-    }
-  } else if (typeof arg0 === "string") {
-    name = arg0;
-    if (typeof arg1 === "object") {
-      options = (arg1 ?? kDefaultOptions) as TestOptions;
-      if (typeof arg2 === "function") {
-        fn = arg2 as TestFn;
-      } else {
-        fn = kDefaultFunction;
-      }
-    } else if (typeof arg1 === "function") {
-      fn = arg1 as TestFn;
-      options = kDefaultOptions;
-    } else {
-      fn = kDefaultFunction;
-      options = kDefaultOptions;
-    }
-  } else if (typeof arg0 === "object" && arg0 !== null) {
-    options = arg0 as TestOptions;
-    if (typeof arg1 === "function") {
-      fn = arg1 as TestFn;
-      name = fn.name || kDefaultName;
-    } else {
-      fn = kDefaultFunction;
-      name = kDefaultName;
-    }
-  } else {
-    name = kDefaultName;
-    fn = kDefaultFunction;
-    options = kDefaultOptions;
+  if (typeof name === "function") {
+    fn = name;
+  } else if (name !== null && typeof name === "object") {
+    fn = options;
+    options = name;
+  } else if (typeof options === "function") {
+    fn = options;
   }
 
-  return { name, options, fn };
+  if (options === null || typeof options !== "object") {
+    options = kDefaultOptions;
+  }
+  // Resolve the name before defaulting fn so kDefaultFunction's own inferred
+  // .name never surfaces (Node's noop is Function.prototype, whose name is "").
+  if (typeof name !== "string" || name === "") {
+    name = (typeof fn === "function" && (fn as Function).name) || kDefaultName;
+  }
+  if (typeof fn !== "function") {
+    fn = kDefaultFunction;
+  }
+
+  return { name: name as string, options: options as TestOptions, fn: fn as TestFn };
 }
 
 // Shared by test and hook options: Node validates both the same way.

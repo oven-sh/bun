@@ -127,7 +127,6 @@ impl Options {
                     fl,
                 ));
             }
-            // IPv6 flow labels are 20 bits (RFC 6437).
             if !fl.is_uint32_as_any_int() || fl.to_u32() > IPV6_FLOWLABEL_MAX {
                 return Err(global.throw_range_error(
                     fl.as_number(),

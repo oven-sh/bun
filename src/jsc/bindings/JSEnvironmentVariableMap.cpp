@@ -174,12 +174,32 @@ static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 
+// The side-effecting accessors above are installed with DontEnum when the var
+// was absent from the launch env. After the first write the property must become
+// enumerable so {...process.env} / Object.keys / JSON.stringify (and therefore
+// child_process / Worker env inheritance) see it. putDirectCustomAccessor asserts
+// NewProperty, so delete first and re-add without DontEnum, same as
+// jsSetterProxyEnvironmentVariable does inline.
+static void makeEnvAccessorEnumerable(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned attributes = 0;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
+        return;
+    object->deleteProperty(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, void());
+    object->putDirectCustomAccessor(vm, propertyName, existing,
+        attributes & ~JSC::PropertyAttribute::DontEnum);
+}
+
 // In Node.js, the "TZ" environment variable is special.
 // Setting it automatically updates the timezone.
 // We also expose an explicit setTimeZone function in bun:jsc
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return false;
@@ -187,6 +207,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     JSValue decodedValue = JSValue::decode(value);
     if (decodedValue.isString()) {
         auto timeZoneName = decodedValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
         applyTZFromString(globalObject, timeZoneName);
     }
 
@@ -195,9 +216,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     auto privateName = builtinNames->dataPrivateName();
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
 
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    makeEnvAccessorEnumerable(vm, globalObject, object, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -266,9 +286,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
     const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
 
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    makeEnvAccessorEnumerable(vm, globalObject, object, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -314,9 +333,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
 
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    makeEnvAccessorEnumerable(vm, globalObject, object, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 

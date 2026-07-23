@@ -231,6 +231,60 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+// TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH are backed by
+// CustomAccessors that are installed DontEnum when the var was absent at launch.
+// Writing one must make it enumerable so {...process.env}, Object.keys,
+// JSON.stringify, and child_process/Worker env inheritance see it (node does).
+it("process.env: runtime-set TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH become enumerable", async () => {
+  const vars = ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"];
+  const childEnv = { ...bunEnv };
+  for (const k of vars) delete childEnv[k];
+
+  const script = `
+    const { spawnSync } = require("node:child_process");
+    const vars = ${JSON.stringify(vars)};
+    for (const k of vars) {
+      if (process.env[k] !== undefined) throw new Error(k + " was set at launch; test invalid");
+    }
+    process.env.TZ = "Asia/Tokyo";
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
+    const spread = { ...process.env };
+    const json = JSON.parse(JSON.stringify(process.env));
+    const grand = spawnSync(process.execPath, ["-e",
+      'process.stdout.write(JSON.stringify([process.env.TZ, process.env.NODE_TLS_REJECT_UNAUTHORIZED, process.env.BUN_CONFIG_VERBOSE_FETCH]))',
+    ], { encoding: "utf8" });
+    process.stdout.write(JSON.stringify({
+      readback: vars.map(k => process.env[k]),
+      enumerable: vars.map(k => Object.prototype.propertyIsEnumerable.call(process.env, k)),
+      inKeys: vars.map(k => Object.keys(process.env).includes(k)),
+      spread: vars.map(k => spread[k] ?? null),
+      json: vars.map(k => json[k] ?? null),
+      grand: JSON.parse(grand.stdout),
+      tzStillApplies: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: childEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    readback: ["Asia/Tokyo", "0", "curl"],
+    enumerable: [true, true, true],
+    inKeys: [true, true, true],
+    spread: ["Asia/Tokyo", "0", "curl"],
+    json: ["Asia/Tokyo", "0", "curl"],
+    grand: ["Asia/Tokyo", "0", "curl"],
+    tzStillApplies: "Asia/Tokyo",
+  });
+  expect(exitCode).toBe(0);
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",

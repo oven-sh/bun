@@ -924,26 +924,7 @@ where
         // incomplete message instead of a second header block spliced into
         // the chunked body.
         if !has_responded && ctx.flags.has_written_status() {
-            if !value.is_empty_or_undefined_or_null()
-                && let Some(server) = ctx.server
-            {
-                // SAFETY: BACKREF; see drain_microtasks() re: the const→mut cast.
-                unsafe {
-                    (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
-                        .run_error_handler(value, None);
-                }
-            }
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                // This path can be reached inside the `do_render_stream` cork
-                // (a direct stream's sync pull() wrote then threw); flush the
-                // cork so those bytes reach the socket before the close.
-                // No-op when not corked.
-                resp.uncork();
-                ctx.force_close();
-            } else {
-                ctx.end_stream(ctx.should_close_connection());
-            }
+            ctx.terminate_body_after_committed_status(value);
             return;
         }
 
@@ -1232,6 +1213,34 @@ where
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
         }
+    }
+
+    /// A body failure after the status line has been committed: `error()`
+    /// cannot replace the response, so report the failure and terminate the
+    /// body so the client observes an incomplete message (RFC 9112 section 7).
+    /// If body bytes have already been written the connection is force-closed
+    /// without the terminating chunk; otherwise the chunked body is ended
+    /// empty. The uncork flushes bytes written inside the `do_render_stream`
+    /// cork and is a no-op when not corked.
+    fn terminate_body_after_committed_status(&mut self, err: JSValue) {
+        if !err.is_empty_or_undefined_or_null()
+            && let Some(server) = self.server
+        {
+            // SAFETY: BACKREF; see drain_microtasks() re: the const→mut cast.
+            unsafe {
+                (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                    .run_error_handler(err, None);
+            }
+        }
+        if let Some(resp) = self.resp {
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                resp.uncork();
+                self.force_close();
+                return;
+            }
+        }
+        self.end_stream(self.should_close_connection());
     }
 
     /// # Safety
@@ -3007,30 +3016,8 @@ where
         }
 
         // Status already on the wire: a second status from `error()` cannot be
-        // sent. Report the failure and terminate the body so the client
-        // observes an incomplete message (RFC 9112 section 7).
-        if !err.is_empty_or_undefined_or_null()
-            && let Some(server) = req.server
-        {
-            // SAFETY: BACKREF; see drain_microtasks() re: const→mut cast.
-            unsafe {
-                (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
-                    .run_error_handler(err, None);
-            }
-        }
-        if let Some(resp) = req.resp {
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                // The synchronous-reject path reaches here inside the
-                // `do_render_stream` cork; flush it so the status line and
-                // already-written chunks reach the socket before the close.
-                // No-op when not corked.
-                resp.uncork();
-                req.force_close();
-                return;
-            }
-        }
-        req.end_stream(req.should_close_connection());
+        // sent.
+        req.terminate_body_after_committed_status(err);
     }
 
     pub fn do_render_with_body(

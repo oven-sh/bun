@@ -4,7 +4,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::{AbortSignal, GlobalRef};
+use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
 
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
@@ -124,9 +124,7 @@ impl Drop for HeadersRef {
 /// the body is fully received, so without this a fully-buffered body is never
 /// errored on abort (the `ByteBlobLoader` store is only released by GC).
 pub(crate) struct BodyAbortListener {
-    /// +1 on the C++ intrusive refcount taken in [`Response::attach_abort_signal`];
-    /// released in `Drop` after the listener entry is removed.
-    signal: NonNull<AbortSignal>,
+    signal: AbortSignalRef,
     /// Owning backref: the `Box<Self>` lives in `Response.abort_listener`, so
     /// `response` is live for as long as `self` is.
     response: *mut Response,
@@ -136,23 +134,23 @@ pub(crate) struct BodyAbortListener {
 impl BodyAbortListener {
     unsafe extern "C" fn on_abort(ctx: *mut c_void, reason: JSValue) {
         reason.ensure_still_alive();
-        // Copy everything out of `*ctx` up front: erroring a still-streaming
-        // body can re-enter `FetchTasklet::ignore_remaining_response_body`
-        // which unrefs `native_response`; with the JS wrapper already gone
-        // that would destroy the Response (and this box) mid-call.
         // SAFETY: `ctx` is the `Box<BodyAbortListener>` registered in
         // `attach_abort_signal`; `clean_native_bindings` removes it before the
-        // box is dropped, so it is live here.
+        // box is dropped, so it is live here. Copy everything out up front:
+        // erroring a still-streaming body can re-enter
+        // `FetchTasklet::ignore_remaining_response_body` → `Response::unref`,
+        // which may destroy the Response (and this box) mid-call.
         let (response, global) =
             unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
-        // SAFETY: `response` is the owning backref (see field doc) and
-        // `ref_count >= 1` while this box exists.
+        // SAFETY: owning-backref invariant; `ref_count >= 1` while this box
+        // exists. The guard releases it last so a re-entrant unref cannot
+        // free the Response until we return.
         Response::ref_(response);
+        let _keepalive = scopeguard::guard((), move |()| Response::unref(response));
         // SAFETY: live for this scope via the ref taken above.
         let response_ref = unsafe { &*response };
-        // R-2: each `get_body_value()` borrow is kept to its own statement;
-        // `get_body_readable_stream` and `readable.error()` both re-enter
-        // `&mut BodyValue` projections / JS.
+        // R-2: re-derive `get_body_value()` per statement; the calls between
+        // project their own `&mut BodyValue` / run JS.
         if !matches!(
             response_ref.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
@@ -166,22 +164,18 @@ impl BodyAbortListener {
                 .get_body_value()
                 .to_error_instance(err, &global);
         }
-        // May destroy `response` and free `*ctx`; do not touch either after.
-        Response::unref(response);
     }
 }
 
 impl Drop for BodyAbortListener {
     fn drop(&mut self) {
-        // `AbortSignal` is an `opaque_ffi!` ZST (S008); our +1 keeps it live.
-        let signal = bun_opaque::opaque_deref(self.signal.as_ptr());
-        signal.clean_native_bindings(core::ptr::from_mut(self).cast::<c_void>());
-        // The pending-activity count suppresses `eventListenersDidChange`'s
-        // "last observer of a timeout signal" deref; release it before our
-        // own ref so that path (if it runs from the final unref) cannot
-        // over-release a ref `cancel_all_timeout_objects` already took.
-        signal.pending_activity_unref();
-        signal.unref();
+        let ctx = core::ptr::from_mut(self).cast::<c_void>();
+        self.signal.clean_native_bindings(ctx);
+        // Keeping the pending-activity count positive until the listener is
+        // gone suppresses `eventListenersDidChange`'s last-observer deref on
+        // a timeout signal whose `m_timeout` ref `cancel_all_timeout_objects`
+        // may have already released. Field drop then `unref()`s `signal`.
+        self.signal.pending_activity_unref();
     }
 }
 
@@ -533,16 +527,12 @@ impl Response {
         global: &JSGlobalObject,
         signal: &AbortSignal,
     ) {
-        let refed = NonNull::new(signal.ref_()).expect("AbortSignal::ref_");
-        // `AbortSignal.timeout()` releases its extra self-ref from
-        // `eventListenersDidChange` when the last observer is removed.
-        // `cancel_all_timeout_objects` (pre-destructOnExit teardown) releases
-        // the same ref, so clearing the listener from `Response::destroy`
-        // during the exit sweep must not also trigger that path; a positive
-        // pending-activity count suppresses it until our ref is the only one.
+        // SAFETY: `signal` is live (borrowed from the caller); `ref_()` bumps
+        // the intrusive refcount and returns the same non-null pointer.
+        let signal_ref = unsafe { AbortSignalRef::adopt(signal.ref_()) };
         signal.pending_activity_ref();
         let mut listener = Box::new(BodyAbortListener {
-            signal: refed,
+            signal: signal_ref,
             response: this,
             global: GlobalRef::new(global),
         });

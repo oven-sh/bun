@@ -1625,7 +1625,16 @@ test("require('node:repl') is lazy until an export is read", async () => {
   expect(stderr).toBe("");
   const lines = stdout.trim().split("\n");
   expect(JSON.parse(lines[0])).toEqual({
-    keys: ["REPLServer", "REPL_MODE_SLOPPY", "REPL_MODE_STRICT", "Recoverable", "isValidSyntax", "repl", "start", "writer"],
+    keys: [
+      "REPLServer",
+      "REPL_MODE_SLOPPY",
+      "REPL_MODE_STRICT",
+      "Recoverable",
+      "isValidSyntax",
+      "repl",
+      "start",
+      "writer",
+    ],
     startIsGetter: true,
   });
   expect(JSON.parse(lines[1])).toEqual({

@@ -393,9 +393,14 @@ mod elf {
 /// `BUN_COMPILED.size == 0` and returns immediately without any syscall.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub fn exit_early_if_self_exe_truncated() {
-    // `BUN_COMPILED` sits in the original `.bun` section in the middle of the
-    // RW segment (between `.init_array` and `.data.rel.ro`), not in the
-    // appended tail, so this read is safe regardless of truncation.
+    // This read is ordered before the on-disk length check so a plain `bun`
+    // (non-standalone) binary pays zero syscalls. That is safe because
+    // `BUN_COMPILED` lives in the original `.bun` section inside the RW
+    // segment, at a lower file offset than `.dynamic` / `.got` / `.got.plt`:
+    // the dynamic linker dereferences those to relocate the image before
+    // `main()`, so any truncation that unmaps `BUN_COMPILED` has already
+    // SIGBUSed in ld.so (before the crash handler exists, hence no
+    // misattribution) and this line is unreachable.
     // SAFETY: FFI call returning a process-lifetime pointer (or null).
     let vaddr_ptr = unsafe { elf::Bun__getStandaloneModuleGraphELFVaddr() };
     if vaddr_ptr.is_null() {

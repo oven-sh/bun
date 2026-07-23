@@ -189,7 +189,6 @@ assert.deepStrictEqual(dns.getServers(), []);
   assert.throws(() => dnsPromises.lookup(common.mustNotCall()), errorReg);
 }
 
-// dns.lookup should accept falsey values
 {
   ['', null, undefined, 0, NaN].forEach(async (value) => {
     await assert.rejects(dnsPromises.lookup(value), {

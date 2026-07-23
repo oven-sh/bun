@@ -88,7 +88,7 @@ fn pm_workspace_cache<'a>(
     unsafe { &mut (*m).workspace_package_json_cache }
 }
 #[inline]
-fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
+fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader {
     // Set during `PackageManager::init`.
     m.env
         .map(|p| p.as_ptr())
@@ -2081,7 +2081,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // `Transpiler::env` is a process-singleton `*mut` (set by `init`); pass as
     // raw pointer so `run_package_script_foreground` can `&mut` it without
     // conflicting with our `&Transpiler` borrow.
-    let transpiler_env: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
+    let transpiler_env: *mut bun_dotenv::Loader = this_transpiler.env;
     manager.env_mut().map.put(b"npm_command", b"pack")?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
@@ -2980,7 +2980,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
-    env: *mut bun_dotenv::Loader<'static>,
+    env: *mut bun_dotenv::Loader,
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
     // Note: `ctx.command_ctx` and `env` are reborrowed via raw pointer

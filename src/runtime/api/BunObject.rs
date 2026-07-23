@@ -2269,9 +2269,7 @@ pub mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        // NOTE: `Loader.map` is `&'a mut Map` (a mutable reference field);
-        // re-borrow as `&mut *` to avoid moving the reference out of the loader.
-        let env_map = &mut *vm.transpiler.env_mut().map;
+        let env_map = &mut vm.transpiler.env_mut().map;
 
         if value.is_empty() {
             // Store a static empty string rather than removing, so that

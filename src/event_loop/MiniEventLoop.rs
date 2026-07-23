@@ -65,7 +65,7 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
 /// FIFO of raw task pointers (tasks are intrusive nodes; the queue does not own them).
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
 
-pub struct MiniEventLoop<'a> {
+pub struct MiniEventLoop {
     pub tasks: Queue,
     pub concurrent_tasks: ConcurrentTaskQueue,
     // Raw pointer because the loop is C-owned
@@ -75,8 +75,7 @@ pub struct MiniEventLoop<'a> {
     /// Mutable; callers (shell spawn,
     /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
-    /// mutable provenance. `'a` is preserved via PhantomData below.
-    pub env: Option<NonNull<DotEnvLoader<'a>>>,
+    pub env: Option<NonNull<DotEnvLoader>>,
     // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
     // Opaque ctx assigned externally; only read/cleared here.
@@ -89,7 +88,7 @@ thread_local! {
     pub static GLOBAL_INITIALIZED: Cell<bool> = const { Cell::new(false) };
     // Raw pointer because the global is heap-allocated once (heap::alloc) and lives
     // for the thread's lifetime (a true thread-lifetime singleton; never freed).
-    pub static GLOBAL: Cell<*mut MiniEventLoop<'static>> = const { Cell::new(core::ptr::null_mut()) };
+    pub static GLOBAL: Cell<*mut MiniEventLoop> = const { Cell::new(core::ptr::null_mut()) };
 }
 
 /// Returns the thread-local `*mut MiniEventLoop`.
@@ -99,9 +98,9 @@ thread_local! {
 /// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
 /// callers reborrow `&mut` for the scope they need.
 pub fn init_global(
-    env: Option<&'static mut DotEnvLoader<'static>>,
+    env: Option<&'static mut DotEnvLoader>,
     cwd: Option<&[u8]>,
-) -> *mut MiniEventLoop<'static> {
+) -> *mut MiniEventLoop {
     if GLOBAL_INITIALIZED.with(|g| g.get()) {
         // Already initialized: hand back the stored raw pointer. No `&mut` is
         // materialized here (see fn doc — avoids aliased `&'static mut` UB).
@@ -111,7 +110,7 @@ pub fn init_global(
     // §Forbidden bans `Box::leak` for `&'static`; this is a
     // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
     // and store the raw pointer in the thread-local.
-    let global_ptr: *mut MiniEventLoop<'static> = bun_core::heap::into_raw(Box::new(loop_));
+    let global_ptr: *mut MiniEventLoop = bun_core::heap::into_raw(Box::new(loop_));
     // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
     // holds the only reference for the duration of first-init. The `GLOBAL`
     // thread-local is NOT yet published (set below, after this `&mut` is dropped),
@@ -133,21 +132,13 @@ pub fn init_global(
         };
     }
 
-    // The process-global loader is stored as `AtomicPtr<Loader<'static>>`.
+    // The process-global loader is stored as `AtomicPtr<Loader>`.
     global.env = env.map(NonNull::from).or_else(|| {
-        NonNull::new(
-            dotenv::INSTANCE
-                .load(core::sync::atomic::Ordering::Acquire)
-                .cast::<DotEnvLoader<'static>>(),
-        )
+        NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire))
     });
     if global.env.is_none() {
-        // Thread-lifetime singletons.
-        let map: *mut dotenv::Map = bun_core::heap::into_raw(Box::new(dotenv::Map::init()));
-        // SAFETY: `map` lives for the thread (singleton); never freed.
-        let loader =
-            bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
-        global.env = Some(loader);
+        // Thread-lifetime singleton.
+        global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
     }
 
     // Set top_level_dir from provided cwd or get current working directory
@@ -176,7 +167,7 @@ pub fn init_global(
     global_ptr
 }
 
-impl<'a> MiniEventLoop<'a> {
+impl MiniEventLoop {
     /// Raw `*mut uws::Loop`.
     ///
     /// This is the sole accessor for the `loop_` field. A `&mut UwsLoop`-
@@ -211,7 +202,7 @@ impl<'a> MiniEventLoop<'a> {
     /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
     /// loader set in `init_global` that outlives `self` (never freed).
     #[inline]
-    pub fn env_ptr(&self) -> Option<NonNull<DotEnvLoader<'a>>> {
+    pub fn env_ptr(&self) -> Option<NonNull<DotEnvLoader>> {
         self.env
     }
 
@@ -267,7 +258,7 @@ impl<'a> MiniEventLoop<'a> {
         }
     }
 
-    pub fn init() -> MiniEventLoop<'a> {
+    pub fn init() -> MiniEventLoop {
         MiniEventLoop {
             tasks: Queue::init(),
             concurrent_tasks: ConcurrentTaskQueue::default(),
@@ -410,7 +401,7 @@ impl<'a> MiniEventLoop<'a> {
 // in `bun_runtime` (it must name `jsc::VirtualMachine`).
 
 bun_io::link_impl_EventLoopCtx! {
-    Mini for MiniEventLoop<'static> => |this| {
+    Mini for MiniEventLoop => |this| {
         platform_event_loop_ptr() => (*this).loop_ptr(),
         // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
         // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
@@ -432,18 +423,18 @@ bun_io::link_impl_EventLoopCtx! {
     }
 }
 
-impl<'a> MiniEventLoop<'a> {
+impl MiniEventLoop {
     /// `this` is the per-thread `MiniEventLoop` singleton; the returned ctx
     /// must not outlive it.
     #[inline]
-    pub fn as_event_loop_ctx(this: &mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
+    pub fn as_event_loop_ctx(this: &mut MiniEventLoop) -> bun_io::EventLoopCtx {
         // SAFETY: `this` is a live `&mut`, so the pointer handed to `new` is
         // non-null and exclusively borrowed for the call's duration.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
     }
 }
 
-impl<'a> Drop for MiniEventLoop<'a> {
+impl Drop for MiniEventLoop {
     fn drop(&mut self) {
         // `tasks.deinit()` is implicit via Queue's Drop.
         debug_assert!(self.concurrent_tasks.is_empty());

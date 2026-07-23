@@ -46,17 +46,17 @@ fn jsc_event_loop_handle(js_event_loop: *mut ()) -> JsEventLoop {
 
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
 /// Unlike jsc.EventLoopHandle, this owns the event loop when it's not a JavaScript event loop.
-pub enum AnyEventLoop<'a> {
+pub enum AnyEventLoop {
     Js {
         /// Typed handle wrapping the erased `*mut jsc::EventLoop`. The
         /// `link_interface!` invariant ("owner is live for every dispatch") is
         /// established once at construction; dispatch is safe.
         owner: JsEventLoop,
     },
-    Mini(Box<MiniEventLoop<'a>>),
+    Mini(Box<MiniEventLoop>),
 }
 
-impl<'a> Default for AnyEventLoop<'a> {
+impl Default for AnyEventLoop {
     /// Stub default for `#[derive(Default)]` containers (e.g. the
     /// `bun_install::PackageManager` stub). Real consumers always overwrite
     /// this via `init()` / `js_current()` before use.
@@ -65,7 +65,7 @@ impl<'a> Default for AnyEventLoop<'a> {
     }
 }
 
-impl<'a> AnyEventLoop<'a> {
+impl AnyEventLoop {
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
@@ -77,11 +77,11 @@ impl<'a> AnyEventLoop<'a> {
     /// Convert to an owned [`EventLoopHandle`]. Thin alias for
     /// [`EventLoopHandle::from_any`].
     #[inline]
-    pub fn as_handle(this: &mut AnyEventLoop<'static>) -> EventLoopHandle {
+    pub fn as_handle(this: &mut AnyEventLoop) -> EventLoopHandle {
         EventLoopHandle::from_any(this)
     }
 
-    pub fn init() -> AnyEventLoop<'a> {
+    pub fn init() -> AnyEventLoop {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 
@@ -94,7 +94,7 @@ impl<'a> AnyEventLoop<'a> {
     /// `AnyEventLoop`. The pointer is not dereferenced here — it's stored
     /// opaquely in [`JsEventLoop`] and only dereferenced at dispatch sites.
     #[inline]
-    pub fn js(js_event_loop: *mut ()) -> AnyEventLoop<'static> {
+    pub fn js(js_event_loop: *mut ()) -> AnyEventLoop {
         AnyEventLoop::Js {
             owner: jsc_event_loop_handle(js_event_loop),
         }
@@ -103,7 +103,7 @@ impl<'a> AnyEventLoop<'a> {
     /// Construct the `Js` variant for the current thread's JS event loop.
     /// Replaces `jsc::VirtualMachine::get().event_loop()` for tier-≤4 callers
     /// (e.g. `bun_install::PackageManager`).
-    pub fn js_current() -> AnyEventLoop<'static> {
+    pub fn js_current() -> AnyEventLoop {
         AnyEventLoop::Js {
             owner: JsEventLoop::current(),
         }
@@ -167,10 +167,10 @@ impl<'a> AnyEventLoop<'a> {
 // `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
 // these four methods. `AnyEventLoop` forwards through `from_any` instead of
 // duplicating each `match`. Bound to `'static` because `from_any` stores
-// `BackRef<MiniEventLoop<'static>>`; every concrete `AnyEventLoop`
+// `BackRef<MiniEventLoop>`; every concrete `AnyEventLoop`
 // instantiation in the tree is already `'static` (verified: install, patch,
 // build_command, ChangedFilesFilter, `js()`/`js_current()`).
-impl AnyEventLoop<'static> {
+impl AnyEventLoop {
     #[inline]
     pub fn r#loop(&mut self) -> *mut UwsLoop {
         EventLoopHandle::from_any(self).r#loop()
@@ -218,7 +218,7 @@ pub enum EventLoopHandle {
     // strictly outlive every `EventLoopHandle` derived from them — the
     // [`BackRef`] invariant. Read-only sites use safe `Deref`; the few
     // `&mut`-taking dispatch sites go through [`mini_mut`] (single deref site).
-    Mini(BackRef<MiniEventLoop<'static>>),
+    Mini(BackRef<MiniEventLoop>),
 }
 
 /// Single `unsafe` deref site for the `EventLoopHandle::Mini` arm — collapses
@@ -233,7 +233,7 @@ pub enum EventLoopHandle {
 /// [`BackRef::get_mut`] precondition, discharged once here instead of at each
 /// dispatch site. Private to this module so the invariant is local.
 #[inline]
-fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop<'static>>) -> &'a mut MiniEventLoop<'static> {
+fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop>) -> &'a mut MiniEventLoop {
     // SAFETY: see fn doc — per-thread `!Send` singleton, exclusive for the
     // returned borrow's duration.
     unsafe { mini.get_mut() }
@@ -294,7 +294,7 @@ impl EventLoopHandle {
     }
 
     #[inline]
-    pub fn init_mini(mini: *mut MiniEventLoop<'static>) -> EventLoopHandle {
+    pub fn init_mini(mini: *mut MiniEventLoop) -> EventLoopHandle {
         // `mini` is the live per-thread singleton (or an `AnyEventLoop::Mini`
         // payload) — never null at any call site. `BackRef: From<NonNull<T>>`
         // wraps it without an `unsafe` block; the back-reference invariant
@@ -378,7 +378,7 @@ impl EventLoopHandle {
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
     }
 
-    pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
+    pub fn from_any(any: &mut AnyEventLoop) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner } => EventLoopHandle::Js { owner: *owner },
             AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(BackRef::new_mut(&mut **mini)),
@@ -477,7 +477,7 @@ impl EventLoopHandle {
         self.native_loop()
     }
 
-    pub fn env(self) -> *mut DotEnvLoader<'static> {
+    pub fn env(self) -> *mut DotEnvLoader {
         match self {
             EventLoopHandle::Js { owner } => owner.env(),
             // `env` must be set — caller invariant. `env_ptr()` takes

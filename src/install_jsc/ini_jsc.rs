@@ -25,7 +25,6 @@ impl IniTestingAPIs {
         use bun_api::BunInstall;
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
-        use bun_core::ZStr;
         use bun_dotenv as dotenv;
         use bun_ini::{config_iterator, load_npmrc};
         use bun_install::npm::Registry;
@@ -38,16 +37,11 @@ impl IniTestingAPIs {
         let mut log = Log::init();
 
         let envjs = frame.argument(1);
-        // The loader is either VM-owned or built locally. Per PORTING.md §Forbidden
-        // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
-        // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
-        // return.
-        let mut map_storage: Option<Box<dotenv::Map>>;
-        let mut env_storage: Option<dotenv::Loader<'_>>;
-        let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
-            // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
-            // `transpiler.env` is set during VM init (transpiler.rs).
-            global.bun_vm().as_mut().transpiler.env
+        // The loader is either VM-owned or built locally; keep local storage in
+        // an `Option` so both arms yield the same `&Loader` type.
+        let mut env_storage: Option<dotenv::Loader> = None;
+        let env: &dotenv::Loader = if envjs.is_empty_or_undefined_or_null() {
+            global.bun_vm().as_mut().transpiler.env()
         } else {
             let mut envmap = dotenv::map::HashTable::new();
             let Some(envobj) = envjs.get_object() else {
@@ -81,32 +75,12 @@ impl IniTestingAPIs {
                 )?;
             }
 
-            map_storage = Some(Box::new(dotenv::Map { map: envmap }));
-            // SAFETY-NOTE: `Loader` borrows from `map_storage`; both live until fn
-            // return.
-            let map_ref: &mut dotenv::Map = map_storage.as_deref_mut().unwrap();
-            env_storage = Some(dotenv::Loader::init(map_ref));
-            // `Loader<'a>` is invariant in `'a` (holds `&'a mut Map`); erase to `'static`
-            // via raw-pointer `.cast()` so both `if` arms unify on a single pointer type.
-            // The borrow does not escape this function — `load_npmrc` only reads through
-            // it and both `env_storage` / `map_storage` drop at fn return.
-            std::ptr::from_mut(env_storage.as_mut().unwrap()).cast::<dotenv::Loader<'static>>()
+            env_storage.insert(dotenv::Loader::init_with_map(dotenv::Map { map: envmap }))
         };
 
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<config_iterator::Item> = Vec::new();
-        if load_npmrc(
-            &mut install,
-            // SAFETY: `env` points to either the VM-singleton Loader or `env_storage`;
-            // both outlive this call and are not aliased for its duration.
-            unsafe { &mut *env },
-            ZStr::from_static(b".npmrc\0"),
-            &mut log,
-            &source,
-            &mut configs,
-        )
-        .is_err()
-        {
+        if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
             return bun_ast_jsc::log_to_js(&log, global, b"error");
         }
 
@@ -200,21 +174,11 @@ impl IniTestingAPIs {
         let bunstr = bun_core::OwnedString::new(jsstr.to_bun_string(global)?);
         let utf8str = bunstr.to_utf8();
 
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
-        // `Parser::init` ties `src: &'a [u8]` and
-        // `env: &'a mut DotEnvLoader<'a>` to one invariant `'a`; the VM-owned
-        // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped
-        // before `utf8str` (drop order is reverse of declaration); no borrow
-        // escapes this function. Same pattern as `bun_ini::load_npmrc`.
-        let src: &'static [u8] = bun_ast::IntoStr::into_str(utf8str.slice());
-        let mut parser = Parser::init(b"<src>", src, env);
-
-        // Borrowck — `Parser::parse` takes `&'a Arena`; split the borrow via
-        // raw ptr so the bump outlives the `&mut parser` for the call.
-        let arena_ptr: *const bun_alloc::Arena = &raw const parser.arena;
-        // SAFETY: `parser.arena` is not moved/dropped for the lifetime of `parser`.
-        let bump: &bun_alloc::Arena = unsafe { &*arena_ptr };
-        parser.parse(bump)?;
+        let env = global.bun_vm().as_mut().transpiler.env();
+        let source = bun_ast::Source::init_path_string(b"<src>", utf8str.slice());
+        let arena = bun_alloc::Arena::new();
+        let mut parser = Parser::init(&source, env);
+        parser.parse(&arena)?;
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),

@@ -93,7 +93,7 @@ pub struct InitOptions {
     /// Forwarded to
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
+    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// Must be applied to
     /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
@@ -808,7 +808,7 @@ impl VirtualMachine {
     /// (`vm.transpiler.env`). The loader is allocated once during VM init and
     /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
     #[inline]
-    pub fn env_loader(&self) -> &'static bun_dotenv::Loader<'static> {
+    pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
         self.env_loader_opt()
             .expect("transpiler.env set during Transpiler::init")
     }
@@ -817,7 +817,7 @@ impl VirtualMachine {
     /// `Transpiler::init` has not yet run (e.g. `GarbageCollectionController::init`
     /// is reached from `JSGlobalObject::create` before `init_runtime_state`).
     #[inline]
-    pub fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader<'static>> {
+    pub fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader> {
         // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
         // to a process-lifetime allocation; never freed while a VM is installed.
         unsafe { self.transpiler.env.as_ref() }
@@ -2758,7 +2758,7 @@ pub struct Options {
     pub log: Option<NonNull<bun_ast::Log>>,
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
+    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub store_fd: bool,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
@@ -3191,7 +3191,7 @@ impl VirtualMachine {
         // `&'static mut Loader` is independent of `&self`, so `map` may be held
         // across the `&mut self` writes below.
         let env = self.transpiler.env_mut();
-        let map = &mut *env.map;
+        let map = &mut env.map;
 
         ensure_source_code_printer();
         // The runtime VM owns the printer from here on — even if a macro had

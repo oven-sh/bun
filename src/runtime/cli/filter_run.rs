@@ -260,7 +260,7 @@ struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     // Raw `*mut` — `init_global` returns the
     // thread-local singleton pointer; aliasing &mut would be UB.
-    event_loop: *mut MiniEventLoop<'static>,
+    event_loop: *mut MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -275,7 +275,7 @@ struct State<'a> {
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
     // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
     // own raw-ptr field. Reborrow `&mut *env` at use sites.
-    env: *mut bun_dotenv::Loader<'static>,
+    env: *mut bun_dotenv::Loader,
 }
 
 struct ElideResult<'b> {
@@ -866,7 +866,7 @@ pub(crate) fn run_scripts_with_filter(
     }
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
-    let env_ptr: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
+    let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),

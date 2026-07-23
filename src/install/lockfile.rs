@@ -1761,10 +1761,7 @@ impl<'a> Printer<'a> {
             Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
         };
 
-        // PORTING.md §Forbidden patterns: never `Box::leak` — own `map`/`loader` as locals;
-        // they live for the function scope (one-shot CLI path).
-        let mut map = DotEnv::Map::init();
-        let mut env_loader = DotEnv::Loader::init(&mut map);
+        let mut env_loader = DotEnv::Loader::init();
         env_loader.quiet = true;
 
         env_loader.load_process()?;

@@ -45,7 +45,7 @@ use crate::{
 /// holds an erased `*mut jsc::EventLoop` driven through a vtable). Stored as
 /// a pointer because the linker borrows the loop owned by the
 /// `BundleThread` / runtime.
-pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop<'static>>>;
+pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
@@ -313,7 +313,7 @@ impl<'a> LinkerContext<'a> {
     /// `BackRef<BundleV2>` (`&` only).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop<'static>> {
+    pub fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop> {
         // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
         // outlives the bundle pass; the pointee is disjoint from `*self`.
         // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`

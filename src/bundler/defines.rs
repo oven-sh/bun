@@ -84,7 +84,7 @@ fn env_string_store_put(
 /// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
 /// per-env `UserDefinesArray`.
 pub fn copy_env_for_define(
-    env: &bun_dotenv::Loader<'_>,
+    env: &bun_dotenv::Loader,
     to_json: &mut RawDefines,
     to_string: &mut UserDefinesArray,
     framework_defaults_keys: &[&[u8]],

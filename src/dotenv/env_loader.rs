@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -103,8 +104,8 @@ pub struct S3Credentials {
     pub insecure_http: bool,
 }
 
-pub struct Loader<'a> {
-    pub map: &'a mut Map,
+pub struct Loader {
+    pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
     pub env_local: Option<bun_ast::Source>,
     pub env_development: Option<bun_ast::Source>,
@@ -121,7 +122,7 @@ pub struct Loader<'a> {
     pub quiet: bool,
 
     pub did_load_process: bool,
-    pub reject_unauthorized: Option<bool>,
+    pub reject_unauthorized: Cell<Option<bool>>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
     aws_credentials: Option<S3Credentials>,
@@ -135,7 +136,7 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
-impl<'a> Loader<'a> {
+impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
     /// or a literal empty-quote pair left over from shell `export FOO=""` /
     /// `export FOO=''`.
@@ -287,22 +288,17 @@ impl<'a> Loader<'a> {
     /// Node's `=== '0'` check exactly).
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
-    pub fn get_tls_reject_unauthorized(&mut self) -> bool {
-        if let Some(reject_unauthorized) = self.reject_unauthorized {
+    pub fn get_tls_reject_unauthorized(&self) -> bool {
+        if let Some(reject_unauthorized) = self.reject_unauthorized.get() {
             return reject_unauthorized;
         }
-        if let Some(reject) = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") {
-            if reject == b"0" {
-                self.reject_unauthorized = Some(false);
-                return false;
-            }
-        }
         // default: true
-        self.reject_unauthorized = Some(true);
-        true
+        let result = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") != Some(b"0");
+        self.reject_unauthorized.set(Some(result));
+        result
     }
 
-    pub fn get_http_proxy_for(&mut self, url: &URL<'_>) -> Option<URL<'a>> {
+    pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
         self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
     }
 
@@ -317,28 +313,13 @@ impl<'a> Loader<'a> {
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
     pub fn get_http_proxy(
-        &mut self,
+        &self,
         is_http: bool,
         hostname: Option<&[u8]>,
         host: Option<&[u8]>,
-    ) -> Option<URL<'a>> {
+    ) -> Option<URL<'_>> {
         // TODO: When Web Worker support is added, make sure to intern these strings
-        //
-        // Lifetime: the returned `URL` borrows env-var values that are
-        // `Box<[u8]>`-owned by `*self.map: Map`, which is borrowed for `'a`
-        // (`map: &'a mut Map`). The boxed allocations are address-stable
-        // across rehashes and Bun never removes/overwrites the proxy env vars
-        // after they are read here, so the slices are valid for `'a`.
-        // Encapsulating the extension here keeps every caller (PackageManager,
-        // fetch, upgrade, create) free of `transmute` (PORTING.md §Forbidden).
-        let extend = |s: &[u8]| -> &'a [u8] {
-            // SAFETY: `s` points into a `Box<[u8]>` owned by `*self.map`, which is
-            // borrowed for `'a`; the boxed allocation is address-stable and never
-            // removed for the proxy env vars (see lifetime note above).
-            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
-        };
-
-        let mut http_proxy: Option<URL<'a>> = None;
+        let mut http_proxy: Option<URL<'_>> = None;
 
         let proxy = if is_http {
             self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
@@ -347,7 +328,7 @@ impl<'a> Loader<'a> {
         };
         if let Some(p) = proxy {
             if !Self::is_emptyish(p) {
-                http_proxy = Some(URL::parse(extend(p)));
+                http_proxy = Some(URL::parse(p));
             }
         }
 
@@ -574,7 +555,11 @@ impl<'a> Loader<'a> {
     // — it constructs `E::String` + `DefineData`, both higher-tier types, and
     // only reads `self.map.map.{keys,values}()` from this crate.
 
-    pub fn init(map: &'a mut Map) -> Loader<'a> {
+    pub fn init() -> Loader {
+        Self::init_with_map(Map::init())
+    }
+
+    pub fn init_with_map(map: Map) -> Loader {
         Loader {
             map,
             env_local: None,
@@ -588,7 +573,7 @@ impl<'a> Loader<'a> {
             custom_files_loaded: StringArrayHashMap::default(),
             quiet: false,
             did_load_process: false,
-            reject_unauthorized: None,
+            reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         }
     }
@@ -628,7 +613,7 @@ impl<'a> Loader<'a> {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -887,7 +872,7 @@ impl<'a> Loader<'a> {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
             }
         }
 
@@ -934,7 +919,7 @@ impl<'a> Loader<'a> {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
             }
         }
 
@@ -1546,21 +1531,20 @@ impl StdEnvMapWrapper {
 
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
 
-// Global singleton. Loader is !Sync (holds `&mut Map`); it is only installed
-// and used under a single-thread (CLI-init) invariant.
-// We store a raw `*mut` in an AtomicPtr (overwritable) and hand
-// the raw pointer back to callers so the no-alias `&mut` proof obligation lives at the *call
-// site*, not here — manufacturing `&'static mut` inside an accessor is aliased-&mut UB the
-// moment two callers hold results simultaneously (PORTING.md §Forbidden: lifetime-extension
-// via `unsafe { &*(p as *const _) }`).
-pub static INSTANCE: AtomicPtr<Loader<'static>> = AtomicPtr::new(core::ptr::null_mut());
+// Global singleton. Installed and used under a single-thread (CLI-init)
+// invariant. We store a raw `*mut` in an AtomicPtr (overwritable) and hand the
+// raw pointer back to callers so the no-alias `&mut` proof obligation lives at
+// the *call site*, not here — manufacturing `&'static mut` inside an accessor
+// is aliased-&mut UB the moment two callers hold results simultaneously
+// (PORTING.md §Forbidden: lifetime-extension via `unsafe { &*(p as *const _) }`).
+pub static INSTANCE: AtomicPtr<Loader> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Read the global singleton as a raw pointer — `Some(ptr)` once `set_instance` has been called.
 /// Callers must `unsafe { &mut *ptr }` at point of use under the single-thread
 /// CLI-init invariant: the loader is only installed and dereferenced on the
 /// main thread, so no two `&mut` borrows can be live at once.
 #[inline]
-pub fn instance() -> Option<*mut Loader<'static>> {
+pub fn instance() -> Option<*mut Loader> {
     let ptr = INSTANCE.load(Ordering::Acquire);
     if ptr.is_null() { None } else { Some(ptr) }
 }
@@ -1568,6 +1552,6 @@ pub fn instance() -> Option<*mut Loader<'static>> {
 /// Install the global singleton. Overwrites any previous value (test harnesses
 /// / worker re-init may call this more than once).
 #[inline]
-pub fn set_instance(loader: *mut Loader<'static>) {
+pub fn set_instance(loader: *mut Loader) {
     INSTANCE.store(loader, Ordering::Release);
 }

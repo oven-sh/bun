@@ -280,8 +280,7 @@ impl CreateCommand {
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -1664,8 +1663,7 @@ impl CreateCommand {
             Global::crash();
         }
 
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -2699,8 +2697,7 @@ pub(crate) struct CreateListExamplesCommand;
 impl CreateListExamplesCommand {
     pub(crate) fn exec(ctx: &Command::Context) -> crate::Result<()> {
         let filesystem = fs::FileSystem::init(None)?;
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 

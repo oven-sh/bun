@@ -618,7 +618,7 @@ impl ProxySettings {
     }
 
     /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
-    pub fn from_env(env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+    pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         #[inline]
         fn is_emptyish(v: &[u8]) -> bool {
             v.is_empty() || v == b"\"\"" || v == b"''"
@@ -640,7 +640,7 @@ impl ProxySettings {
 
     /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
     /// used for both schemes; NO_PROXY is still consulted per hop.
-    pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader<'_>) -> Option<Box<Self>> {
+    pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         let no_proxy = env
             .get(b"no_proxy")
             .filter(|v| !v.is_empty())

@@ -81,10 +81,6 @@ impl SharedPtr {
     pub fn clone_weak(&self) -> WeakPtr {
         Arc::downgrade(&self.0)
     }
-    #[inline]
-    pub fn as_arc(&self) -> &Arc<SSLConfig> {
-        &self.0
-    }
 }
 
 impl core::ops::Deref for SharedPtr {

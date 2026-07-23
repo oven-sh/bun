@@ -536,16 +536,8 @@ impl CacheConfig {
         self.0 & 0x0001 != 0
     }
     #[inline]
-    pub const fn entry_cache(self) -> bool {
-        self.0 & 0x0002 != 0
-    }
-    #[inline]
     pub const fn pos_in_pending(self) -> u8 {
         ((self.0 >> 2) & 0x1F) as u8
-    }
-    #[inline]
-    pub const fn name_len(self) -> u16 {
-        (self.0 >> 7) & 0x1FF
     }
     #[inline]
     pub const fn new(

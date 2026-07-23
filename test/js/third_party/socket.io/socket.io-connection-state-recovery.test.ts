@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { createServer, Server as HttpServer } from "http";
 import { Server, Socket } from "socket.io";
 import { Adapter } from "socket.io-adapter";
-import { eioHandshake, eioPoll, eioPush, fail, success, waitFor } from "./support/util.ts";
+import { eioHandshake, eioPoll, eioPush, waitFor } from "./support/util.ts";
 
 async function init(httpServer: HttpServer, io: Server) {
   // Engine.IO handshake
@@ -35,140 +35,121 @@ async function init(httpServer: HttpServer, io: Server) {
   return [handshake.sid, handshake.pid, offset];
 }
 
+// These tests exercise the Engine.IO HTTP long-polling transport directly via
+// supertest (8 sequential round trips in the heaviest case). They await the
+// protocol events themselves; the test runner's own timeout bounds hangs.
 describe("connection state recovery", () => {
-  it("should restore session and missed packets", done => {
+  it("should restore session and missed packets", async () => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},
     });
 
-    const timeout = setTimeout(() => {
-      fail(done, io, new Error("timeout"));
-    }, 200);
+    try {
+      let serverSocket: Socket | undefined;
 
-    let serverSocket: Socket | undefined;
+      io.once("connection", socket => {
+        socket.join("room1");
+        serverSocket = socket;
+      });
 
-    io.once("connection", socket => {
-      socket.join("room1");
-      serverSocket = socket;
-    });
+      const [sid, pid, offset] = await init(httpServer, io);
 
-    (async () => {
-      try {
-        const [sid, pid, offset] = await init(httpServer, io);
+      io.emit("hello1"); // broadcast
+      io.to("room1").emit("hello2"); // broadcast to room
+      serverSocket?.emit("hello3"); // direct message
 
-        io.emit("hello1"); // broadcast
-        io.to("room1").emit("hello2"); // broadcast to room
-        serverSocket?.emit("hello3"); // direct message
+      const newSid = await eioHandshake(httpServer);
+      await eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`);
 
-        const newSid = await eioHandshake(httpServer);
-        await eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`);
+      const payload = await eioPoll(httpServer, newSid);
 
-        const payload = await eioPoll(httpServer, newSid);
-        clearTimeout(timeout);
+      const packets = payload.split("\x1e");
 
-        const packets = payload.split("\x1e");
+      expect(packets.length).toBe(4);
 
-        expect(packets.length).toBe(4);
-
-        // note: EVENT packets are received before the CONNECT packet, which is a bit weird
-        // see also: https://github.com/socketio/socket.io-deno/commit/518f534e1c205b746b1cb21fe76b187dabc96f34
-        expect(packets[0].startsWith('42["hello1"')).toBe(true);
-        expect(packets[1].startsWith('42["hello2"')).toBe(true);
-        expect(packets[2].startsWith('42["hello3"')).toBe(true);
-        expect(packets[3]).toBe(`40{"sid":"${sid}","pid":"${pid}"}`);
-        success(done, io);
-      } catch (err) {
-        fail(done, io, err);
-      }
-    })();
+      // note: EVENT packets are received before the CONNECT packet, which is a bit weird
+      // see also: https://github.com/socketio/socket.io-deno/commit/518f534e1c205b746b1cb21fe76b187dabc96f34
+      expect(packets[0].startsWith('42["hello1"')).toBe(true);
+      expect(packets[1].startsWith('42["hello2"')).toBe(true);
+      expect(packets[2].startsWith('42["hello3"')).toBe(true);
+      expect(packets[3]).toBe(`40{"sid":"${sid}","pid":"${pid}"}`);
+    } finally {
+      io.close();
+    }
   });
 
-  it("should restore rooms and data attributes", done => {
+  it("should restore rooms and data attributes", async () => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},
     });
 
-    const timeout = setTimeout(() => {
-      fail(done, io, new Error("timeout"));
-    }, 200);
+    try {
+      io.once("connection", socket => {
+        expect(socket.recovered).toBe(false);
 
-    io.once("connection", socket => {
-      expect(socket.recovered).toBe(false);
+        socket.join("room1");
+        socket.join("room2");
+        socket.data.foo = "bar";
+      });
 
-      socket.join("room1");
-      socket.join("room2");
-      socket.data.foo = "bar";
-    });
-    (async () => {
-      try {
-        const [sid, pid, offset] = await init(httpServer, io);
+      const [sid, pid, offset] = await init(httpServer, io);
 
-        const newSid = await eioHandshake(httpServer);
+      const newSid = await eioHandshake(httpServer);
 
-        const [socket] = await Promise.all([
-          waitFor<Socket>(io, "connection"),
-          eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`),
-        ]);
+      const [socket] = await Promise.all([
+        waitFor<Socket>(io, "connection"),
+        eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`),
+      ]);
 
-        clearTimeout(timeout);
-        expect(socket.id).toBe(sid);
-        expect(socket.recovered).toBe(true);
+      expect(socket.id).toBe(sid);
+      expect(socket.recovered).toBe(true);
 
-        expect(socket.rooms.has(socket.id)).toBe(true);
-        expect(socket.rooms.has("room1")).toBe(true);
-        expect(socket.rooms.has("room2")).toBe(true);
+      expect(socket.rooms.has(socket.id)).toBe(true);
+      expect(socket.rooms.has("room1")).toBe(true);
+      expect(socket.rooms.has("room2")).toBe(true);
 
-        expect(socket.data.foo).toBe("bar");
+      expect(socket.data.foo).toBe("bar");
 
-        await eioPoll(httpServer, newSid); // drain buffer
-        success(done, io);
-      } catch (err) {
-        fail(done, io, err);
-      }
-    })();
+      await eioPoll(httpServer, newSid); // drain buffer
+    } finally {
+      io.close();
+    }
   });
 
-  it("should not run middlewares upon recovery by default", done => {
+  it("should not run middlewares upon recovery by default", async () => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},
     });
-    const timeout = setTimeout(() => {
-      fail(done, io, new Error("timeout"));
-    }, 200);
 
-    (async () => {
-      try {
-        const [_, pid, offset] = await init(httpServer, io);
+    try {
+      const [_, pid, offset] = await init(httpServer, io);
 
-        io.use((socket, next) => {
-          socket.data.middlewareWasCalled = true;
+      io.use((socket, next) => {
+        socket.data.middlewareWasCalled = true;
 
-          next();
-        });
+        next();
+      });
 
-        const newSid = await eioHandshake(httpServer);
+      const newSid = await eioHandshake(httpServer);
 
-        const [socket] = await Promise.all([
-          waitFor<Socket>(io, "connection"),
-          eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`),
-        ]);
+      const [socket] = await Promise.all([
+        waitFor<Socket>(io, "connection"),
+        eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`),
+      ]);
 
-        clearTimeout(timeout);
-        expect(socket.recovered).toBe(true);
-        expect(socket.data.middlewareWasCalled).toBe(undefined);
+      expect(socket.recovered).toBe(true);
+      expect(socket.data.middlewareWasCalled).toBe(undefined);
 
-        await eioPoll(httpServer, newSid); // drain buffer
-        success(done, io);
-      } catch (err) {
-        fail(done, io, err);
-      }
-    })();
+      await eioPoll(httpServer, newSid); // drain buffer
+    } finally {
+      io.close();
+    }
   });
 
-  it("should run middlewares even upon recovery", done => {
+  it("should run middlewares even upon recovery", async () => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {
@@ -176,120 +157,94 @@ describe("connection state recovery", () => {
       },
     });
 
-    const timeout = setTimeout(() => {
-      fail(done, io, new Error("timeout"));
-    }, 200);
+    try {
+      const [_, pid, offset] = await init(httpServer, io);
 
-    (async () => {
-      try {
-        const [_, pid, offset] = await init(httpServer, io);
+      io.use((socket, next) => {
+        socket.data.middlewareWasCalled = true;
 
-        io.use((socket, next) => {
-          socket.data.middlewareWasCalled = true;
+        next();
+      });
 
-          next();
-        });
+      const newSid = await eioHandshake(httpServer);
 
-        const newSid = await eioHandshake(httpServer);
+      const [socket] = await Promise.all([
+        waitFor<Socket>(io, "connection"),
+        eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`),
+      ]);
 
-        const [socket] = await Promise.all([
-          waitFor<Socket>(io, "connection"),
-          eioPush(httpServer, newSid, `40{"pid":"${pid}","offset":"${offset}"}`),
-        ]);
+      expect(socket.recovered).toBe(true);
+      expect(socket.data.middlewareWasCalled).toBe(true);
 
-        clearTimeout(timeout);
-
-        expect(socket.recovered).toBe(true);
-        expect(socket.data.middlewareWasCalled).toBe(true);
-
-        await eioPoll(httpServer, newSid); // drain buffer
-        success(done, io);
-      } catch (err) {
-        fail(done, io, err);
-      }
-    })();
+      await eioPoll(httpServer, newSid); // drain buffer
+    } finally {
+      io.close();
+    }
   });
 
-  it("should fail to restore an unknown session", done => {
+  it("should fail to restore an unknown session", async () => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer, {
       connectionStateRecovery: {},
     });
 
-    const timeout = setTimeout(() => {
-      fail(done, io, new Error("timeout"));
-    }, 200);
+    try {
+      // Engine.IO handshake
+      const sid = await eioHandshake(httpServer);
 
-    (async () => {
-      try {
-        // Engine.IO handshake
-        const sid = await eioHandshake(httpServer);
+      // Socket.IO handshake
+      await eioPush(httpServer, sid, '40{"pid":"foo","offset":"bar"}');
 
-        // Socket.IO handshake
-        await eioPush(httpServer, sid, '40{"pid":"foo","offset":"bar"}');
+      const handshakeBody = await eioPoll(httpServer, sid);
 
-        const handshakeBody = await eioPoll(httpServer, sid);
+      expect(handshakeBody.startsWith("40")).toBe(true);
 
-        clearTimeout(timeout);
+      const handshake = JSON.parse(handshakeBody.substring(2));
 
-        expect(handshakeBody.startsWith("40")).toBe(true);
-
-        const handshake = JSON.parse(handshakeBody.substring(2));
-
-        expect(handshake.sid).not.toBe("foo");
-        expect(handshake.pid).not.toBe("bar");
-
-        success(done, io);
-      } catch (err) {
-        fail(done, io, err);
-      }
-    })();
+      expect(handshake.sid).not.toBe("foo");
+      expect(handshake.pid).not.toBe("bar");
+    } finally {
+      io.close();
+    }
   });
 
-  it("should be disabled by default", done => {
+  it("should be disabled by default", async () => {
     const httpServer = createServer().listen(0);
     const io = new Server(httpServer);
-    const timeout = setTimeout(() => {
-      fail(done, io, new Error("timeout"));
-    }, 200);
 
-    (async () => {
-      try {
-        // Engine.IO handshake
-        const sid = await eioHandshake(httpServer);
+    try {
+      // Engine.IO handshake
+      const sid = await eioHandshake(httpServer);
 
-        // Socket.IO handshake
-        await eioPush(httpServer, sid, "40");
+      // Socket.IO handshake
+      await eioPush(httpServer, sid, "40");
 
-        const handshakeBody = await eioPoll(httpServer, sid);
+      const handshakeBody = await eioPoll(httpServer, sid);
 
-        clearTimeout(timeout);
-        expect(handshakeBody.startsWith("40")).toBe(true);
+      expect(handshakeBody.startsWith("40")).toBe(true);
 
-        const handshake = JSON.parse(handshakeBody.substring(2));
+      const handshake = JSON.parse(handshakeBody.substring(2));
 
-        expect(handshake.sid).not.toBe(undefined);
-        expect(handshake.pid).toBe(undefined);
-
-        success(done, io);
-      } catch (err) {
-        fail(done, io, err);
-      }
-    })();
+      expect(handshake.sid).not.toBe(undefined);
+      expect(handshake.pid).toBe(undefined);
+    } finally {
+      io.close();
+    }
   });
 
-  it("should not call adapter#persistSession or adapter#restoreSession if disabled", done => {
+  it("should not call adapter#persistSession or adapter#restoreSession if disabled", async () => {
     const httpServer = createServer().listen(0);
 
     let io: Server;
+    let called = "";
     class DummyAdapter extends Adapter {
       override persistSession() {
-        fail(done, io, new Error("should not happen"));
+        called = "persistSession";
         return Promise.reject("should not happen");
       }
 
       override restoreSession() {
-        fail(done, io, new Error("should not happen"));
+        called = "restoreSession";
         return Promise.reject("should not happen");
       }
     }
@@ -297,23 +252,18 @@ describe("connection state recovery", () => {
     io = new Server(httpServer, {
       adapter: DummyAdapter,
     });
-    const timeout = setTimeout(() => {
-      fail(done, io, new Error("timeout"));
-    }, 200);
 
-    (async () => {
-      try {
-        // Engine.IO handshake
-        const sid = await eioHandshake(httpServer);
+    try {
+      // Engine.IO handshake
+      const sid = await eioHandshake(httpServer);
 
-        await eioPush(httpServer, sid, '40{"pid":"foo","offset":"bar"}');
-        await eioPoll(httpServer, sid);
-        await eioPush(httpServer, sid, "1");
-        clearTimeout(timeout);
-        success(done, io);
-      } catch (err) {
-        fail(done, io, err);
-      }
-    })();
+      await eioPush(httpServer, sid, '40{"pid":"foo","offset":"bar"}');
+      await eioPoll(httpServer, sid);
+      await eioPush(httpServer, sid, "1");
+
+      expect(called).toBe("");
+    } finally {
+      io.close();
+    }
   });
 });

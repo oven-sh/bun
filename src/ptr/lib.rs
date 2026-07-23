@@ -45,10 +45,10 @@ pub use ref_count::{
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCounted};
+pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;
-pub use parent_ref::{Anchored, LiveMarker, ParentRef};
+pub use parent_ref::ParentRef;
 // Compat alias for callers that use the pointer-typedef name.
 pub type IntrusiveRc<T> = RefPtr<T>;
 
@@ -396,19 +396,6 @@ impl Interned {
     #[inline]
     pub const fn from_static(s: &'static [u8]) -> Self {
         Interned(s)
-    }
-
-    /// Adopt a leaked allocation. Consumes the `Box` so the leak is explicit at
-    /// the call site (replaces ad-hoc `intern` helpers in the bundler/linker).
-    #[inline]
-    pub fn leak(b: Box<[u8]>) -> Self {
-        Interned(Box::leak(b))
-    }
-
-    /// `leak` for `Vec<u8>` — shrinks to fit and leaks.
-    #[inline]
-    pub fn leak_vec(v: Vec<u8>) -> Self {
-        Self::leak(v.into_boxed_slice())
     }
 
     /// Escape hatch for storage this module cannot see (mmap'd standalone

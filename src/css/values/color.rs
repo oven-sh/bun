@@ -1231,28 +1231,6 @@ pub fn parse_rgb_components(
     Ok((r, g, b, is_legacy_syntax))
 }
 
-pub fn parse_hslhwb_components<T>(
-    input: &mut css::Parser,
-    parser: &mut ComponentParser,
-    allows_legacy: bool,
-) -> CssResult<(f32, f32, f32, bool)> {
-    let _ = core::marker::PhantomData::<T>; // autofix
-    let h = parse_angle_or_number(input, parser)?;
-    let is_legacy_syntax = allows_legacy
-        && parser.from.is_none()
-        && !h.is_nan()
-        && input.try_parse(|i| i.expect_comma()).is_ok();
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
-    if is_legacy_syntax {
-        input.expect_colon()?;
-    }
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
-    if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
-        return Err(input.new_custom_error(css::ParserError::invalid_value));
-    }
-    Ok((h, a, b, is_legacy_syntax))
-}
-
 pub(crate) fn map_gamut<T>(color: T) -> T
 where
     T: ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB> + Copy,
@@ -1495,26 +1473,6 @@ pub fn parse_number_or_percentage(
 }
 
 impl LABColor {
-    pub fn new_lab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_oklab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // Intentionally the `Lab` variant (sic) — kept for behavioral
-        // compatibility.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_lch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // Intentionally the `Lab` variant (sic) — kept for behavioral compatibility.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_oklch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // Intentionally the `Lab` variant (sic) — kept for behavioral compatibility.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
     pub fn into_hsl(&self) -> HSL {
         HSL::from_lab_color(self)
     }

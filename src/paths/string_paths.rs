@@ -181,9 +181,6 @@ pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &
     add_nt_path_prefix(wbuf, utf16)
 }
 
-// These are the same because they don't have rules like needing a trailing slash
-pub use self::to_nt_path as to_nt_dir;
-
 pub fn to_extended_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     debug_assert!(wbuf.len() > 4);
     if utf8.starts_with(&windows::LONG_PATH_PREFIX_U8)
@@ -489,21 +486,6 @@ pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
 }
 
 pub use bun_core::strings::remove_leading_dot_slash;
-
-// Copied from std, modified to accept input type — canonical impl lives in
-// `crate::{basename_posix, basename_windows}` (generic over `PathChar`);
-// this is a thin re-wrapper preserving the `Ch` bound for this module's API.
-#[inline]
-pub fn basename<T: Ch>(input: &[T]) -> &[T] {
-    #[cfg(windows)]
-    {
-        return crate::basename_windows::<T>(input);
-    }
-    #[cfg(not(windows))]
-    {
-        crate::basename_posix::<T>(input)
-    }
-}
 
 // Run with `cargo test -p bun_paths` (also the Miri lane,
 // `bun run rust:miri -p bun_paths`). simdutf's C++ implementation is only

@@ -131,10 +131,6 @@ pub enum UnixOrHost {
     Fd(Fd),
 }
 
-impl UnixOrHost {
-    // Note: deinit() deleted — Box<[u8]> fields auto-drop.
-}
-
 impl Listener {
     #[bun_jsc::host_fn(method)]
     pub fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -447,8 +443,9 @@ impl Listener {
                 });
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
-                        .expect("int cast");
+                    if let Some(p) = bun_opaque::opaque_deref_mut(ls).get_local_port() {
+                        *port = p;
+                    }
                 }
                 ls
             }
@@ -920,11 +917,6 @@ impl Listener {
         // connection / protos / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.active_connections.get() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1446,7 +1438,10 @@ impl Listener {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let address_js = ZigString::init(formatted).to_js(global);
-        let port_js = JSValue::js_number(socket_ref.get_local_port() as f64);
+        let port_js = match socket_ref.get_local_port() {
+            Some(p) => JSValue::js_number(p as f64),
+            None => JSValue::UNDEFINED,
+        };
 
         out.put(global, b"family", family_js);
         out.put(global, b"address", address_js);

@@ -24,9 +24,7 @@ use crate::webcore::blob::store::Data as StoreData;
 // Canonical re-exports (struct + registry live in bun_http now)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_http::ssl_config::{
-    GlobalRegistry, SSLConfig, SharedPtr, SslConfig, WeakPtr, global_registry,
-};
+pub use bun_http::ssl_config::SSLConfig;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ReadFromBlobError
@@ -255,16 +253,6 @@ impl SSLConfigFromJs for SSLConfig {
         // We don't need to deinit `result` if `any` is false.
         if any { Ok(Some(result)) } else { Ok(None) }
     }
-}
-
-/// Free-function aliases for callers that prefer module-path syntax.
-#[inline]
-pub fn from_js(
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<SSLConfig>> {
-    <SSLConfig as SSLConfigFromJs>::from_js(vm, global, value)
 }
 
 /// The `SSLConfig` for the `tls: true` shorthand: every option at its

@@ -3758,7 +3758,12 @@ describe("parser-tier error responses", () => {
     // Same request-line trickled across writes so the fallback-buffer overflow
     // path (not the single-read path) is the one that classifies it.
     const trickled = head(
-      await rawRequest(server.port, ["GET /", Buffer.alloc(10000, "a").toString(), big, " HTTP/1.1\r\nHost: x\r\n\r\n"]),
+      await rawRequest(server.port, [
+        "GET /",
+        Buffer.alloc(10000, "a").toString(),
+        big,
+        " HTTP/1.1\r\nHost: x\r\n\r\n",
+      ]),
     );
     const hdr = head(await rawRequest(server.port, `GET / HTTP/1.1\r\nHost: x\r\nX-Big: ${big}\r\n\r\n`));
     expect({ uriOnce: uriOnce.status, trickled: trickled.status, hdr: hdr.status }).toEqual({

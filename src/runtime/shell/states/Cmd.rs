@@ -772,28 +772,7 @@ impl Cmd {
                     // SAFETY: returns a live JSC-owned `*mut Value` borrowed
                     // from the Request/Response wrapper while `jsval` is rooted.
                     let body = unsafe { &mut *body };
-                    body.to_blob_if_possible();
-                    match body {
-                        crate::webcore::body::Value::Locked(_) => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "Request/Response body is a ReadableStream, which cannot be \
-                                 redirected in Bun Shell yet. Read it first: \
-                                 $`cmd < ${{await response.bytes()}}`"
-                            )));
-                        }
-                        crate::webcore::body::Value::Used => {
-                            return Err(global
-                                .err(
-                                    crate::jsc::ErrorCode::BODY_ALREADY_USED,
-                                    format_args!("Body already used"),
-                                )
-                                .throw());
-                        }
-                        crate::webcore::body::Value::Error(err) => {
-                            return Err(global.throw_value(err.to_js(global)));
-                        }
-                        _ => {}
-                    }
+                    crate::shell::util::check_body_for_redirect(body, global)?;
                     if flags.stdin() {
                         let b = body.use_as_any_blob();
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;

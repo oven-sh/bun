@@ -732,30 +732,8 @@ impl Builtin {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
-                    body.to_blob_if_possible();
-                    match body {
-                        crate::webcore::body::Value::Locked(_) => {
-                            let _ = global.throw_invalid_arguments(format_args!(
-                                "Request/Response body is a ReadableStream, which cannot be \
-                                 redirected in Bun Shell yet. Read it first: \
-                                 $`cmd < ${{await response.bytes()}}`"
-                            ));
-                            return Some(Yield::failed());
-                        }
-                        crate::webcore::body::Value::Used => {
-                            let _ = global
-                                .err(
-                                    crate::jsc::ErrorCode::BODY_ALREADY_USED,
-                                    format_args!("Body already used"),
-                                )
-                                .throw();
-                            return Some(Yield::failed());
-                        }
-                        crate::webcore::body::Value::Error(err) => {
-                            let _ = global.throw_value(err.to_js(global));
-                            return Some(Yield::failed());
-                        }
-                        _ => {}
+                    if crate::shell::util::check_body_for_redirect(body, global).is_err() {
+                        return Some(Yield::failed());
                     }
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());

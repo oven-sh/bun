@@ -18,21 +18,9 @@ import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
 
 const skip = !fault.available() || isWindows;
 
-const spawned: Bun.Subprocess[] = [];
-afterEach(async () => {
-  fault.clear();
-  for (const p of spawned.splice(0)) {
-    p.stdin?.end();
-    const killTimer = setTimeout(() => p.kill(), 500);
-    try {
-      await p.exited;
-    } finally {
-      clearTimeout(killTimer);
-    }
-  }
-});
+afterEach(() => fault.clear());
 
-async function spawnServer(): Promise<number> {
+async function withServer(fn: (port: number) => Promise<void>) {
   using dir = tempDir("h3-fault", {
     "server.mjs": `
       const server = Bun.serve({
@@ -53,15 +41,33 @@ async function spawnServer(): Promise<number> {
     stderr: "pipe",
     stdin: "pipe",
   });
-  spawned.push(proc);
+  let port = 0;
   let buf = "";
   for await (const chunk of proc.stderr) {
     buf += new TextDecoder().decode(chunk);
     const m = buf.match(/PORT=(\d+)/);
-    if (m) return Number(m[1]);
+    if (m) {
+      port = Number(m[1]);
+      break;
+    }
     if (buf.length > 4096) break;
   }
-  throw new Error("server did not report a port:\n" + buf);
+  if (!port) {
+    proc.kill();
+    await proc.exited;
+    throw new Error("server did not report a port:\n" + buf);
+  }
+  try {
+    await fn(port);
+  } finally {
+    proc.stdin?.end();
+    const killTimer = setTimeout(() => proc.kill(), 500);
+    try {
+      await proc.exited;
+    } finally {
+      clearTimeout(killTimer);
+    }
+  }
 }
 
 const h3 = (port: number, init: RequestInit = {}) =>
@@ -72,11 +78,8 @@ const h3 = (port: number, init: RequestInit = {}) =>
     signal: AbortSignal.timeout(8000),
   } as RequestInit);
 
-test.skipIf(skip)(
-  "EAGAIN on the coalesced handshake datagram is requeued and the fetch completes",
-  async () => {
-    const port = await spawnServer();
-
+test.skipIf(skip)("EAGAIN on the coalesced handshake datagram is requeued and the fetch completes", async () => {
+  await withServer(async port => {
     // Arm an EAGAIN on the second UDP send the client engine makes. The
     // first is the padded Initial (CRYPTO ClientHello). The second is the
     // response to the server's flight: an INIT ACK coalesced with the HSK
@@ -89,32 +92,25 @@ test.skipIf(skip)(
     const res = await h3(port);
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
-  },
-  30_000,
-);
+  });
+});
 
-test.skipIf(skip)(
-  "a non-backpressure send error on the first datagram is retried and does not pause the engine",
-  async () => {
-    const port = await spawnServer();
-
+test.skipIf(skip)("a non-backpressure send error on the first datagram recovers without stalling the engine", async () => {
+  await withServer(async port => {
     // ECONNREFUSED on the very first send is what a stale ICMP on the shared
-    // client socket looks like. us_quic_packets_out retries once; the retry
-    // is a real send and the handshake proceeds normally.
+    // client socket looks like. The errno is remapped to EAGAIN for lsquic,
+    // the UDP poll is re-armed writable, and on_drain → send_unsent_packets
+    // resends once the single-shot fault is consumed.
     fault.set({ syscall: "sendmsg", action: "errno", errno: "ECONNREFUSED", after: 0, repeat: 1 });
 
     const res = await h3(port);
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
-  },
-  30_000,
-);
+  });
+});
 
-test.skipIf(skip)(
-  "repeated EAGAIN over several loop iterations recovers via on_drain without stalling the fetch",
-  async () => {
-    const port = await spawnServer();
-
+test.skipIf(skip)("repeated EAGAIN over several loop iterations recovers via on_drain without stalling the fetch", async () => {
+  await withServer(async port => {
     // Fail the first handful of sends with EAGAIN. Each failure re-arms the
     // UDP poll's writable interest; on_drain → send_unsent_packets runs on
     // the next iteration, so progress resumes as soon as the rule disarms.
@@ -125,6 +121,5 @@ test.skipIf(skip)(
     const res = await h3(port);
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
-  },
-  30_000,
-);
+  });
+});

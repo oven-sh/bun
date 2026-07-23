@@ -139,9 +139,10 @@ mod posix {
     fn open_psi_fd() -> Option<Fd> {
         use bun_sys::O;
 
-        /// 150 ms of "some"-stall in any 2 s window. 2 s is the minimum
-        /// window for unprivileged PSI triggers (kernel 6.6+).
-        const TRIGGER: &[u8] = b"some 150000 2000000";
+        /// 150 ms of "some"-stall in any 2 s window (the minimum for
+        /// unprivileged PSI triggers, kernel 6.6+). psi_write NUL-terminates
+        /// in place over the last byte written, so the NUL must be included.
+        const TRIGGER: &[u8] = b"some 150000 2000000\0";
 
         let mut cgroup_buf = [0u8; 320];
         let paths = [
@@ -204,6 +205,16 @@ mod posix {
             poll: register_os_watch(global),
         });
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+    }
+
+    pub(super) fn has_os_backend(global: &JSGlobalObject) -> bool {
+        match slot(global.bun_vm().as_mut()) {
+            // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
+            Some(raw) => unsafe { raw.cast::<MemoryPressureWatcher>().as_ref() }
+                .poll
+                .is_some(),
+            None => false,
+        }
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {
@@ -402,6 +413,21 @@ pub extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
     emit(global, lvl);
+}
+
+/// Whether the installed watcher actually registered an OS-level signal
+/// source (PSI trigger / kqueue filter / notification thread), as opposed to
+/// the silent no-backend fallback. Windows installs are all-or-nothing.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__MemoryPressure__hasOsBackend(global: &JSGlobalObject) -> bool {
+    #[cfg(not(windows))]
+    {
+        posix::has_os_backend(global)
+    }
+    #[cfg(windows)]
+    {
+        Bun__MemoryPressure__isInstalled(global)
+    }
 }
 
 #[unsafe(no_mangle)]

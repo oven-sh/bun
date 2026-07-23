@@ -1790,7 +1790,7 @@ impl PackageManifest {
         let left = group.head.head.range.left;
         let mut newest_filtered: Option<Semver::Version> = None;
 
-        if left.op == Semver::range::Op::Eql {
+        if group.is_exact() {
             let result = self.find_by_version(left.version);
             if let Some(r) = result {
                 if Self::is_package_version_too_recent(r.package, min_age_ms) {
@@ -1860,7 +1860,7 @@ impl PackageManifest {
     ) -> Option<FindResult<'_>> {
         let left = group.head.head.range.left;
         // Fast path: exact version
-        if left.op == Semver::range::Op::Eql {
+        if group.is_exact() {
             return self.find_by_version(left.version);
         }
 

@@ -57,16 +57,16 @@ describe.todoIf(
   }
 
   const batchSize = isWindows ? 10 : 20;
-  const warmupBatches = 3;
+  const warmupBatches = 5;
   const mainBatches = 6;
 
   async function run(iterate: () => Promise<void>, bytesPerProcess: number) {
     /**
      * @param totalBatches # of batches to run
-     * @returns peak RSS observed across the batches
+     * @returns per-batch post-GC RSS samples (MB) and their peak
      */
     async function phase(totalBatches: number) {
-      let peak = 0;
+      const samples: number[] = [];
       for (let batch = 0; batch < totalBatches; batch++) {
         const batchPromises: Promise<void>[] = [];
         for (let i = 0; i < batchSize; i++) batchPromises.push(iterate());
@@ -77,21 +77,21 @@ describe.todoIf(
         // batches and the peak comparison sees a false positive.
         Bun.gc(true);
 
-        peak = Math.max(peak, process.memoryUsage.rss());
+        samples.push(Math.round(process.memoryUsage.rss() / MB));
       }
-      return peak;
+      return { samples, peak: Math.max(...samples) * MB };
     }
 
-    const warmupPeak = await phase(warmupBatches);
-    const mainPeak = await phase(mainBatches);
+    const warmup = await phase(warmupBatches);
+    const main = await phase(mainBatches);
 
     // Compare the max RSS seen across batches rather than a single post-run sample.
     // mimalloc returns pages on its own schedule, so one sample can land anywhere;
     // the max over N batches is stable and still grows per batch under #18316/#20095.
-    const delta = mainPeak - warmupPeak;
-    const pct = delta / warmupPeak;
+    const delta = main.peak - warmup.peak;
+    const pct = delta / warmup.peak;
     console.log(
-      `Peak RSS: warmup ${Math.round(warmupPeak / MB)} MB -> main ${Math.round(mainPeak / MB)} MB, ` +
+      `RSS samples: warmup=[${warmup.samples.join(",")}] main=[${main.samples.join(",")}] MB, ` +
         `delta ${Math.round(delta / MB)} MB (${Math.round(100 * pct)}%)`,
     );
     expect(pct).toBeLessThan(0.8);

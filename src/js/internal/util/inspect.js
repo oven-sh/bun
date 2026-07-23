@@ -125,6 +125,7 @@ const StringPrototypeValueOf = uncurryThis(String.prototype.valueOf);
 const SymbolPrototypeToString = uncurryThis(Symbol.prototype.toString);
 const SymbolPrototypeValueOf = uncurryThis(Symbol.prototype.valueOf);
 const SymbolIterator = Symbol.iterator;
+const SymbolToPrimitive = Symbol.toPrimitive;
 const SymbolToStringTag = Symbol.toStringTag;
 
 const customInspectSymbol = Symbol.for("nodejs.util.inspect.custom");
@@ -2441,36 +2442,44 @@ function hasBuiltInToString(value) {
     if (proxyTarget === null) {
       return true;
     }
-    value = proxyTarget;
+    return hasBuiltInToString(proxyTarget);
   }
 
-  // Check if value has a custom Symbol.toPrimitive transformation.
-  if (typeof value[Symbol.toPrimitive] === "function") {
-    return false;
-  }
+  let hasOwnToString = ObjectPrototypeHasOwnProperty;
+  let hasOwnToPrimitive = ObjectPrototypeHasOwnProperty;
 
-  // Count objects that have no `toString` function as built-in.
+  // Count objects without `toString` and `Symbol.toPrimitive` function as built-in.
   if (typeof value.toString !== "function") {
-    return true;
-  }
-
-  // The object has a own `toString` property. Thus it's not not a built-in one.
-  if (ObjectPrototypeHasOwnProperty(value, "toString")) {
+    if (typeof value[SymbolToPrimitive] !== "function") {
+      return true;
+    } else if (ObjectPrototypeHasOwnProperty(value, SymbolToPrimitive)) {
+      return false;
+    }
+    hasOwnToString = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty(value, "toString")) {
+    return false;
+  } else if (typeof value[SymbolToPrimitive] !== "function") {
+    hasOwnToPrimitive = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty(value, SymbolToPrimitive)) {
     return false;
   }
 
-  // Find the object that has the `toString` property as own property in the
-  // prototype chain.
+  // Find the object that has the `toString` property or the `Symbol.toPrimitive`
+  // property as own property in the prototype chain.
   let pointer = value;
   do {
     pointer = ObjectGetPrototypeOf(pointer);
-  } while (!ObjectPrototypeHasOwnProperty(pointer, "toString"));
+  } while (!hasOwnToString(pointer, "toString") && !hasOwnToPrimitive(pointer, SymbolToPrimitive));
 
   // Check closer if the object is a built-in.
   const descriptor = ObjectGetOwnPropertyDescriptor(pointer, "constructor");
   return (
     descriptor !== undefined && typeof descriptor.value === "function" && builtInObjects.has(descriptor.value.name)
   );
+}
+
+function returnFalse() {
+  return false;
 }
 
 const firstErrorLine = error => StringPrototypeSplit(error.message, "\n", 1)[0];

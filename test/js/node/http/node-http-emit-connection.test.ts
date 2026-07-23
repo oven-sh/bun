@@ -45,7 +45,10 @@ function collect(client: net.Socket) {
 async function setup(handler?: http.RequestListener) {
   const httpServer = http.createServer(handler);
   const raw = net.createServer(sock => httpServer.emit("connection", sock));
-  await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    raw.once("error", reject);
+    raw.listen(0, "127.0.0.1", resolve);
+  });
   const port = (raw.address() as net.AddressInfo).port;
   const client = net.connect(port, "127.0.0.1");
   await new Promise<void>((resolve, reject) => {
@@ -219,7 +222,10 @@ test.concurrent("http._connectionListener serves a socket when invoked directly"
   // as `this` instead of emitting 'connection'.
   const httpServer = http.createServer((req, res) => res.end("direct:" + req.url));
   const raw = net.createServer(sock => (http as any)._connectionListener.call(httpServer, sock));
-  await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    raw.once("error", reject);
+    raw.listen(0, "127.0.0.1", resolve);
+  });
   const port = (raw.address() as net.AddressInfo).port;
   const client = net.connect(port, "127.0.0.1");
   try {

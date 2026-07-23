@@ -589,6 +589,7 @@ public:
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
     V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
     V(public, LazyClassStructure, m_JSNodePerformanceHooksHistogramClassStructure)                           \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodePerformanceHooksIntervalHistogramStructure)     \
                                                                                                              \
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \

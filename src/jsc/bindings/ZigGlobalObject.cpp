@@ -2084,6 +2084,11 @@ void GlobalObject::finishCreation(VM& vm)
             Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
         });
 
+    m_JSNodePerformanceHooksIntervalHistogramStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createJSNodePerformanceHooksIntervalHistogramStructure(init.vm, defaultGlobalObject(init.owner)));
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));

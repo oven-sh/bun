@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
-import { createHistogram } from "perf_hooks";
+import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 
 describe("Histogram", () => {
   test("basic histogram creation and initial state", () => {
@@ -581,5 +581,92 @@ describe("Histogram", () => {
     const inspected = inspect(h);
 
     assert.ok(inspected.includes("Histogram"));
+  });
+
+  describe("class hierarchy", () => {
+    test("monitorEventLoopDelay() histogram does not expose record/recordDelta/add", () => {
+      const eld = monitorEventLoopDelay();
+      assert.strictEqual(typeof eld.record, "undefined");
+      assert.strictEqual(typeof eld.recordDelta, "undefined");
+      assert.strictEqual(typeof eld.add, "undefined");
+      assert.strictEqual(typeof eld.enable, "function");
+      assert.strictEqual(typeof eld.disable, "function");
+      assert.strictEqual(typeof eld[Symbol.dispose], "function");
+      // base Histogram surface is still reachable
+      assert.strictEqual(typeof eld.reset, "function");
+      assert.strictEqual(typeof eld.percentile, "function");
+      assert.strictEqual(eld.count, 0);
+    });
+
+    test("createHistogram() histogram does not expose enable/disable", () => {
+      const h = createHistogram();
+      assert.strictEqual(typeof h.record, "function");
+      assert.strictEqual(typeof h.recordDelta, "function");
+      assert.strictEqual(typeof h.add, "function");
+      assert.strictEqual(typeof h.enable, "undefined");
+      assert.strictEqual(typeof h.disable, "undefined");
+    });
+
+    test("add() rejects an event-loop-delay histogram", () => {
+      const h = createHistogram();
+      h.record(5);
+      const eld = monitorEventLoopDelay();
+      assert.throws(
+        () => h.add(eld),
+        err =>
+          err.name === "TypeError" && err.code === "ERR_INVALID_ARG_TYPE" && /RecordableHistogram/.test(err.message),
+      );
+      assert.strictEqual(h.count, 1);
+    });
+
+    test("add() rejects non-histogram values", () => {
+      const h = createHistogram();
+      for (const bad of [{}, 42, "str", null, undefined]) {
+        assert.throws(
+          () => h.add(bad),
+          err => err.name === "TypeError" && err.code === "ERR_INVALID_ARG_TYPE",
+        );
+      }
+    });
+
+    test("add() returns undefined", () => {
+      const h1 = createHistogram();
+      const h2 = createHistogram();
+      h2.record(1);
+      assert.strictEqual(h1.add(h2), undefined);
+    });
+
+    test("record()/add() borrowed onto an event-loop-delay histogram throws ERR_INVALID_THIS", () => {
+      const eld = monitorEventLoopDelay();
+      const rec = createHistogram();
+      const { record, recordDelta, add } = Object.getPrototypeOf(rec);
+      for (const fn of [() => record.call(eld, 1), () => recordDelta.call(eld), () => add.call(eld, rec)]) {
+        assert.throws(fn, err => err.name === "TypeError" && err.code === "ERR_INVALID_THIS");
+      }
+      assert.strictEqual(eld.count, 0);
+    });
+
+    test("prototype chain", () => {
+      const rec = createHistogram();
+      const eld = monitorEventLoopDelay();
+
+      const recProto = Object.getPrototypeOf(rec);
+      const eldProto = Object.getPrototypeOf(eld);
+      assert.notStrictEqual(recProto, eldProto);
+
+      const baseProto = Object.getPrototypeOf(recProto);
+      assert.strictEqual(Object.getPrototypeOf(eldProto), baseProto);
+      assert.strictEqual(Object.getPrototypeOf(baseProto), Object.prototype);
+
+      assert.ok(Object.prototype.hasOwnProperty.call(recProto, "record"));
+      assert.ok(Object.prototype.hasOwnProperty.call(baseProto, "reset"));
+      assert.ok(!Object.prototype.hasOwnProperty.call(baseProto, "record"));
+
+      assert.strictEqual(rec.constructor.name, "RecordableHistogram");
+      assert.strictEqual(eld.constructor.name, "ELDHistogram");
+
+      assert.strictEqual(Object.prototype.toString.call(rec), "[object Object]");
+      assert.strictEqual(Object.prototype.toString.call(eld), "[object Object]");
+    });
   });
 });

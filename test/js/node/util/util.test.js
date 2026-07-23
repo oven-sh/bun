@@ -429,6 +429,88 @@ describe("util", () => {
       });
     }
   });
+
+  describe("getSystemErrorMap", () => {
+    it("is a function", () => {
+      expect(typeof util.getSystemErrorMap).toBe("function");
+    });
+    it("returns a Map of [name, message] keyed by negative errno", () => {
+      const map = util.getSystemErrorMap();
+      expect(map).toBeInstanceOf(Map);
+      const { UV_ENOENT, UV_EACCES } = process.binding("uv");
+      expect(map.get(UV_ENOENT)).toEqual(["ENOENT", "no such file or directory"]);
+      expect(map.get(UV_EACCES)).toEqual(["EACCES", "permission denied"]);
+      for (const [code, [name, msg]] of map) {
+        expect(code).toBeLessThan(0);
+        expect(typeof name).toBe("string");
+        expect(typeof msg).toBe("string");
+      }
+    });
+    it("returns a fresh Map on each call", () => {
+      expect(util.getSystemErrorMap()).not.toBe(util.getSystemErrorMap());
+    });
+  });
+
+  describe("getSystemErrorMessage", () => {
+    it("is a function", () => {
+      expect(typeof util.getSystemErrorMessage).toBe("function");
+    });
+    for (const item of ["test", {}, []]) {
+      it(`throws ERR_INVALID_ARG_TYPE for ${util.inspect(item)}`, () => {
+        expect(() => util.getSystemErrorMessage(item)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      });
+    }
+    for (const item of [0, 1, Infinity, -Infinity, NaN, 1.5]) {
+      it(`throws ERR_OUT_OF_RANGE for ${item}`, () => {
+        expect(() => util.getSystemErrorMessage(item)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+      });
+    }
+    it("returns the libuv description for known errnos", () => {
+      const { UV_ENOENT, UV_EINVAL } = process.binding("uv");
+      expect(util.getSystemErrorMessage(UV_ENOENT)).toBe("no such file or directory");
+      expect(util.getSystemErrorMessage(UV_EINVAL)).toBe("invalid argument");
+    });
+    it("matches getSystemErrorMap() for every known errno", () => {
+      for (const [code, [, msg]] of util.getSystemErrorMap()) {
+        expect(util.getSystemErrorMessage(code)).toBe(msg);
+      }
+    });
+    it("returns 'Unknown system error N' for unknown errnos", () => {
+      expect(util.getSystemErrorMessage(-111111)).toBe("Unknown system error -111111");
+    });
+  });
+
+  describe("transferableAbortSignal", () => {
+    it("is a function", () => {
+      expect(typeof util.transferableAbortSignal).toBe("function");
+    });
+    it("returns the same AbortSignal instance", () => {
+      const ac = new AbortController();
+      expect(util.transferableAbortSignal(ac.signal)).toBe(ac.signal);
+      const s = AbortSignal.abort("r");
+      expect(util.transferableAbortSignal(s)).toBe(s);
+    });
+    for (const item of [undefined, null, {}, { aborted: false }, new AbortController(), 1, "x"]) {
+      it(`throws ERR_INVALID_ARG_TYPE for ${util.inspect(item)}`, () => {
+        expect(() => util.transferableAbortSignal(item)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      });
+    }
+  });
+
+  describe("transferableAbortController", () => {
+    it("is a function", () => {
+      expect(typeof util.transferableAbortController).toBe("function");
+    });
+    it("returns a working AbortController", () => {
+      const ac = util.transferableAbortController();
+      expect(ac).toBeInstanceOf(AbortController);
+      expect(ac.signal).toBeInstanceOf(AbortSignal);
+      expect(ac.signal.aborted).toBe(false);
+      ac.abort("reason");
+      expect(ac.signal.aborted).toBe(true);
+      expect(ac.signal.reason).toBe("reason");
+    });
+  });
 });
 
 describe("util.parseEnv", () => {

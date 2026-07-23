@@ -149,33 +149,9 @@ export function requireResolve(
   id: string,
   options: { paths?: string[] } = {},
 ) {
+  // Only `options.paths` extraction happens here; builtin bypass and paths
+  // validation are native (functionImportMeta__resolveSyncPrivate).
   const paths = typeof options === "object" && options !== null ? options.paths : undefined;
-  if (paths !== undefined) {
-    // node resolves builtin ids before validating `paths`
-    // (lib/internal/modules/cjs/loader.js, Module._resolveFilename), so
-    // `require.resolve("node:fs", { paths: [0] })` must not throw.
-    // Node gates the bypass on BuiltinModule.normalizeRequirableId succeeding,
-    // so a prefixed non-builtin like "node:nope" still validates `paths`
-    // (ERR_INVALID_ARG_TYPE for paths[0], not MODULE_NOT_FOUND).
-    // `isBuiltin` covers prefixed and unprefixed ids, including bun:*.
-    if (typeof id === "string" && require("node:module").isBuiltin(id)) {
-      return $resolveSync(
-        id,
-        typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
-        false,
-        true,
-        undefined,
-      );
-    }
-    if (!$isArray(paths)) {
-      throw $ERR_INVALID_ARG_VALUE("options.paths", paths);
-    }
-    for (let i = 0; i < paths.length; i++) {
-      if (typeof paths[i] !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("paths", "array of strings", paths);
-      }
-    }
-  }
   return $resolveSync(id, typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""), false, true, paths);
 }
 

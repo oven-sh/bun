@@ -64,9 +64,7 @@ describe("cookies on error path", () => {
     });
     const res = await fetch(new URL("/ok", server.url));
     expect(await res.text()).toBe("ok");
-    expect(res.headers.getSetCookie()).toEqual([
-      "session=TOKEN-abc123; Path=/; Secure; HttpOnly; SameSite=Lax",
-    ]);
+    expect(res.headers.getSetCookie()).toEqual(["session=TOKEN-abc123; Path=/; Secure; HttpOnly; SameSite=Lax"]);
     expect(res.status).toBe(200);
   });
 });

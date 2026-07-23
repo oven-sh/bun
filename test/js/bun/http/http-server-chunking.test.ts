@@ -734,17 +734,14 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
       });
     });
 
-    test.concurrentIf(!isASAN)(
-      "rejects a trailer-part larger than the header-size limit with 431",
-      async () => {
-        const line = "X-T: " + Buffer.alloc(200, "v").toString() + "\r\n";
-        const trailer = Buffer.alloc(17 * 1024, line).toString();
-        const { paths, received } = await drive(["5\r\nhello\r\n0\r\n" + trailer + "\r\n"], { pipeline: true });
-        expect({ paths, status: received.match(/HTTP\/1\.1 \d+/)?.[0] }).toEqual({
-          paths: ["/a"],
-          status: "HTTP/1.1 431",
-        });
-      },
-    );
+    test.concurrentIf(!isASAN)("rejects a trailer-part larger than the header-size limit with 431", async () => {
+      const line = "X-T: " + Buffer.alloc(200, "v").toString() + "\r\n";
+      const trailer = Buffer.alloc(17 * 1024, line).toString();
+      const { paths, received } = await drive(["5\r\nhello\r\n0\r\n" + trailer + "\r\n"], { pipeline: true });
+      expect({ paths, status: received.match(/HTTP\/1\.1 \d+/)?.[0] }).toEqual({
+        paths: ["/a"],
+        status: "HTTP/1.1 431",
+      });
+    });
   });
 });

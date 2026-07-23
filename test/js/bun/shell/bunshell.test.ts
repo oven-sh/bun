@@ -1537,6 +1537,64 @@ describe("deno_task", () => {
     //   .exitCode(1)
     //   .run();
 
+    describe("fd number is only recognized as its own word (POSIX 2.7)", () => {
+      // A trailing digit in a word must stay part of that word, not become an fd.
+      TestBuilder.command`echo z1>test.txt`.fileEquals("test.txt", "z1\n").runAsTest("echo z1>f writes z1");
+      TestBuilder.command`echo z2>test.txt`.fileEquals("test.txt", "z2\n").runAsTest("echo z2>f writes z2");
+      TestBuilder.command`echo z0>test.txt`.fileEquals("test.txt", "z0\n").runAsTest("echo z0>f writes z0");
+      TestBuilder.command`echo abc123>test.txt`
+        .fileEquals("test.txt", "abc123\n")
+        .runAsTest("echo abc123>f writes abc123");
+      TestBuilder.command`echo ${{ raw: '"z"1>test.txt' }}`
+        .fileEquals("test.txt", "z1\n")
+        .runAsTest("digit after quoted text is not an fd");
+      // https://github.com/oven-sh/bun/issues/12602
+      TestBuilder.command`echo PASS > script1 && echo FAIL > script && cat ./script1<script`
+        .ensureTempDir()
+        .stdout("PASS\n")
+        .fileEquals("script", "FAIL\n")
+        .runAsTest("./script1<file keeps the trailing 1 in the word");
+      TestBuilder.command`echo ${{ raw: "$(echo z)1" }}>test.txt`
+        .fileEquals("test.txt", "z1\n")
+        .runAsTest("digit after command substitution is not an fd");
+      TestBuilder.command`echo z1>>test.txt`.fileEquals("test.txt", "z1\n").runAsTest("echo z1>>f writes z1");
+
+      // A standalone digit before the operator is still an fd.
+      TestBuilder.command`echo z 1> test.txt`
+        .fileEquals("test.txt", "z\n")
+        .runAsTest("standalone 1> still redirects stdout");
+      TestBuilder.command`echo z 2> test.txt`
+        .stdout("z\n")
+        .fileEquals("test.txt", "")
+        .runAsTest("standalone 2> still redirects stderr");
+      TestBuilder.command`echo z 1>test.txt`
+        .fileEquals("test.txt", "z\n")
+        .runAsTest("standalone 1>file (no space) redirects stdout");
+
+      // fd numbers outside 0/1/2 aren't supported yet but must be recognized
+      // as redirects, not silently treated as arguments.
+      test.each([
+        ["echo z 3> test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 10> test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 3< test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 3>> test.txt", "Redirecting to file descriptors other than 0, 1, and 2 is not supported yet."],
+        ["echo z 1< test.txt", "Redirecting input to file descriptors other than 0 is not supported yet."],
+        ["echo z 2< test.txt", "Redirecting input to file descriptors other than 0 is not supported yet."],
+      ])("`%s` is a redirect (unsupported fd)", async (script, expected) => {
+        let message = "";
+        try {
+          await $`${{ raw: script }}`.cwd(TestBuilder.tmpdir()).quiet();
+        } catch (e) {
+          message = (e as Error).message;
+        }
+        expect(message).toBe(expected);
+      });
+
+      // A digit word not followed by a redirect operator is a plain argument.
+      TestBuilder.command`echo 42 >test.txt`.fileEquals("test.txt", "42\n").runAsTest("echo 42 >f writes 42");
+      TestBuilder.command`echo 3 z`.stdout("3 z\n").runAsTest("digit arg with no redirect");
+    });
+
     // /dev/null
     TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 2> /dev/null`
       .stdout("1\n")

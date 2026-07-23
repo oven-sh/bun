@@ -451,6 +451,169 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  test("op_redirect fd must be its own word", () => {
+    // Mid-word digits are text, not fd numbers (POSIX 2.7).
+    for (const [script, word] of [
+      ["echo z1>f", "z1"],
+      ["echo z2>f", "z2"],
+      ["echo z0>f", "z0"],
+      ["echo z9>f", "z9"],
+      ["echo z11>f", "z11"],
+    ] as const) {
+      expect(JSON.parse(lex`${{ raw: script }}`)).toEqual([
+        { "Text": "echo" },
+        { "Delimit": {} },
+        { "Text": word },
+        { "Delimit": {} },
+        { "Redirect": redirect({ stdout: true }) },
+        { "Text": "f" },
+        { "Delimit": {} },
+        { "Eof": {} },
+      ]);
+    }
+
+    // https://github.com/oven-sh/bun/issues/12602
+    expect(JSON.parse(lex`./script1<file`)).toEqual([
+      { "Text": "./script1" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdin: true }) },
+      { "Text": "file" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // After quoted text, a digit is still part of the same word.
+    expect(JSON.parse(lex`${{ raw: 'echo "z"1>f' }}`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleQuotedText": "z" },
+      { "Text": "1" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // After a glob atom, a digit is still part of the same word.
+    for (const [script, glob, digit] of [
+      ["echo *1>f", "Asterisk", "1"],
+      ["echo **1>f", "DoubleAsterisk", "1"],
+      ["echo *3>f", "Asterisk", "3"],
+      ["echo **3>f", "DoubleAsterisk", "3"],
+    ] as const) {
+      expect(JSON.parse(lex`${{ raw: script }}`)).toEqual([
+        { "Text": "echo" },
+        { "Delimit": {} },
+        { [glob]: {} },
+        { "Text": digit },
+        { "Delimit": {} },
+        { "Redirect": redirect({ stdout: true }) },
+        { "Text": "f" },
+        { "Delimit": {} },
+        { "Eof": {} },
+      ]);
+    }
+
+    // A space between a glob atom and a digit starts a new word.
+    expect(JSON.parse(lex`echo ** 2>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleAsterisk": {} },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`echo * 2>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Asterisk": {} },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // `0<` is an stdin redirect without a spurious APPEND flag.
+    expect(JSON.parse(lex`cat 0<f`)).toEqual([
+      { "Text": "cat" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdin: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // Leading zeros on an fd number still resolve to the decimal value.
+    expect(JSON.parse(lex`echo z 01>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "z" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`echo z 02>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "z" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // Standalone digit before the operator is an fd.
+    expect(JSON.parse(lex`echo z 1>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "z" },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`1>f echo z`)).toEqual([
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "z" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+    expect(JSON.parse(lex`echo a;2>f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "a" },
+      { "Delimit": {} },
+      { "Semicolon": {} },
+      { "Redirect": redirect({ stderr: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    // A digit word not followed by < or > is a plain argument.
+    expect(JSON.parse(lex`echo 42 z`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "42" },
+      { "Delimit": {} },
+      { "Text": "z" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
   test("obj_ref", () => {
     const expected = [
       {

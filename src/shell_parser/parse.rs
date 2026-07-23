@@ -2187,6 +2187,13 @@ pub(crate) enum RedirectDirection {
     In,
 }
 
+pub(crate) enum FdRedirect {
+    Redirect(ast::RedirectFlags),
+    NotRedirect,
+    UnsupportedFd,
+    UnsupportedInputFd,
+}
+
 #[derive(Clone, Copy)]
 pub struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
     chars: ShellCharIter<'bump, ENCODING>,
@@ -2741,15 +2748,49 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             if self.chars.state != CharState::Normal {
                                 break 'escaped;
                             }
-                            let snapshot = self.make_snapshot();
-                            if let Some(redirect) = self.eat_redirect(input) {
-                                self.break_word(true)?;
-                                self.tokens.push(Token::Redirect(redirect));
-                                fell_through = true;
+                            // POSIX 2.7: the fd number before a redirect operator must
+                            // be a complete word on its own; mid-word digits are text.
+                            if self.word_start != self.j
+                                || matches!(
+                                    self.last_tok_tag(),
+                                    Some(
+                                        TokenTag::Var
+                                            | TokenTag::VarArgv
+                                            | TokenTag::Text
+                                            | TokenTag::SingleQuotedText
+                                            | TokenTag::DoubleQuotedText
+                                            | TokenTag::BraceBegin
+                                            | TokenTag::Comma
+                                            | TokenTag::BraceEnd
+                                            | TokenTag::CmdSubstEnd
+                                            | TokenTag::Asterisk
+                                            | TokenTag::DoubleAsterisk
+                                    )
+                                )
+                            {
                                 break 'escaped;
                             }
-                            self.backtrack(&snapshot);
-                            break 'escaped;
+                            let snapshot = self.make_snapshot();
+                            match self.eat_redirect(input) {
+                                FdRedirect::Redirect(redirect) => {
+                                    self.break_word(true)?;
+                                    self.tokens.push(Token::Redirect(redirect));
+                                    fell_through = true;
+                                    break 'escaped;
+                                }
+                                FdRedirect::NotRedirect => {
+                                    self.backtrack(&snapshot);
+                                    break 'escaped;
+                                }
+                                FdRedirect::UnsupportedFd => {
+                                    self.add_error(b"Redirecting to file descriptors other than 0, 1, and 2 is not supported yet.");
+                                    return Ok(());
+                                }
+                                FdRedirect::UnsupportedInputFd => {
+                                    self.add_error(b"Redirecting input to file descriptors other than 0 is not supported yet.");
+                                    return Ok(());
+                                }
+                            }
                         }
                         // Operators
                         c if c == u32::from(b'|') => {
@@ -3003,7 +3044,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::Comma
                 | TokenTag::BraceEnd
                 | TokenTag::CmdSubstEnd
-                | TokenTag::Asterisk => true,
+                | TokenTag::Asterisk
+                | TokenTag::DoubleAsterisk => true,
 
                 TokenTag::Pipe
                 | TokenTag::DoublePipe
@@ -3011,7 +3053,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::DoubleAmpersand
                 | TokenTag::Redirect
                 | TokenTag::Dollar
-                | TokenTag::DoubleAsterisk
                 | TokenTag::Eq
                 | TokenTag::Semicolon
                 | TokenTag::Newline
@@ -3078,21 +3119,36 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     // TODO Arbitrary file descriptor redirect
-    fn eat_redirect(&mut self, first: InputChar) -> Option<ast::RedirectFlags> {
-        let mut flags = ast::RedirectFlags::default();
-        match first.char {
-            c if c == u32::from(b'0') => flags |= ast::RedirectFlags::STDIN,
-            c if c == u32::from(b'1') => flags |= ast::RedirectFlags::STDOUT,
-            c if c == u32::from(b'2') => flags |= ast::RedirectFlags::STDERR,
-            // Just allow the std file descriptors for now
-            _ => return None,
+    fn eat_redirect(&mut self, first: InputChar) -> FdRedirect {
+        debug_assert!((u32::from(b'0')..=u32::from(b'9')).contains(&first.char));
+        // Consume the full digit run so multi-digit fds like `10>` are
+        // recognized as redirects instead of splitting into an argument plus
+        // `0>`, and so leading zeros (`01>`) still resolve to fd 1.
+        let mut fd: u32 = first.char - u32::from(b'0');
+        while let Some(p) = self.peek() {
+            if p.escaped || !(u32::from(b'0')..=u32::from(b'9')).contains(&p.char) {
+                break;
+            }
+            let _ = self.eat();
+            fd = fd
+                .saturating_mul(10)
+                .saturating_add(p.char - u32::from(b'0'));
         }
+        let mut flags = match fd {
+            0 => ast::RedirectFlags::STDIN,
+            1 => ast::RedirectFlags::STDOUT,
+            2 => ast::RedirectFlags::STDERR,
+            _ => ast::RedirectFlags::default(),
+        };
         if let Some(input) = self.peek() {
             if input.escaped {
-                return None;
+                return FdRedirect::NotRedirect;
             }
             match input.char {
                 c if c == u32::from(b'>') => {
+                    if flags.is_empty() {
+                        return FdRedirect::UnsupportedFd;
+                    }
                     let _ = self.eat();
                     let is_double = self.eat_simple_redirect_operator(RedirectDirection::Out);
                     if is_double {
@@ -3110,7 +3166,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                             flags |= ast::RedirectFlags::STDOUT;
                                             flags.remove(ast::RedirectFlags::STDERR);
                                         } else {
-                                            return None;
+                                            return FdRedirect::NotRedirect;
                                         }
                                     }
                                     c2 if c2 == u32::from(b'2') => {
@@ -3120,27 +3176,37 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                             flags |= ast::RedirectFlags::STDERR;
                                             flags.remove(ast::RedirectFlags::STDOUT);
                                         } else {
-                                            return None;
+                                            return FdRedirect::NotRedirect;
                                         }
                                     }
-                                    _ => return None,
+                                    _ => return FdRedirect::NotRedirect,
                                 }
                             }
                         }
                     }
-                    Some(flags)
+                    FdRedirect::Redirect(flags)
                 }
                 c if c == u32::from(b'<') => {
+                    if flags.is_empty() {
+                        return FdRedirect::UnsupportedFd;
+                    }
+                    // RedirectFlags cannot represent "open fd 1/2 for reading",
+                    // so `1<`/`2<` are rejected rather than silently opening
+                    // the file for writing.
+                    if !flags.stdin() {
+                        return FdRedirect::UnsupportedInputFd;
+                    }
+                    let _ = self.eat();
                     let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;
                     }
-                    Some(flags)
+                    FdRedirect::Redirect(flags)
                 }
-                _ => None,
+                _ => FdRedirect::NotRedirect,
             }
         } else {
-            None
+            FdRedirect::NotRedirect
         }
     }
 

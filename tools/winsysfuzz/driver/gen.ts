@@ -101,12 +101,34 @@ const NODE_MODS = [...new Set(nodeFns.map(c => c.container.replace(/^node:/, "")
 // WSF_GEN_MODE=fs concentrates the draw on filesystem/process surfaces -
 // the libuv completion layer where the confirmed Windows crashes live.
 const FS_MODE = process.env.WSF_GEN_MODE === "fs";
+// WSF_GEN_MODE=depth: each program hammers ONE family (all callables that
+// share a container/name-prefix) - the shape that found both confirmed
+// crashes (many Bun.write variations per program), generalized.
+const DEPTH_MODE = process.env.WSF_GEN_MODE === "depth";
 const FS_KEEP = /^(node:fs|node:child_process|node:zlib|node:stream)$|^Bun$/;
 const FS_BUN_FN = /^(file|write|spawn|spawnSync|mmap|openInEditor|resolveSync|resolve|pathToFileURL|fileURLToPath|which|readableStreamTo\w*|inspect|deflateSync|gzipSync|inflateSync|gunzipSync|zstdCompressSync|zstdDecompressSync|indexOfLine|stringWidth|escapeHTML|hash|allocUnsafe)$/;
 const fnCalls = [
   ...spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name) && (!FS_MODE || FS_BUN_FN.test(c.name))),
   ...nodeFns.filter(c => !FS_MODE || FS_KEEP.test(c.container)),
 ];
+let emitComment = "";
+// Depth mode: restrict the whole program to a single family chosen by seed.
+if (DEPTH_MODE && fnCalls.length) {
+  const families = new Map<string, typeof fnCalls>();
+  for (const c of fnCalls) {
+    const fam = c.container === "Bun" ? "Bun." + c.name.replace(/(Sync|Async)$/, "") : c.container;
+    const arr = families.get(fam) ?? [];
+    arr.push(c);
+    families.set(fam, arr);
+  }
+  const usable = [...families.entries()].filter(([, v]) => v.length >= 2);
+  if (usable.length) {
+    const [famName, famCalls] = usable[Math.floor(rnd() * usable.length)];
+    fnCalls.length = 0;
+    fnCalls.push(...famCalls);
+    emitComment = `depth-family: ${famName} (${famCalls.length} callables)`;
+  }
+}
 const methodsByKind = new Map<string, Callable[]>();
 for (const c of spec.callables) {
   if (!c.isMethod || EXCLUDE_CONTAINER.test(c.container)) continue;
@@ -504,6 +526,7 @@ emit(`const P = (s) => join(DIR, s);`);
 emit(`const BIG = new Uint8Array(256 * 1024).map((_, i) => i % 251);`);
 emit(`writeFileSync(P("data.txt"), "the quick brown fox jumps over the lazy dog\\n".repeat(20));`);
 emit(`writeFileSync(P("big.bin"), BIG); writeFileSync(P("empty.txt"), ""); writeFileSync(P("uni-ë-🐰.txt"), "unicode name");`);
+if (emitComment) emit(`// ${emitComment}`);
 emit(`const SPAWN = [process.execPath, "-e", "process.stdin.pipe(process.stdout); setTimeout(()=>{}, 200)"];`);
 // re-entrancy helpers: reach back into the pool from inside a coercion hook
 emit(`function $any(kind) { const arr = $poolMap.get(kind); if (!arr || !arr.length) return undefined; return arr[(Math.random() * arr.length) | 0]; }`);
@@ -645,6 +668,13 @@ emit(`// --- generated statements ----------------------------------------------
 for (let i = 0; i < Math.min(6, Math.max(3, Math.floor(nStatements / 8))); i++) genCreate();
 for (let i = 0; i < nStatements; i++) {
   const r = rnd();
+  if (DEPTH_MODE) {
+    // hammer the chosen family: mostly plain calls with hostile args
+    if (r < 0.7) genCall();
+    else if (r < 0.85) genCreate();
+    else genLifecycle();
+    continue;
+  }
   if (r < 0.18) genCreate();
   else if (r < 0.44) genMethod();
   else if (r < 0.56) genLifecycle();

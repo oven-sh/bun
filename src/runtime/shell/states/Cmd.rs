@@ -772,7 +772,7 @@ impl Cmd {
                     // SAFETY: returns a live JSC-owned `*mut Value` borrowed
                     // from the Request/Response wrapper while `jsval` is rooted.
                     let body = unsafe { &mut *body };
-                    crate::shell::util::check_body_for_redirect(body, global)?;
+                    crate::shell::util::check_body_for_redirect(body, global, flags.stdin())?;
                     if flags.stdin() {
                         let b = body.use_as_any_blob();
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;

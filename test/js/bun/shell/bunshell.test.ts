@@ -1732,6 +1732,22 @@ describe("deno_task", () => {
           expect(stdout.toString()).toBe(P);
         });
       });
+
+      test("stdout redirect to a stream-body Response rejects without the stdin hint", async () => {
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode(P));
+            c.close();
+          },
+        });
+        const err = await $`echo hi > ${new Response(body)}`.text().then(
+          () => null,
+          e => e,
+        );
+        expect(err).not.toBeNull();
+        expect(err.message).toMatch(/body is a ReadableStream/);
+        expect(err.message).not.toContain("Read it first");
+      });
     });
   });
 

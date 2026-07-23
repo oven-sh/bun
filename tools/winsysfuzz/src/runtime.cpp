@@ -90,6 +90,38 @@ uintptr_t ImageSize(HMODULE m) {
 // for a call encoding filters stack garbage that merely looks like a code
 // pointer. Covers the encodings compilers emit: E8 rel32, and FF /2
 // (register/memory) with optional REX prefix and displacement.
+// The true bun caller of a wrapped syscall RETURNED FROM a call whose
+// TARGET is inside kernelbase/ntdll (it called ReadFile/CloseHandle/...).
+// A stale return address left on the stack instead called something in
+// bun's own image. For the direct rel32 form we can decode the target and
+// know for certain; indirect forms defer to the caller's window heuristic.
+enum class CallTarget : uint8_t { Wrapper, Own, Unknown };
+inline CallTarget CallTargetKind(uintptr_t ip) {
+  const uint8_t* p = (const uint8_t*)ip;
+  if (ip < g_txtBase + 7) return CallTarget::Unknown;
+  if (p[-5] == 0xE8) { // call rel32: target = ip + rel
+    int32_t rel = *(const int32_t*)(p - 4);
+    uintptr_t tgt = ip + (intptr_t)rel;
+    // A rel32 call to a wrapper goes through bun's IMPORT THUNK (a jmp
+    // stub inside bun's image) or lands directly in the OS module.
+    if ((tgt >= g_kbBase && tgt < g_kbEnd) || (tgt >= g_ntBase && tgt < g_ntEnd)) return CallTarget::Wrapper;
+    if (tgt >= g_txtBase && tgt < g_txtEnd) {
+      // Import thunk: "jmp qword ptr [rip+disp32]" (FF 25) whose slot holds
+      // an OS-module address.
+      const uint8_t* t = (const uint8_t*)tgt;
+      if (t[0] == 0xFF && t[1] == 0x25) {
+        int32_t d = *(const int32_t*)(t + 2);
+        uintptr_t slot = tgt + 6 + (intptr_t)d;
+        uintptr_t dest = *(const uintptr_t*)slot;
+        if ((dest >= g_kbBase && dest < g_kbEnd) || (dest >= g_ntBase && dest < g_ntEnd)) return CallTarget::Wrapper;
+      }
+      return CallTarget::Own; // called bun's own code: not the wrapper's caller
+    }
+    return CallTarget::Unknown;
+  }
+  return CallTarget::Unknown; // indirect call: undecidable statically
+}
+
 inline bool AfterCall(uintptr_t ip) {
   const uint8_t* p = (const uint8_t*)ip;
   if (ip < g_txtBase + 7) return false;
@@ -593,7 +625,12 @@ CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)
       for (uint8_t k = 0; k < nframes_; k++) if (frames_[k] == v) { dup = true; break; }
       if (dup) continue;
       frames_[nframes_++] = v;
-      if (bunFrame_ == 0 && p < keyWindow) bunFrame_ = v;
+      if (bunFrame_ == 0) {
+        CallTarget ct = CallTargetKind(v);
+        if (ct == CallTarget::Wrapper) bunFrame_ = v;               // proven caller of a wrapper
+        else if (ct == CallTarget::Unknown && p < keyWindow) bunFrame_ = v; // indirect, but live-window
+        // ct == Own: called bun's own code - a stale leftover, never the key
+      }
     }
   }
 }

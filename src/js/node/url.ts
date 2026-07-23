@@ -1039,25 +1039,30 @@ function pathToFileURL(filepath: unknown, options?: { windows?: boolean }): URL 
   }
   validateString(filepath, "path");
   const path = require("node:path");
-  if (windows && (filepath as string).startsWith("\\\\")) {
+  const isUNC = windows && (filepath as string).startsWith("\\\\");
+  let resolved: string = isUNC
+    ? (filepath as string)
+    : windows
+      ? path.win32.resolve(filepath)
+      : path.posix.resolve(filepath);
+  if (isUNC || (windows && resolved.startsWith("\\\\"))) {
     // UNC path format: \\server\share\resource
     // "\\?\UNC\" path prefix should be ignored.
     // Ref: https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation
-    const isExtendedUNC = (filepath as string).startsWith("\\\\?\\UNC\\");
+    const isExtendedUNC = resolved.startsWith("\\\\?\\UNC\\");
     const prefixLength = isExtendedUNC ? 8 : 2;
-    const hostnameEndIndex = (filepath as string).indexOf("\\", prefixLength);
+    const hostnameEndIndex = resolved.indexOf("\\", prefixLength);
     if (hostnameEndIndex === -1) {
-      throw $ERR_INVALID_ARG_VALUE("path", filepath, "Missing UNC resource path");
+      throw $ERR_INVALID_ARG_VALUE("path", resolved, "Missing UNC resource path");
     }
     if (hostnameEndIndex === 2) {
-      throw $ERR_INVALID_ARG_VALUE("path", filepath, "Empty UNC servername");
+      throw $ERR_INVALID_ARG_VALUE("path", resolved, "Empty UNC servername");
     }
-    const hostname = (filepath as string).slice(prefixLength, hostnameEndIndex);
-    const outURL = new URL(encodePathChars((filepath as string).slice(hostnameEndIndex), true));
+    const hostname = resolved.slice(prefixLength, hostnameEndIndex);
+    const outURL = new URL(encodePathChars(resolved.slice(hostnameEndIndex), true));
     outURL.hostname = hostname;
     return outURL;
   }
-  let resolved = windows ? path.win32.resolve(filepath) : path.posix.resolve(filepath);
   const filePathLast = (filepath as string).$charCodeAt((filepath as string).length - 1);
   if (
     (filePathLast === Char.FORWARD_SLASH || (windows && filePathLast === Char.BACKWARD_SLASH)) &&

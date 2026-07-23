@@ -185,6 +185,9 @@ describe("url.pathToFileURL", () => {
       url.pathToFileURL("\\\\nas\\My Docs\\File.doc", { windows: true }).href,
       "file://nas/My%20Docs/File.doc",
     );
+    // Forward-slash UNC: path.win32.resolve normalizes it to \\srv\share\x, which
+    // must be re-checked for the UNC prefix after resolving.
+    assert.strictEqual(url.pathToFileURL("//srv/share/x", { windows: true }).href, "file://srv/share/x");
     if (!isWindows) {
       // Exercises the override path here; on Windows these go through the native
       // Bun.pathToFileURL, whose UNC handling is covered by test.todo("UNC paths") above.

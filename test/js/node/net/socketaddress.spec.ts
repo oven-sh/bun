@@ -2,6 +2,7 @@
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
 import { SocketAddress, SocketAddressInitOptions } from "node:net";
+import { bunEnv, bunExe } from "harness";
 
 let v4: SocketAddress;
 let v6: SocketAddress;
@@ -131,6 +132,63 @@ describe("SocketAddress constructor", () => {
 
     expect(after.rss).toBeLessThanOrEqual(before.rss * growthFactor);
   });
+
+  it("does not leak the address string on validation-error paths", async () => {
+    // Each case populates the address BunString (+1 WTFStringImpl ref) then
+    // throws from a later validator. With a 64KB address and 1000 iterations,
+    // a leaked ref pins ~64MB per case; the threshold is well below that and
+    // well above ASAN/GC noise.
+    const code = /* js */ `
+      const net = require("node:net");
+      const big = Buffer.alloc(64 * 1024, "a").toString();
+      const cases = {
+        // Options::from_js: later option validators throw after address_str is set
+        bad_family:      i => new net.SocketAddress({ address: big + (i & 0xff), family: "bad!" }),
+        bad_port:        i => new net.SocketAddress({ address: big + (i & 0xff), port: NaN }),
+        bad_flow_type:   i => new net.SocketAddress({ address: big + (i & 0xff), family: "ipv6", flowlabel: "x" }),
+        bad_flow_range:  i => new net.SocketAddress({ address: big + (i & 0xff), family: "ipv6", flowlabel: -1 }),
+        // init_js: pton rejects an invalid IP after options were accepted
+        pton_reject:     i => new net.SocketAddress({ address: big + (i & 0xff), family: "ipv4" }),
+        // init_from_addr_family: AF::from_js throws after the address was read
+        blocklist_bad_family: i => new net.BlockList().addAddress(big + (i & 0xff), "bad!"),
+      };
+      for (const fn of Object.values(cases))
+        for (let i = 0; i < 300; i++) try { fn(i); } catch {}
+      Bun.gc(true); Bun.gc(true);
+      const out = {};
+      for (const [name, fn] of Object.entries(cases)) {
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 1000; i++) try { fn(i); } catch {}
+        Bun.gc(true); Bun.gc(true); Bun.gc(true);
+        out[name] = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      }
+      process.stdout.write(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: {
+        ...bunEnv,
+        // Disable ASAN's free-quarantine so RSS reflects live allocations;
+        // harmless on non-ASAN builds.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let growth: Record<string, number>;
+    try {
+      growth = JSON.parse(stdout);
+    } catch {
+      throw new Error(`subprocess did not report growth\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
+    }
+    for (const [name, mb] of Object.entries(growth)) {
+      expect(mb, `RSS growth for '${name}' error path: ${mb.toFixed(2)} MB`).toBeLessThan(20);
+    }
+    expect(Object.keys(growth).length).toBe(6);
+    expect(exitCode).toBe(0);
+  }, 30_000);
 }); // </SocketAddress constructor>
 
 describe("SocketAddress.isSocketAddress", () => {

@@ -79,7 +79,8 @@ impl Options {
             return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
         }
 
-        let address_str: Option<BunString> = if let Some(a) = obj.get(global, "address")? {
+        // OwnedString releases the +1 from BunString::from_js on every early return below.
+        let address_str: Option<OwnedString> = if let Some(a) = obj.get(global, "address")? {
             if !a.is_string() {
                 return Err(global.throw_invalid_argument_type_value(
                     b"options.address",
@@ -87,7 +88,7 @@ impl Options {
                     a,
                 ));
             }
-            Some(BunString::from_js(a, global)?)
+            Some(OwnedString::new(BunString::from_js(a, global)?))
         } else {
             None
         };
@@ -140,7 +141,7 @@ impl Options {
 
         Ok(Options {
             family: _family,
-            address: address_str,
+            address: address_str.map(OwnedString::into_inner),
             port: _port,
             flowlabel: _flowlabel,
         })
@@ -353,12 +354,13 @@ impl SocketAddress {
                 address_js,
             ));
         }
-        let address_: BunString = BunString::from_js(address_js, global)?;
+        // OwnedString releases the +1 from BunString::from_js if AF::from_js throws.
+        let address_ = OwnedString::new(BunString::from_js(address_js, global)?);
         let family_: AF = AF::from_js(global, family_js)?;
         Self::init_js(
             global,
             Options {
-                address: Some(address_),
+                address: Some(address_.into_inner()),
                 family: family_,
                 ..Default::default()
             },
@@ -376,7 +378,10 @@ impl SocketAddress {
     }
 
     pub fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
+        // `options.address` is adopted (+1); wrap immediately so a `pton` failure
+        // releases it. Transferred into `_presentation` on success.
+        let presentation: OwnedString =
+            OwnedString::new(options.address.unwrap_or(BunString::empty()));
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
@@ -390,8 +395,7 @@ impl SocketAddress {
                     addr: 0, // undefined → overwritten below
                     ..inet::sockaddr_in::ZEROED
                 };
-                if let Some(address_str) = options.address {
-                    presentation = address_str;
+                if options.address.is_some() {
                     let slice = presentation.to_owned_slice_z();
                     // Box<ZStr> drops at scope exit
                     pton(
@@ -414,8 +418,7 @@ impl SocketAddress {
                     scope_id: 0,
                     ..inet::sockaddr_in6::ZEROED
                 };
-                if let Some(address_str) = options.address {
-                    presentation = address_str;
+                if options.address.is_some() {
                     let slice = presentation.to_owned_slice_z();
                     pton(
                         global,
@@ -432,7 +435,7 @@ impl SocketAddress {
 
         Ok(SocketAddress {
             _addr: addr,
-            _presentation: Cell::new(presentation),
+            _presentation: Cell::new(presentation.into_inner()),
         })
     }
 }

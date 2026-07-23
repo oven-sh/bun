@@ -708,3 +708,41 @@ describe("AssertionError", () => {
     expect(error).toBe(custom);
   });
 });
+
+describe("generated diff preserves non-ASCII content", () => {
+  const messageOf = (a: unknown, b: unknown): string => {
+    const error = caught(() => assert.deepStrictEqual(a, b));
+    expect(error).not.toBeNull();
+    return error!.message;
+  };
+
+  test("Latin1 characters (U+0080 to U+00FF) are not replaced with U+FFFD", () => {
+    const message = messageOf({ a: "café", b: 1 }, { a: "café", b: 2 });
+    expect(message).toContain("a: 'café'");
+    expect(message).not.toContain("\uFFFD");
+  });
+
+  test("characters above U+00FF render as text, not arrays of char codes", () => {
+    const message = messageOf(["☃"], ["☃x"]);
+    expect(message).toContain("'☃'");
+    expect(message).toContain("'☃x'");
+    // The old bug marshalled UTF-16 lines as arrays of char codes, e.g.
+    // `32,32,39,9731,39` (the code point of ☃ is 9731).
+    expect(message).not.toContain("9731");
+    expect(message).not.toMatch(/\d+,\d+/);
+  });
+
+  test("astral (surrogate-pair) characters survive the diff", () => {
+    const message = messageOf(["😀"], ["😀x"]);
+    expect(message).toContain("'😀'");
+    expect(message).toContain("'😀x'");
+    expect(message).not.toContain("\uFFFD");
+  });
+
+  test("mixed Latin1 and UTF-16 operands both render correctly", () => {
+    const message = messageOf({ v: "café\nend" }, { v: "snowman ☃\nend" });
+    expect(message).toContain("café");
+    expect(message).toContain("☃");
+    expect(message).not.toContain("\uFFFD");
+  });
+});

@@ -1978,11 +1978,18 @@ Socket.prototype.connect = function connect(...args) {
   this[kHandleKind] = pipe ? "PipeWrap" : "TCPSocketWrap";
   registerHandle(this, this[kHandleKind], kUserUnrefed);
 
-  if (!pipe) {
-    lookupAndConnect(this, options);
-  } else {
-    validateString(path, "options.path");
-    internalConnect(this, options, path);
+  try {
+    if (!pipe) {
+      lookupAndConnect(this, options);
+    } else {
+      validateString(path, "options.path");
+      internalConnect(this, options, path);
+    }
+  } catch (e) {
+    // Synchronous option-validation throws leave the caller with no socket
+    // reference to destroy(); unlink here or the registry pins it forever.
+    unregisterHandle(this);
+    throw e;
   }
   return this;
 };

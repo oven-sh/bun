@@ -2408,3 +2408,35 @@ it("_getActiveRequests entries carry node's request-wrap constructor names", asy
   expect(stdout.trim()).toBe('{"named":true}');
   expect(exitCode).toBe(0);
 });
+
+it("synchronous connect/lookup validation throws do not leak registry entries", async () => {
+  // Acquire-before-fallible-call regression: a sync throw from option
+  // validation (net) or the native call (dns) must not leave a phantom
+  // handle/request pinned in the registry.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const dns = require("dns");
+       for (let i = 0; i < 3; i++) {
+         try { net.connect({ port: 80, localAddress: "not-an-ip" }); } catch {}
+         try { net.connect({ path: 123 }); } catch {}
+         try { dns.lookupService("not-an-ip", 80, () => {}); } catch {}
+       }
+       const info = process.getActiveResourcesInfo();
+       console.log(JSON.stringify({
+         tcp: info.filter(x => x === "TCPSocketWrap").length,
+         pipe: info.filter(x => x === "PipeWrap").length,
+         nameinfo: info.filter(x => x === "GetNameInfoReqWrap").length,
+         handles: process._getActiveHandles().length,
+       }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"tcp":0,"pipe":0,"nameinfo":0,"handles":0}');
+  expect(exitCode).toBe(0);
+});

@@ -173,8 +173,7 @@ test("Blob body Content-Type is sent verbatim", async () => {
     "blob-json": () => new Response(new Blob(["{}"], { type: "application/json; charset=utf-16" })),
     "file-utf16": () => new Response(new File(["<b>x</b>"], "x.bin", { type: "text/html; charset=utf-16" })),
     // non-table essence already passed through untouched; keep as a control
-    "control-nontable": () =>
-      new Response(new Blob(["b"], { type: "application/vnd.api+json; charset=utf-16" })),
+    "control-nontable": () => new Response(new Blob(["b"], { type: "application/vnd.api+json; charset=utf-16" })),
   };
 
   using server = Bun.serve({

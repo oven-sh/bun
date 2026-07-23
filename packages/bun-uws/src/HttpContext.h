@@ -30,7 +30,6 @@
 #include <string>
 #include <map>
 #include <string_view>
-#include <cstdio>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
 #include <span>
@@ -465,8 +464,6 @@ private:
 
             /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */
             if (!((HttpResponse<SSL> *) s)->hasResponded() && !httpResponseData->onAborted && !httpResponseData->socketData) {
-                /* Throw exception here? */
-                fputs("Error: Returning from a request handler without responding or attaching an abort handler is forbidden!\n", stderr);
                 std::terminate();
             }
 

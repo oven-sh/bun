@@ -366,11 +366,35 @@ static bool isIndexKey(JSC::JSGlobalObject* globalObject, const JSC::Identifier&
     return JSC::parseIndex(const_cast<JSC::Identifier&>(identifier)).has_value();
 }
 
+// Expected's own enumerable non-index string and symbol properties only —
+// index keys are covered by the subsequence/contents comparison of the
+// caller (arrays and typed arrays), and enforcing them positionally here
+// would break the ordered-with-gaps semantics.
+static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    JSC::JSObject* actualObject = actual.getObject();
+    JSC::JSObject* expectedObject = expected.getObject();
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    expectedObject->methodTable()->getOwnPropertyNames(expectedObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (size_t i = 0; i < names.size(); i++) {
+        if (isIndexKey(globalObject, names[i]))
+            continue;
+        if (!names[i].isSymbol() && names[i] == vm.propertyNames->length)
+            continue;
+        bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal)
+            return false;
+    }
+    return true;
+}
+
 // Expected's elements as a subsequence of actual's, in order with gaps, then
 // expected's own enumerable non-index properties.
 static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
-    auto& vm = globalObject->vm();
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
     const uint64_t actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actualObject));
@@ -401,20 +425,7 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
             return false;
     }
 
-    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
-    expectedObject->methodTable()->getOwnPropertyNames(expectedObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, false);
-    for (size_t i = 0; i < names.size(); i++) {
-        if (isIndexKey(globalObject, names[i]))
-            continue;
-        if (!names[i].isSymbol() && names[i] == vm.propertyNames->length)
-            continue;
-        bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!equal)
-            return false;
-    }
-    return true;
+    return nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
 // Expected's entries as a subset of actual's: identity keys fast-path with
@@ -465,7 +476,11 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         bool consumed = false;
         bool identityPresent = actualMap->has(globalObject, expectedKey);
         RETURN_IF_EXCEPTION(scope, false);
-        if (identityPresent && !identityKeyUsed(expectedKey)) {
+        bool expectedKeyAlreadyUsed = identityKeyUsed(expectedKey);
+        // sameValue can resolve rope strings and throw; the lambda cannot
+        // hold the check macro, so check at every call site.
+        RETURN_IF_EXCEPTION(scope, false);
+        if (identityPresent && !expectedKeyAlreadyUsed) {
             // Reserve the identity entry's index so the deep-matching loop
             // below cannot consume it twice.
             size_t identityIndex = SIZE_MAX;
@@ -476,6 +491,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                         break;
                     }
                 }
+                RETURN_IF_EXCEPTION(scope, false);
             }
             if (identityIndex == SIZE_MAX || !usedIndices[identityIndex]) {
                 JSValue actualValue = actualMap->get(globalObject, expectedKey);
@@ -505,6 +521,7 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 continue;
             JSValue candidateKey = gcBuffer.at(entriesStart + i * 2);
             bool candidateIsUsedIdentity = identityKeyUsed(candidateKey);
+            RETURN_IF_EXCEPTION(scope, false);
             if (candidateIsUsedIdentity)
                 continue;
             bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, candidateKey, expectedKey);
@@ -680,7 +697,9 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
             return false;
         if (actualType == JSC::DataViewType)
             return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
-        return true;
+        // node also matches expected's own enumerable non-index properties
+        // on typed arrays; index keys stay with the contents containment.
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, nonIndexObjectSubset);
     }
 
     const bool actualIsBuffer = actualType == JSC::ArrayBufferType;

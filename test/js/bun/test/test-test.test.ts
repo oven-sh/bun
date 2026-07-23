@@ -3,11 +3,48 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { tmpdir } from "os";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
+import { constructStdCollision } from "../../../cli/install/wyhash-std-collision.js";
 
 const tmp = realpathSync(tmpdir());
+
+test("test files with colliding hashes use distinct snapshot files", async () => {
+  using dir = tempDir("test-file-hash-collision", {});
+  const prefix = `${realpathSync(String(dir))}/`;
+  const collision = constructStdCollision({ prefixStr: prefix, suffixStr: ".test.js" });
+  const first = collision.str1;
+  const second = collision.str2;
+
+  expect(first).not.toBe(second);
+  expect(Bun.hash.wyhash(first)).toBe(Bun.hash.wyhash(second));
+
+  await Promise.all([
+    Bun.write(first, `import { test, expect } from "bun:test"; test("alpha", () => expect("alpha").toMatchSnapshot());`),
+    Bun.write(second, `import { test, expect } from "bun:test"; test("beta", () => expect("beta").toMatchSnapshot());`),
+  ]);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--update-snapshots", first, second],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const snapshotDir = join(String(dir), "__snapshots__");
+  const [firstSnapshot, secondSnapshot] = await Promise.all([
+    Bun.file(join(snapshotDir, `${basename(first)}.snap`)).text(),
+    Bun.file(join(snapshotDir, `${basename(second)}.snap`)).text(),
+  ]);
+
+  expect({ stdout, stderr, firstSnapshot, secondSnapshot }).toMatchObject({
+    firstSnapshot: expect.stringContaining('exports[`alpha 1`] = `"alpha"`;'),
+    secondSnapshot: expect.stringContaining('exports[`beta 1`] = `"beta"`;'),
+  });
+  expect(exitCode).toBe(0);
+});
 
 it("shouldn't crash when async test runner callback throws", async () => {
   console.log("it(shouldn't crash when async test runner callback throws)");

@@ -98,9 +98,14 @@ const KNOWN_BROKEN_FN = process.env.WSF_ALLOW_BROKEN ? /^$/ : /^(write)$/;
 const EXCLUDE_NODE_FN = /^(crypto\.(createDiffieHellman|createDiffieHellmanGroup|generatePrime|generatePrimeSync|generateKeyPair|generateKeyPairSync|pbkdf2|pbkdf2Sync|scrypt|scryptSync)|fs\.(watch|watchFile|unwatchFile|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|rename|renameSync|truncate|truncateSync|chmod|chmodSync|chown|chownSync|utimes|utimesSync|lchown|lchmod|link|linkSync|symlink|symlinkSync|copyFile|copyFileSync|cp|cpSync|mkdtemp|mkdtempSync|writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)|child_process\.(exec|execFile|execSync|execFileSync)|.*\.(createInterface|clearScreenDown)|tty\..*|dns\.(lookup|resolve.*|reverse)|net\.(connect|createConnection)|http.*\.(get|request)|worker_threads\..*|os\.setPriority)$/;
 const nodeFns = spec.callables.filter(c => /^node:/.test(c.container) && !EXCLUDE_NODE_FN.test(c.path));
 const NODE_MODS = [...new Set(nodeFns.map(c => c.container.replace(/^node:/, "")))];
+// WSF_GEN_MODE=fs concentrates the draw on filesystem/process surfaces -
+// the libuv completion layer where the confirmed Windows crashes live.
+const FS_MODE = process.env.WSF_GEN_MODE === "fs";
+const FS_KEEP = /^(node:fs|node:child_process|node:zlib|node:stream)$|^Bun$/;
+const FS_BUN_FN = /^(file|write|spawn|spawnSync|mmap|openInEditor|resolveSync|resolve|pathToFileURL|fileURLToPath|which|readableStreamTo\w*|inspect|deflateSync|gzipSync|inflateSync|gunzipSync|zstdCompressSync|zstdDecompressSync|indexOfLine|stringWidth|escapeHTML|hash|allocUnsafe)$/;
 const fnCalls = [
-  ...spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name)),
-  ...nodeFns,
+  ...spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name) && (!FS_MODE || FS_BUN_FN.test(c.name))),
+  ...nodeFns.filter(c => !FS_MODE || FS_KEEP.test(c.container)),
 ];
 const methodsByKind = new Map<string, Callable[]>();
 for (const c of spec.callables) {

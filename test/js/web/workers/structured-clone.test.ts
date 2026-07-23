@@ -1018,3 +1018,181 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
   });
 });
+
+// https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+describe("structuredClone rejects non-serializable values", () => {
+  const rejected: [string, () => unknown][] = [
+    ["a function", () => function named() {}],
+    ["an arrow function", () => () => {}],
+    ["a symbol", () => Symbol("nope")],
+    ["a symbol held as a property value", () => ({ a: Symbol("nope") })],
+    ["a symbol inside an array", () => [Symbol("nope")]],
+    ["a WeakMap", () => new WeakMap()],
+    ["a WeakSet", () => new WeakSet()],
+    ["a WeakRef", () => new WeakRef({})],
+    ["the global object", () => globalThis],
+    ["a Promise", () => Promise.resolve()],
+    ["a Proxy of a plain object", () => new Proxy({ a: 1 }, {})],
+    [
+      "a detached ArrayBuffer",
+      () => {
+        const buffer = new ArrayBuffer(8);
+        structuredClone(buffer, { transfer: [buffer] });
+        return buffer;
+      },
+    ],
+  ];
+
+  function expectDataCloneError(clone: () => unknown) {
+    let thrown: any;
+    try {
+      clone();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect(thrown.name).toBe("DataCloneError");
+  }
+
+  for (const [label, make] of rejected) {
+    test(`${label} throws a DataCloneError`, () => {
+      expectDataCloneError(() => structuredClone(make()));
+    });
+  }
+
+  test("a typed array in the transfer list throws a DataCloneError", () => {
+    const view = new Uint8Array(8);
+    expectDataCloneError(() => structuredClone(view, { transfer: [view as any] }));
+  });
+});
+
+describe("structuredClone object semantics", () => {
+  test("invokes own getters once and writes data properties", () => {
+    let calls = 0;
+    const cloned = structuredClone({
+      get a() {
+        calls++;
+        return 1;
+      },
+    });
+    expect(calls).toBe(1);
+    expect(Object.getOwnPropertyDescriptor(cloned, "a")).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  });
+
+  test("drops non-enumerable own properties", () => {
+    const source = { kept: 1 };
+    Object.defineProperty(source, "dropped", { value: 2, enumerable: false });
+    expect(Object.keys(structuredClone(source))).toEqual(["kept"]);
+  });
+
+  test("drops symbol-keyed properties", () => {
+    const cloned = structuredClone({ [Symbol("k")]: 1, a: 2 });
+    expect(Object.getOwnPropertySymbols(cloned)).toEqual([]);
+    expect(cloned).toEqual({ a: 2 });
+  });
+
+  test("keeps own properties explicitly set to undefined", () => {
+    expect(Object.keys(structuredClone({ a: undefined }))).toEqual(["a"]);
+  });
+
+  test("keeps array holes as holes", () => {
+    const cloned = structuredClone([, 1]);
+    expect(0 in cloned).toBe(false);
+    expect(cloned.length).toBe(2);
+  });
+
+  test("gives the clone Object.prototype regardless of the source prototype", () => {
+    class Tagged {
+      a = 1;
+    }
+    const cloned = structuredClone(new Tagged());
+    expect(Object.getPrototypeOf(cloned)).toBe(Object.prototype);
+    expect(cloned).toEqual({ a: 1 });
+  });
+
+  test("resets RegExp lastIndex", () => {
+    const source = /a/g;
+    source.lastIndex = 5;
+    expect(structuredClone(source).lastIndex).toBe(0);
+  });
+
+  test("preserves Map and Set insertion order", () => {
+    expect([
+      ...structuredClone(
+        new Map([
+          ["b", 1],
+          ["a", 2],
+        ]),
+      ).keys(),
+    ]).toEqual(["b", "a"]);
+    expect([...structuredClone(new Set(["b", "a"]))]).toEqual(["b", "a"]);
+  });
+
+  test("preserves reference identity between sibling properties", () => {
+    const shared = { n: 1 };
+    const cloned = structuredClone({ a: shared, b: shared });
+    expect(cloned.a).toBe(cloned.b);
+    expect(cloned.a).not.toBe(shared);
+  });
+
+  test("preserves a cycle through an object", () => {
+    const source: Record<string, unknown> = {};
+    source.self = source;
+    const cloned = structuredClone(source);
+    expect(cloned.self).toBe(cloned);
+  });
+
+  test("preserves a cycle through an array", () => {
+    const source: unknown[] = [];
+    source[0] = source;
+    const cloned = structuredClone(source);
+    expect(cloned[0]).toBe(cloned);
+  });
+
+  test("preserves a cycle through a Map value", () => {
+    const source = new Map();
+    source.set("self", source);
+    const cloned = structuredClone(source);
+    expect(cloned.get("self")).toBe(cloned);
+  });
+
+  test("preserves a cycle through a Set member", () => {
+    const source = new Set();
+    source.add(source);
+    const cloned = structuredClone(source);
+    expect(cloned.has(cloned)).toBe(true);
+  });
+
+  test("preserves a Map key that is also its own value", () => {
+    const key = { k: 1 };
+    const cloned = structuredClone(new Map([[key, key]]));
+    const clonedKey = [...cloned.keys()][0];
+    expect(cloned.get(clonedKey)).toBe(clonedKey);
+  });
+});
+
+describe("structuredClone of Error", () => {
+  test("keeps the subclass name, message and stack", () => {
+    const cloned = structuredClone(new TypeError("boom"));
+    expect(cloned.name).toBe("TypeError");
+    expect(cloned.message).toBe("boom");
+    expect(typeof cloned.stack).toBe("string");
+  });
+
+  test("drops extra own properties", () => {
+    const source = new Error("boom");
+    (source as any).extra = 1;
+    expect((structuredClone(source) as any).extra).toBeUndefined();
+  });
+
+  // Node/V8 and Firefox both serialize `cause` as accompanying data.
+  test.failing("keeps the cause", () => {
+    const cloned = structuredClone(new Error("boom", { cause: new RangeError("why") }));
+    expect((cloned.cause as Error)?.name).toBe("RangeError");
+  });
+});

@@ -2845,24 +2845,25 @@ impl GitHandler {
                 bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
             }
 
-            let spawn_git = |argv: &[&[u8]], stderr: spawn_sync::SyncStdio| -> crate::Result<bool> {
-                let result = spawn_sync::spawn(&spawn_sync::Options {
-                    argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-                    cwd: Box::from(destination),
-                    stdin: spawn_sync::SyncStdio::Inherit,
-                    stdout: stderr,
-                    stderr,
-                    #[cfg(windows)]
-                    windows: spawn_sync::WindowsOptions {
-                        loop_: win_loop,
+            let spawn_git =
+                |argv: &[&[u8]], stderr: spawn_sync::SyncStdio| -> crate::Result<bool> {
+                    let result = spawn_sync::spawn(&spawn_sync::Options {
+                        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+                        cwd: Box::from(destination),
+                        stdin: spawn_sync::SyncStdio::Inherit,
+                        stdout: stderr,
+                        stderr,
+                        #[cfg(windows)]
+                        windows: spawn_sync::WindowsOptions {
+                            loop_: win_loop,
+                            ..Default::default()
+                        },
+                        #[cfg(not(windows))]
+                        windows: (),
                         ..Default::default()
-                    },
-                    #[cfg(not(windows))]
-                    windows: (),
-                    ..Default::default()
-                })?;
-                Ok(matches!(result, Ok(r) if r.is_ok()))
-            };
+                    })?;
+                    Ok(matches!(result, Ok(r) if r.is_ok()))
+                };
 
             // `git commit` refuses to run without a resolvable committer identity
             // and prints a multi-line "Please tell me who you are" banner to

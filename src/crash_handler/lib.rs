@@ -603,6 +603,11 @@ mod draft {
         /// attach the affected files to crash report. Others, which may have low crash
         /// rate or only crash due to assertion failures, are debug-only. See `Action`.
         pub static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
+
+        /// Snapshot of `CURRENT_ACTION` taken by `CrashHandler__setDlOpenAction` so the
+        /// paired clear can restore it. Actions nest: e.g. auto-install drains microtasks
+        /// inside an `Action::Resolver` frame, and a microtask may call `process.dlopen`.
+        static DLOPEN_PREV_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
     }
 
     // PORTING.md §Concurrency: `bun_threading::Guarded<Vec<..>>` instead of bare Mutex + global Vec.
@@ -3768,18 +3773,18 @@ mod draft {
     #[unsafe(no_mangle)]
     pub(crate) unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
         if !action.is_null() {
-            debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
+            // Save/restore like `scoped_action`: the caller may already be inside an
+            // enclosing action (e.g. `Action::Resolver` when auto-install ticks the
+            // event loop and a drained microtask calls `process.dlopen`).
+            DLOPEN_PREV_ACTION.with(|c| c.set(current_action()));
             // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
             let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
             // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
             let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
-            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
+            set_current_action(Some(Action::Dlopen(s)));
         } else {
-            debug_assert!(matches!(
-                CURRENT_ACTION.with(|c| c.get()),
-                Some(Action::Dlopen(_))
-            ));
-            CURRENT_ACTION.with(|c| c.set(None));
+            debug_assert!(matches!(current_action(), Some(Action::Dlopen(_))));
+            set_current_action(DLOPEN_PREV_ACTION.with(|c| c.take()));
         }
     }
 

@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -365,4 +365,45 @@ describe("automatic crash reporter", () => {
       expect(sent).toBe(true);
     });
   }
+});
+
+// `CrashHandler__setDlOpenAction` used to `debug_assert!(CURRENT_ACTION.is_none())`
+// and force-clear to `None`, but actions legitimately nest: the resolver's
+// auto-install path holds `Action::Resolver` while `PackageManager::sleep_until`
+// ticks the event loop and drains microtasks, and a microtask may call
+// `process.dlopen` (which installs `Action::Dlopen`). On POSIX debug builds the
+// assert panicked; on release the clear silently clobbered the enclosing action.
+test("process.dlopen inside a resolver auto-install frame does not trip CURRENT_ACTION bookkeeping", async () => {
+  using dir = tempDir("crash-handler-dlopen-nested-action", {
+    "package.json": JSON.stringify({ name: "box", version: "0.0.0" }),
+    "index.ts": `
+      Promise.resolve().then(() => {
+        try { process.dlopen({ exports: {} }, "/nonexistent-addon.node"); } catch {}
+      });
+      try {
+        import.meta.resolve("some-package-that-is-not-installed-xyz", import.meta.url);
+      } catch {}
+      console.log("survived");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--install=fallback", "index.ts"],
+    cwd: String(dir),
+    env: {
+      ...noReportEnv,
+      // Unroutable registry: auto-install enqueues the fetch, ticks the event
+      // loop (draining the dlopen microtask inside the Resolver action), then
+      // fails fast without touching the network.
+      BUN_CONFIG_REGISTRY: "http://127.0.0.1:1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("survived");
+  expect(exitCode).toBe(0);
 });

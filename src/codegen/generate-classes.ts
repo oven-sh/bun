@@ -385,8 +385,33 @@ function generatePrototype(typeName, obj) {
   const proto = prototypeName(typeName);
   const { proto: protoFields } = obj;
   var specialSymbols = "";
+  var inspectCustomImpl = "";
 
   var staticPrototypeValues = "";
+
+  if (Array.isArray(obj.inspectCustom)) {
+    const fnName = `${prototypeName(typeName)}__inspectCustom`;
+    const props = obj.inspectCustom as string[];
+    inspectCustomImpl = `
+JSC_DEFINE_HOST_FUNCTION(${fnName}, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue thisValue = callFrame->thisValue();
+    if (!thisValue.inherits<${className(typeName)}>()) [[unlikely]]
+        return JSC::JSValue::encode(thisValue);
+    static constexpr ASCIILiteral props[] = { ${props.map(p => `${JSON.stringify(p)}_s`).join(", ")} };
+    return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "${typeName}"_s, props, ${props.length});
+}
+`;
+    specialSymbols += `
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().inspectCustomPublicName(), JSFunction::create(vm, globalObject, 2, String("[nodejs.util.inspect.custom]"_s), ${fnName}, ImplementationVisibility::Public), PropertyAttribute::DontEnum | 0);`;
+  } else if (obj.inspectCustom && typeof obj.inspectCustom === "object" && "extern" in obj.inspectCustom) {
+    const fnName = obj.inspectCustom.extern;
+    externs += `
+JSC_DECLARE_HOST_FUNCTION(${fnName});
+`;
+    specialSymbols += `
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().inspectCustomPublicName(), JSFunction::create(vm, globalObject, 2, String("[nodejs.util.inspect.custom]"_s), ${fnName}, ImplementationVisibility::Public), PropertyAttribute::DontEnum | 0);`;
+  }
 
   if (obj.construct) {
     if (obj.constructNeedsThis) {
@@ -497,7 +522,7 @@ ${generateHashTable(
 const ClassInfo ${proto}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${proto}) };
 
 ${renderFieldsImpl(protoSymbolName, typeName, obj, protoFields, obj.values || [])}
-
+${inspectCustomImpl}
 void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -2685,6 +2710,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include "WebCoreJSBuiltins.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 
 #if !OS(WINDOWS)

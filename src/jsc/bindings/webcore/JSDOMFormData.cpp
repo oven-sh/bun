@@ -56,6 +56,7 @@
 #include <wtf/URL.h>
 #include "ZigGeneratedClasses.h"
 #include "GCDefferalContext.h"
+#include "streams/WebStreamsInspectCustom.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -216,11 +217,31 @@ static const HashTableValue JSDOMFormDataPrototypeTableValues[] = {
 
 const ClassInfo JSDOMFormDataPrototype::s_info = { "FormData"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFormDataPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSDOMFormData>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSValue data = WebCore::getInternalProperties(vm, lexicalGlobalObject, thisObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    // getInternalProperties stamps @@toStringTag for toJSON; strip it so the
+    // formatter does not render "FormData FormData { ... }".
+    JSObject* dataObject = asObject(data);
+    DeletePropertySlot slot;
+    dataObject->methodTable()->deleteProperty(dataObject, lexicalGlobalObject, vm.propertyNames->toStringTagSymbol, slot);
+    scope.assertNoException();
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "FormData"_s, dataObject));
+}
+
 void JSDOMFormDataPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSDOMFormData::info(), JSDOMFormDataPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    Bun::WebStreams::installInspectCustom(vm, this, jsDOMFormDataPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

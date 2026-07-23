@@ -2232,6 +2232,20 @@ pub mod formatter {
                 });
             }
 
+            // DOMWrapper types (Response, Blob, Headers, ReadableStream, ...)
+            // route to `print_private` first so the native runtime formatter
+            // gets right of first refusal; `print_private` itself consults
+            // `[nodejs.util.inspect.custom]` when the hook declines. Web
+            // platform classes carrying that symbol for `util.inspect` would
+            // otherwise short-circuit here and lose Bun's richer console
+            // rendering (e.g. `Response (N bytes)`).
+            if js_type == jsc::JSType::DOMWrapper {
+                return Ok(TagResult {
+                    tag: TagPayload::Private,
+                    cell: js_type,
+                });
+            }
+
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
@@ -2255,13 +2269,6 @@ pub mod formatter {
                     }
                     _ => {}
                 }
-            }
-
-            if js_type == jsc::JSType::DOMWrapper {
-                return Ok(TagResult {
-                    tag: TagPayload::Private,
-                    cell: js_type,
-                });
             }
 
             // If we check an Object has a method table and it does not it will crash
@@ -4659,6 +4666,24 @@ pub mod formatter {
                     (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
                 if handled {
                     return Ok(());
+                }
+            }
+
+            // The runtime hook declined. `get_tag` sends DOMWrapper values here
+            // unconditionally so the hook above retains priority; any
+            // `[nodejs.util.inspect.custom]` the value carries is consulted now,
+            // covering ReadableStream / AbortSignal / CryptoKey / etc.
+            if !self.disable_inspect_custom {
+                if let Ok(Some(callback)) =
+                    value.fast_get(self.global_this, jsc::BuiltinName::InspectCustom)
+                {
+                    if callback.is_callable() {
+                        self.custom_formatted_object = CustomFormattedObject {
+                            function: callback,
+                            this: value,
+                        };
+                        return self.print_custom_formatted_object::<C>(writer_);
+                    }
                 }
             }
 

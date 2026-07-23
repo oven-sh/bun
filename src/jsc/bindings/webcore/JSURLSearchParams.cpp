@@ -58,6 +58,9 @@
 #include <variant>
 #include "GCDefferalContext.h"
 #include "wtf/StdLibExtras.h"
+#include "streams/WebStreamsInspectCustom.h"
+#include "ZigGlobalObject.h"
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -188,11 +191,68 @@ static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
 
 const ClassInfo JSURLSearchParamsPrototype::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParamsPrototype) };
 
+// Node renders URLSearchParams like a Map: `URLSearchParams { 'a' => '1', 'b' => '2' }`.
+// This preserves duplicate keys and ordering, which the toJSON-shaped object cannot.
+JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSURLSearchParams>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+
+    JSValue depthValue = callFrame->argument(0);
+    JSValue optionsValue = callFrame->argument(1);
+    double depth = depthValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (depth < 0)
+        return JSValue::encode(thisValue);
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(utilInspect);
+    auto inspect = [&](JSValue v) -> String {
+        MarkedArgumentBuffer args;
+        args.append(v);
+        args.append(optionsValue);
+        ASSERT(!args.hasOverflowed());
+        JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, utilInspect, callData, jsUndefined(), args);
+        RETURN_IF_EXCEPTION(scope, String());
+        auto* str = result.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, String());
+        return str->value(lexicalGlobalObject);
+    };
+
+    auto& impl = thisObject->wrapped();
+    if (impl.size() == 0)
+        return JSValue::encode(jsNontrivialString(vm, "URLSearchParams {}"_s));
+
+    StringBuilder builder;
+    builder.append("URLSearchParams { "_s);
+    auto iter = impl.createIterator();
+    bool first = true;
+    for (auto entry = iter.next(); entry.has_value(); entry = iter.next()) {
+        if (!first)
+            builder.append(", "_s);
+        first = false;
+        String key = inspect(jsString(vm, entry.value().key));
+        RETURN_IF_EXCEPTION(scope, {});
+        String value = inspect(jsString(vm, entry.value().value));
+        RETURN_IF_EXCEPTION(scope, {});
+        builder.append(key, " => "_s, value);
+    }
+    builder.append(" }"_s);
+    return JSValue::encode(jsString(vm, builder.toString()));
+}
+
 void JSURLSearchParamsPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSURLSearchParams::info(), JSURLSearchParamsPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    Bun::WebStreams::installInspectCustom(vm, this, jsURLSearchParamsPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

@@ -69,12 +69,32 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
     return JSValue::encode(jsString(vm, makeString(name, " "_s, view.data)));
 }
 
+EncodedJSValue customInspectGetters(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSValue thisValue, ASCIILiteral name, const ASCIILiteral* propNames, unsigned propCount)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!thisValue.isObject()) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* thisObject = asObject(thisValue);
+
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    for (unsigned i = 0; i < propCount; ++i) {
+        auto ident = Identifier::fromString(vm, propNames[i]);
+        JSValue v = thisObject->get(lexicalGlobalObject, ident);
+        RETURN_IF_EXCEPTION(scope, {});
+        data->putDirect(vm, ident, v, 0);
+    }
+
+    RELEASE_AND_RETURN(scope, customInspect(lexicalGlobalObject, callFrame, thisValue, name, data));
+}
+
 void installInspectCustom(VM& vm, JSObject* prototype, NativeFunction nativeFunction)
 {
     auto* globalObject = prototype->globalObject();
     prototype->putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).inspectCustomPublicName(), 2,
         nativeFunction, ImplementationVisibility::Public, NoIntrinsic,
-        static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum));
+        static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
 } // namespace WebStreams

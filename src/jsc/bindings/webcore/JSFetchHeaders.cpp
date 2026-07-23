@@ -43,6 +43,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -320,11 +321,25 @@ static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
 
 const ClassInfo JSFetchHeadersPrototype::s_info = { "Headers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFetchHeadersPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSFetchHeaders>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSValue data = WebCore::getInternalProperties(vm, lexicalGlobalObject, thisObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "Headers"_s, asObject(data)));
+}
+
 void JSFetchHeadersPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSFetchHeaders::info(), JSFetchHeadersPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    Bun::WebStreams::installInspectCustom(vm, this, jsFetchHeadersPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

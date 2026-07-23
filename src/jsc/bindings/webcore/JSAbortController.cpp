@@ -48,6 +48,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "streams/WebStreamsInspectCustom.h"
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -145,10 +146,20 @@ static const HashTableValue JSAbortControllerPrototypeTableValues[] = {
 
 const ClassInfo JSAbortControllerPrototype::s_info = { "AbortController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortControllerPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSValue thisValue = callFrame->thisValue();
+    if (!thisValue.inherits<JSAbortController>()) [[unlikely]]
+        return JSValue::encode(thisValue);
+    static constexpr ASCIILiteral props[] = { "signal"_s };
+    return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "AbortController"_s, props, std::size(props));
+}
+
 void JSAbortControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAbortController::info(), JSAbortControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsAbortControllerPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

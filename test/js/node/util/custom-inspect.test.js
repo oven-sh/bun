@@ -331,3 +331,124 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(inspect(globalThis[className].prototype)).toContain("encoding: [Getter]");
   });
 });
+
+// These classes keep all state in native slots and expose it via prototype
+// accessors, so without [nodejs.util.inspect.custom] util.inspect would render
+// each of them as `ClassName {}`. Bun's own console.log had a native formatter
+// for them already; this covers the util.inspect / util.format('%o') / Console
+// path that pino, winston, and debug use.
+describe("util.inspect web-platform classes", () => {
+  const inspect = util.inspect;
+
+  test("Symbol.for(nodejs.util.inspect.custom) is installed and non-enumerable", () => {
+    for (const C of [
+      Response,
+      Request,
+      Headers,
+      Blob,
+      URLSearchParams,
+      FormData,
+      AbortSignal,
+      AbortController,
+      TextDecoder,
+    ]) {
+      const desc = Object.getOwnPropertyDescriptor(C.prototype, customSymbol);
+      expect({
+        class: C.name,
+        type: typeof desc?.value,
+        enumerable: desc?.enumerable,
+      }).toEqual({ class: C.name, type: "function", enumerable: false });
+    }
+  });
+
+  test("Response", () => {
+    const res = new Response("hello", { status: 404, statusText: "Not Found", headers: { "x-a": "1" } });
+    const out = inspect(res);
+    expect(out).toStartWith("Response {");
+    expect(out).toContain("status: 404");
+    expect(out).toContain("statusText: 'Not Found'");
+    expect(out).toContain("headers: Headers { 'x-a': '1'");
+    expect(out).toContain("bodyUsed: false");
+    expect(out).toContain("ok: false");
+    expect(out).toContain("redirected: false");
+    expect(out).toContain("type: 'default'");
+    expect(out).toContain("url: ''");
+  });
+
+  test("Request", () => {
+    const req = new Request("https://example.com/path", { method: "POST", headers: { "x-a": "1" } });
+    const out = inspect(req);
+    expect(out).toStartWith("Request {");
+    expect(out).toContain("method: 'POST'");
+    expect(out).toContain("url: 'https://example.com/path'");
+    expect(out).toContain("headers: Headers { 'x-a': '1'");
+    expect(out).toContain("redirect: 'follow'");
+    expect(out).toContain("signal: AbortSignal { aborted: false }");
+  });
+
+  test("Headers", () => {
+    expect(inspect(new Headers({ a: "1", b: "2" }))).toBe("Headers { a: '1', b: '2' }");
+    expect(inspect(new Headers())).toBe("Headers {}");
+  });
+
+  test("Blob and File", () => {
+    expect(inspect(new Blob(["abc"], { type: "text/plain" }))).toMatch(/^Blob { size: 3, type: 'text\/plain.*' }$/);
+    const file = inspect(new File(["abc"], "name.txt", { type: "text/plain", lastModified: 123 }));
+    expect(file).toStartWith("File {");
+    expect(file).toContain("size: 3");
+    expect(file).toContain("name: 'name.txt'");
+    expect(file).toContain("lastModified: 123");
+  });
+
+  test("URLSearchParams", () => {
+    expect(inspect(new URLSearchParams("a=1&b=2"))).toBe("URLSearchParams { 'a' => '1', 'b' => '2' }");
+    expect(inspect(new URLSearchParams("a=1&b=2&a=3"))).toBe("URLSearchParams { 'a' => '1', 'b' => '2', 'a' => '3' }");
+    expect(inspect(new URLSearchParams())).toBe("URLSearchParams {}");
+  });
+
+  test("FormData", () => {
+    const f = new FormData();
+    f.append("a", "1");
+    f.append("b", "2");
+    f.append("a", "3");
+    expect(inspect(f)).toBe("FormData { a: [ '1', '3' ], b: '2' }");
+    expect(inspect(new FormData())).toBe("FormData {}");
+  });
+
+  test("AbortSignal and AbortController", () => {
+    expect(inspect(AbortSignal.abort())).toBe("AbortSignal { aborted: true }");
+    expect(inspect(new AbortController())).toBe("AbortController { signal: AbortSignal { aborted: false } }");
+  });
+
+  test("TextDecoder", () => {
+    expect(inspect(new TextDecoder("utf-8"))).toBe("TextDecoder { encoding: 'utf-8', fatal: false, ignoreBOM: false }");
+    expect(inspect(new TextDecoder("utf-16le", { fatal: true }))).toBe(
+      "TextDecoder { encoding: 'utf-16le', fatal: true, ignoreBOM: false }",
+    );
+  });
+
+  test("Timeout", () => {
+    const t = setTimeout(function callback() {}, 50);
+    try {
+      const out = inspect(t);
+      expect(out).toStartWith("Timeout {");
+      expect(out).toContain("_idleTimeout: 50");
+      expect(out).toContain("_onTimeout: [Function: callback]");
+      expect(out).toContain("_destroyed: false");
+    } finally {
+      clearTimeout(t);
+    }
+  });
+
+  test("util.format('%o', ...) uses the custom inspect", () => {
+    expect(util.format("%o", new Headers({ a: "1" }))).toBe("Headers { a: '1' }");
+    expect(util.format("%o", AbortSignal.abort())).toBe("AbortSignal { aborted: true }");
+  });
+
+  test("calling with a foreign receiver falls through without throwing", () => {
+    const fn = Response.prototype[customSymbol];
+    expect(fn.call({}, 2, {})).toEqual({});
+    expect(fn.call(null, 2, {})).toBeNull();
+    expect(() => inspect(Object.create(Response.prototype))).not.toThrow();
+  });
+});

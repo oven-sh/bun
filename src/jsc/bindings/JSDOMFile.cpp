@@ -4,11 +4,29 @@
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSDOMFile.h"
+#include "streams/WebStreamsInspectCustom.h"
 
 using namespace JSC;
 
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
+
+// File and Blob share Blob's prototype, so this lives here rather than in
+// generated code. Branches on the Rust-side `is_file` flag (via the same
+// host hook `File[Symbol.hasInstance]` uses) to decide which shape to print.
+JSC_DEFINE_HOST_FUNCTION(JSBlob__inspectCustom, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue thisValue = callFrame->thisValue();
+    if (!thisValue.inherits<WebCore::JSBlob>()) [[unlikely]]
+        return JSC::JSValue::encode(thisValue);
+
+    if (JSDOMFile__hasInstance(JSValue::encode(jsUndefined()), lexicalGlobalObject, JSValue::encode(thisValue))) {
+        static constexpr ASCIILiteral props[] = { "size"_s, "type"_s, "name"_s, "lastModified"_s };
+        return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "File"_s, props, std::size(props));
+    }
+    static constexpr ASCIILiteral props[] = { "size"_s, "type"_s };
+    return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "Blob"_s, props, std::size(props));
+}
 
 // TODO: make this inehrit from JSBlob instead of InternalFunction
 // That will let us remove this hack for [Symbol.hasInstance] and fix the prototype chain.

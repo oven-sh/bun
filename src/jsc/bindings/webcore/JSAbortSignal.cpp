@@ -54,6 +54,7 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include "ErrorCode.h"
+#include "streams/WebStreamsInspectCustom.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -156,10 +157,20 @@ static const HashTableValue JSAbortSignalPrototypeTableValues[] = {
 
 const ClassInfo JSAbortSignalPrototype::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignalPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSValue thisValue = callFrame->thisValue();
+    if (!thisValue.inherits<JSAbortSignal>()) [[unlikely]]
+        return JSValue::encode(thisValue);
+    static constexpr ASCIILiteral props[] = { "aborted"_s };
+    return Bun::WebStreams::customInspectGetters(lexicalGlobalObject, callFrame, thisValue, "AbortSignal"_s, props, std::size(props));
+}
+
 void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsAbortSignalPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

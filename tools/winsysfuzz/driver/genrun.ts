@@ -98,6 +98,47 @@ function judge(r: Run): { kind: "crash" | "hang" | null; sig: string; detail: st
   return { kind: null, sig: "", detail: "" };
 }
 
+
+// --- inline minimization + call-set fingerprint --------------------------
+// A heap-address segfault has no stable stack fingerprint, so distinct bugs
+// share one crash-class key. The CAUSE fingerprint is the minimal program:
+// delta-minimize the crashing program, then key it by the sorted set of
+// its surviving $step labels (the API calls the crash actually needs).
+async function crashesText(text: string, dir: string): Promise<boolean> {
+  const f = join(dir, "min-cand.js");
+  await Bun.write(f, text);
+  for (let k = 0; k < 2; k++) {
+    const r = await runProgram(f, dir);
+    if (judge(r).kind === "crash") return true;
+  }
+  return false;
+}
+async function minimizeProgram(text: string, dir: string): Promise<string> {
+  let cur = text.split("\n");
+  let n = 2;
+  let iters = 0;
+  while (cur.length >= 2 && iters++ < 400) {
+    const chunk = Math.ceil(cur.length / n);
+    let reduced = false;
+    for (let start = 0; start < cur.length; start += chunk) {
+      const trial = [...cur.slice(0, start), ...cur.slice(start + chunk)];
+      if (trial.length && (await crashesText(trial.join("\n"), dir))) {
+        cur = trial;
+        n = Math.max(2, n - 1);
+        reduced = true;
+        break;
+      }
+    }
+    if (!reduced) {
+      if (n >= cur.length) break;
+      n = Math.min(cur.length, n * 2);
+    }
+  }
+  return cur.join("\n");
+}
+const callSetOf = (prog: string): string =>
+  [...new Set([...prog.matchAll(/\$step\("([A-Za-z0-9_.:() -]+)"/g)].map(m => m[1]))].sort().join(" ; ");
+
 let iter = 0;
 let crashes = 0;
 let hangs = 0;
@@ -207,8 +248,27 @@ async function worker(w: number) {
       }
       continue;
     }
+    // For a crash, the class key (0xHEAP...) is not identity: minimize the
+    // program and key by its call set, so distinct causes queue separately
+    // and one bug queues once however it faults.
+    let minimalText = "";
+    if (j.kind === "crash") {
+      // Minimize SOLO (hold the verify lock: siblings pause) - a reduction
+      // runs the target hundreds of times and must not compete with 24
+      // workers, nor should crashes race under it.
+      verifying++;
+      try {
+        console.log(`   minimizing seed ${seed}...`);
+        minimalText = await minimizeProgram(await Bun.file(program).text(), dir);
+      } finally {
+        verifying--;
+      }
+      const cs = callSetOf(minimalText);
+      j.sig = `gencrash{${cs || j.sig}}`;
+      console.log(`   minimal call set: ${cs || "(none)"} (${minimalText.split("\n").length} lines)`);
+    }
     if (knownKeys.has(j.sig)) {
-      console.log(`   known signature - not re-queued`);
+      console.log(`   known cause - not re-queued (${j.sig.slice(0, 70)})`);
       continue;
     }
     knownKeys.add(j.sig);
@@ -221,8 +281,10 @@ async function worker(w: number) {
     const programCopy = join(queueDir, "programs");
     ensureDir(programCopy);
     const savedProgram = join(programCopy, `gen-${seed}.js`);
+    const savedMinimal = join(programCopy, `gen-${seed}.min.js`);
     try {
       await Bun.write(savedProgram, await Bun.file(program).text());
+      if (minimalText) await Bun.write(savedMinimal, minimalText);
     } catch {}
     const entry = {
       queuedAt: stamp,
@@ -241,7 +303,7 @@ async function worker(w: number) {
       lastStage: null,
       termChain: null,
       stacks: null,
-      findings: savedProgram,
+      findings: minimalText ? savedMinimal : savedProgram,
       workDir: dir,
     };
     appendFileSync(qfile, JSON.stringify(entry) + "\n");

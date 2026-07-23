@@ -220,6 +220,20 @@ function drawSchedule(): string[] {
   return [...rules];
 }
 
+// --- unverified recurrence: a race that fires 1-in-N never reproduces in
+// two immediate replays, but its SIGNATURE recurring across independent
+// runs IS the reproduction. Count prior drops per signature; a recurring
+// signature is escalated to the queue instead of dropped again.
+const unverifiedPath = join(queueDir, "wide-unverified.log");
+const unverifiedCount = new Map<string, number>();
+try {
+  if (await Bun.file(unverifiedPath).exists()) {
+    for (const line of (await Bun.file(unverifiedPath).text()).split("\n")) {
+      const sig = line.split("\t")[3];
+      if (sig) unverifiedCount.set(sig, (unverifiedCount.get(sig) ?? 0) + 1);
+    }
+  }
+} catch {}
 // --- known signatures: never re-report a triaged/queued finding ------------
 const knownKeys = new Set<string>();
 for (const f of ["triaged.jsonl", "queue.jsonl"]) {
@@ -359,17 +373,28 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
       if (bad) repro++;
     }
     if (repro === 0) {
+      const key = (sig || detail).slice(0, 120);
+      const prior = unverifiedCount.get(key) ?? 0;
+      unverifiedCount.set(key, prior + 1);
+      const frames = (crashSig?.frames ?? []).slice(0, 8).join(" || ");
       try {
         appendFileSync(
-          join(queueDir, "wide-unverified.log"),
-          `${new Date().toISOString()}\t${outcome}\t${basename(file)}\t${(sig || detail).slice(0, 120)}\t${schedule.join(" ; ")}\n`,
+          unverifiedPath,
+          `${new Date().toISOString()}\t${outcome}\t${basename(file)}\t${key}\t${schedule.join(" ; ")}\t${frames}\n`,
         );
       } catch {}
-      console.log(`  [${outcome} unverified 0/2 - dropped] ${basename(file)}: ${(sig || detail).slice(0, 70)}`);
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {}
-      return null;
+      if (prior + 1 >= 2) {
+        // Recurring signature: escalate as a finding (falls through to the
+        // queue below with a verdict naming the recurrence count).
+        console.log(`  [${outcome} RECURRING x${prior + 1} - escalating] ${basename(file)}: ${key.slice(0, 60)}`);
+        detail = `${detail} [recurring x${prior + 1}, unreproduced in-pass]`;
+      } else {
+        console.log(`  [${outcome} unverified 0/2 - logged] ${basename(file)}: ${key.slice(0, 70)}`);
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {}
+        return null;
+      }
     }
     detail = `${detail}${outcome === "CRASH" ? "" : ""}`; // (signature unchanged)
     console.log(`  [${outcome} verified ${repro}/2] ${basename(file)}`);
@@ -444,7 +469,7 @@ while (pass++ < passes) {
       const entry = {
         queuedAt: stamp,
         dedupeKey: h.key,
-        verdict: "wide-verified", // reproduced in-pass under load (>=1 of 2 immediate replays)
+        verdict: /recurring x/.test(h.detail) ? "wide-recurring" : "wide-verified", // in-pass repro, or signature recurrence across runs
         outcome: h.outcome,
         boundary: null,
         crashKind: null,

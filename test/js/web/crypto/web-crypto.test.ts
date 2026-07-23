@@ -344,7 +344,11 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
       "decrypt",
     ]);
     const ml = (await crypto.subtle.generateKey("ML-DSA-65", true, ["sign", "verify"])) as CryptoKeyPair;
-    for (const key of [chacha, ml.privateKey, ml.publicKey]) {
+    const kem = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateBits",
+      "decapsulateBits",
+    ])) as CryptoKeyPair;
+    for (const key of [chacha, ml.privateKey, ml.publicKey, kem.privateKey, kem.publicKey]) {
       let err: Error | undefined;
       try {
         structuredClone(key);

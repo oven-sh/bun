@@ -439,6 +439,7 @@ void LoadSchedule(const char* path) {
       r.mode = Fault::Mangle;
       r.mangle = strstr(modeTok, "zero")      ? MangleKind::Zero
                  : strstr(modeTok, "garbage") ? MangleKind::Garbage
+                 : strstr(modeTok, "field")   ? MangleKind::Field
                                                : MangleKind::Short;
       r.status = 0;
     } else if (strncmp(modeTok, "delay", 5) == 0) {
@@ -726,6 +727,110 @@ void CallCtx::FormatRvas(char* out, size_t cap) const {
   if (!emitted) snprintf(out, cap, "0");
 }
 
+// --- structured out-buffer mutation ------------------------------------------
+// The garbage/short mangles perturb BYTES; bugs in size/length/offset
+// handling live in FIELDS. mangle:field mutates ONE structured field of the
+// syscall's output to a boundary value chosen by the rule's status slot
+// (injected_ = variant). Same code path, orders of magnitude more values:
+// exactly where try_from/slice/entry-walk bugs live. Only ever on a
+// synchronous success (a filled IOSB); the same infeasibility rules as
+// garbage (never bun's own installation/code files, never o:-keyed calls).
+namespace {
+inline bool FieldTargetSkipped(uint32_t sys, ULONG_PTR* args, int argc, const uintptr_t* frames) {
+  if (KeyOf(frames[0]).tag == 'o') return true; // another module's own buffer
+  int8_t hi = kHooks[sys].handleIndex;
+  if (hi >= 0 && hi < argc) {
+    const HandleEnt* he = LookupHandle(args[hi]);
+    if (he && he->own) return true; // bun's own installation files
+  }
+  return false;
+}
+} // namespace
+
+bool CallCtx::ApplyFieldMangle(struct _IO_STATUS_BLOCK* iosb) {
+  if (!iosb) return false;
+  if (FieldTargetSkipped(sys_, args_, argc_, frames_)) return false;
+  const ULONG_PTR variant = injected_; // the rule's status slot selects the mutation
+  bool applied = false;
+  __try {
+    // (1) IO_STATUS_BLOCK.Information - the transferred byte count every
+    //     read/query path sizes by. Variants: 0 / requested+1 / huge / one.
+    if (sys_ == SYS_NtReadFile || sys_ == SYS_NtQueryDirectoryFile || sys_ == SYS_NtQueryDirectoryFileEx ||
+        sys_ == SYS_NtQueryInformationFile || sys_ == SYS_NtQueryVolumeInformationFile ||
+        sys_ == SYS_NtQueryValueKey || sys_ == SYS_NtQueryObject) {
+      int8_t li = kHooks[sys_].lengthIndex;
+      ULONG_PTR requested = (li >= 0 && li < argc_) ? args_[li] : (ULONG_PTR)iosb->Information;
+      switch (variant % 5) {
+        case 0: iosb->Information = 0; break;                       // nothing transferred
+        case 1: iosb->Information = requested + 1; break;           // one past the buffer
+        case 2: iosb->Information = requested ? requested * 2 : 4096; break; // double
+        case 3: iosb->Information = 0x7ffffffe; break;              // huge count
+        default: iosb->Information = 1; break;                      // truncated to a byte
+      }
+      applied = true;
+    }
+    // (2) FileInformationClass structs (NtQueryInformationFile: buffer at
+    //     arg 2, class at arg 4): mutate the class's size/length field.
+    if (sys_ == SYS_NtQueryInformationFile && argc_ > 4 && args_[2]) {
+      ULONG cls = (ULONG)args_[4];
+      auto* p = (unsigned char*)args_[2];
+      switch (cls) {
+        case 5: { // FileStandardInformation: AllocationSize(i64) EndOfFile(i64) NumberOfLinks(u32)
+          auto* eof = (LONGLONG*)(p + 8);
+          switch (variant % 4) {
+            case 0: *eof = 0; break;
+            case 1: *eof = -1; break;
+            case 2: *eof = 0x7fffffffffffffffLL; break;      // absurd size
+            default: *eof += 1; break;                        // off by one vs reality
+          }
+          applied = true;
+          break;
+        }
+        case 9: { // FileNameInformation: FileNameLength(u32) FileName[]
+          auto* len = (ULONG*)p;
+          switch (variant % 3) {
+            case 0: *len = 0; break;
+            case 1: *len += 0x10000; break;                     // length past the buffer
+            default: if (*len & 1) *len ^= 1; else *len |= 1; break; // odd UTF-16 length
+          }
+          applied = true;
+          break;
+        }
+        case 34: /* FilePositionInformation */ case 4: { // FileBasicInformation timestamps
+          auto* t = (LONGLONG*)p;
+          switch (variant % 3) {
+            case 0: t[0] = 0; break;
+            case 1: t[0] = -1; break;
+            default: t[0] = 0x7fffffffffffffffLL; break;         // far-future/invalid time
+          }
+          applied = true;
+          break;
+        }
+        default: break;
+      }
+    }
+    // (3) Directory entry chains (NtQueryDirectoryFile buffer): the first
+    //     entry's NextEntryOffset / FileNameLength - the walk bugs live here.
+    if ((sys_ == SYS_NtQueryDirectoryFile || sys_ == SYS_NtQueryDirectoryFileEx) &&
+        iosb->Information >= 8) {
+      int8_t bi = kHooks[sys_].bufIndex;
+      if (bi >= 0 && bi < argc_ && args_[bi]) {
+        auto* ent = (ULONG*)args_[bi]; // FILE_*_DIRECTORY_INFORMATION: NextEntryOffset(u32) FileIndex(u32) ... FileNameLength(u32) @+60
+        switch (variant % 4) {
+          case 0: ent[0] = 0; break;                                  // last entry (truncate listing)
+          case 1: ent[0] = 8; break;                                  // offset into itself: overlap
+          case 2: ent[0] = (ULONG)iosb->Information + 16; break;       // offset past the buffer
+          default: if (iosb->Information > 64) *(ULONG*)((unsigned char*)ent + 60) += 0x8000; break; // FileNameLength past end
+        }
+        applied = true;
+      }
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    applied = false; // the buffer wasn't what the class implies: do nothing
+  }
+  return applied;
+}
+
 ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
   ULONG_PTR ret = real;
   // A post-fault lies "the call failed" - but if the real return was
@@ -775,7 +880,9 @@ ULONG_PTR CallCtx::Exit(ULONG_PTR real) {
       if (!shrunk_ && (ULONG)ret == 0 && idx >= 0 && idx < argc_) {
         auto* iosb = (IO_STATUS_BLOCK*)args_[idx];
         if (iosb) {
-          if (mangle_ == MangleKind::Zero) {
+          if (mangle_ == MangleKind::Field) {
+            applied = ApplyFieldMangle(iosb);
+          } else if (mangle_ == MangleKind::Zero) {
             iosb->Information = 0;
             applied = true;
           } else if (mangle_ == MangleKind::Garbage) {

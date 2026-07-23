@@ -29,7 +29,7 @@ enum class Fault : uint8_t {
 
 // Mangle kinds — all target the IO_STATUS_BLOCK a synchronous I/O
 // syscall filled in on success. Real filter drivers do exactly these.
-enum class MangleKind : uint8_t { Short, Zero, Garbage };
+enum class MangleKind : uint8_t { Short, Zero, Garbage, Field };
 
 // Per-syscall-invocation context. Constructed at hook entry; drives the
 // fault decision and writes the trace record at exit.
@@ -55,6 +55,9 @@ class CallCtx {
   // Handle-table maintenance (always) plus WSF_ARGS=1 detail records:
   // A (decoded NT path) and D (handle target, AFD ioctl, lengths).
   void LogDetail(LONG64 seq, ULONG_PTR ret) const;
+  // mangle:field - mutate one structured field of this call's output to a
+  // boundary value (variant selected by the rule's status slot).
+  bool ApplyFieldMangle(struct _IO_STATUS_BLOCK* iosb);
   uint32_t sys_;
   bool live_;      // false => reentrant call: pass straight through, no log/fault
   uint8_t nframes_;

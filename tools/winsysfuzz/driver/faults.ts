@@ -12,7 +12,7 @@
 //                    CRASH(), Rust alloc abort). A crash here is expected.
 //   judgment       — lying-API (post-mode) / edge cases where "correct"
 //                    behavior is a human call.
-export type Mode = "pre" | "post" | "mangle:short" | "mangle:zero" | "mangle:garbage" | "delay";
+export type Mode = "pre" | "post" | "mangle:short" | "mangle:zero" | "mangle:garbage" | "mangle:field" | "delay";
 export type Fault = { status: string; mode: Mode; expect?: "must-handle" | "abort-expected" | "judgment" };
 export const F = (status: string, mode: Mode = "pre", expect: Fault["expect"] = "must-handle"): Fault => ({
   status,
@@ -150,6 +150,28 @@ export const FAULTS: Record<string, Fault[]> = {
   // and not a finding worth compute or triage. (NtAllocateVirtualMemory[Ex]
   // used to carry an abort-expected fault; removed.)
 };
+
+
+// --- structured out-buffer value mutation (mangle:field) -------------------
+// The status slot is a VARIANT selector, not a status: the runtime maps it
+// to one boundary mutation of the call's output (IOSB.Information counts,
+// FILE_*_INFORMATION size/length fields, directory-entry chains). A judgment
+// class - a lying kernel is a hostile-environment model (filter drivers,
+// network redirectors, TOCTOU) - but panics/OOB in bun on a malformed OS
+// result are the target: try_from / slice / entry-walk bugs.
+const FIELD = (variant: number) => F(variant.toString(16), "mangle:field", "judgment");
+const fieldVariants = [0, 1, 2, 3, 4].map(FIELD);
+for (const sys of [
+  "NtReadFile",
+  "NtQueryInformationFile",
+  "NtQueryDirectoryFile",
+  "NtQueryDirectoryFileEx",
+  "NtQueryVolumeInformationFile",
+  "NtQueryValueKey",
+  "NtQueryObject",
+]) {
+  FAULTS[sys] = [...(FAULTS[sys] ?? []), ...fieldVariants];
+}
 
 // --- UNIVERSAL FAULT SURFACE ------------------------------------------------
 // The curated FAULTS menu is a WEIGHTING of preferred realistic

@@ -3,8 +3,10 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
+import dgram from "node:dgram";
 import { once } from "node:events";
 import fs from "node:fs";
+import os from "node:os";
 import {
   BlockList,
   connect,
@@ -689,7 +691,7 @@ describe("IPv6 scoped address literals (`%zone`)", () => {
   // if_nametoindex) and a numeric scope id on Windows; discover the loopback
   // one instead of hardcoding.
   let zone: string | undefined;
-  for (const [name, addrs] of Object.entries(require("node:os").networkInterfaces())) {
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
     for (const a of addrs as any[]) {
       if (a.family === "IPv6" && a.internal) {
         zone = isWindows ? String(a.scopeid) : name;
@@ -724,20 +726,25 @@ describe("IPv6 scoped address literals (`%zone`)", () => {
     const s = createServer();
     s.on("error", reject);
     s.listen(0, host, () => resolve(s.address()));
-    const addr = await promise;
-    expect(addr.family).toBe("IPv6");
-    s.close();
+    try {
+      const addr = await promise;
+      expect(addr.family).toBe("IPv6");
+    } finally {
+      s.close();
+    }
   });
 
   it.skipIf(!host)("dgram bind on `::1%zone`", async () => {
-    const dgram = require("node:dgram");
     const { promise, resolve, reject } = Promise.withResolvers<any>();
     const d = dgram.createSocket("udp6");
     d.on("error", reject);
     d.bind(0, host, () => resolve(d.address()));
-    const addr = await promise;
-    expect(addr.family).toBe("IPv6");
-    d.close();
+    try {
+      const addr = await promise;
+      expect(addr.family).toBe("IPv6");
+    } finally {
+      d.close();
+    }
   });
 
   it.skipIf(!host)("Bun.udpSocket bind and Bun.connect on `::1%zone`", async () => {

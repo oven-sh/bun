@@ -1177,20 +1177,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
 }
 
 static int us_quic_resolve(const char *host, int port, struct sockaddr_storage *out) {
-    memset(out, 0, sizeof(*out));
-    struct sockaddr_in *v4 = (struct sockaddr_in *) out;
-    struct sockaddr_in6 *v6 = (struct sockaddr_in6 *) out;
-    if (inet_pton(AF_INET, host, &v4->sin_addr) == 1) {
-        v4->sin_family = AF_INET;
-        v4->sin_port = htons((unsigned short) port);
-        return 0;
-    }
-    if (inet_pton(AF_INET6, host, &v6->sin6_addr) == 1) {
-        v6->sin6_family = AF_INET6;
-        v6->sin6_port = htons((unsigned short) port);
-        return 0;
-    }
-    return -1;
+    return bsd_parse_ip_address(host, port, out) != 0 ? 0 : -1;
 }
 
 /* One UDP endpoint for all client connections on this loop. lsquic

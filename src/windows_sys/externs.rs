@@ -668,7 +668,7 @@ pub mod ntdll {
     use super::*;
 
     #[cfg(windows)]
-    #[link(name = "ntdll")]
+    #[cfg_attr(windows, link(name = "ntdll"))]
     unsafe extern "system" {
         pub fn RtlLookupFunctionEntry(
             ControlPc: u64,

@@ -326,9 +326,11 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
         RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "key_ops"_s), key_opsValue);
     }
-    auto ktyValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.kty);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "kty"_s), ktyValue);
+    if (!IDLDOMString::isNullValue(dictionary.kty)) {
+        auto ktyValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.kty));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "kty"_s), ktyValue);
+    }
     if (!IDLDOMString::isNullValue(dictionary.n)) {
         auto nValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, IDLDOMString::extractValueFromNullable(dictionary.n));
         RETURN_IF_EXCEPTION(throwScope, {});

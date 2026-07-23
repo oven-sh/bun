@@ -36,6 +36,8 @@
 #include "JSDOMConvertAny.h"
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertBufferSource.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNullable.h"
@@ -517,21 +519,23 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
     }
     auto format = *parsedFormat;
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto keyData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer, IDLDictionary<JsonWebKey>>>(*lexicalGlobalObject, argument1.value());
-    bool keyDataNotBufferLike = false;
-    if (throwScope.exception()) [[unlikely]] {
-        // Node picks the converter by format: JWK conversion errors (e.g. a
-        // throwing getter) propagate; buffer formats report the type error.
-        if (format == SubtleCrypto::KeyFormat::Jwk || !throwScope.tryClearException())
-            return {};
-        keyDataNotBufferLike = true;
-    } else if (format != SubtleCrypto::KeyFormat::Jwk && std::holds_alternative<JsonWebKey>(keyData)) {
-        // A plain object converts into the JsonWebKey alternative without an
-        // exception; buffer formats still report node's type error for it.
-        keyDataNotBufferLike = true;
+    SubtleCrypto::KeyDataVariant keyData;
+    if (format == SubtleCrypto::KeyFormat::Jwk) {
+        // JWK conversion errors (e.g. a throwing member getter) propagate,
+        // like node's.
+        keyData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer, IDLDictionary<JsonWebKey>>>(*lexicalGlobalObject, argument1.value());
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else {
+        // Node picks the converter by format: buffer formats never read the
+        // JWK members, so a poisoned getter cannot fire and no exception is
+        // swallowed when the argument is not buffer-like.
+        JSC::JSValue keyDataValue = argument1.value();
+        if (!dynamicDowncast<JSC::JSArrayBuffer>(keyDataValue) && !dynamicDowncast<JSC::JSArrayBufferView>(keyDataValue)) [[unlikely]]
+            return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView."_s);
+        auto bufferData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, keyDataValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        std::visit([&](auto&& alternative) { keyData = WTF::move(alternative); }, WTF::move(bufferData));
     }
-    if (keyDataNotBufferLike) [[unlikely]]
-        return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView."_s);
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});

@@ -1077,15 +1077,26 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             bun_options_types::offline_mode::OfflineMode::Online
         });
 
-        // `-i` that will reach the REPL (mirrors the exec_node_repl dispatch in
-        // mod.rs: interactive, no positionals, not --print) carries node's
-        // --interactive meaning, so both REPL spellings keep the resolver
-        // options bunfig/defaults produced instead of --install=fallback.
-        let repl_bound_i = cmd == CommandTag::AutoCommand
+        // `-i` that will reach the REPL carries node's --interactive meaning,
+        // so both REPL spellings keep the resolver options bunfig/defaults
+        // produced instead of --install=fallback. Mirrors the exec_node_repl
+        // dispatch in mod.rs: interactive, not --print, and no run target
+        // (RunCommand's positionals carry a leading "run").
+        let repl_no_target = match cmd {
+            CommandTag::AutoCommand => ctx.positionals.is_empty(),
+            CommandTag::RunCommand => match ctx.positionals.as_slice() {
+                [] => true,
+                [only] => only.as_ref() == b"run",
+                _ => false,
+            },
+            _ => false,
+        };
+        let repl_bound_i = repl_no_target
             && args.flag(b"-i")
-            && ctx.positionals.is_empty()
             && args.option(b"--print").is_none()
-            && (args.flag(b"--interactive") || args.option(b"--eval").is_none());
+            && (args.flag(b"--interactive")
+                || (cmd == CommandTag::AutoCommand
+                    && args.option(b"--eval").is_none_or(<[u8]>::is_empty)));
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
         } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand && !repl_bound_i {

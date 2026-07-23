@@ -998,9 +998,8 @@ impl BufferOutputSink {
             MutableString::init_empty(),
         );
         // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
-        if let Some(ret_err) =
-            unsafe { Self::run_output_sink(sink, bytes.list.as_slice(), is_async) }
-        {
+        let ret_err = unsafe { Self::run_output_sink(sink, bytes.list.as_slice(), is_async) };
+        if let Some(ret_err) = ret_err {
             ret_err.ensure_still_alive();
             ret_err.protect();
             Self::write_tmp_sync_error(sink, ret_err);

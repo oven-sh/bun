@@ -329,6 +329,40 @@ describe("Glob.match", () => {
     expect(glob.match("bde")).toBeTrue();
   });
 
+  test("unclosed `{` is treated as a literal", () => {
+    // bash, picomatch and minimatch all treat an unmatched `{` as a literal.
+    // It must not make the whole pattern unmatchable, and an unclosed group
+    // containing a comma must not be auto-closed into a brace expansion.
+    expect(new Glob("{").match("{")).toBeTrue();
+    expect(new Glob("{a").match("{a")).toBeTrue();
+    expect(new Glob("a{b").match("a{b")).toBeTrue();
+    expect(new Glob("a{b,c").match("a{b,c")).toBeTrue();
+    expect(new Glob("a{b,c").match("ab")).toBeFalse();
+    expect(new Glob("a{b,c").match("ac")).toBeFalse();
+
+    // Wildcards still work around the literal `{`.
+    expect(new Glob("*{").match("abc{")).toBeTrue();
+    expect(new Glob("a{b*").match("a{bcd")).toBeTrue();
+    expect(new Glob("a{b*").match("abcd")).toBeFalse();
+
+    // An escaped `}` does not close the group.
+    expect(new Glob("{a,b\\}").match("{a,b}")).toBeTrue();
+    expect(new Glob("{a,b\\}").match("a")).toBeFalse();
+
+    // Outer `{` unclosed → literal; inner balanced group still expands.
+    expect(new Glob("{a,{b,c}").match("{a,b")).toBeTrue();
+    expect(new Glob("{a,{b,c}").match("{a,c")).toBeTrue();
+    expect(new Glob("{a,{b,c}").match("a")).toBeFalse();
+    expect(new Glob("{{a,b}").match("{a")).toBeTrue();
+    expect(new Glob("{{a,b}").match("{b")).toBeTrue();
+    expect(new Glob("{{a,b}").match("a")).toBeFalse();
+
+    // A closed group followed by an unclosed `{`.
+    expect(new Glob("{a,b}{c").match("a{c")).toBeTrue();
+    expect(new Glob("{a,b}{c").match("b{c")).toBeTrue();
+    expect(new Glob("{a,b}{c").match("ac")).toBeFalse();
+  });
+
   test("deeply nested braces do not overflow depth counters", () => {
     const opens = Buffer.alloc(300, "{").toString();
     const closes = Buffer.alloc(300, "}").toString();
@@ -353,11 +387,14 @@ describe("Glob.match", () => {
     glob = new Glob("*{a," + opens + closes + "}");
     expect(glob.match("za")).toBeTrue();
 
-    // >32767 consecutive `{` overflows match_brace's group pre-scan counter.
-    // The group never closes, so nothing matches.
+    // 40,000 consecutive `{`, none closed, so every `{` is a literal. The
+    // unclosed-brace pre-scan must not overflow its depth counter, and
+    // matching must stay linear in the number of unclosed braces.
     glob = new Glob(Buffer.alloc(40_000, "{").toString());
     expect(glob.match("a")).toBeFalse();
     expect(glob.match("{")).toBeFalse();
+    expect(glob.match(Buffer.alloc(40_000, "{").toString())).toBeTrue();
+    expect(glob.match(Buffer.alloc(40_001, "{").toString())).toBeFalse();
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

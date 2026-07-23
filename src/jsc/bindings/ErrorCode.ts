@@ -357,9 +357,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_TRAILING_JUNK_AFTER_STREAM_END", TypeError],
   ["ERR_SQLITE_ERROR", Error],
   ["ERR_CRYPTO_ARGON2_NOT_SUPPORTED", Error],
-  ["ERR_WORKER_INVALID_EXEC_ARGV", Error],
   // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],
+  ["ERR_WORKER_INVALID_EXEC_ARGV", Error],
 ];
 export default errors;

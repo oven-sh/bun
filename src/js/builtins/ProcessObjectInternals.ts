@@ -528,8 +528,12 @@ export function windowsEnv(
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
+      if (typeof p === "symbol") {
+        // JSProcessEnvMap rejects symbol keys (after descriptor validation),
+        // matching node; no bookkeeping applies.
+        return $Object.$defineProperty(internalEnv, p, attributes);
+      }
       const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       const isNewKey = !(k in internalEnv) && !envMapList.includes(p);
       // The define can throw (JSProcessEnvMap rejects partial data
       // descriptors), so it runs before the bookkeeping: a rejected define

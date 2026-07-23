@@ -397,19 +397,23 @@ static SharedEnvStore* sharedEnvStoreFor(JSC::JSObject* object)
 // process.env (src/node_env_var.cc, EnvDefiner). Bun deliberately still accepts
 // accessors — see the "does not let the store shadow an accessor defined on
 // process.env" test — so only the data-descriptor half of node's rule is
-// enforced here: a descriptor carrying a value must spell out writable,
+// enforced here
 // enumerable and configurable, all true. Accessor and empty descriptors keep
 // their existing behaviour. Returns false with an exception pending on reject.
 static bool validateEnvPropertyDescriptor(JSC::JSGlobalObject* globalObject, const JSC::PropertyDescriptor& descriptor, JSC::ThrowScope& scope)
 {
     static constexpr auto dataDescriptorMessage = "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s;
 
-    if (!descriptor.value())
+    // Accessors are deliberately accepted (divergence documented above the
+    // JSSharedEnvMap declaration); everything else must be a full permissive
+    // data descriptor per node (node_env_var.cc EnvDefiner, verified on
+    // v26.3.0) — including attribute-only ({writable: false}) and empty ({})
+    // descriptors, which would otherwise silently make the var non-writable
+    // or non-enumerable.
+    if (descriptor.isAccessorDescriptor())
         return true;
-
-    // A partial data descriptor is rejected even when what it does specify is
-    // permissive: node requires all three attributes to be present and true.
-    if (!descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent()
+    if (!descriptor.value()
+        || !descriptor.writablePresent() || !descriptor.enumerablePresent() || !descriptor.configurablePresent()
         || !descriptor.writable() || !descriptor.enumerable() || !descriptor.configurable()) {
         scope.throwException(globalObject, createError(globalObject, Bun::ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, dataDescriptorMessage));
         return false;
@@ -633,13 +637,20 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     if (!validateEnvPropertyDescriptor(globalObject, descriptor, scope))
         return false;
 
+    // node coerces the key to a string after validating the descriptor, so a
+    // symbol key throws the plain conversion TypeError (no code).
+    // Symbol-keyed accessors flow through with the accessor divergence.
+    if (propertyName.isSymbol() && !descriptor.isAccessorDescriptor()) {
+        JSC::throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return false;
+    }
+
     auto* uid = propertyName.uid();
-    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
+    if (propertyName.isSymbol() || !uid || descriptor.isAccessorDescriptor()) {
         // The descriptor lands on the Base object, but getOwnPropertySlot reads the
         // store first, so a store entry would shadow it. Move the entry onto Base as
-        // an enumerable data property first: a partial descriptor then keeps that
-        // enumerability, exactly as it does on the regular process.env. (Node rejects
-        // accessors on process.env outright — on both maps — so match bun's own map.)
+        // an enumerable data property first: the accessor then replaces it, keeping
+        // the key's enumerability, exactly as on the regular process.env.
         if (!propertyName.isSymbol() && uid) {
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
@@ -812,6 +823,14 @@ public:
 
         if (!validateEnvPropertyDescriptor(globalObject, descriptor, scope))
             return false;
+
+        // node coerces the key to a string after validating the descriptor,
+        // so a symbol key throws the plain conversion TypeError (no code).
+        // Symbol-keyed accessors flow through with the accessor divergence.
+        if (propertyName.isSymbol() && !descriptor.isAccessorDescriptor()) {
+            JSC::throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+            return false;
+        }
 
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }

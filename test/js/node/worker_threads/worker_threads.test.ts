@@ -459,54 +459,70 @@ describe("execArgv option", async () => {
     );
   });
 
-  it("a glued short-flag value is split like bun's own CLI parser", async () => {
-    // `bun -r./setup.js app.js` puts the verbatim token into process.execArgv,
-    // so the execArgv round-trip must accept and honor -r<path> and -r=<path>.
-    using dir = tempDir("worker-execargv-glued", { "preload-g.js": "globalThis.__glued = 'G';" });
-    for (const form of [`-r${join(String(dir), "preload-g.js")}`, `-r=${join(String(dir), "preload-g.js")}`]) {
-      const w = new Worker("require('worker_threads').parentPort.postMessage(globalThis.__glued);", {
-        eval: true,
-        execArgv: [form],
-      });
-      const [got] = await once(w, "message");
-      expect(got).toBe("G");
-    }
-  });
-
-  it("splits glued short flags in NODE_OPTIONS like the CLI parser", async () => {
-    using dir = tempDir("worker-nodeopts-glued", { "preload-n.js": "globalThis.__nopts = 'N';" });
-    const p = join(String(dir), "preload-n.js");
-    // node accepts an attached short-flag value in NODE_OPTIONS.
-    for (const form of [`-r${p}`, `-r=${p}`]) {
-      const w = new Worker("1", { eval: true, env: { ...process.env, NODE_OPTIONS: form } });
-      await once(w, "exit");
-    }
-    // A glued env-disallowed short reports the flag, not the whole token.
-    let err: any;
-    try {
-      new Worker("1", { eval: true, env: { NODE_OPTIONS: "-e1+1" } });
-    } catch (e) {
-      err = e;
-    }
-    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
-    expect(err?.message).toBe(
-      "Initiated Worker with invalid NODE_OPTIONS env variable: -e is not allowed in NODE_OPTIONS",
+  it("SHARE_ENV process.env validates descriptors like node", async () => {
+    const w = new Worker(
+      `const { parentPort } = require("worker_threads");
+       const out = {};
+       try { Object.defineProperty(process.env, "BUN_TEST_SHARE_DEFINE", { writable: false }); out.partial = null; }
+       catch (e) { out.partial = e.code; }
+       try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }
+       catch (e) { out.symbol = e.name; }
+       parentPort.postMessage(out);`,
+      { eval: true, env: SHARE_ENV },
     );
+    const [out] = await once(w, "message");
+    expect(out).toEqual({ partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError" });
   });
 
-  it("chains boolean short flags like bun's CLI parser", async () => {
-    // bun_clap parses -br<path> as -b then -r<path>, so the round-tripped
-    // token must chain the same way and still honor the -r preload.
-    using dir = tempDir("worker-execargv-chain", { "preload-c.js": "globalThis.__chained = 'C';" });
-    const w = new Worker("require('worker_threads').parentPort.postMessage(globalThis.__chained);", {
+  it("rejects a glued short-flag value like node", async () => {
+    // node v26.3.0 rejects -r<path> and -r=<path> in execArgv with the whole
+    // token in the message (its CLI rejects glued shorts too); only the
+    // separate-token form is valid.
+    using dir = tempDir("worker-execargv-glued", { "preload-g.js": "globalThis.__glued = 'G';" });
+    const p = join(String(dir), "preload-g.js");
+    for (const form of [`-r${p}`, `-r=${p}`]) {
+      let err: any;
+      try {
+        new Worker("1", { eval: true, execArgv: [form] });
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+      expect(err?.message).toBe(`Initiated Worker with invalid execArgv flags: ${form}`);
+    }
+    const w = new Worker("require('worker_threads').parentPort.postMessage(globalThis.__glued);", {
       eval: true,
-      execArgv: [`-br${join(String(dir), "preload-c.js")}`],
+      execArgv: ["-r", p],
     });
     const [got] = await once(w, "message");
-    expect(got).toBe("C");
-    // An unknown chained short, and `=` on a non-value short, invalidate the
-    // whole token, as in bun_clap.
-    for (const bad of ["-bz", "-b=x"]) {
+    expect(got).toBe("G");
+  });
+
+  it("rejects glued short flags in NODE_OPTIONS like node", async () => {
+    using dir = tempDir("worker-nodeopts-glued", { "preload-n.js": "globalThis.__nopts = 'N';" });
+    const p = join(String(dir), "preload-n.js");
+    // node v26.3.0 rejects the glued forms with the whole token in the
+    // message; the space-separated form is accepted.
+    for (const form of [`-r${p}`, `-r=${p}`, "-e1+1"]) {
+      let err: any;
+      try {
+        new Worker("1", { eval: true, env: { NODE_OPTIONS: form } });
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+      expect(err?.message).toBe(
+        `Initiated Worker with invalid NODE_OPTIONS env variable: ${form} is not allowed in NODE_OPTIONS`,
+      );
+    }
+    const w = new Worker("1", { eval: true, env: { ...process.env, NODE_OPTIONS: `-r ${p}` } });
+    await once(w, "exit");
+  });
+
+  it("rejects chained or glued boolean short flags like node", () => {
+    // node rejects any short token it cannot match whole; there is no
+    // chaining in worker execArgv validation (verified on v26.3.0).
+    for (const bad of ["-br./nope.js", "-bz", "-b=x"]) {
       let err: any;
       try {
         new Worker("1", { eval: true, execArgv: [bad] });

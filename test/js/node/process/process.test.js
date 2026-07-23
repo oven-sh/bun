@@ -6,6 +6,55 @@ import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
+it("process.env defineProperty validates descriptors like node", () => {
+  // Matrix verified against node v26.3.0.
+  const key = "BUN_TEST_DEFINE_MATRIX";
+  const dataMsg = "'process.env' only accepts a configurable, writable, and enumerable data descriptor";
+  const full = { value: "v", writable: true, enumerable: true, configurable: true };
+  try {
+    for (const [desc, msg] of [
+      [{ writable: false }, dataMsg],
+      [{}, dataMsg],
+      [{ value: "v" }, dataMsg],
+    ]) {
+      expect(() => Object.defineProperty(process.env, key, desc)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", message: msg }),
+      );
+      expect(key in process.env).toBe(false);
+    }
+    // Attribute-only on an existing key is rejected too, and the var stays
+    // writable — node validates before looking at the current entry.
+    process.env[key] = "before";
+    expect(() => Object.defineProperty(process.env, key, { writable: false })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+    );
+    process.env[key] = "after";
+    expect(process.env[key]).toBe("after");
+    Object.defineProperty(process.env, key, full);
+    expect(process.env[key]).toBe("v");
+    // Symbol keys: the descriptor is validated first, then node's key
+    // coercion throws a plain TypeError with no code.
+    let symErr;
+    try {
+      Object.defineProperty(process.env, Symbol("s"), full);
+    } catch (e) {
+      symErr = e;
+    }
+    expect(symErr?.name).toBe("TypeError");
+    expect(symErr?.message).toBe("Cannot convert a Symbol value to a string");
+    expect(symErr?.code).toBeUndefined();
+    expect(() => Object.defineProperty(process.env, Symbol("s"), { writable: false })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+    );
+    // Deliberate divergence: node rejects accessor descriptors on process.env
+    // outright; bun accepts them (documented in JSEnvironmentVariableMap.cpp).
+    Object.defineProperty(process.env, key, { get: () => "g", configurable: true });
+    expect(process.env[key]).toBe("g");
+  } finally {
+    delete process.env[key];
+  }
+});
+
 it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom key", () => {
   const key = "BUN_TEST_PHANTOM_DEFINE";
   expect(key in process.env).toBe(false);

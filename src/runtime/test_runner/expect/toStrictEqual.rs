@@ -11,9 +11,8 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toStrictEqual", "<green>expected<r>")?;
-
+        let this = self.post_match_guard(global);
+        let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
         let arguments: &[JSValue] = _arguments.slice();
 
@@ -23,7 +22,12 @@ impl Expect {
             ));
         }
 
+        this.increment_expect_call_counter();
+
         let expected = arguments[0];
+        let value: JSValue = this.get_value(global, this_value, "toStrictEqual", "<green>expected<r>")?;
+
+        let not = this.flags.get().not();
         let mut pass = value.jest_strict_deep_equals(expected, global)?;
 
         if not {

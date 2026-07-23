@@ -23,13 +23,16 @@ pub(crate) fn to_be_type_of(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeTypeOf", "")?;
+    let this = this.post_match_guard(global);
+    let this_value = frame.this();
     let _arguments = frame.arguments_old::<1>();
     let arguments = _arguments.slice();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires 1 argument")));
     }
+
+    let value: JSValue = this.get_value(global, this_value, "toBeTypeOf", "")?;
 
     let expected = arguments[0];
     expected.ensure_still_alive();
@@ -39,7 +42,9 @@ pub(crate) fn to_be_type_of(
     }
 
     let expected_type = bun_core::OwnedString::new(expected.to_bun_string(global)?);
+    this.increment_expect_call_counter();
 
+    let not = this.flags.get().not();
     let expected_utf8 = expected_type.to_utf8();
     let Some(typeof_) = JS_TYPE_OF_MAP.get(expected_utf8.slice()).copied() else {
         return Err(global.throw_invalid_arguments(format_args!(

@@ -10,14 +10,16 @@ pub(crate) fn to_have_nth_returned_with(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    let [nth_arg, expected] = frame.arguments_as_array::<2>();
-    let (this, returns, _value) = this.mock_prologue(
+    let this = this.post_match_guard(global);
+    let this_value = frame.this();
+    let value: JSValue = this.get_value(
         global,
-        frame.this(),
+        this_value,
         "toHaveNthReturnedWith",
         "<green>n<r>, <green>expected<r>",
-        super::mock::MockKind::Returns,
     )?;
+
+    let [nth_arg, expected] = frame.arguments_as_array::<2>();
 
     // Validate n is a number
     if !nth_arg.is_any_int() {
@@ -29,6 +31,16 @@ pub(crate) fn to_have_nth_returned_with(
     if n <= 0 {
         return Err(global.throw_invalid_arguments(format_args!(
             "toHaveNthReturnedWith() n must be greater than 0"
+        )));
+    }
+
+    this.increment_expect_call_counter();
+    let returns = super::mock::JSMockFunction__getReturns(global, value)?;
+    if !returns.js_type().is_array() {
+        let mut formatter = super::make_formatter(global);
+        return Err(global.throw(format_args!(
+            "Expected value must be a mock function: {}",
+            value.to_fmt(&mut formatter),
         )));
     }
 

@@ -8,10 +8,16 @@ pub(crate) fn to_match_object(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, received_object, not) =
-        this.matcher_prelude(global, frame.this(), "toMatchObject", "<green>expected<r>")?;
+    let this = this.post_match_guard(global);
+    let this_value = frame.this();
     let args_buf = frame.arguments_old::<1>();
     let args = args_buf.slice();
+
+    this.increment_expect_call_counter();
+
+    let not = this.flags.get().not();
+
+    let received_object: JSValue = this.get_value(global, this_value, "toMatchObject", "<green>expected<r>")?;
 
     if !received_object.is_object() {
         let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);

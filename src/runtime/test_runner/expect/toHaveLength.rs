@@ -9,9 +9,8 @@ pub(crate) fn to_have_length(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toHaveLength", "<green>expected<r>")?;
-
+    let this = this.post_match_guard(global);
+    let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
@@ -19,7 +18,12 @@ pub(crate) fn to_have_length(
         return Err(global.throw_invalid_arguments(format_args!("toHaveLength() takes 1 argument")));
     }
 
+    this.increment_expect_call_counter();
+
     let expected: JSValue = arguments[0];
+    let value: JSValue = this.get_value(global, this_value, "toHaveLength", "<green>expected<r>")?;
+
+    let not = this.flags.get().not();
 
     if !value.is_object() && !value.is_string() {
         let mut fmt = super::make_formatter(global);

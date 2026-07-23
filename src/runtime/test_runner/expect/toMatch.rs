@@ -9,14 +9,15 @@ pub(crate) fn to_match(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toMatch", "<green>expected<r>")?;
-
+    let this = this.post_match_guard(global);
+    let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toMatch() requires 1 argument")));
     }
+
+    this.increment_expect_call_counter();
 
     let mut formatter = super::make_formatter(global);
 
@@ -29,6 +30,8 @@ pub(crate) fn to_match(
     }
     expected_value.ensure_still_alive();
 
+    let value: JSValue = this.get_value(global, this_value, "toMatch", "<green>expected<r>")?;
+
     if !value.is_string() {
         return Err(global.throw(format_args!(
             "Received value must be a string: {}",
@@ -36,6 +39,7 @@ pub(crate) fn to_match(
         )));
     }
 
+    let not = this.flags.get().not();
     let mut pass: bool = 'brk: {
         if expected_value.is_string() {
             break 'brk value.string_includes(global, expected_value)?;

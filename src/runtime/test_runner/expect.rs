@@ -1756,6 +1756,12 @@ impl Expect {
     /// Returns `(guard, received_value, not)`. The guard derefs to `&Expect`
     /// and runs `post_match` on drop; `not` is `flags.not()` snapshotted once.
     /// Callers that don't need `not` until later destructure as `(this, v, _)`.
+    ///
+    /// This helper calls `get_value` and then `increment_expect_call_counter`
+    /// before returning. Matchers whose Zig reference validates argument count
+    /// or argument type *before* either of those steps must NOT use this helper
+    /// and instead open-code the sequence so `expect.assertions(n)` observes the
+    /// same count on invalid-argument errors.
     #[inline]
     pub fn matcher_prelude<'a>(
         &'a self,
@@ -3034,18 +3040,18 @@ pub mod mock {
     #[derive(Clone, Copy)]
     pub enum MockKind {
         /// `mock.calls`; not-a-mock → `global.throw("Expected value must be a mock function: …")`.
-        /// toHaveBeenCalled / toHaveBeenCalledOnce / toHaveBeenCalledTimes.
+        /// toHaveBeenCalledOnce / toHaveBeenCalledTimes.
         Calls,
         /// `mock.calls`; not-a-mock → `this.throw(signature, "Matcher error: received value must be a mock function …")`.
         /// toHaveBeenCalledWith / toHaveBeenLastCalledWith / toHaveBeenNthCalledWith.
         CallsWithSig,
         /// `mock.results`; not-a-mock → `global.throw("Expected value must be a mock function: …")`.
-        /// toHaveReturned* / toHave*ReturnedWith.
+        /// toHaveReturned / toHaveReturnedTimes / toHaveReturnedWith / toHaveLastReturnedWith.
         Returns,
     }
 
     impl Expect {
-        /// Shared prologue for every `expect(mockFn).toHave*` matcher: arms the
+        /// Shared prologue for most `expect(mockFn).toHave*` matchers: arms the
         /// `post_match` guard, resolves the captured value (handling `.resolves`/
         /// `.rejects`), bumps the assertion counter, fetches the requested
         /// mock-backed array, and emits the kind-appropriate "not a mock" error.
@@ -3053,6 +3059,11 @@ pub mod mock {
         /// Returns the [`PostMatchGuard`] (so `post_match` runs when the caller
         /// drops it), the `mock.calls` / `mock.results` JSArray, and the raw
         /// received value (some matchers print it again on later error paths).
+        ///
+        /// Delegates to [`Self::matcher_prelude`] and inherits its ordering
+        /// constraint: matchers whose Zig reference validates arguments before
+        /// `incrementExpectCallCounter` (`toHaveBeenCalled`,
+        /// `toHaveNthReturnedWith`) must open-code the sequence instead.
         pub fn mock_prologue<'a>(
             &'a self,
             global: &'a JSGlobalObject,

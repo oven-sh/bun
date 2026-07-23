@@ -12,9 +12,8 @@ impl Expect {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (this, left, not) =
-            self.matcher_prelude(global_this, callframe.this(), "toBe", "<green>expected<r>")?;
-
+        let this = self.post_match_guard(global_this);
+        let this_value = callframe.this();
         let arguments_ = callframe.arguments_old::<2>();
         let arguments = arguments_.slice();
 
@@ -22,8 +21,12 @@ impl Expect {
             return Err(global_this.throw_invalid_arguments(format_args!("toBe() takes 1 argument")));
         }
 
+        this.increment_expect_call_counter();
         let right = arguments[0];
         right.ensure_still_alive();
+        let left = this.get_value(global_this, this_value, "toBe", "<green>expected<r>")?;
+
+        let not = this.flags.get().not();
         let mut pass = right.is_same_value(left, global_this)?;
 
         if not {

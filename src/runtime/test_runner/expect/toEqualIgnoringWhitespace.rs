@@ -16,9 +16,8 @@ pub(crate) fn to_equal_ignoring_whitespace(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toEqualIgnoringWhitespace", "<green>expected<r>")?;
-
+    let this = this.post_match_guard(global);
+    let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -27,7 +26,10 @@ pub(crate) fn to_equal_ignoring_whitespace(
         )));
     }
 
+    this.increment_expect_call_counter();
+
     let expected = arguments[0];
+    let value: JSValue = this.get_value(global, this_value, "toEqualIgnoringWhitespace", "<green>expected<r>")?;
 
     if !expected.is_string() {
         return Err(global.throw(format_args!(
@@ -35,6 +37,7 @@ pub(crate) fn to_equal_ignoring_whitespace(
         )));
     }
 
+    let not = this.flags.get().not();
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {

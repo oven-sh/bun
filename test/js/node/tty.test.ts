@@ -253,8 +253,10 @@ describe("isatty", () => {
           const { isattyStdioHandles } = require("bun:internal-for-testing");
           const { isatty } = require("node:tty");
           const sys = isattyStdioHandles();
-          const uv = { stdin: isatty(0), stdout: isatty(1), stderr: isatty(2) };
-          process.stdout.write("RESULT " + JSON.stringify({ sys, uv }));
+          process.stdout.write(
+            "RESULT " +
+              JSON.stringify([sys.stdin, sys.stdout, sys.stderr, isatty(0), isatty(1), isatty(2)]),
+          );
         `,
       ],
       env: bunEnv,
@@ -264,7 +266,7 @@ describe("isatty", () => {
         rows: 24,
         data(_t, chunk: Uint8Array) {
           output += decoder.decode(chunk, { stream: true });
-          if (output.includes("RESULT ") && output.includes("}}")) done.resolve();
+          if (output.includes("RESULT ") && output.includes("]")) done.resolve();
         },
         exit() {
           eof.resolve();
@@ -279,13 +281,16 @@ describe("isatty", () => {
     output += decoder.decode();
 
     const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
-    const match = stripped.match(/RESULT (\{.*\}\})/);
+    // ConPTY can interleave cursor-save/restore and other noise around the
+    // payload; stripANSI removes escape sequences, and `[^\]]*` keeps the
+    // match within the first array literal so trailing noise cannot bleed in.
+    const match = stripped.match(/RESULT (\[[^\]]*\])/);
     if (!match) {
       throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
     }
-    const { sys, uv } = JSON.parse(match[1]);
-    expect(uv).toEqual({ stdin: true, stdout: true, stderr: true });
-    expect(sys).toEqual(uv);
+    const [sysIn, sysOut, sysErr, uvIn, uvOut, uvErr] = JSON.parse(match[1]);
+    expect({ uvIn, uvOut, uvErr }).toEqual({ uvIn: true, uvOut: true, uvErr: true });
+    expect({ sysIn, sysOut, sysErr }).toEqual({ sysIn: uvIn, sysOut: uvOut, sysErr: uvErr });
   });
 });
 

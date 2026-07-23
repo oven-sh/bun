@@ -1831,7 +1831,10 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+    // Listen on all interfaces: a bare port makes verdaccio bind to whatever `localhost`
+    // resolves to for its process, which on some hosts is IPv6-only while the `bun install`
+    // child resolves `http://localhost:<port>/` to IPv4 and gets ECONNREFUSED.
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `0.0.0.0:${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
@@ -1875,7 +1878,7 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    this.process?.kill();
   }
 
   /**

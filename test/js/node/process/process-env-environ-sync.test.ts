@@ -6,10 +6,12 @@
 // POSIX only: Windows already routes JS->OS through SetEnvironmentVariableW
 // and has no libc `environ` contract to test against via bun:ffi.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isPosix, libcPathForDlopen } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, libcPathForDlopen } from "harness";
 
-describe.skipIf(!isPosix)("process.env <-> libc environ on the main thread", () => {
-  const libc = JSON.stringify(isPosix ? libcPathForDlopen() : "");
+const canDlopenLibc = isLinux || isMacOS;
+
+describe.skipIf(!canDlopenLibc)("process.env <-> libc environ on the main thread", () => {
+  const libc = JSON.stringify(canDlopenLibc ? libcPathForDlopen() : "");
   const ffiPrelude = `
     const { dlopen } = require("bun:ffi");
     const libc = dlopen(${libc}, {
@@ -154,10 +156,10 @@ describe.skipIf(!isPosix)("process.env <-> libc environ on the main thread", () 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
     const { deltaMB } = JSON.parse(stdout);
     const threshold = isASAN || isDebug ? 40 : 20;
     expect(deltaMB).toBeLessThan(threshold);
+    expect(exitCode).toBe(0);
   });
 });
 

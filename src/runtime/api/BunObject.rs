@@ -2336,7 +2336,7 @@ pub mod environment_variables {
     /// a JS write/delete removes the key. Always accessed under
     /// `ENVIRON_LOCK`.
     #[cfg(not(windows))]
-    static DOTENV_OVERLAY: bun_core::Mutex<Option<std::collections::HashSet<Box<[u8]>>>> =
+    static DOTENV_OVERLAY: bun_core::Mutex<Option<bun_collections::StringSet>> =
         bun_core::Mutex::new(None);
 
     /// NUL-terminate `s` into `buf`, rejecting embedded NULs (libc would
@@ -2400,19 +2400,20 @@ pub mod environment_variables {
     /// observes it) and the DotEnv map (so Bun-internal consumers like
     /// `Bun.spawn` without `env:` and `Bun.which` observe it). The DotEnv-map
     /// write is skipped when `setenv` rejects the name (e.g. contains `=`), so
-    /// the two stores cannot diverge.
+    /// the two stores cannot diverge. Returns whether `environ` was updated so
+    /// callers can keep their own secondary store (SHARE_ENV) consistent.
     #[cfg(not(windows))]
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__Process__setOSEnv(
         global_object: &JSGlobalObject,
         name: &BunString,
         value: &BunString,
-    ) {
+    ) -> bool {
         let name_slice = name.to_utf8();
         let value_slice = value.to_utf8();
         let name_bytes = name_slice.slice();
         if name_bytes.is_empty() {
-            return;
+            return false;
         }
         let mut name_buf = Vec::new();
         let mut value_buf = Vec::new();
@@ -2420,7 +2421,7 @@ pub mod environment_variables {
             make_cstr(&mut name_buf, name_bytes),
             make_cstr(&mut value_buf, value_slice.slice()),
         ) else {
-            return;
+            return false;
         };
         let vm = global_object.bun_vm().as_mut();
         // Serialises env_map.put against a spawning worker's
@@ -2432,16 +2433,17 @@ pub mod environment_variables {
             let rc = unsafe { libc::setenv(name_c, value_c, 1) };
             if rc == 0 {
                 if let Some(overlay) = DOTENV_OVERLAY.lock().as_mut() {
-                    overlay.remove(name_bytes);
+                    overlay.swap_remove(name_bytes);
                 }
             }
             rc
         };
         if rc != 0 {
-            return;
+            return false;
         }
         let env_map = &mut *vm.transpiler.env_mut().map;
         bun_core::handle_oom(env_map.put(name_bytes, value_slice.slice()));
+        true
     }
 
     #[cfg(not(windows))]
@@ -2463,7 +2465,7 @@ pub mod environment_variables {
             // SAFETY: name_c is NUL-terminated for the duration of the call.
             unsafe { libc::unsetenv(name_c) };
             if let Some(overlay) = DOTENV_OVERLAY.lock().as_mut() {
-                overlay.remove(name_bytes);
+                overlay.swap_remove(name_bytes);
             }
         }
         let env_map = &mut *vm.transpiler.env_mut().map;
@@ -2481,17 +2483,33 @@ pub mod environment_variables {
     ) {
         let keys: Vec<Box<[u8]>> = {
             let _guard = ENVIRON_LOCK.lock();
+            let overlay = DOTENV_OVERLAY.lock();
+            let overlay_ref = overlay.as_ref().filter(|s| !s.is_empty());
+            // A native setenv of an overlay key (bypassing the JS write path,
+            // which would have removed it) must not yield the key twice.
+            let mut seen = bun_collections::StringSet::new();
             let mut keys: Vec<Box<[u8]>> = bun_sys::environ()
                 .iter()
                 .filter_map(|&entry| {
                     // SAFETY: environ entries are NUL-terminated C strings.
                     let line = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
                     let eq = bun_core::strings::index_of_char(line, b'=')? as usize;
-                    (eq > 0).then(|| Box::<[u8]>::from(&line[..eq]))
+                    if eq == 0 {
+                        return None;
+                    }
+                    let key = &line[..eq];
+                    if overlay_ref.is_some_and(|o| o.contains(key)) {
+                        bun_core::handle_oom(seen.insert(key));
+                    }
+                    Some(Box::<[u8]>::from(key))
                 })
                 .collect();
-            if let Some(overlay) = DOTENV_OVERLAY.lock().as_ref() {
-                keys.extend(overlay.iter().cloned());
+            if let Some(o) = overlay_ref {
+                for key in o.keys() {
+                    if !seen.contains(key) {
+                        keys.push(key.clone());
+                    }
+                }
             }
             keys
         };
@@ -2507,25 +2525,25 @@ pub mod environment_variables {
     #[cfg(not(windows))]
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__Process__initOSEnvOverlay(global_object: &JSGlobalObject) {
-        use std::collections::HashSet;
         let vm = global_object.bun_vm().as_mut();
         let env_map = &mut *vm.transpiler.env_mut().map;
         let _guard = ENVIRON_LOCK.lock();
-        let environ_keys: HashSet<&[u8]> = bun_sys::environ()
-            .iter()
-            .filter_map(|&entry| {
-                // SAFETY: environ entries are NUL-terminated C strings.
-                let line = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
-                let eq = bun_core::strings::index_of_char(line, b'=')? as usize;
-                (eq > 0).then_some(&line[..eq])
-            })
-            .collect();
-        let mut overlay: HashSet<Box<[u8]>> = HashSet::new();
+        let mut environ_keys = bun_collections::StringSet::new();
+        for &entry in bun_sys::environ() {
+            // SAFETY: environ entries are NUL-terminated C strings.
+            let line = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
+            if let Some(eq) = bun_core::strings::index_of_char(line, b'=')
+                && eq > 0
+            {
+                bun_core::handle_oom(environ_keys.insert(&line[..eq as usize]));
+            }
+        }
+        let mut overlay = bun_collections::StringSet::new();
         let mut it = env_map.map.iterator();
         while let Some(pair) = it.next() {
             let key: &[u8] = pair.key_ptr;
             if !environ_keys.contains(key) {
-                overlay.insert(Box::from(key));
+                bun_core::handle_oom(overlay.insert(key));
             }
         }
         *DOTENV_OVERLAY.lock() = Some(overlay);

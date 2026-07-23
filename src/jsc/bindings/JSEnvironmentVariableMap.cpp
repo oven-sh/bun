@@ -35,7 +35,7 @@ extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* 
 
 #if !OS(WINDOWS)
 extern "C" bool Bun__Process__getOSEnv(JSGlobalObject* globalObject, const BunString* name, BunString* out);
-extern "C" void Bun__Process__setOSEnv(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" bool Bun__Process__setOSEnv(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" void Bun__Process__unsetOSEnv(JSGlobalObject* globalObject, const BunString* name);
 extern "C" void Bun__Process__enumerateOSEnv(void* ctx, void (*cb)(void*, const unsigned char*, size_t));
 extern "C" void Bun__Process__initOSEnvOverlay(JSGlobalObject* globalObject);
@@ -357,25 +357,28 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 // every mutation of a main-rooted shared store has to re-apply that write-
 // through. Gated on the *store*, not the writing thread: node roots a
 // main-founded tree at its RealEnvStore, so a worker writing through that tree
-// reaches the OS env too. `value == nullptr` deletes.
-static ALWAYS_INLINE void syncOSEnv(JSGlobalObject* globalObject, SharedEnvStore* store, const String& key, const String* value)
+// reaches the OS env too. `value == nullptr` deletes. Returns false when the
+// native write was attempted and rejected (embedded NUL / `=` in name) so the
+// caller can skip updating the SharedEnvStore and avoid a divergence.
+static ALWAYS_INLINE bool syncOSEnv(JSGlobalObject* globalObject, SharedEnvStore* store, const String& key, const String* value)
 {
     if (!store || !store->isMainRooted())
-        return;
+        return true;
 #if OS(WINDOWS)
     UNUSED_PARAM(globalObject);
     if (value)
         Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
     else
         Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
+    return true;
 #else
     BunString name = Bun::toString(key);
     if (value) {
         BunString val = Bun::toString(*value);
-        Bun__Process__setOSEnv(globalObject, &name, &val);
-    } else {
-        Bun__Process__unsetOSEnv(globalObject, &name);
+        return Bun__Process__setOSEnv(globalObject, &name, &val);
     }
+    Bun__Process__unsetOSEnv(globalObject, &name);
+    return true;
 #endif
 }
 
@@ -580,8 +583,8 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncOSEnv(globalObject, store, keyStr, &stringValue);
-    store->set(keyStr, stringValue);
+    if (syncOSEnv(globalObject, store, keyStr, &stringValue))
+        store->set(keyStr, stringValue);
     return true;
 }
 
@@ -653,8 +656,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncOSEnv(globalObject, store, keyStr, &stringValue);
-    store->set(keyStr, stringValue);
+    if (syncOSEnv(globalObject, store, keyStr, &stringValue))
+        store->set(keyStr, stringValue);
     return true;
 }
 

@@ -550,13 +550,14 @@ async function runOneFile(
   addRunCounts(counts, fileCounts);
 }
 
-function rebuildError(serialized: any): Error {
-  const error = new Error(serialized.message);
-  error.stack = serialized.stack;
-  if (serialized.name !== undefined && serialized.name !== "Error") error.name = serialized.name;
-  if (serialized.code !== undefined) (error as any).code = serialized.code;
-  if (serialized.failureType !== undefined) (error as any).failureType = serialized.failureType;
-  if (serialized.cause !== undefined) (error as any).cause = rebuildError(serialized.cause);
+function rebuildError(serialized: any, depth = 0): Error {
+  const { message, stack, name, code, failureType, cause } = serialized;
+  const error = new Error(message);
+  error.stack = stack;
+  if (name !== undefined && name !== "Error") error.name = name;
+  if (code !== undefined) (error as any).code = code;
+  if (failureType !== undefined) (error as any).failureType = failureType;
+  if (cause !== undefined && depth < 8) (error as any).cause = rebuildError(cause, depth + 1);
   return error;
 }
 
@@ -618,7 +619,7 @@ function nestingOf(node: TestNode) {
 }
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
-function serializeRunError(error: unknown) {
+function serializeRunError(error: unknown, depth = 0) {
   if (Error.isError(error)) {
     const cause = (error as { cause?: unknown }).cause;
     return {
@@ -628,7 +629,7 @@ function serializeRunError(error: unknown) {
       code: (error as { code?: string }).code,
       failureType: (error as { failureType?: string }).failureType,
       name: (error as Error).name,
-      cause: cause !== undefined ? serializeRunError(cause) : undefined,
+      cause: cause !== undefined && depth < 8 ? serializeRunError(cause, depth + 1) : undefined,
     };
   }
   return { __proto__: null, message: String(error), stack: undefined, code: undefined, name: "Error" };
@@ -1505,10 +1506,11 @@ class TestNode {
     // (under `bun test` with multiple files, Bun.main is the file currently
     // being collected); nested tests inherit their parent's file.
     this.filePath = parent !== undefined && parent.parent !== undefined ? parent.filePath : Bun.main;
-    this.skipped = !!options.skip;
-    this.todoFlag = !!options.todo || (parent?.todoFlag ?? false);
-    if (typeof options.skip === "string") this.message = options.skip;
-    else if (typeof options.todo === "string") this.message = options.todo;
+    const { skip, todo } = options;
+    this.skipped = !!skip;
+    this.todoFlag = !!todo || (parent?.todoFlag ?? false);
+    if (typeof skip === "string") this.message = skip;
+    else if (typeof todo === "string") this.message = todo;
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
   }
 
@@ -2363,7 +2365,7 @@ async function drainSubtestChain(node: TestNode) {
   } while (chain !== node.subtestChain);
 }
 
-function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown): Promise<undefined> {
+function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown, ownTodo: boolean): Promise<undefined> {
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
@@ -2414,7 +2416,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown)
       });
     }
     // A todo suite's failures do not fail the owning test (Node).
-    if (suite.failedSubtests > 0 && !suite.todoFlag) {
+    if (suite.failedSubtests > 0 && !ownTodo) {
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
@@ -2602,7 +2604,8 @@ function addSuite(
       reportDirectiveOnlyNode(suite, "skip");
       return Promise.resolve(undefined);
     }
-    if (mode === "todo") suite.todoFlag = true;
+    const ownTodo = mode === "todo" || !!options.todo;
+    if (ownTodo) suite.todoFlag = true;
     // The suite's children must run after the parent's previously scheduled
     // subtests AND after the describe callback's own returned promise settles
     // (Node's Suite.run awaits buildPromise before iterating subtests). The
@@ -2628,7 +2631,7 @@ function addSuite(
       gate.resolve();
       build = undefined;
     }
-    return scheduleSuiteSubtest(runningNode, suite, build);
+    return scheduleSuiteSubtest(runningNode, suite, build, ownTodo);
   }
 
   const parent = currentCollectionParent();

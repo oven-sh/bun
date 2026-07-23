@@ -504,41 +504,50 @@ const SocketHandlers: SocketHandler = {
     self._secureEstablished = true;
     self[kVerifyError] = verifyError ?? null;
 
-    self.emit("secure", self);
-    self.alpnProtocol = socket.alpnProtocol;
-    const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
+    // Same routing as ServerHandlers below: Node's 'secure' emit (and
+    // onConnectSecure's 'secureConnect' downstream of it) has no try/catch, so
+    // a throwing listener becomes uncaughtException; reportError mirrors that
+    // without changing Bun.connect's handshake-throw-to-error-handler contract.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+    try {
+      self.emit("secure", self);
+      self.alpnProtocol = socket.alpnProtocol;
+      const { checkServerIdentity } = self[bunTLSConnectOptions];
+      if (!verifyError && typeof checkServerIdentity === "function") {
+        const hostname = self.servername || self._host || "localhost";
+        const cert = self.getPeerCertificate(true);
+        if (cert) {
+          verifyError = checkServerIdentity(hostname, cert);
+        }
       }
-    }
-    let rejectUnauthorized;
-    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
-      if (verifyError) {
-        self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
-        if (rejectUnauthorized ?? self._rejectUnauthorized) {
-          self.destroy(verifyError);
-          return;
+      let rejectUnauthorized;
+      if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
+        if (verifyError) {
+          self.authorized = false;
+          self.authorizationError = verifyError.code || verifyError.message;
+          if (rejectUnauthorized ?? self._rejectUnauthorized) {
+            self.destroy(verifyError);
+            return;
+          }
+        } else {
+          self.authorized = true;
         }
       } else {
         self.authorized = true;
       }
-    } else {
-      self.authorized = true;
-    }
-    self.emit("secureConnect", verifyError);
-    self.removeListener("end", onConnectEnd);
-    // For TLS 1.2 the NewSessionTicket is part of the handshake, so the
-    // new-session callback fired before the handshake completed and the
-    // session was parked; deliver it now that 'secureConnect' has been
-    // emitted, the way Node flushes its kPendingSession.
-    const pendingSession = self[kpendingSession];
-    if (pendingSession) {
-      self[kpendingSession] = null;
-      self.emit("session", pendingSession);
+      self.emit("secureConnect", verifyError);
+      self.removeListener("end", onConnectEnd);
+      // For TLS 1.2 the NewSessionTicket is part of the handshake, so the
+      // new-session callback fired before the handshake completed and the
+      // session was parked; deliver it now that 'secureConnect' has been
+      // emitted, the way Node flushes its kPendingSession.
+      const pendingSession = self[kpendingSession];
+      if (pendingSession) {
+        self[kpendingSession] = null;
+        self.emit("session", pendingSession);
+      }
+    } catch (err) {
+      reportError(err);
     }
   },
   timeout(socket) {
@@ -1394,41 +1403,50 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self._secureEstablished = true;
     self[kVerifyError] = verifyError ?? null;
 
-    self.emit("secure", self);
-    self.alpnProtocol = socket.alpnProtocol;
-    const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
+    // Same routing as the other handshake tables: Node's 'secure' emit (and
+    // onConnectSecure's 'secureConnect' downstream of it) has no try/catch, so
+    // a throwing listener becomes uncaughtException; reportError mirrors that
+    // without changing Bun.connect's handshake-throw-to-error-handler contract.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+    try {
+      self.emit("secure", self);
+      self.alpnProtocol = socket.alpnProtocol;
+      const { checkServerIdentity } = self[bunTLSConnectOptions];
+      if (!verifyError && typeof checkServerIdentity === "function") {
+        const hostname = self.servername || self._host || "localhost";
+        const cert = self.getPeerCertificate(true);
+        if (cert) {
+          verifyError = checkServerIdentity(hostname, cert);
+        }
       }
-    }
-    let rejectUnauthorized;
-    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
-      if (verifyError) {
-        self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
-        if (rejectUnauthorized ?? self._rejectUnauthorized) {
-          self.destroy(verifyError);
-          return;
+      let rejectUnauthorized;
+      if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
+        if (verifyError) {
+          self.authorized = false;
+          self.authorizationError = verifyError.code || verifyError.message;
+          if (rejectUnauthorized ?? self._rejectUnauthorized) {
+            self.destroy(verifyError);
+            return;
+          }
+        } else {
+          self.authorized = true;
         }
       } else {
         self.authorized = true;
       }
-    } else {
-      self.authorized = true;
-    }
-    self.emit("secureConnect", verifyError);
-    self.removeListener("end", onConnectEnd);
-    // For TLS 1.2 the NewSessionTicket is part of the handshake, so the
-    // new-session callback fired before the handshake completed and the
-    // session was parked; deliver it now that 'secureConnect' has been
-    // emitted, the way Node flushes its kPendingSession.
-    const pendingSession = self[kpendingSession];
-    if (pendingSession) {
-      self[kpendingSession] = null;
-      self.emit("session", pendingSession);
+      self.emit("secureConnect", verifyError);
+      self.removeListener("end", onConnectEnd);
+      // For TLS 1.2 the NewSessionTicket is part of the handshake, so the
+      // new-session callback fired before the handshake completed and the
+      // session was parked; deliver it now that 'secureConnect' has been
+      // emitted, the way Node flushes its kPendingSession.
+      const pendingSession = self[kpendingSession];
+      if (pendingSession) {
+        self[kpendingSession] = null;
+        self.emit("session", pendingSession);
+      }
+    } catch (err) {
+      reportError(err);
     }
   },
   error(socket, error) {

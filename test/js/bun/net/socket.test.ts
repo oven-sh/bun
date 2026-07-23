@@ -3236,3 +3236,46 @@ it.skipIf(!isLinux)(
     expect(out).toEqual({ localPort: null, remotePort: null });
   },
 );
+
+describe("TLS handshake callback throw", () => {
+  // A throw from a Bun-native handshake callback must reach the socket's own
+  // error handler (the documented contract), not crash the process — node:tls
+  // gets its uncaughtException semantics in net.ts, not in the shared native
+  // dispatch.
+  it("is delivered to the socket's own error handler", async () => {
+    const { tls: certs } = require("harness");
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: certs,
+      socket: {
+        data() {},
+        error() {},
+      },
+    });
+    try {
+      const boom = new Error("boom-native-handshake");
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake() {
+            throw boom;
+          },
+          error(_socket, err) {
+            resolve(err as Error);
+          },
+          data() {},
+          close() {
+            reject(new Error("socket closed before the error handler ran"));
+          },
+        },
+      });
+      expect(await promise).toBe(boom);
+    } finally {
+      server.stop(true);
+    }
+  });
+});

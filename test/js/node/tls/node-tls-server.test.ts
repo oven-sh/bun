@@ -2125,3 +2125,57 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
     }
   });
 });
+
+describe("throwing 'secureConnection' listener", () => {
+  // Node has no try/catch around the handshake-done emits, so a throwing
+  // listener becomes uncaughtException — never 'tlsClientError' or a socket
+  // 'error'. Verified against node v26.3.0.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+  it("becomes uncaughtException, not tlsClientError or a socket 'error'", async () => {
+    const { bunEnv, bunExe, tls: certs } = require("harness");
+    const script = `
+      const tlsMod = require("node:tls");
+      const state = { uncaught: null, tlsClientError: null, socketError: null };
+      function finish() {
+        console.log(JSON.stringify(state));
+        process.exit(0);
+      }
+      process.on("uncaughtException", function onUncaught(err) {
+        state.uncaught = err.message;
+        setImmediate(finish);
+      });
+      const server = tlsMod.createServer(${JSON.stringify(certs)}, function onConn(sock) {
+        sock.on("error", function onSockErr(err) {
+          state.socketError = err.message;
+          setImmediate(finish);
+        });
+        throw new Error("boom-secureConnection");
+      });
+      server.on("tlsClientError", function onTlsClientError(err) {
+        state.tlsClientError = err.message;
+        setImmediate(finish);
+      });
+      server.listen(0, "127.0.0.1", function onListen() {
+        const client = tlsMod.connect({
+          port: server.address().port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+        });
+        client.on("error", function onClientError() {});
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual({
+      uncaught: "boom-secureConnection",
+      tlsClientError: null,
+      socketError: null,
+    });
+    expect(exitCode).toBe(0);
+  });
+});

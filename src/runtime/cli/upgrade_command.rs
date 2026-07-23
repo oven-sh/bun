@@ -1045,7 +1045,7 @@ impl UpgradeCommand {
                 if !result.status.is_ok() {
                     let _ = save_dir_.delete_tree(&version_name);
                     let exit_code: u32 = match &result.status {
-                        Status::Exited(e) => u32::from(e.code),
+                        Status::Exited(e) => e.code,
                         Status::Signaled(sig) => 128 + u32::from(*sig),
                         _ => 1,
                     };

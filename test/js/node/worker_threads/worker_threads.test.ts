@@ -473,6 +473,27 @@ describe("execArgv option", async () => {
     }
   });
 
+  it("splits glued short flags in NODE_OPTIONS like the CLI parser", async () => {
+    using dir = tempDir("worker-nodeopts-glued", { "preload-n.js": "globalThis.__nopts = 'N';" });
+    const p = join(String(dir), "preload-n.js");
+    // node accepts an attached short-flag value in NODE_OPTIONS.
+    for (const form of [`-r${p}`, `-r=${p}`]) {
+      const w = new Worker("1", { eval: true, env: { ...process.env, NODE_OPTIONS: form } });
+      await once(w, "exit");
+    }
+    // A glued env-disallowed short reports the flag, not the whole token.
+    let err: any;
+    try {
+      new Worker("1", { eval: true, env: { NODE_OPTIONS: "-e1+1" } });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe(
+      "Initiated Worker with invalid NODE_OPTIONS env variable: -e is not allowed in NODE_OPTIONS",
+    );
+  });
+
   it("chains boolean short flags like bun's CLI parser", async () => {
     // bun_clap parses -br<path> as -b then -r<path>, so the round-tripped
     // token must chain the same way and still honor the -r preload.

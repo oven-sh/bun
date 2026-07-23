@@ -11,7 +11,9 @@ it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom k
   expect(key in process.env).toBe(false);
   // Partial data descriptors are rejected (ERR_INVALID_OBJECT_DEFINE_PROPERTY);
   // the windowsEnv proxy must not record the key before the define runs.
-  expect(() => Object.defineProperty(process.env, key, { value: "42" })).toThrow();
+  expect(() => Object.defineProperty(process.env, key, { value: "42" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+  );
   expect(Reflect.ownKeys(process.env)).not.toContain(key);
   expect(Bun.inspect(process.env)).not.toContain(key);
   try {

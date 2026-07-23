@@ -585,6 +585,50 @@ pub unsafe extern "C" fn Bun__Worker__validateWorkerNodeOptions(
         if !tok.starts_with(b"-") || tok == b"-" || tok == b"--" {
             continue;
         }
+        if tok[1] != b'-' {
+            // Short-flag token: same chaining as `scan_exec_argv` (mirroring
+            // `bun_clap`), with the env policy applied per chained flag. A
+            // glued remainder — `-r./s.js`, `-r=./s.js`, or a quoted value
+            // collapsed into the token — is the value of a value-taking
+            // short.
+            let mut j = 1usize;
+            while j < tok.len() {
+                let short = [b'-', tok[j]];
+                let spec = match map.get(&short[..]) {
+                    Some(s) if s.env => s,
+                    Some(_) => return fail(not_allowed(&short, false)),
+                    None => return fail(not_allowed(tok, false)),
+                };
+                let next = j + 1;
+                let next_is_eql = next < tok.len() && tok[next] == b'=';
+                if next_is_eql && spec.value == ValueMode::None {
+                    return fail(not_allowed(tok, false));
+                }
+                match spec.value {
+                    ValueMode::None => j = next,
+                    // A glued remainder is dropped for an optional-value
+                    // short, as in `bun_clap`.
+                    ValueMode::Optional => break,
+                    ValueMode::Required => {
+                        if next >= tok.len() {
+                            let next_is_value = tokens.get(i).is_some_and(|t| {
+                                let t = t.as_bytes();
+                                let t = t.strip_suffix(b"\0").unwrap_or(t);
+                                !t.starts_with(b"-")
+                            });
+                            if !next_is_value {
+                                let mut msg = short.to_vec();
+                                msg.extend_from_slice(b" requires an argument");
+                                return fail(msg);
+                            }
+                            i += 1;
+                        }
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
         // A quoted value can be glued to its flag in one token
         // (`--flag "a b"`); split it off so the name lookup still works.
         let (tok, glued_value) = match tok.iter().position(u8::is_ascii_whitespace) {

@@ -183,6 +183,11 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // hot_reloader's watcher error handler logs "Watcher crashed" and
       // panics ONLY under debug_assertions - release continues.
       if (/panic: Watcher crash\b/.test(detail)) k = "debug-only";
+      // A tripped debug_assert!/ASSERT is NOT nothing: it is the debug build
+      // stopping exactly where the release binary (asserts compiled out)
+      // proceeds unprotected. Keep these as findings under their own kind
+      // rather than discarding them as debug-only.
+      if (/panic: assertion failed:|ASSERTION FAILED:/.test(detail) && !/is_absolute_windows/.test(detail)) k = "debug-assert";
       // --hot/--watch die-with-message: the reloader cannot function without
       // its watcher, so init/start failure routes to Output::panic by design
       // (hot_reloader.rs Failed to enable/start File Watcher). Not a bug.

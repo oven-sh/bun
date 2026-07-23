@@ -1456,6 +1456,143 @@ describe("bun test", () => {
     expect(output).toContain("1 pass");
     expect(output).toContain("app message");
   });
+
+  describe("process.exit() inside a test", () => {
+    test.concurrent("exits nonzero with a summary when a later file is never reached", async () => {
+      using dir = tempDir("bun-test-process-exit", {
+        "a-exits.test.ts": `
+          import { test } from "bun:test";
+          test("calls process.exit(0)", () => { process.exit(0); });
+        `,
+        "b-never-runs.test.ts": `
+          import { test, expect } from "bun:test";
+          test("would fail", () => { expect(1).toBe(2); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a-exits.test.ts", "./b-never-runs.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("process.exit(0) was called during bun test");
+      expect(stderr).toContain("1 test file was never reached");
+      expect(stderr).toMatch(/Ran \d+ tests? across \d+ files?/);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("exits nonzero with a summary for a single file (no remaining files)", async () => {
+      using dir = tempDir("bun-test-process-exit-single", {
+        "only.test.ts": `
+          import { test } from "bun:test";
+          test("ok", () => {});
+          test("calls process.exit(0)", () => { process.exit(0); });
+          test("never runs", () => { throw new Error("unreachable"); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./only.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("process.exit(0) was called during bun test");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).not.toContain("never reached");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("exits nonzero when called from a describe() body with a later file queued", async () => {
+      using dir = tempDir("bun-test-process-exit-describe", {
+        "a.test.ts": `
+          import { describe } from "bun:test";
+          describe("x", () => { process.exit(0); });
+        `,
+        "b.test.ts": `
+          import { test, expect } from "bun:test";
+          test("would fail", () => { expect(1).toBe(2); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("process.exit(0) was called during bun test");
+      expect(stderr).toContain("1 test file was never reached");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("reports the requested code in the message", async () => {
+      using dir = tempDir("bun-test-process-exit-code", {
+        "only.test.ts": `
+          import { test } from "bun:test";
+          test("calls process.exit(42)", () => { process.exit(42); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./only.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("process.exit(42) was called during bun test");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("does not mask an earlier failure when the last file exits at top level", async () => {
+      using dir = tempDir("bun-test-process-exit-mask", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          test("fails", () => { expect(1).toBe(2); });
+        `,
+        "b.test.ts": `process.exit(0);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("process.exit(0) was called during bun test");
+      expect(stderr).toContain("1 fail");
+      expect(exitCode).toBe(1);
+    });
+
+    // Node's test/parallel common/index.js re-spawns the current file with
+    // `// Flags:` applied and then `process.exit(child.status)` from the
+    // parent's module top level. That is the only file in the run and no
+    // test body has started, so the requested code must pass through.
+    test.concurrent.each([0, 1] as const)(
+      "passes through top-level process.exit(%p) when it is the only file",
+      async code => {
+        using dir = tempDir("bun-test-process-exit-wrapper", {
+          "wrapper.test.ts": `process.exit(${code});`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "./wrapper.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("process.exit");
+        expect(exitCode).toBe(code);
+      },
+    );
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {

@@ -58,6 +58,11 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else {
+        // `bun test` runs every file in this process, so an in-test
+        // `process.exit()` would otherwise drop the summary and report the
+        // run green regardless of later files. Flush the summary and force a
+        // nonzero exit before the normal shutdown path.
+        crate::cli::test_command::on_process_exit_during_tests(vm, code);
         vm.on_exit();
         vm.global_exit();
     }

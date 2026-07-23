@@ -144,6 +144,19 @@ pub struct TestRunner<'a> {
     pub filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
     pub unhandled_errors_between_tests: u32,
+    /// Total number of test files queued for the serial run, set by
+    /// `test_command` after discovery so [`on_process_exit_during_tests`]
+    /// can report how many files were never reached. `0` in a `--parallel`
+    /// worker (the coordinator owns the file list).
+    ///
+    /// [`on_process_exit_during_tests`]: crate::cli::test_command::on_process_exit_during_tests
+    pub total_test_files: u32,
+    /// Set for the duration of `load_entry_point_for_test_runner` in
+    /// `TestCommand::run`. Distinguishes a top-level-module `process.exit()`
+    /// (the Node re-spawn pattern) from one inside a `describe()` callback,
+    /// which runs later via `Collection::step` but is still
+    /// `Phase::Collection`.
+    pub module_load_in_progress: bool,
     pub summary: Summary,
 
     pub bun_test_root: bun_test::BunTestRoot,

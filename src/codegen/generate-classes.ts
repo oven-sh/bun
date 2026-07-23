@@ -125,6 +125,7 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
   )}Wrapper, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -145,9 +146,9 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
           ? std::optional<JSC::JSType>(decoded.asCell()->type())
           : std::optional<JSC::JSType>(std::nullopt);
     }
-    return { result };
+    OPERATION_RETURN(throwScope, result);
 #endif
-    return {${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs})};
+    OPERATION_RETURN(throwScope, ${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs}));
 }
 `.trim();
 }

@@ -812,7 +812,11 @@ fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
         };
         jobs.push(PersistJob {
             key,
-            format: if entry.is_cjs { Format::Cjs } else { Format::Esm },
+            format: if entry.is_cjs {
+                Format::Cjs
+            } else {
+                Format::Esm
+            },
             code,
             filename: entry.filename.clone(),
             is_cjs: entry.is_cjs,
@@ -836,13 +840,8 @@ fn write_persist_job_locked(
 
     let cache_size = blob.len() as u32;
     let cache_hash = hash32(blob);
-    let headers: [u32; HEADER_COUNT] = [
-        MAGIC,
-        job.code_size,
-        cache_size,
-        job.code_hash,
-        cache_hash,
-    ];
+    let headers: [u32; HEADER_COUNT] =
+        [MAGIC, job.code_size, cache_size, job.code_hash, cache_hash];
 
     let basename = cache_basename(job.key);
     let mut tmpname_buf = PathBuffer::uninit();

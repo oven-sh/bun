@@ -155,6 +155,8 @@ async function worker(w: number) {
       for (let a = 0; a < 4 && !verified; a++) {
         const r2 = await runProgram(vprogram, vdir);
         const j2 = judge(r2);
+        // A crash replaying as a crash of the SAME address class verifies
+        // it - exact token/address equality is ASLR noise.
         verified = j2.kind === j.kind && (j.kind !== "crash" || j2.sig === j.sig);
         if (!verified) {
           console.log(

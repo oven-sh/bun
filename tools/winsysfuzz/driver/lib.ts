@@ -91,6 +91,7 @@ const CRASH_SIGNATURES: { re: RegExp; kind: string }[] = [
 ];
 export interface CrashSig {
   kind: string;
+  traceToken?: string; // bun.report token (symbolization payload, per-run; not a fingerprint)
   signature: string; // stable dedupe key: the matched line, addresses folded
   detail: string; // the raw matched text
   raw?: string; // identical to detail: the UNFOLDED text (index values, sizes)
@@ -123,6 +124,7 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // the real handler's anchor accompanies them (see hasCrashAnchor).
       if (!hasCrashAnchor && /panic|assert|unreachable|crash-banner/.test(kind)) continue;
       const detail = m[1].trim();
+      const traceToken = traceUrl ? traceUrl[1].slice(0, 120) : undefined;
       // Fold volatile addresses/counts so identical crashes dedupe:
       // "Segmentation fault at address 0x24" keeps the low offset (a
       // struct-field null deref reads identically), thread ids and
@@ -136,13 +138,14 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // every wild-pointer segfault one key; the trace URL keeps distinct
       // crashes distinct. Use it as the signature when the report has one.
       const traceUrl = /https?:\/\/bun\.report\/[^\s\/]+\/([A-Za-z0-9_+\-\/=]+)/.exec(text);
-      // The token's LEADING characters encode the version/build and the
-      // stable top frames; the tail encodes ASLR-randomized addresses that
-      // differ every process. Fingerprint on the stable prefix so the same
-      // crash keys identically across runs while distinct stacks still
-      // differ (their prefixes diverge within the first ~18 chars).
-      const signature = traceUrl ? `${kind}@trace:${traceUrl[1].slice(0, 18)}` : detail
-        .replace(/0x[0-9a-fA-F]{9,}/g, m => (/^0x[fF]{9,}$/.test(m) ? "0xFFFF(-1)" : "0xPTR"))
+      // The bun.report token is a symbolization payload, NOT a fingerprint:
+      // frame data is interleaved with per-run ASLR bits throughout, so no
+      // substring is stable. Fingerprint on the fault ADDRESS CLASS instead
+      // - null page (0x0..0xFFF, a null-struct-field deref), the -1 sentinel,
+      // or heap-range - and carry the token along purely as data.
+      let signature = detail
+        .replace(/0x[0-9a-fA-F]{1,3}\b/g, "0xNULLPAGE")
+        .replace(/0x[0-9a-fA-F]{9,}/g, m => (/^0x[fF]{9,}$/.test(m) ? "0xFFFF(-1)" : "0xHEAP"))
         .replace(/\bthread \d+\b/g, "thread N")
         // fold Win32/errno codes: the same die-with-message site with a
         // different injected error code is the same finding

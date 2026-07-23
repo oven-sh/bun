@@ -39,6 +39,9 @@ use crate::ZStr;
 // ──────────────────────────────────────────────────────────────────────────────
 
 new!(pub AGENT: string, "AGENT", {});
+// Windows: root of the "All Users" profile — used to locate
+// `%ALLUSERSPROFILE%\bunfig.toml` (the Windows system-wide bunfig path).
+platform_specific_new!(pub ALLUSERSPROFILE: string, posix = None, windows = "ALLUSERSPROFILE", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
@@ -105,6 +108,10 @@ new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {})
 new!(pub BUN_POSTGRES_SOCKET_MONITOR_READER: string, "BUN_POSTGRES_SOCKET_MONITOR_READER", {});
 new!(pub BUN_RUNTIME_TRANSPILER_CACHE_PATH: string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", {});
 new!(pub BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR: boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", { default: false });
+// Absolute path to a system-wide bunfig.toml. Loaded before home/project
+// configs. Unset falls back to /etc/bunfig.toml or %ALLUSERSPROFILE%\bunfig.toml
+// for package-manager commands only. See feature #28726.
+new!(pub BUN_SYSTEM_CONFIG: string, "BUN_SYSTEM_CONFIG", {});
 new!(pub BUN_TCC_OPTIONS: string, "BUN_TCC_OPTIONS", {});
 // Standard C compiler environment variable for include paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.

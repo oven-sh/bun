@@ -633,8 +633,12 @@ impl FileSystemRouter {
         // after it returns nothing borrows `url_path`/`params` and the backing buffer can
         // be moved into the result.
         let pathname_len = route.pathname.len();
-        let mut result =
-            MatchedRoute::init(&route, this.origin, this.asset_prefix, this.base_dir.unwrap());
+        let mut result = MatchedRoute::init(
+            &route,
+            this.origin,
+            this.asset_prefix,
+            this.base_dir.unwrap(),
+        );
         result.pathname = match url_path.into_owned_buffer() {
             Some(decoded) => decoded.into_boxed_slice(),
             None => path.into_vec().into_boxed_slice(),

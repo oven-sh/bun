@@ -910,7 +910,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const pauseOnConnect = server && (server.pauseOnConnect ?? server[bunSocketServerOptions]?.pauseOnConnect);
     if (pauseOnConnect) {
-      self.pause();
+      // Duplex only: the native handle keeps reading so close_notify/FIN still
+      // arrive (Node buffers decrypted bytes on a paused TLSSocket and emits
+      // 'end'); ServerHandlers.data applies native backpressure at HWM.
+      Duplex.prototype.pause.$call(self);
     }
     if (server) {
       const connectionListener = server[bunSocketServerOptions]?.connectionListener;

@@ -6478,6 +6478,7 @@ function connectionListenerHTTP1(server, socket, options) {
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
 
+  const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
   const kOnBody = HTTPParser.kOnBody | 0;
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
@@ -6486,6 +6487,16 @@ function connectionListenerHTTP1(server, socket, options) {
   parser.initialize(HTTPParser.REQUEST, {});
 
   let req = null;
+  // The parser flushes each full 32-slot header block through kOnHeaders and
+  // only hands the residual block to kOnHeadersComplete, so requests with more
+  // than 31 headers arrive in pieces that must be concatenated.
+  let pendingHeaders = [];
+  let pendingUrl = "";
+
+  parser[kOnHeaders] = function onHttp1Headers(headers, url) {
+    pendingHeaders = pendingHeaders.length === 0 ? headers : pendingHeaders.concat(headers);
+    pendingUrl += url;
+  };
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,
@@ -6498,6 +6509,15 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
+    if (rawHeaders === undefined) {
+      rawHeaders = pendingHeaders;
+    } else if (pendingHeaders.length !== 0) {
+      rawHeaders = pendingHeaders.concat(rawHeaders);
+    }
+    pendingHeaders = [];
+    if (url === undefined) url = pendingUrl;
+    pendingUrl = "";
+
     socket[kHttp1ActiveRequests]++;
 
     req = new IncomingMessageClass(socket);
@@ -6538,6 +6558,10 @@ function connectionListenerHTTP1(server, socket, options) {
     if (req && !req._dumped) req.push(chunk);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
+    // A chunked body's trailers are flushed through kOnHeaders too; drop them
+    // so they can't bleed into the next request on a keep-alive connection.
+    pendingHeaders = [];
+    pendingUrl = "";
     if (req) {
       req.complete = true;
       req.push(null);

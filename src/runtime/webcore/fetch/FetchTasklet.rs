@@ -752,20 +752,21 @@ impl FetchTasklet {
                 }
             }
 
+            // `body` (&mut response.body.value) and `get_fetch_headers()`
+            // (&response.init.headers) are disjoint fields, but borrowck can't see
+            // through the accessor methods. Hold `body` as a raw ptr.
+            let body: *mut BodyValue = response.get_body_value();
+            // `BodyAbortListener::on_abort` may have already transitioned the
+            // body to `Error` while this callback was queued; don't clobber a
+            // terminal state with the late-arriving bytes. Checked before
+            // `buffer_reset.set(false)` so the defer still drops them.
+            // SAFETY: just obtained from live `response`.
+            if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+                return Ok(());
+            }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
             buffer_reset.set(false);
             if !self.result.has_more {
-                // `body` (&mut response.body.value) and `get_fetch_headers()`
-                // (&response.init.headers) are disjoint fields, but borrowck can't see
-                // through the accessor methods. Hold `body` as a raw ptr.
-                let body: *mut BodyValue = response.get_body_value();
-                // `BodyAbortListener::on_abort` may have already transitioned
-                // the body to `Error` while this callback was queued; don't
-                // clobber a terminal state with the late-arriving bytes.
-                // SAFETY: just obtained from live `response`.
-                if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
-                    return Ok(());
-                }
                 let scheduled_response_buffer =
                     core::mem::take(&mut self.scheduled_response_buffer.list);
                 // done resolve body

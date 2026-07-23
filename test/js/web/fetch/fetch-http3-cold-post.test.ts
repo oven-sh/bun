@@ -17,19 +17,15 @@ import { join } from "node:path";
 // rarely does, so this test is regression coverage for the fixed code path
 // rather than a deterministic reproduction. The lsquic debug trace in the PR
 // that introduced this test shows the deadlock directly.
-test(
-  "large POST on a cold connection does not strand the TLS Finished",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fetch-http3-cold-post-fixture.ts")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  120_000,
-);
+test("large POST on a cold connection does not strand the TLS Finished", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-http3-cold-post-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+}, 120_000);

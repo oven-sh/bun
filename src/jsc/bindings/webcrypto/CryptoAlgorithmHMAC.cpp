@@ -110,9 +110,17 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
     RefPtr<CryptoKeyHMAC> result;
     switch (format) {
     case CryptoKeyFormat::Raw:
+        if (hmacParameters.length && !hmacParameters.length.value()) {
+            exceptionCallback(DataError, ""_s);
+            return;
+        }
         result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Jwk: {
+        if (hmacParameters.length && !hmacParameters.length.value()) {
+            exceptionCallback(DataError, ""_s);
+            return;
+        }
         auto checkAlgCallback = [](CryptoAlgorithmIdentifier hash, const String& alg) -> bool {
             switch (hash) {
             case CryptoAlgorithmIdentifier::SHA_1:

@@ -3699,9 +3699,14 @@ describe("parser-tier error responses", () => {
         },
       },
     });
-    for (const piece of Array.isArray(bytes) ? bytes : [bytes]) {
-      conn.write(piece);
+    const pieces = Array.isArray(bytes) ? bytes : [bytes];
+    for (let i = 0; i < pieces.length; i++) {
+      conn.write(pieces[i]);
       conn.flush();
+      // Client and server share one event loop: yield so the server's onData
+      // runs for this write before the next one is queued, letting the
+      // array form actually deliver separate reads.
+      if (i + 1 < pieces.length) await Bun.sleep(0);
     }
     await promise;
     return Buffer.concat(received).toString("latin1");
@@ -3755,8 +3760,9 @@ describe("parser-tier error responses", () => {
     using server = serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => new Response("ok") });
     const big = Buffer.alloc(65536, "a").toString();
     const uriOnce = head(await rawRequest(server.port, `GET /${big} HTTP/1.1\r\nHost: x\r\n\r\n`));
-    // Same request-line trickled across writes so the fallback-buffer overflow
-    // path (not the single-read path) is the one that classifies it.
+    // Same request-line split across reads so the buffered-overflow classifier
+    // (headOverflowStatus over the fallback buffer) is what returns 414: the
+    // first two reads land in the fallback buffer, the third fills it.
     const trickled = head(
       await rawRequest(server.port, [
         "GET /",

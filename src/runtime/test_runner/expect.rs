@@ -1934,7 +1934,13 @@ impl ExpectStatic {
                 return Err(global_this.throw_out_of_memory());
             };
             // SAFETY: from_js_ptr returns the live m_ctx payload owned by instance_jsvalue.
-            unsafe { (*instance).flags_cell().set(this.flags) };
+            let cell = unsafe { (*instance).flags_cell() };
+            // Merge: copy `not`/`promise` from the ExpectStatic chain while keeping
+            // anything T::invoke already set (e.g. ExpectAny's constructor type).
+            let mut flags = cell.get();
+            flags.set_not(this.flags.not());
+            flags.set_promise(this.flags.promise());
+            cell.set(flags);
         }
         Ok(instance_jsvalue)
     }

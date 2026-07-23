@@ -277,7 +277,12 @@ impl ScanOutcome {
 }
 
 /// Record one accepted flag's honored per-worker effect (if any).
-fn record_honored(out: &mut ScanOutcome, saw_no_addons: &mut bool, key: &[u8], value: Option<Vec<u8>>) {
+fn record_honored(
+    out: &mut ScanOutcome,
+    saw_no_addons: &mut bool,
+    key: &[u8],
+    value: Option<Vec<u8>>,
+) {
     match key {
         b"--no-addons" => *saw_no_addons = true,
         b"--use-system-ca" => out.honored.use_system_ca = Some(true),

@@ -1586,10 +1586,10 @@ impl SendQueue {
         #[cfg(not(windows))]
         {
             let socket = self.get_socket()?;
+            let raw = socket.socket.get()?;
             // SAFETY: `get()` is Some only for a live connected socket owned
             // by this queue; the pointer is valid for the duration of the
             // synchronous read below.
-            let raw = socket.socket.get()?;
             Some(unsafe { (*raw).get_fd() })
         }
         #[cfg(windows)]

@@ -131,7 +131,12 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // SENTINEL addresses their identity: all-F (a -1/INVALID_HANDLE used
       // as a pointer) and low offsets (a struct field off a null base) are
       // diagnostic, and folding them merged unrelated wild-pointer faults.
-      const signature = detail
+      // The crash handler prints a bun.report trace URL that ENCODES the
+      // stack: it is the fingerprint. A folded heap address (0xPTR) makes
+      // every wild-pointer segfault one key; the trace URL keeps distinct
+      // crashes distinct. Use it as the signature when the report has one.
+      const traceUrl = /https?:\/\/bun\.report\/[^\s\/]+\/([A-Za-z0-9_+\-\/=]+)/.exec(text);
+      const signature = traceUrl ? `${kind}@trace:${traceUrl[1].slice(0, 100)}` : detail
         .replace(/0x[0-9a-fA-F]{9,}/g, m => (/^0x[fF]{9,}$/.test(m) ? "0xFFFF(-1)" : "0xPTR"))
         .replace(/\bthread \d+\b/g, "thread N")
         // fold Win32/errno codes: the same die-with-message site with a

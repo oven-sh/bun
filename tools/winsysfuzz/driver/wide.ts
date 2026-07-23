@@ -305,7 +305,16 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     dir,
     timeoutMs,
     capture: true,
+  }).catch(e => {
+    // A spawn/IO failure under load must never abort the whole pass;
+    // account it as a driver error for this one file and move on.
+    console.error(`  [driver-error] ${basename(file)}: ${String(e).slice(0, 160)}`);
+    return null;
   });
+  if (!rr) {
+    onFate(0, "driver-error", null);
+    return null;
+  }
   // Did any rule actually fire? (a file that never issues the syscall is a
   // clean pass by construction - not a finding, not even a coverage claim)
   let outcome: string | null = null;

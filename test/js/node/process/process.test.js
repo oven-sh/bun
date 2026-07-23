@@ -238,8 +238,12 @@ it("process.env coerces assigned values to strings", () => {
     process.env.COERCE_NUM = 42;
     process.env.COERCE_NULL = null;
     process.env.COERCE_BOOL = true;
+    process.env.COERCE_BIG = 42n;
+    process.env.COERCE_ARR = [1, 2];
+    process.env.COERCE_FN = function f() {};
     process.env.COERCE_OBJ = { toString: () => "from-toString" };
     process.env["4242424242"] = 55;
+    Object.assign(process.env, { COERCE_ASN: 7 });
     Object.defineProperty(process.env, "COERCE_DEF", {
       value: 7,
       writable: true,
@@ -252,18 +256,29 @@ it("process.env coerces assigned values to strings", () => {
       num: process.env.COERCE_NUM,
       null: process.env.COERCE_NULL,
       bool: process.env.COERCE_BOOL,
+      big: process.env.COERCE_BIG,
+      arr: process.env.COERCE_ARR,
+      fn: process.env.COERCE_FN,
       obj: process.env.COERCE_OBJ,
       idx: process.env["4242424242"],
+      asn: process.env.COERCE_ASN,
       def: process.env.COERCE_DEF,
     }).toEqual({
       undef: "undefined",
       num: "42",
       null: "null",
       bool: "true",
+      big: "42",
+      arr: "1,2",
+      fn: String(function f() {}),
       obj: "from-toString",
       idx: "55",
+      asn: "7",
       def: "7",
     });
+
+    expect(Object.values(process.env).every(v => typeof v === "string")).toBe(true);
+    expect(JSON.parse(JSON.stringify(process.env)).COERCE_BIG).toBe("42");
 
     expect(() => {
       process.env.COERCE_THROWS = {
@@ -273,6 +288,19 @@ it("process.env coerces assigned values to strings", () => {
       };
     }).toThrow("boom");
     expect(process.env.COERCE_THROWS).toBeUndefined();
+
+    // Node throws on Symbol values (ToString on Symbol throws) for set, assign, and defineProperty.
+    expect(() => (process.env.COERCE_SYM = Symbol("s"))).toThrow(TypeError);
+    expect(() => Object.assign(process.env, { COERCE_SYM: Symbol("s") })).toThrow(TypeError);
+    expect(() =>
+      Object.defineProperty(process.env, "COERCE_SYM", {
+        value: Symbol("s"),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      }),
+    ).toThrow(TypeError);
+    expect(process.env.COERCE_SYM).toBeUndefined();
 
     // structuredClone(process.env) must keep working now that the backing object
     // has its own ClassInfo. Windows wraps it in a Proxy that was never clonable.
@@ -285,9 +313,14 @@ it("process.env coerces assigned values to strings", () => {
       "COERCE_NUM",
       "COERCE_NULL",
       "COERCE_BOOL",
+      "COERCE_BIG",
+      "COERCE_ARR",
+      "COERCE_FN",
       "COERCE_OBJ",
+      "COERCE_ASN",
       "COERCE_DEF",
       "COERCE_THROWS",
+      "COERCE_SYM",
       "4242424242",
     ]) {
       delete process.env[k];

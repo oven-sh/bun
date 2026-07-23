@@ -254,15 +254,33 @@ function installBunExposeInternalsRequireInterceptor() {
   const originalRequire = BunModule.prototype.require;
   let exposedInternals;
   let requireVendoredNodeInternal;
+  const mergedInternals = { __proto__: null };
   BunModule.prototype.require = function require(id) {
     if (typeof id === 'string' && id.startsWith('internal/')) {
       exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
-      if (exposedInternals[id] !== undefined) {
-        return exposedInternals[id];
-      }
       // Pure-JS node internals vendored under common/nodeinternals/ (webidl,
       // socket_list, fs/utils, webcrypto helpers). undefined = not vendored.
       requireVendoredNodeInternal ??= originalRequire.call(this, path.join(__dirname, 'nodeinternals.js')).requireVendoredNodeInternal;
+      const exposed = exposedInternals[id];
+      if (exposed !== undefined) {
+        // A native entry may cover only part of the module's surface; fill
+        // the gaps from the vendored port, with the real implementations
+        // winning key-for-key (internal/fs/utils: native stringToFlags /
+        // validateRmOptionsSync + vendored getDirents/getDirent). Cached so
+        // repeated requires return the same module object, like node.
+        if (typeof exposed === 'object' && exposed !== null && !Array.isArray(exposed)) {
+          const cached = mergedInternals[id];
+          if (cached !== undefined) {
+            return cached;
+          }
+          const vendored = requireVendoredNodeInternal(id);
+          if (vendored !== undefined && typeof vendored === 'object' && vendored !== null) {
+            return (mergedInternals[id] = { ...vendored, ...exposed });
+          }
+          return (mergedInternals[id] = exposed);
+        }
+        return exposed;
+      }
       const vendored = requireVendoredNodeInternal(id);
       if (vendored !== undefined) {
         return vendored;

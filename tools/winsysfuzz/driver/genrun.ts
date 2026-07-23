@@ -135,8 +135,11 @@ async function runProgram(program: string, cwd: string, limitMs: number = timeou
   const exit = (await Promise.race([exited, timer])) as number | null;
   // Grace for the killed child to release its output files.
   if (timedOut) await Promise.race([exited, new Promise(r => setTimeout(r, 1500))]);
-  const stdout = await Bun.file(outFile).text().catch(() => "");
-  const stderr = await Bun.file(errFile).text().catch(() => "");
+  // A runaway program can print megabytes; the crash oracle only needs the
+  // head (early errors) and the tail (crash report at exit). Cap it.
+  const cap = (t: string) => (t.length <= 400000 ? t : t.slice(0, 150000) + "\n[...output truncated...]\n" + t.slice(-250000));
+  const stdout = cap(await Bun.file(outFile).text().catch(() => ""));
+  const stderr = cap(await Bun.file(errFile).text().catch(() => ""));
   // Snapshot the edge bitmap this run produced (copy: the view is reused).
   const coverageBits = cov ? cov.view.slice(4) : null;
   return { exit, timedOut, stdout, stderr, ms: Date.now() - t0, coverageBits };

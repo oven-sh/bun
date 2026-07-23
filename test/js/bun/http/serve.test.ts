@@ -20,7 +20,9 @@ import { join, resolve } from "path";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
-import net from "node:net";
+import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
+import net, { type AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import nodeTls from "node:tls";
 import { tmpdir } from "os";
@@ -1266,6 +1268,41 @@ it("reload() of a node:http-backed server is not treated as a mode switch", asyn
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("OK\n");
   expect(exitCode).toBe(0);
+});
+
+// reload() clears the uWS route table; the connection-open filter that backs
+// node:http's 'connection' event is not a route and must survive that. `bun --hot`
+// on a node:http app takes this reload path on every file change.
+it("reload() of a node:http-backed server keeps the 'connection' event firing", async () => {
+  let connections = 0;
+  const httpServer = createHttpServer((req, res) => res.end("ok"));
+  httpServer.on("connection", () => connections++);
+  httpServer.listen(0, "127.0.0.1");
+  await once(httpServer, "listening");
+  try {
+    const { port } = httpServer.address() as AddressInfo;
+    const hit = async () => {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      // Drain the response so 'end' (and then 'close') is delivered.
+      socket.resume();
+      await once(socket, "close");
+    };
+
+    await hit();
+    expect(connections).toBe(1);
+
+    const native = (httpServer as any)[Symbol.for("::bunternal::")] as Server;
+    native.reload({ fetch: () => new Response("x") });
+
+    await hit();
+    expect(connections).toBe(2);
+  } finally {
+    httpServer.closeAllConnections();
+    httpServer.close();
+  }
 });
 
 it("reload() cannot turn a Bun.serve server into a node:http server", async () => {

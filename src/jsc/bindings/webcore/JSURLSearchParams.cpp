@@ -248,6 +248,29 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
     RETURN_IF_EXCEPTION(scope, {});
     auto inspectCallData = JSC::getCallData(utilInspect);
 
+    // node measures removeColors(output[i]).length before comparing to
+    // breakLength, so ANSI escapes (ESC[ ... letter) don't count towards the
+    // single/multi-line layout decision.
+    auto visibleLengthOf = [](const String& s) -> size_t {
+        StringView view { s };
+        size_t count = 0;
+        for (unsigned i = 0; i < view.length();) {
+            char16_t c = view[i];
+            if (c == 0x1B && i + 1 < view.length() && view[i + 1] == '[') {
+                i += 2;
+                while (i < view.length()) {
+                    char16_t t = view[i++];
+                    if ((t >= 'A' && t <= 'Z') || (t >= 'a' && t <= 'z'))
+                        break;
+                }
+                continue;
+            }
+            count++;
+            i++;
+        }
+        return count;
+    };
+
     auto& impl = thisObject->wrapped();
     auto iter = impl.createIterator();
     Vector<String> output;
@@ -272,7 +295,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
         RETURN_IF_EXCEPTION(scope, {});
 
         auto line = makeString(keyStr, " => "_s, valueStr);
-        totalLength += line.length();
+        totalLength += visibleLengthOf(line);
         output.append(WTF::move(line));
     }
     if (output.size() > 1)
@@ -287,7 +310,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
     }
 
     auto name = Bun::WebStreams::constructorNameOf(lexicalGlobalObject, thisValue, "URLSearchParams"_s);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     if (output.isEmpty())
         return JSValue::encode(jsString(vm, makeString(name, " {}"_s)));
 

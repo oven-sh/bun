@@ -120,15 +120,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSymbolObject,
     GET_FIRST_CELL
     return JSValue::encode(jsBoolean(cell->inherits<JSC::SymbolObject>()));
 }
-// Brand check for WHATWG URL instances backed by the wrapper class —
-// immune to prototype/Symbol.hasInstance tampering (assert internals).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionIsURL,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::CallFrame* callframe))
-{
-    GET_FIRST_CELL
-    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSDOMURL>()));
-}
 
 // assert.partialDeepStrictEqual typed-array/ArrayBuffer branch: expected's
 // elements must appear in actual's elements in order, allowing gaps (node's
@@ -272,16 +263,6 @@ static bool partialBufferContentsEquiv(JSC::JSGlobalObject* globalObject, JSC::T
         break;
     }
     return result;
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialTypedArrayEquiv,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::CallFrame* callframe))
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    bool result = partialBufferContentsEquiv(globalObject, scope, callframe->argument(0), callframe->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(result));
 }
 
 extern "C" bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::JSGlobalObject*);

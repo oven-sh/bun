@@ -147,9 +147,12 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
-// Node invokes fs/dns callbacks off the libuv completion, so a throw inside one
-// escapes as an uncaughtException. Bun runs them from a promise reaction, where
-// an unguarded throw would only reject that promise (an unhandledRejection).
+// Node invokes fs/dns callbacks off the libuv completion via InternalMakeCallback
+// (src/api/callback.cc in node v26.3.0: callback->Call empty on throw fails the
+// InternalCallbackScope, the pending exception surfaces through
+// TriggerUncaughtException in src/node_errors.cc; dispatch sites: FSReqCallback
+// Resolve/Reject in src/node_file.cc, cares_wrap.cc for dns). Bun runs them from
+// a promise reaction, where an unguarded throw would only reject that promise.
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The

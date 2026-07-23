@@ -50,11 +50,8 @@ afterEach(() => {
 it.skipIf(isWindows)(
   "process.exit() in a watch kill-signal handler never returns to JS",
   async () => {
-    const cwd = tmpdirSync();
-    const path = join(cwd, "exiter.js");
-    await Bun.write(
-      path,
-      `process.on("SIGTERM", () => {
+    using dir = tempDir("watch-exit-in-sigterm", {
+      "exiter.js": `process.on("SIGTERM", () => {
   process.exit(0);
   require("fs").writeFileSync("should-not-write.txt", "hello");
 });
@@ -64,7 +61,9 @@ process.on("SIGTERM", () => {
 console.log("started");
 setInterval(() => {}, 1000);
 `,
-    );
+    });
+    const cwd = String(dir);
+    const path = join(cwd, "exiter.js");
     watchee = spawn({
       cwd,
       cmd: [bunExe(), "--watch", "exiter.js"],

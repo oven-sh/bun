@@ -132,23 +132,25 @@ WTF::String constructorNameOf(JSGlobalObject* lexicalGlobalObject, JSValue thisV
     while (obj) {
         PropertySlot slot(obj, PropertySlot::InternalMethodType::GetOwnProperty);
         bool has = obj->methodTable()->getOwnPropertySlot(obj, lexicalGlobalObject, vm.propertyNames->constructor, slot);
-        CLEAR_IF_EXCEPTION(scope);
+        RETURN_IF_EXCEPTION(scope, fallback);
         if (has) {
             JSValue ctorValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->constructor);
-            CLEAR_IF_EXCEPTION(scope);
-            if (ctorValue.isCallable()) {
+            RETURN_IF_EXCEPTION(scope, fallback);
+            if (!ctorValue.isEmpty() && ctorValue.isCallable()) {
                 JSValue nameValue = ctorValue.get(lexicalGlobalObject, vm.propertyNames->name);
-                CLEAR_IF_EXCEPTION(scope);
-                if (nameValue.isString()) {
+                RETURN_IF_EXCEPTION(scope, fallback);
+                if (!nameValue.isEmpty() && nameValue.isString()) {
                     String name = asString(nameValue)->value(lexicalGlobalObject);
-                    CLEAR_IF_EXCEPTION(scope);
+                    RETURN_IF_EXCEPTION(scope, fallback);
                     if (!name.isEmpty())
                         return name;
                 }
             }
         }
         JSValue proto = obj->getPrototype(lexicalGlobalObject);
-        CLEAR_IF_EXCEPTION(scope);
+        RETURN_IF_EXCEPTION(scope, fallback);
+        if (proto.isEmpty())
+            break;
         obj = proto.getObject();
     }
     return fallback;

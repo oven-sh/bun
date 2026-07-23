@@ -4,14 +4,27 @@ import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/32686
 test.concurrent.each(["./src/worker.ts", "../src/worker.ts", "/abs/path", "/$bunfs/root/worker", ".", "/", "/=foo"])(
-  "define value %j is auto-quoted",
+  "bare define value %j is rejected; JSON.stringify() round-trips",
   async value => {
     using dir = tempDir("bun-build-define-32686", {
       "entry.ts": `declare const X: string; console.log(X);`,
     });
+    let threw: unknown;
+    try {
+      await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        define: { X: value },
+      });
+    } catch (e) {
+      threw = e;
+    }
+    expect(String((threw as AggregateError)?.errors?.[0] ?? threw)).toContain(
+      `define value for "X" must be a valid JSON literal or identifier: ${value}`,
+    );
+
     const result = await Bun.build({
       entrypoints: [join(String(dir), "entry.ts")],
-      define: { X: value },
+      define: { X: JSON.stringify(value) },
     });
     expect(result.success).toBe(true);
     const out = await result.outputs[0].text();
@@ -19,7 +32,7 @@ test.concurrent.each(["./src/worker.ts", "../src/worker.ts", "/abs/path", "/$bun
   },
 );
 
-test.concurrent("--define CLI auto-quotes a value starting with a dot", async () => {
+test.concurrent("--define CLI rejects a bare path value with an actionable error", async () => {
   using dir = tempDir("bun-build-define-32686-cli", {
     "entry.ts": `declare const X: string; console.log(X);`,
   });
@@ -31,6 +44,7 @@ test.concurrent("--define CLI auto-quotes a value starting with a dot", async ()
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-  expect(stdout).toContain(JSON.stringify("./src/worker.ts"));
+  expect(stderr).toContain('define value for "X" must be a valid JSON literal or identifier: ./src/worker.ts');
+  expect(stdout).not.toContain("./src/worker.ts");
+  expect(exitCode).not.toBe(0);
 });

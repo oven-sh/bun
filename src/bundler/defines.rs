@@ -295,10 +295,10 @@ impl DefineExt for Define {
 /// `process.env.NODE_ENV` & `process.env.BUN_ENV` defaults) and `true` /
 /// `false` (the `process.browser` default). The `E::EString` payloads live in
 /// process-lifetime `static`s — producing one is allocation-free and never
-/// touches the thread-local AST store `json_parser::parse_env_json` writes into.
+/// touches the thread-local AST store `json_parser::parse_define_value` writes into.
 /// Returns `None` for everything else (user `--define` values, env-file
 /// `NODE_ENV` overrides like `staging`, JSON object/array literals, …), which
-/// falls through to the general `parse_env_json` path in `DefineData::parse`.
+/// falls through to the general `parse_define_value` path in `DefineData::parse`.
 fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     static DEVELOPMENT: bun_ast::E::EString = bun_ast::E::EString::from_static(b"development");
     static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
@@ -402,13 +402,28 @@ impl DefineDataExt for DefineData {
                         bun_ast::Loc::default(),
                         format_args!(
                             "define key \"{}\" contains invalid identifier \"{}\"",
-                            bstr::BStr::new(part),
-                            bstr::BStr::new(value_str)
+                            bstr::BStr::new(key),
+                            bstr::BStr::new(part)
                         ),
                     );
                 }
-                break;
+                return Err(crate::Error::SyntaxError);
             }
+        }
+
+        // `--drop` entries arrive here with `value_is_undefined` set and an empty
+        // `value_str`; they have no value to validate.
+        if value_is_undefined {
+            return Ok(DefineData {
+                value: ExprData::EUndefined(bun_ast::E::Undefined),
+                original_name: None,
+                flags: Flags::new(
+                    true,
+                    true,
+                    bun_ast::E::CallUnwrap::Never,
+                    method_call_must_be_replaced_with_undefined_,
+                ),
+            });
         }
 
         // check for nested identifiers
@@ -425,7 +440,7 @@ impl DefineDataExt for DefineData {
         if is_ident {
             // Special-case undefined. it's not an identifier here
             // https://github.com/evanw/esbuild/issues/1407
-            let value = if value_is_undefined || value_str == b"undefined" {
+            let value = if value_str == b"undefined" {
                 ExprData::EUndefined(bun_ast::E::Undefined)
             } else {
                 ExprData::EIdentifier(
@@ -445,7 +460,7 @@ impl DefineDataExt for DefineData {
                     None
                 },
                 flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
+                    /* valueless: */ false,
                     /* can_be_removed_if_unused: */ true,
                     /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
@@ -460,7 +475,7 @@ impl DefineDataExt for DefineData {
         // `true` / `false` for `process.browser`) — the entire default define
         // set on the `bun run` path. Build the `DefineData` straight from
         // process-lifetime statics: skips the `bump.alloc_slice_copy` +
-        // `json_parser::parse_env_json` + `Expr::deep_clone` round-trip and,
+        // `json_parser::parse_define_value` + `Expr::deep_clone` round-trip and,
         // crucially, never touches the thread-local AST `Expr`/`Stmt` stores
         // (created lazily below only when a value really needs JSON parsing).
         if let Some(value) = const_default_define_value(value_str) {
@@ -473,7 +488,7 @@ impl DefineDataExt for DefineData {
                     None
                 },
                 flags: Flags::new(
-                    /* valueless: */ value_is_undefined,
+                    /* valueless: */ false,
                     /* can_be_removed_if_unused: */ can_be_removed_if_unused,
                     /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
@@ -482,7 +497,7 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // `parse_env_json` builds `E::String`/`E::Object` nodes in the
+        // `parse_define_value` builds `E::String`/`E::Object` nodes in the
         // thread-local AST `Expr`/`Stmt` stores, so create them now — done
         // lazily here (idempotent no-ops once created) instead of eagerly in
         // `Transpiler::configure_defines`, since most inits resolve every define
@@ -500,11 +515,36 @@ impl DefineDataExt for DefineData {
             path: defines_path(),
             ..Default::default()
         };
-        let expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
+        // Parse into a scratch log so the user sees a single `define value for
+        // "…" must be …` error naming the key, not the JSON parser's
+        // `Unexpected <token>` pointing into the synthetic defines.json source.
+        // Success-path warnings (duplicate keys in an object literal) are
+        // suppressed via `json_warn_duplicate_keys: false` in the parser.
+        let mut scratch = bun_ast::Log::default();
+        let parsed = if value_str.is_empty() {
+            None
+        } else {
+            match bun_parsers::json_parser::parse_define_value(&source, &mut scratch, bump) {
+                Ok(expr) if scratch.errors == 0 => Some(expr),
+                _ => None,
+            }
+        };
+        let Some(expr) = parsed else {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::default(),
+                format_args!(
+                    "define value for \"{}\" must be a valid JSON literal or identifier: {}",
+                    bstr::BStr::new(key),
+                    bstr::BStr::new(value_str)
+                ),
+            );
+            return Err(crate::Error::SyntaxError);
+        };
         // The `deep_clone` is load-bearing even though `.data` bytes already
-        // live in `bump`: `parse_env_json` → `new_expr` → `Expr::init` allocates
-        // the `E::String` *payload* (the `StoreRef` target) in the thread-local
-        // AST store, which `configure_defines` resets on return via
+        // live in `bump`: `parse_define_value` → `new_expr` → `Expr::init`
+        // allocates the `E::String` *payload* (the `StoreRef` target) in the
+        // thread-local AST store, which `configure_defines` resets on return via
         // `StoreResetGuard`. Before the `bun_ast` unification this was masked by
         // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
         // is identity, so without `deep_clone` the `DefineData.value` dangles
@@ -513,13 +553,9 @@ impl DefineDataExt for DefineData {
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,
-            original_name: if !value_str.is_empty() {
-                Some(Box::<[u8]>::from(value_str))
-            } else {
-                None
-            },
+            original_name: Some(Box::<[u8]>::from(value_str)),
             flags: Flags::new(
-                /* valueless: */ value_is_undefined,
+                /* valueless: */ false,
                 /* can_be_removed_if_unused: */ can_be_removed_if_unused,
                 /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                 /* method_call_must_be_replaced_with_undefined: */

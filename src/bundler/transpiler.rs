@@ -560,7 +560,7 @@ impl<'a> Transpiler<'a> {
                         .any(|k| &**k == options::default_user_defines::node_env::KEY)
                 });
 
-        // `parse_env_json` needs a thread-local AST store to build
+        // `parse_define_value` needs a thread-local AST store to build
         // `E::String` nodes in. That work
         // is now done lazily inside `DefineData::parse`, only on the JSON-parse
         // slow path — the common case (`bun run` with no user `--define`)
@@ -1185,7 +1185,7 @@ impl<'a> Transpiler<'a> {
         // These two `create()`s are eager (not deferred to the first `parse()`)
         // because option setup below needs the AST stores *unconditionally*:
         // `from_api` → `defines_from_transform_options` always materialises at
-        // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
+        // least `process.env.NODE_ENV` via `parse_define_value`, whose `E::String`
         // payload lands in the thread-local Expr store (then a `StoreResetGuard`
         // resets it — which `expect()`s the store exists). So there is no
         // "transpile nothing" spawn that skips them. They are *cheap*, though:

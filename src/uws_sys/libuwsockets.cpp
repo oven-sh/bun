@@ -401,6 +401,21 @@ extern "C"
     }
   }
 
+  void uws_app_end_all_websockets(int ssl, uws_app_t *app, int code, const char *message, size_t length)
+  {
+    std::string_view msg = message ? std::string_view(message, length) : std::string_view();
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->endAllWebSockets(code, msg);
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->endAllWebSockets(code, msg);
+    }
+  }
+
   void uws_app_set_on_clienterror(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength), void *user_data)
   {
     if (ssl)

@@ -1585,18 +1585,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
                 self.notify_inspector_server_stopped();
-                if abrupt {
-                    self.flags.insert(ServerFlags::TERMINATED);
-                }
+            }
+            // A prior graceful stop already took the listener. An abrupt stop
+            // still needs to tear down in-flight connections so a "graceful
+            // then force" shutdown can complete.
+            if abrupt {
+                self.end_all_websockets_going_away();
+                self.terminate_app();
             }
             return;
         };
-        if abrupt || (self.pending_requests == 0 && !self.has_active_web_sockets()) {
-            self.unref();
-        }
-        // A graceful stop with work in flight keeps the ref (deinit_if_we_can
-        // unrefs when the drain completes): on Windows uv_run skips I/O with
-        // zero ref'd handles, so unrefing here wedged server.close() teardown.
 
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
@@ -1617,31 +1615,67 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
+        // Send 1001 Going Away to every open WebSocket so peers see a clean
+        // protocol close instead of a dropped connection (1006), and so the
+        // graceful-stop promise can observe the count reaching zero.
+        self.end_all_websockets_going_away();
+
+        if abrupt || (self.pending_requests == 0 && !self.has_active_web_sockets()) {
+            self.unref();
+        }
+        // A graceful stop with work in flight keeps the ref (deinit_if_we_can
+        // unrefs when the drain completes): on Windows uv_run skips I/O with
+        // zero ref'd handles, so unrefing here wedged server.close() teardown.
+
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
-        } else if !self.flags.contains(ServerFlags::TERMINATED) {
-            if let Some(ws) = self.config.websocket.as_mut() {
-                ws.handler.app = None;
-            }
-            self.flags.insert(ServerFlags::TERMINATED);
-            // `app.close()` synchronously drains every open websocket; their
-            // `on_close` defers call `on_websocket_closed`, which would
-            // dispatch `deinit_if_we_can` through a fresh `&mut NewServer`
-            // while this frame still holds `&mut self`. Hold the re-entrance
-            // guard across the drain so that nested call early-returns —
-            // `stop()` runs `deinit_if_we_can` itself right after this returns.
-            self.deinit_running.set(true);
+        } else {
+            self.terminate_app();
+        }
+    }
+
+    fn end_all_websockets_going_away(&mut self) {
+        if !self.has_active_web_sockets() {
+            return;
+        }
+        // node:http `Server#close()` must leave upgraded sockets to the user
+        // (Node only stops accepting and closes idle keep-alives); the `ws`
+        // shim tracks its own `clients` set for the user to drain.
+        if !self.config.on_node_http_request.is_empty() {
+            return;
+        }
+        let Some(app) = self.app else { return };
+        // `end()` fires close handlers synchronously; hold (and save/restore)
+        // the re-entrance guard so nested `deinit_if_we_can` / `stop(true)`
+        // early-return instead of running under this frame's `&mut self`.
+        let prev = self.deinit_running.replace(true);
+        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        bun_opaque::opaque_deref_mut(app).end_all_websockets(1001, b"Server closed");
+        self.deinit_running.set(prev);
+    }
+
+    /// Force-close every connection on the uws app and mark the server
+    /// terminated. Guarded by `TERMINATED` so repeated abrupt stops are no-ops.
+    fn terminate_app(&mut self) {
+        if self.flags.contains(ServerFlags::TERMINATED) {
+            return;
+        }
+        if let Some(ws) = self.config.websocket.as_mut() {
+            ws.handler.app = None;
+        }
+        self.flags.insert(ServerFlags::TERMINATED);
+        if let Some(app) = self.app {
+            let prev = self.deinit_running.replace(true);
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
-            self.deinit_running.set(false);
-            // Only clear after the drain — `on_close` defers reach
-            // `on_websocket_closed` through `handler.server`, so wiping it
-            // earlier would strand the live-socket count and the idle pass
-            // would never see it drained.
-            if let Some(ws) = self.config.websocket.as_mut() {
-                ws.handler.server = None;
-            }
+            bun_opaque::opaque_deref_mut(app).close();
+            self.deinit_running.set(prev);
+        }
+        // Clear only after the drain: `on_close` defers reach
+        // `on_websocket_closed` via `handler.server`, so wiping it earlier
+        // would strand the live-socket count.
+        if let Some(ws) = self.config.websocket.as_mut() {
+            ws.handler.server = None;
         }
     }
 

@@ -104,6 +104,20 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw())
     }
 
+    pub fn end_all_websockets(&mut self, code: i32, message: &[u8]) {
+        // SAFETY: `message` is only read for the synchronous duration of the
+        // call; uWS copies it into the close frame before returning.
+        unsafe {
+            c::uws_app_end_all_websockets(
+                Self::SSL_FLAG,
+                self.as_raw(),
+                code,
+                message.as_ptr(),
+                message.len(),
+            )
+        }
+    }
+
     pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
         // SAFETY: FFI call; uws_create_app returns null on failure.
         let app = unsafe { c::uws_create_app(Self::SSL_FLAG, *opts) };
@@ -466,6 +480,13 @@ pub mod c {
     unsafe extern "C" {
         pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
         pub(crate) safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
+        pub(crate) fn uws_app_end_all_websockets(
+            ssl: i32,
+            app: &mut uws_app_s,
+            code: c_int,
+            message: *const u8,
+            length: usize,
+        );
         // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the
         // C++ shim itself) — no preconditions on this call.

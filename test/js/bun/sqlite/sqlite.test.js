@@ -1440,7 +1440,7 @@ it("close(true) should throw an error if the database is in use", () => {
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
-  expect(() => db.close(true)).toThrow("database is locked");
+  expect(() => db.close(true)).toThrow("Cannot close the database because prepared statements are still open");
   prepared.finalize();
   expect(() => db.close(true)).not.toThrow();
 });
@@ -1450,7 +1450,7 @@ it("close() should NOT throw an error if the database is in use", () => {
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
-  expect(() => db.close()).not.toThrow("database is locked");
+  expect(() => db.close()).not.toThrow();
 });
 
 it("should dispose AND throw an error if the database is in use", () => {
@@ -1462,7 +1462,146 @@ it("should dispose AND throw an error if the database is in use", () => {
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
     }
-  }).toThrow("database is locked");
+  }).toThrow("Cannot close the database because prepared statements are still open");
+});
+
+describe("close() with a statement still alive", () => {
+  it("makes the statement throw instead of reading the closed database", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (name TEXT)");
+    db.exec("INSERT INTO foo (name) VALUES ('foo')");
+    const prepared = db.prepare("SELECT * FROM foo");
+    expect(prepared.all()).toEqual([{ name: "foo" }]);
+
+    db.close();
+
+    expect(() => prepared.get()).toThrow("Database has closed");
+    expect(() => prepared.all()).toThrow("Database has closed");
+    expect(() => prepared.values()).toThrow("Database has closed");
+    expect(() => prepared.raw()).toThrow("Database has closed");
+    expect(() => prepared.run()).toThrow("Database has closed");
+    expect(() => [...prepared]).toThrow("Database has closed");
+    expect(() => prepared.columnTypes).toThrow("Database has closed");
+    expect(() => prepared.declaredTypes).toThrow("Database has closed");
+    expect(() => prepared.paramsCount).toThrow("Database has closed");
+    expect(() => prepared.safeIntegers()).toThrow("Database has closed");
+    expect(() => JSON.stringify(prepared)).toThrow("Database has closed");
+  });
+
+  it("leaves the statement inspectable, the way finalize() does", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (name TEXT)");
+    const prepared = db.prepare("SELECT * FROM foo");
+    expect(prepared.all()).toEqual([]);
+
+    db.close();
+
+    // Neither reads the closed database: columnNames is cached from the last
+    // execution, and toString() is how Symbol.toStringTag renders a statement.
+    expect(prepared.columnNames).toEqual(["name"]);
+    expect(prepared.toString()).toBe("");
+    expect(() => Bun.inspect(prepared)).not.toThrow();
+  });
+
+  it("releases the database file", () => {
+    // The sidecar files are only removed once the sqlite3 connection is really
+    // closed, which it is not while an unfinalized statement keeps it alive.
+    const dir = tempDirWithFiles("sqlite-close-live-statement", { "empty.txt": "" });
+    const file = path.join(dir, "my.db");
+    const db = new Database(file);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+    db.exec("CREATE TABLE foo (name TEXT)");
+    db.exec("INSERT INTO foo (name) VALUES ('foo')");
+    const prepared = db.prepare("SELECT * FROM foo");
+    expect(prepared.all()).toEqual([{ name: "foo" }]);
+    db.exec("PRAGMA wal_checkpoint(truncate)");
+
+    db.close();
+
+    expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
+    expect(() => prepared.all()).toThrow("Database has closed");
+  });
+
+  it("stops an in-progress iteration", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (a INTEGER)");
+    for (let i = 0; i < 5; i++) db.run("INSERT INTO foo VALUES (?)", [i]);
+    const prepared = db.prepare("SELECT * FROM foo");
+
+    const seen = [];
+    expect(() => {
+      for (const row of prepared) {
+        seen.push(row.a);
+        if (row.a === 2) db.close();
+      }
+    }).toThrow("Database has closed");
+    expect(seen).toEqual([0, 1, 2]);
+  });
+
+  it("rejects a statement whose database is closed while binding", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (a TEXT, b TEXT)");
+    db.exec("INSERT INTO foo VALUES ('x', 'y')");
+    const prepared = db.prepare("SELECT * FROM foo WHERE a = $a AND b = $b");
+
+    // Closing from a parameter getter finalizes `prepared` and frees the
+    // sqlite3* that the bind loop is holding.
+    expect(() =>
+      prepared.all({
+        get $a() {
+          db.close();
+          return "x";
+        },
+        $b: "y",
+      }),
+    ).toThrow("Statement has finalized");
+
+    expect(() => prepared.all({ $a: "x", $b: "y" })).toThrow("Database has closed");
+  });
+
+  // db.run() prepares its statements internally, so once close() finalizes the
+  // tracked ones, that internal statement is the last thing holding the
+  // connection open and finalizing it frees the sqlite3* mid-call.
+  it.each(["INSERT INTO t VALUES ($a)", "INSERT INTO t VALUES ($a); INSERT INTO t VALUES (2)"])(
+    "rejects db.run(%p) when a binding getter closes the database",
+    sql => {
+      const db = new Database(":memory:");
+      db.exec("CREATE TABLE t (a INT)");
+      const keepalive = db.prepare("SELECT 1");
+
+      expect(() =>
+        db.run(sql, {
+          get $a() {
+            db.close();
+            return 1;
+          },
+        }),
+      ).toThrow("Database has closed");
+
+      expect(() => keepalive.get()).toThrow("Database has closed");
+    },
+  );
+
+  it("stays safe when the statement is garbage collected afterwards", async () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (name TEXT)");
+    db.exec("INSERT INTO foo (name) VALUES ('foo')");
+
+    // Dropped without finalize(), so ~JSSQLStatement runs after close() already
+    // finalized the underlying sqlite3_stmt.
+    (() => {
+      expect(db.prepare("SELECT * FROM foo").all()).toEqual([{ name: "foo" }]);
+    })();
+
+    db.close();
+    Bun.gc(true);
+    await Bun.sleep(0);
+    Bun.gc(true);
+
+    expect(() => db.prepare("SELECT * FROM foo")).toThrow("Cannot use a closed database");
+    expect(() => db.close()).not.toThrow();
+  });
 });
 
 it("should dispose", () => {

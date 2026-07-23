@@ -191,16 +191,18 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
     }
 
 #define CHECK_PREPARED                                                                                             \
+    if (castedThis->version_db != nullptr && castedThis->version_db->db == nullptr) [[unlikely]] {                 \
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));     \
+        return {};                                                                                                 \
+    }                                                                                                              \
     if (castedThis->stmt == nullptr || castedThis->version_db == nullptr) [[unlikely]] {                           \
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s)); \
         return {};                                                                                                 \
     }
 
-#define CHECK_PREPARED_JIT                                                                                         \
-    if (castedThis->stmt == nullptr || castedThis->version_db == nullptr) [[unlikely]] {                           \
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s)); \
-        return {};                                                                                                 \
-    }
+namespace WebCore {
+class JSSQLStatement;
+}
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
@@ -217,6 +219,10 @@ public:
     sqlite3* db;
     std::atomic<uint64_t> version;
     size_t reference_count;
+
+    // Every live JSSQLStatement prepared against this connection. Not owning:
+    // entries are added in JSSQLStatement::create, removed in ~JSSQLStatement.
+    Vector<WebCore::JSSQLStatement*> statements;
 
     void release()
     {
@@ -475,6 +481,7 @@ public:
         JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db, memorySizeChange);
         if (version_db) {
             ++version_db->reference_count;
+            version_db->statements.append(ptr);
         }
         ptr->finishCreation(globalObject->vm());
         return ptr;
@@ -1543,6 +1550,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, bindings, safeIntegers, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
 
+                // A getter invoked while binding can close the database. `sql` is
+                // the last statement holding it open, so `db` is freed as soon as
+                // this iteration finalizes it.
                 if (versionDB->db != db) [[unlikely]] {
                     throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
                     return {};
@@ -1805,6 +1815,21 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
 }
 
+// A prepared statement keeps the sqlite3 connection (and the database file
+// descriptor) alive until it is finalized, so finalize the ones this connection
+// handed out. Their JS wrappers then report that the database has closed.
+static void finalizeOutstandingStatements(VersionSqlite3* versionDB)
+{
+    Vector<JSSQLStatement*> statements;
+    statements.swap(versionDB->statements);
+    for (auto* statement : statements) {
+        if (statement->stmt) {
+            sqlite3_finalize(statement->stmt);
+            statement->stmt = nullptr;
+        }
+    }
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
 
@@ -1847,13 +1872,27 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
+    // close(true) is documented to fail while queries are outstanding, so let
+    // sqlite3_close() see the statements that are still alive.
+    if (!shouldThrowOnError)
+        finalizeOutstandingStatements(versionDB);
+
     // sqlite3_close_v2 is used for automatic GC cleanup
     int statusCode = shouldThrowOnError ? sqlite3_close(db) : sqlite3_close_v2(db);
     if (statusCode != SQLITE_OK) {
+        // sqlite3_close() only reports SQLITE_BUSY for unfinalized statements,
+        // but its error string says "database is locked".
+        if (statusCode == SQLITE_BUSY) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Cannot close the database because prepared statements are still open. Finalize them first, or call close(false)."_s));
+            return {};
+        }
+
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
         return {};
     }
 
+    // Anything still tracked here was finalized before close(true) succeeded.
+    versionDB->statements.clear();
     versionDB->db = nullptr;
     return JSValue::encode(jsUndefined());
 }
@@ -2866,6 +2905,7 @@ JSSQLStatement::~JSSQLStatement()
 {
     if (this->stmt) {
         sqlite3_finalize(this->stmt);
+        this->stmt = nullptr;
     }
 
     if (auto* columnNames = this->columnNames.get()) {
@@ -2874,6 +2914,7 @@ JSSQLStatement::~JSSQLStatement()
     }
 
     if (this->version_db) {
+        this->version_db->statements.removeFirst(this);
         this->version_db->release();
     }
 }

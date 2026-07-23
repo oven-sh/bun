@@ -1584,9 +1584,13 @@ mod draft {
             // mutating that same field. Copy the two fields we compare against so
             // the borrow ends before the `install.default_registry` mutation.
             let (default_registry_host, default_registry_pathname): (Box<[u8]>, Box<[u8]>) = 'brk: {
+                // An empty url means auth-only config (see below); match
+                // against the default registry URL it will resolve to.
                 if let Some(dr) = &install.default_registry {
-                    let u = URL::parse(&dr.url);
-                    break 'brk (Box::from(u.host), Box::from(u.pathname));
+                    if !dr.url.is_empty() {
+                        let u = URL::parse(&dr.url);
+                        break 'brk (Box::from(u.host), Box::from(u.pathname));
+                    }
                 }
                 let u = URL::parse(
                     bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
@@ -1684,14 +1688,14 @@ mod draft {
                         if let Some(r) = install.default_registry.as_mut() {
                             break 'brk r;
                         }
+                        // Leave the url empty: this carries auth for the
+                        // default registry without explicitly configuring a
+                        // registry URL. Options::load fills in the default.
                         install.default_registry = Some(NpmRegistry {
                             password: Box::default(),
                             token: Box::default(),
                             username: Box::default(),
-                            url: Box::<[u8]>::from(
-                                bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
-                                    .as_bytes(),
-                            ),
+                            url: Box::default(),
                             email: Box::default(),
                         });
                         install.default_registry.as_mut().unwrap()

@@ -9099,3 +9099,151 @@ registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}
     expect(await exited).not.toBe(0);
   }
 });
+
+// https://github.com/oven-sh/bun/issues/34168
+test("registry from bunfig.toml takes precedence over npm_config_registry env vars", async () => {
+  const bunfigReceived: string[] = [];
+  using bunfigRegistry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      bunfigReceived.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const envReceived: string[] = [];
+  using envRegistry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      envReceived.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  for (const key of ["npm_config_registry", "NPM_CONFIG_REGISTRY"]) {
+    bunfigReceived.length = 0;
+    envReceived.length = 0;
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+[install]
+cache = false
+registry = "http://127.0.0.1:${bunfigRegistry.port}/"
+`,
+      ),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: mergeWindowEnvs([env, { [key]: `http://127.0.0.1:${envRegistry.port}/` }]),
+    });
+
+    await stderr.text();
+    await stdout.text();
+
+    // The manifest request must go to the bunfig.toml registry, and no
+    // request may reach the env var registry.
+    expect(bunfigReceived).toEqual(["/no-deps"]);
+    expect(envReceived).toEqual([]);
+    expect(await exited).not.toBe(0);
+  }
+});
+
+test("npm_config_registry env var is used when bunfig.toml has no registry", async () => {
+  const received: string[] = [];
+  using envRegistry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      received.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  // bunfigOpts.npm omits the registry line from the generated bunfig.toml.
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { npm: true, linker: "hoisted" } });
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: mergeWindowEnvs([env, { npm_config_registry: `http://127.0.0.1:${envRegistry.port}/` }]),
+  });
+
+  await stderr.text();
+  await stdout.text();
+
+  // With no explicitly configured registry, the env var still applies.
+  expect(received).toEqual(["/no-deps"]);
+  expect(await exited).not.toBe(0);
+});
+
+test("npm_config_registry env var is used when .npmrc only has auth for the default registry", async () => {
+  // `npm login` writes an auth-only .npmrc line with no registry= line; that
+  // must not count as an explicitly configured registry.
+  const received: { pathname: string; authorization: string | null }[] = [];
+  using envRegistry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      received.push({ pathname: new URL(req.url).pathname, authorization: req.headers.get("authorization") });
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { npm: true, linker: "hoisted" } });
+  await Promise.all([
+    write(join(packageDir, ".npmrc"), `//registry.npmjs.org/:_authToken=npm_secret_token\n`),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: mergeWindowEnvs([env, { npm_config_registry: `http://127.0.0.1:${envRegistry.port}/` }]),
+  });
+
+  await stderr.text();
+  await stdout.text();
+
+  // The env var registry is used, and the token saved for the default
+  // registry host is not sent to it.
+  expect(received).toEqual([{ pathname: "/no-deps", authorization: null }]);
+  expect(await exited).not.toBe(0);
+});

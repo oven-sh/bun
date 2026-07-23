@@ -578,15 +578,25 @@ impl Options {
         // technically, npm_config is case in-sensitive
         // load_registry:
         {
-            const REGISTRY_KEYS: [&[u8]; 3] = [
-                b"BUN_CONFIG_REGISTRY",
-                b"NPM_CONFIG_REGISTRY",
-                b"npm_config_registry",
-            ];
+            // An explicit registry in bunfig.toml / .npmrc wins over the
+            // npm-compat env vars; BUN_CONFIG_REGISTRY and --registry still
+            // override it.
+            let config_has_registry = bun_install_ref
+                .and_then(|config| config.default_registry.as_ref())
+                .is_some_and(|registry| !registry.url.is_empty());
+            let registry_keys: &[&[u8]] = if config_has_registry {
+                &[b"BUN_CONFIG_REGISTRY"]
+            } else {
+                &[
+                    b"BUN_CONFIG_REGISTRY",
+                    b"NPM_CONFIG_REGISTRY",
+                    b"npm_config_registry",
+                ]
+            };
             let mut did_set = false;
 
             // was `inline for`; homogeneous elements → plain for.
-            for registry_key in REGISTRY_KEYS {
+            for &registry_key in registry_keys {
                 if !did_set {
                     if let Some(registry_) = env.get(registry_key) {
                         if !registry_.is_empty()

@@ -766,6 +766,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             stmts.push(*stmt);
                         }
 
+                        if let Some(keep) =
+                            p.keep_stmt_symbol_name(stmt.loc, data.default_name.ref_, name)
+                        {
+                            stmts.push(keep);
+                        }
+
                         p.react_refresh.hook_ctx_storage = prev;
                         restore_dead!();
                         record_on_exit!();
@@ -859,6 +865,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(class_expr, b"default"),
                             );
+                        }
+
+                        if !Self::class_has_custom_static_name(&class.class) {
+                            let keep_name: &[u8] = match class.class.class_name {
+                                Some(n) if !n.ref_.is_empty() => p.load_name_from_ref(n.ref_),
+                                _ => js_ast::ClauseItem::DEFAULT_ALIAS,
+                            };
+                            if let Some(keep) =
+                                p.keep_stmt_symbol_name(stmt.loc, data.default_name.ref_, keep_name)
+                            {
+                                stmts.push(keep);
+                            }
                         }
 
                         restore_dead!();
@@ -977,6 +995,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ));
             } else {
                 stmts.push(*stmt);
+                if let Some(keep) = p.keep_stmt_symbol_name(stmt.loc, name_ref, original_name) {
+                    stmts.push(keep);
+                }
             }
         } else if mark_as_dead {
             if let Some(replacement) = p
@@ -1068,6 +1089,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !mark_as_dead || was_export_inside_namespace {
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
+            if let Some(name) = data.class.class_name {
+                if !Self::class_has_custom_static_name(&data.class) {
+                    let original_name = p.symbols[name.ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
+                    if let Some(keep) = p.keep_stmt_symbol_name(stmt.loc, name.ref_, original_name)
+                    {
+                        stmts.push(keep);
+                    }
+                }
+            }
         } else {
             let ref_ = data
                 .class

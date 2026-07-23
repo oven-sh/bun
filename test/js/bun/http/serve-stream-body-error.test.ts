@@ -367,6 +367,32 @@ describe("Response body errors reach error() until the first body byte is writte
     });
   });
 
+  // An async fetch() that goes Pending past the initial drain reaches
+  // do_render_stream with is_async()=true, so its own drain_microtasks is a
+  // no-op: small yields stay in the sink buffer, and on_reject_stream can
+  // fire in the same microtask drain as the yields, before the deferred
+  // auto-flusher runs. Those bytes never reached the client; error() must
+  // still replace the response.
+  test.concurrent.each([
+    ["iter-throw-first", "boom-first"],
+    ["iter-yield-then-throw", "boom-fast"],
+  ])("async fetch %s: error() is invoked", async (r, message) => {
+    expect(await run(r, "async-fetch")).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 500 Internal Server Error",
+        xErr: true,
+        xOrig: false,
+        xCustom: false,
+        body: "E:" + message,
+        resetAfterBytes: false,
+        errorCalls: [message],
+        unhandled: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // An async error() handler goes through process_on_error_promise; the
   // original (protected) fetch() Response must be released first or it leaks
   // one GC root per request (and trips handle_resolve's debug_assert).

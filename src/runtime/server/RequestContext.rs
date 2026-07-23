@@ -2938,11 +2938,9 @@ where
         stream_log!("handleRejectStream");
 
         let mut ended_response = false;
-        let mut stream_produced_bytes = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             ended_response = wrapper.sink.ended_response;
-            stream_produced_bytes = wrapper.sink.wrote > 0 || !wrapper.sink.buffer.is_empty();
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
                 // assigned (flushFromJS / endFromJS). Drop that root before
@@ -2997,20 +2995,18 @@ where
             return;
         }
 
-        // The stream produced bytes (flushed or still in the sink buffer), or
-        // this stream is itself `error()`'s Response body: either way the
-        // Response's own status is what should go out. Write it now so the
-        // terminate path below closes without a terminator instead of
-        // re-entering `handle_reject` (which would replace it with the
-        // default 500).
-        if (stream_produced_bytes || req.flags.has_called_error_handler())
-            && !req.flags.has_written_status()
-        {
+        // This stream is itself `error()`'s Response body: `error()` already
+        // ran, so `handle_reject` below would fall through to the default
+        // 500. Keep `error()`'s own status instead and terminate.
+        if req.flags.has_called_error_handler() && !req.flags.has_written_status() {
             req.render_metadata();
         }
 
         // No status line committed: the stream failed before its first body
         // byte reached uWS, so `error()` can still replace the response.
+        // Bytes still in the sink buffer never reached the client and are
+        // discarded (the sink was marked done above), so they do not count
+        // as committed.
         // `handle_reject` runs the user's handler (or the default 500 page)
         // and reports the failure itself.
         if !req.flags.has_written_status() {

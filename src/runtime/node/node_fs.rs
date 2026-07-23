@@ -4200,7 +4200,10 @@ pub mod args {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
-                        } else {
+                        } else if !value.is_object() || value.get(ctx, "aborted")?.is_none() {
+                            // node's validateAbortSignal accepts any object with an
+                            // `aborted` property (abort-controller polyfills, cross-realm
+                            // signals). Only reject values that fail that shape check.
                             return Err(ctx.throw_invalid_argument_type_value(
                                 b"signal",
                                 b"AbortSignal",
@@ -4303,7 +4306,10 @@ pub mod args {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
-                        } else {
+                        } else if !value.is_object() || value.get(ctx, "aborted")?.is_none() {
+                            // node's validateAbortSignal accepts any object with an
+                            // `aborted` property (abort-controller polyfills, cross-realm
+                            // signals). Only reject values that fail that shape check.
                             return Err(ctx.throw_invalid_argument_type_value(
                                 b"signal",
                                 b"AbortSignal",

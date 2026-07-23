@@ -124,15 +124,39 @@ test.concurrent("queued pipelined response with Content-Length and write() befor
   // The /b handler runs while its response is still queued behind /a's: with
   // an explicit Content-Length and the body written before end(), 'finish'
   // must wait until the response is assigned the socket and flushed.
+  let queuedWritableFinished: boolean | undefined;
   using ctx = await setup(async (req, res) => {
     if (req.url === "/a") await new Promise(r => setImmediate(r));
     res.writeHead(200, { "Content-Length": "5" });
     res.write("ok:" + req.url);
     res.end();
+    // The queued response still has its bytes in outputData, so it has not
+    // finished writing (like Node's OutgoingMessage accounting).
+    if (req.url === "/b") queuedWritableFinished = res.writableFinished;
   });
   ctx.client.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "GET /b HTTP/1.1\r\nHost: x\r\n\r\n");
   const buf = await ctx.reader.until("ok:/b");
   expect(buf.indexOf("ok:/a")).toBeLessThan(buf.indexOf("ok:/b"));
+  expect(queuedWritableFinished).toBe(false);
+});
+
+test.concurrent("writableNeedDrain and 'drain' track buffered writes on an adopted socket", async () => {
+  const big = Buffer.alloc(1 << 20, "x").toString();
+  const states: unknown[] = [];
+  using ctx = await setup((req, res) => {
+    res.writeHead(200, { "Content-Length": String(big.length) });
+    const accepted = res.write(big);
+    states.push(accepted, res.writableNeedDrain);
+    res.on("drain", () => {
+      states.push("drain", res.writableNeedDrain);
+      res.end();
+    });
+  });
+  ctx.client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  // Connection: close ends the socket once the response has fully flushed.
+  await new Promise<void>(resolve => ctx.client.on("close", () => resolve()));
+  expect(states).toEqual([false, true, "drain", false]);
+  expect(ctx.reader.buf.length).toBeGreaterThanOrEqual(big.length);
 });
 
 test.concurrent("malformed request emits 'clientError'", async () => {

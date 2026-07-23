@@ -3864,6 +3864,11 @@ ServerResponse.prototype._implicitHeader = function () {
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
+    // Standalone path (no native handle): OutgoingMessage semantics, where
+    // write() sets kNeedDrain when the buffered write returned false.
+    if (!this[kHandle]) {
+      return !this.destroyed && !this.finished && !!this[kNeedDrain];
+    }
     // True between a write() that returned false and the next 'drain': either
     // the native handle still has buffered bytes, or this turn's accounting
     // (kBytesBuffered) crossed the high-water mark and a 'drain' is pending.
@@ -3879,7 +3884,13 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
 
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
   get() {
-    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
+    // Standalone path (no native handle): OutgoingMessage semantics; a queued
+    // pipelined response that end()ed with bytes still in outputData has not
+    // finished writing yet.
+    if (!this[kHandle]) {
+      return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
+    }
+    return !!(this.finished && this[kHandle].finished);
   },
 });
 

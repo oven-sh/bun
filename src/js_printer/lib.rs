@@ -460,6 +460,27 @@ pub mod analyze_transpiled_module {
             StringID(idx)
         }
 
+        /// Interns the record's specifier exactly as `print_import_record_path`
+        /// prints it: namespaced records become `namespace:path`. The module
+        /// record built from this info must request the same specifier the
+        /// printed source imports, or namespaced resolutions are lost.
+        pub fn str_for_import_record(&mut self, record: &bun_ast::ImportRecord) -> StringID {
+            if record
+                .flags
+                .contains(bun_ast::ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
+                && !record.path.is_file()
+            {
+                let mut buf: Vec<u8> =
+                    Vec::with_capacity(record.path.namespace.len() + 1 + record.path.text.len());
+                buf.extend_from_slice(record.path.namespace);
+                buf.push(b':');
+                buf.extend_from_slice(record.path.text);
+                self.str(&buf)
+            } else {
+                self.str(record.path.text)
+            }
+        }
+
         pub fn request_module(
             &mut self,
             import_record_path: StringID,
@@ -5244,15 +5265,13 @@ pub mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
-                    self.print_import_record_path(
-                        self.import_record(s.import_record_index as usize),
-                    );
+                    let export_star_record = self.import_record(s.import_record_index as usize);
+                    self.print_import_record_path(export_star_record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str(irp);
+                            let irp_id = mi.str_for_import_record(export_star_record);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5480,7 +5499,6 @@ pub mod __gated_printer {
                     }
 
                     self.print_whitespacer(ws!(b"} from "));
-                    let irp = &import_record.path.text;
                     self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
@@ -5489,7 +5507,7 @@ pub mod __gated_printer {
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str(irp);
+                            let id = mi.str_for_import_record(import_record);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -6007,10 +6025,9 @@ pub mod __gated_printer {
                         // reshaped for borrowck — `module_info()` borrows `&mut self`,
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
-                        let import_record_path = &record.path.text;
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str(import_record_path);
+                            let irp_id = mi.str_for_import_record(record);
                             use analyze_transpiled_module::FetchParameters as FP;
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {

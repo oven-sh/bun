@@ -135,6 +135,53 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/33904
+  test("with --isolate, plugin onResolve namespace survives query-suffixed imports", async () => {
+    using dir = tempDir("isolate-plugin-ns", {
+      "bunfig.toml": `[test]\npreload = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+        import { dirname, resolve } from "node:path";
+        Bun.plugin({
+          name: "query-loader",
+          setup(build) {
+            build.onResolve({ filter: /\\.bar\\?custom$/ }, args => ({
+              path: resolve(dirname(args.importer), args.path.slice(0, -"?custom".length)),
+              namespace: "custom",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "custom" }, () => ({
+              contents: 'export const fromPlugin = "FROM_PLUGIN"; export default "FROM_PLUGIN";',
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "data.bar": `unused`,
+      "reexport-clause.ts": `export { fromPlugin } from "./data.bar?custom";`,
+      "reexport-star.ts": `export * from "./data.bar?custom";`,
+      "plugin.test.ts": `
+        import { test, expect } from "bun:test";
+        import direct from "./data.bar?custom";
+        import { fromPlugin as viaClause } from "./reexport-clause.ts";
+        import { fromPlugin as viaStar } from "./reexport-star.ts";
+
+        test("namespaced onLoad applies under isolation", () => {
+          expect({ direct, viaClause, viaStar }).toEqual({
+            direct: "FROM_PLUGIN",
+            viaClause: "FROM_PLUGIN",
+            viaStar: "FROM_PLUGIN",
+          });
+        });
+      `,
+    });
+    for (const flag of ["--isolate", "--parallel"]) {
+      const { stderr, exitCode } = await runTests(String(dir), [flag], ["./plugin.test.ts"]);
+      const output = normalizeBunSnapshot(stderr, dir);
+      expect(output, flag).toContain("1 pass");
+      expect(output, flag).toContain("0 fail");
+      expect(exitCode, flag).toBe(0);
+    }
+  });
+
   test("with --isolate, module state is not shared between files", async () => {
     using dir = tempDir("isolate-modules", {
       "shared.ts": `export let counter = { n: 0 };`,

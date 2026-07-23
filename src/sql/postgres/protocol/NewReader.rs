@@ -116,6 +116,23 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.wrapped.read_z()
     }
 
+    /// Read a NUL-terminated string whose terminator must appear within the
+    /// next `limit` bytes. Returns `InvalidMessage` (not `ShortRead`) when it
+    /// does not: the caller has already established via `length()` that those
+    /// bytes are the message body, so a missing terminator is a framing
+    /// violation, not a partial read. Returns the string without its NUL and
+    /// the total bytes consumed (string + NUL).
+    pub fn string_within(&mut self, limit: usize) -> Result<(Data, usize), AnyPostgresError> {
+        let view = self.wrapped.peek();
+        let bound = view.len().min(limit);
+        let Some(zero) = view[..bound].iter().position(|&b| b == 0) else {
+            return Err(AnyPostgresError::InvalidMessage);
+        };
+        let data = self.wrapped.read(zero)?;
+        self.wrapped.skip(1);
+        Ok((data, zero + 1))
+    }
+
     #[inline]
     pub fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         if !self.wrapped.ensure_length(count) {
@@ -142,22 +159,53 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.int::<PostgresShort>()
     }
 
-    pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
-        let expected = self.int::<PostgresInt32>()?;
-        // The length of every Postgres v3 message is a signed Int32 that
-        // includes its own 4 bytes, so a value below 4 (or negative, i.e. the
-        // sign bit set on the wire) is malformed. `expected` is server-controlled.
-        if expected < 4 || expected > i32::MAX as u32 {
+    /// The length of every Postgres v3 message is a signed Int32 that includes
+    /// its own 4 bytes, so a value below 4 (or negative, i.e. the sign bit set
+    /// on the wire) is malformed. `raw` is server-controlled.
+    #[inline]
+    fn validate_length(raw: PostgresInt32) -> Result<PostgresInt32, AnyPostgresError> {
+        if raw < 4 || raw > i32::MAX as u32 {
             return Err(AnyPostgresError::InvalidMessageLength);
         }
-        self.ensure_capacity((expected - 4) as usize)?;
+        Ok(raw)
+    }
 
+    pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
+        let expected = Self::validate_length(self.int::<PostgresInt32>()?)?;
+        self.ensure_capacity((expected - 4) as usize)?;
         Ok(expected)
     }
 
+    /// `length()` without consuming: validates the Int32 at the cursor and
+    /// confirms the whole message body is present, but leaves both for the
+    /// handler to read. Returns `(remaining, length)` where `remaining` is the
+    /// buffer's byte count before the length field, so after the handler runs
+    /// the frame boundary is `remaining - length`.
+    pub fn peek_length(&mut self) -> Result<(usize, usize), AnyPostgresError> {
+        let view = self.wrapped.peek();
+        if view.len() < 4 {
+            return Err(AnyPostgresError::ShortRead);
+        }
+        let raw = PostgresInt32::from_be_slice(&view[..4]);
+        let length = Self::validate_length(raw)? as usize;
+        if view.len() < length {
+            return Err(AnyPostgresError::ShortRead);
+        }
+        Ok((view.len(), length))
+    }
+
+    /// `length()` minus the 4 bytes the length field itself occupies, i.e. the
+    /// number of body bytes remaining in this message. Cannot underflow:
+    /// `length()` has already returned `InvalidMessageLength` for any value
+    /// below 4, and `ensure_capacity` has confirmed those bytes are present.
+    #[inline]
+    pub fn body_length(&mut self) -> Result<usize, AnyPostgresError> {
+        Ok((self.length()? - 4) as usize)
+    }
+
     pub fn skip_message(&mut self) -> Result<(), AnyPostgresError> {
-        let length = self.length()?;
-        self.skip(usize::try_from(length - 4).expect("int cast"))
+        let body = self.body_length()?;
+        self.skip(body)
     }
 
     #[inline]

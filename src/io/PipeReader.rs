@@ -1336,6 +1336,14 @@ impl WindowsBufferedReader {
         self.source.as_mut().unwrap().set_data(self_ptr);
         self.buffer().clear();
         self.flags.remove(WindowsFlags::IS_DONE);
+        // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
+        // a real uv_read_start failure on a freshly-spawned stdio pipe cannot be
+        // triggered from JS, so the test exercises the consumer's error path this way.
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_FAIL_PIPE_READER_START.get() == Some(true)
+        {
+            return sys::Result::Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::open));
+        }
         self.start_reading()
     }
 

@@ -14,11 +14,11 @@ impl ParameterStatus {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        reader.length()?;
+        let mut remaining = reader.body_length()?;
 
-        Ok(Self {
-            name: reader.read_z()?,
-            value: reader.read_z()?,
-        })
+        let (name, consumed) = reader.string_within(remaining)?;
+        remaining -= consumed;
+        let (value, _) = reader.string_within(remaining)?;
+        Ok(Self { name, value })
     }
 }

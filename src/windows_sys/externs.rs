@@ -546,10 +546,146 @@ impl FILE_INFORMATION_CLASS {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Stack unwinding (winnt.h) — used by the crash handler to walk the faulting
+// thread's stack from its saved CONTEXT record.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub const UNW_FLAG_NHANDLER: DWORD = 0;
+
+/// `_IMAGE_RUNTIME_FUNCTION_ENTRY` (winnt.h). x64 and ARM64 share the first
+/// two DWORDs; x64 adds `UnwindInfoAddress`. Only ever used via pointer
+/// returned by `RtlLookupFunctionEntry`, so the exact tail layout is not
+/// read here.
+#[repr(C)]
+pub struct RUNTIME_FUNCTION {
+    pub BeginAddress: DWORD,
+    #[cfg(target_arch = "x86_64")]
+    pub EndAddress: DWORD,
+    pub UnwindData: DWORD,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct M128A {
+    pub Low: u64,
+    pub High: i64,
+}
+
+/// `_CONTEXT` for AMD64 (winnt.h). Full layout so `RtlVirtualUnwind` can
+/// mutate it in place during a stack walk. Only `Rip`/`Rsp` are read by bun.
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct CONTEXT {
+    pub P1Home: u64,
+    pub P2Home: u64,
+    pub P3Home: u64,
+    pub P4Home: u64,
+    pub P5Home: u64,
+    pub P6Home: u64,
+    pub ContextFlags: DWORD,
+    pub MxCsr: DWORD,
+    pub SegCs: WORD,
+    pub SegDs: WORD,
+    pub SegEs: WORD,
+    pub SegFs: WORD,
+    pub SegGs: WORD,
+    pub SegSs: WORD,
+    pub EFlags: DWORD,
+    pub Dr0: u64,
+    pub Dr1: u64,
+    pub Dr2: u64,
+    pub Dr3: u64,
+    pub Dr6: u64,
+    pub Dr7: u64,
+    pub Rax: u64,
+    pub Rcx: u64,
+    pub Rdx: u64,
+    pub Rbx: u64,
+    pub Rsp: u64,
+    pub Rbp: u64,
+    pub Rsi: u64,
+    pub Rdi: u64,
+    pub R8: u64,
+    pub R9: u64,
+    pub R10: u64,
+    pub R11: u64,
+    pub R12: u64,
+    pub R13: u64,
+    pub R14: u64,
+    pub R15: u64,
+    pub Rip: u64,
+    pub FltSave: [u8; 512],
+    pub VectorRegister: [M128A; 26],
+    pub VectorControl: u64,
+    pub DebugControl: u64,
+    pub LastBranchToRip: u64,
+    pub LastBranchFromRip: u64,
+    pub LastExceptionToRip: u64,
+    pub LastExceptionFromRip: u64,
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+const _: () = {
+    assert!(core::mem::size_of::<CONTEXT>() == 1232);
+    assert!(core::mem::offset_of!(CONTEXT, Rsp) == 0x98);
+    assert!(core::mem::offset_of!(CONTEXT, Rip) == 0xf8);
+};
+
+/// `_ARM64_NT_CONTEXT` (winnt.h). Only `Pc`/`Sp`/`Lr` are read by bun.
+#[cfg(all(windows, target_arch = "aarch64"))]
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct CONTEXT {
+    pub ContextFlags: DWORD,
+    pub Cpsr: DWORD,
+    pub X: [u64; 29],
+    pub Fp: u64,
+    pub Lr: u64,
+    pub Sp: u64,
+    pub Pc: u64,
+    pub V: [M128A; 32],
+    pub Fpcr: DWORD,
+    pub Fpsr: DWORD,
+    pub Bcr: [DWORD; 8],
+    pub Bvr: [u64; 8],
+    pub Wcr: [DWORD; 2],
+    pub Wvr: [u64; 2],
+}
+
+#[cfg(all(windows, target_arch = "aarch64"))]
+const _: () = {
+    assert!(core::mem::size_of::<CONTEXT>() == 912);
+    assert!(core::mem::offset_of!(CONTEXT, Lr) == 0xf8);
+    assert!(core::mem::offset_of!(CONTEXT, Sp) == 0x100);
+    assert!(core::mem::offset_of!(CONTEXT, Pc) == 0x108);
+};
+
+// ──────────────────────────────────────────────────────────────────────────
 // ntdll namespace (subset).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ntdll {
     use super::*;
+
+    #[cfg(windows)]
+    #[cfg_attr(windows, link(name = "ntdll"))]
+    unsafe extern "system" {
+        pub fn RtlLookupFunctionEntry(
+            ControlPc: u64,
+            ImageBase: *mut u64,
+            HistoryTable: *mut c_void,
+        ) -> *mut RUNTIME_FUNCTION;
+        pub fn RtlVirtualUnwind(
+            HandlerType: DWORD,
+            ImageBase: u64,
+            ControlPc: u64,
+            FunctionEntry: *mut RUNTIME_FUNCTION,
+            ContextRecord: *mut CONTEXT,
+            HandlerData: *mut *mut c_void,
+            EstablisherFrame: *mut u64,
+            ContextPointers: *mut c_void,
+        ) -> *mut c_void;
+    }
 
     #[cfg_attr(windows, link(name = "ntdll"))]
     unsafe extern "system" {
@@ -697,7 +833,17 @@ pub mod kernel32 {
         pub Protect: u32,
         pub Type: u32,
     }
+    pub const MEM_COMMIT: u32 = 0x1000;
     pub const MEM_FREE: u32 = 0x10000;
+
+    pub const PAGE_NOACCESS: u32 = 0x01;
+    pub const PAGE_READONLY: u32 = 0x02;
+    pub const PAGE_READWRITE: u32 = 0x04;
+    pub const PAGE_WRITECOPY: u32 = 0x08;
+    pub const PAGE_EXECUTE_READ: u32 = 0x20;
+    pub const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
+    pub const PAGE_GUARD: u32 = 0x100;
 
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {

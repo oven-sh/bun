@@ -346,8 +346,20 @@ impl Error {
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
+        // Node reports libuv's codes in `err.errno` on every platform. On POSIX
+        // that is just the negated host errno. On Windows `self.errno` may be
+        // either an `E` discriminant or a raw libuv magnitude regardless of
+        // `from_libuv` (callers are inconsistent), so always try the
+        // discriminant→UV table first; a raw magnitude falls through to plain
+        // negation and lands on the same value.
+        #[cfg(windows)]
+        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
+            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
+        #[cfg(not(windows))]
+        let js_errno = c_int::from(self.errno).wrapping_neg();
+
         let mut err = SystemError {
-            errno: c_int::from(self.errno).wrapping_neg(),
+            errno: js_errno,
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             message: BunString::empty(),
             ..Default::default()

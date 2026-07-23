@@ -1725,25 +1725,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
-        }
-    }
-
+    // Start the readers before the Writable::Buffer stdin writer so that if
+    // the writer's start() throws below, both PipeReaders have taken their
+    // start() ref and on_process_exit's later drain is refcount-balanced.
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Err(err) =
-            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
-        {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
-        }
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
@@ -1753,18 +1742,20 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        if let Err(err) =
-            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
-        {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            let _ = global_this.throw_value(err.to_js(global_this));
-            return Err(JsError::Thrown);
-        }
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy);
 
         if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
+        }
+    }
+
+    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
+        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
+            let _ = subprocess.try_kill(subprocess.kill_signal);
+            let _ = global_this.throw_value(err.to_js(global_this));
+            return Err(JsError::Thrown);
         }
     }
 
@@ -1774,11 +1765,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
     // finalize_streams (on later GC) skips them and the caller is the sole
     // owner via .stdio[i]. Placed here (not earlier) because the
-    // Writable::init error arm, the has_exception catch-all, the IPC
-    // open-socket failure, and the stdout/stderr Readable::Pipe .start()
-    // error paths all throw after populating stdio_pipes; on those paths
-    // the caller never receives the Subprocess, so the OwnedFd slot must
-    // remain for the GC'd wrapper's finalize_streams to close.
+    // Writable::init error arm, the has_exception catch-all, and the IPC
+    // open-socket failure all throw after populating stdio_pipes; on those
+    // paths the caller never receives the Subprocess, so the OwnedFd slot
+    // must remain for the GC'd wrapper's finalize_streams to close.
     #[cfg(not(windows))]
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {

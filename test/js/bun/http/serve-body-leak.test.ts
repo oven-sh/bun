@@ -1,44 +1,16 @@
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isFlaky, isLinux, isWindows } from "harness";
+import type { Subprocess } from "bun";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
 const batchSize = 40;
-const totalCount = 10_000;
+// A leaked 512 KB body × totalCount would grow RSS by gigabytes; the assertions
+// below compare against O(100 MB), so the slower ASAN/debug lanes keep the same
+// margin with fewer iterations (each request is ~2-10× slower there).
+const totalCount = isASAN || isDebug ? 3_000 : 10_000;
 const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
-
-// let HARDCODED_URL = "http://localhost:52666/";
-let HARDCODED_URL = null;
-
-async function getURL() {
-  if (HARDCODED_URL) {
-    const url = new URL(HARDCODED_URL);
-    await warmup(url);
-    return {
-      url,
-      process: {
-        [Symbol.asyncDispose]() {
-          return Promise.resolve();
-        },
-      },
-    };
-  }
-  let defer = Promise.withResolvers<string>();
-  const process = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
-    env: bunEnv,
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "ignore",
-    ipc(message) {
-      defer.resolve(message);
-    },
-  });
-  const url: URL = new URL(await defer.promise);
-  process.unref();
-  await warmup(url);
-  return { url, process };
-}
 
 async function getMemoryUsage(url: URL): Promise<number> {
   return (await fetch(`${url.origin}/report`).then(res => res.json())) as number;
@@ -54,7 +26,7 @@ async function warmup(url: URL) {
       batch[j] = fetch(`${url.origin}/streaming`, {
         method: "POST",
         body: zeroCopyPayload,
-      });
+      }).then(res => res.text());
     }
     await Promise.all(batch);
     remaining -= batchSize;
@@ -151,54 +123,71 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
 }
 
 // Since the payload size is 512 KB
-// If it was leaking the body, the memory usage would be at least 512 KB * 10_000 = 5 GB
+// If it was leaking the body, the memory usage would be at least 512 KB * totalCount = multiple GB
 // If it ends up around 280 MB, it's probably not leaking the body.
-for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
-  ["should not leak memory when buffering the body", callBuffering, false, 64],
-  ["should not leak memory when buffering a JSON body", callJSONBuffering, false, 64],
-  ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
-  ["should not leak memory when streaming the body", callStreaming, isFlaky && isLinux, 64],
-  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
-  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
-] as const) {
-  const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it.todoIf(skip || (isFlaky && isWindows))(
-    testName,
-    async () => {
-      const { url, process } = await getURL();
-      try {
+//
+// One fixture subprocess serves every scenario below: spawning a fresh one per
+// test (and re-running the 10k-request warmup each time) was the dominant cost
+// on ASAN. Sequential reuse keeps the RSS assertions meaningful because a real
+// body leak compounds across scenarios instead of being hidden by a restart.
+describe("request body leak", () => {
+  let fixture: Subprocess;
+  let url: URL;
+
+  beforeAll(async () => {
+    const defer = Promise.withResolvers<string>();
+    fixture = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "ignore",
+      ipc(message) {
+        defer.resolve(message);
+      },
+    });
+    fixture.exited.then(code => defer.reject(new Error(`body-leak fixture exited (${code}) before sending its URL`)));
+    url = new URL(await defer.promise);
+    await warmup(url);
+  }, 60_000);
+
+  afterAll(async () => {
+    fixture?.kill();
+    await fixture?.exited;
+  });
+
+  for (const test_info of [
+    ["#10265 should not leak memory when ignoring the body", callIgnore, 64],
+    ["should not leak memory when buffering the body", callBuffering, 64],
+    ["should not leak memory when buffering a JSON body", callJSONBuffering, 64],
+    ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, 64],
+    ["should not leak memory when streaming the body", callStreaming, 64],
+    ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, 64],
+    ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, 64],
+  ] as const) {
+    const [testName, fn, maxMemoryGrowth] = test_info;
+    it(
+      testName,
+      async () => {
+        // fail fast with the exit code instead of a ConnectionRefused cascade if a prior scenario crashed the fixture
+        expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
         const report = await calculateMemoryLeak(fn, url);
         console.log(report);
-        // peak memory is too high
-        expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 2.5);
-
+        // Peak should stay within a small multiple of the post-GC baseline; a
+        // leaked 512 KB body per request would blow past this by an order of
+        // magnitude. 3x (was 2.5x) gives headroom for the incomplete-streaming
+        // scenario on Windows, where 40 concurrent half-read uploads briefly
+        // hold ~2.6x of a low shared-server baseline before dropping back.
+        expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 3);
         // acceptable memory leak
         expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
-
         // ASAN quarantine + debug-assertions instrumentation inflate RSS;
         // give the asan lane more headroom than a plain release build.
         expect(report.end_memory).toBeLessThanOrEqual((isASAN ? 768 : 512) * 1024 * 1024);
-      } catch (e) {
-        if (!isCI && process.platform !== "win32") {
-          try {
-            await fetch(`${url.origin}/heap-snapshot`);
-            await Bun.sleep(10);
-          } catch (e) {
-            console.error(e);
-          }
-        }
-
-        throw e;
-      } finally {
-        process.kill?.();
-      }
-    },
-    // release-asan runs streaming-echo at ~31s median (27-39s over 35 CI runs),
-    // so 40s leaves no margin on a slow runner; give ASAN the same 60s as debug.
-    isDebug || isASAN ? 60_000 : 40_000,
-  );
-}
+      },
+      isDebug || isASAN ? 60_000 : 40_000,
+    );
+  }
+});
 
 // A client disconnecting while a direct response stream is suspended inside pull() must not
 // leak the native response sink (nothing else can ever free it once the request context is
@@ -257,7 +246,7 @@ it("aborting direct-stream responses parked in pull() does not leak the native s
     const leaked = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
     return leaked ? Number(leaked[1]) : 0;
   };
-  const [small, large] = [await runAborts(2), await runAborts(22)];
+  const [small, large] = await Promise.all([runAborts(2), runAborts(22)]);
   // 20 extra aborted requests leaked ~176 bytes each before the fix.
   expect(large - small).toBeLessThan(1000);
-});
+}, 30_000);

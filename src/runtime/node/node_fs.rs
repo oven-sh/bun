@@ -1085,6 +1085,7 @@ mod _async_tasks {
         args::Readlink,
         args::Realpath,
         args::Unlink,
+        args::Rm,
         args::RmDir,
         args::Mkdir,
         args::MkdirTemp,
@@ -3350,7 +3351,31 @@ pub mod args {
         }
     }
 
-    pub type Rm = RmDir;
+    /// `fs.rm` shares `RmDir`'s option set but validates it the way node's
+    /// `validateRmOptions` does: an own `recursive`/`force` key holding
+    /// `undefined` overwrites the default and is rejected, where `fs.rmdir`
+    /// silently keeps the default for it.
+    pub struct Rm(pub RmDir);
+    impl std::ops::Deref for Rm {
+        type Target = RmDir;
+        fn deref(&self) -> &RmDir {
+            &self.0
+        }
+    }
+    impl Unprotect for Rm {
+        #[inline]
+        fn unprotect(&mut self) {
+            self.0.unprotect();
+        }
+    }
+    impl Rm {
+        pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rm> {
+            Ok(Rm(RmDir::from_js_impl(ctx, arguments, true)?))
+        }
+        pub fn to_thread_safe(&mut self) {
+            self.0.to_thread_safe();
+        }
+    }
 
     pub struct RmDir {
         pub path: PathLike,
@@ -3373,6 +3398,16 @@ pub mod args {
     fs_args_path_forwarders!(RmDir; path);
     impl RmDir {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
+            Self::from_js_impl(ctx, arguments, false)
+        }
+        /// `strict_booleans` selects node's `validateRmOptions` behavior (used by
+        /// `fs.rm`): a present-but-`undefined` `recursive`/`force` is a type
+        /// error. `fs.rmdir` treats `undefined` as absent.
+        fn from_js_impl(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            strict_booleans: bool,
+        ) -> JsResult<RmDir> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
             let mut force = false;
@@ -3381,7 +3416,15 @@ pub mod args {
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 if val.is_object() {
-                    if let Some(boolean) = val.get(ctx, "recursive")? {
+                    let get_option = |name: &'static str| -> JsResult<Option<JSValue>> {
+                        if strict_booleans {
+                            let key = bun_core::String::borrow_utf8(name.as_bytes());
+                            val.get_own(ctx, &key)
+                        } else {
+                            val.get(ctx, name)
+                        }
+                    };
+                    if let Some(boolean) = get_option("recursive")? {
                         if boolean.is_boolean() {
                             recursive = boolean.to_boolean();
                         } else {
@@ -3390,7 +3433,7 @@ pub mod args {
                             )));
                         }
                     }
-                    if let Some(boolean) = val.get(ctx, "force")? {
+                    if let Some(boolean) = get_option("force")? {
                         if boolean.is_boolean() {
                             force = boolean.to_boolean();
                         } else {
@@ -3399,7 +3442,7 @@ pub mod args {
                             )));
                         }
                     }
-                    if let Some(delay) = val.get(ctx, "retryDelay")? {
+                    if let Some(delay) = get_option("retryDelay")? {
                         retry_delay = c_uint::try_from(validators::validate_integer(
                             ctx,
                             delay,
@@ -3409,7 +3452,7 @@ pub mod args {
                         )?)
                         .expect("infallible: validated range");
                     }
-                    if let Some(retries) = val.get(ctx, "maxRetries")? {
+                    if let Some(retries) = get_option("maxRetries")? {
                         max_retries = u32::try_from(validators::validate_integer(
                             ctx,
                             retries,
@@ -3614,16 +3657,10 @@ pub mod args {
             let mut mode: Mode = DEFAULT_PERMISSION;
             if let Some(val) = arguments.next() {
                 arguments.eat();
-                if val.is_object() {
-                    if let Some(flags_) = val.get_truthy(ctx, "flags")? {
-                        flags = FileSystemFlags::from_js(ctx, flags_)?.unwrap_or(flags);
-                    }
-                    if let Some(mode_) = val.get_truthy(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
-                } else if !val.is_empty() {
+                if !val.is_empty() {
                     if !val.is_undefined_or_null() {
-                        // error is handled below
+                        // Node has no options-object form here: the second argument is
+                        // always the flags, so `{}` is an invalid flags value.
                         flags = FileSystemFlags::from_js(ctx, val)?.unwrap_or(flags);
                     }
                     if let Some(next) = arguments.next_eat() {
@@ -7722,15 +7759,21 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
-                let errno = if matches!(err, crate::Error::FileNotFound) {
+                if matches!(err, crate::Error::FileNotFound) {
                     if args.force {
                         return Ok(());
                     }
-                    E::ENOENT
-                } else {
-                    map_anyerror_to_errno_rm_tree(&err)
-                };
-                return Err(sys::Error::from_code(errno, sys::Tag::rm).with_path(args.path.slice()));
+                    // Node reaches a missing path through the lstat() that
+                    // validateRmOptions performs before removing anything, so the
+                    // ENOENT it reports is tagged `lstat`, not `rm`.
+                    return Err(sys::Error::from_code(E::ENOENT, sys::Tag::lstat)
+                        .with_path(args.path.slice()));
+                }
+                return Err(sys::Error::from_code(
+                    map_anyerror_to_errno_rm_tree(&err),
+                    sys::Tag::rm,
+                )
+                .with_path(args.path.slice()));
             }
             return Ok(());
         }
@@ -7764,8 +7807,15 @@ impl NodeFS {
                 }
                 return Ok(());
             }
-            if e1 == E::ENOENT && args.force {
-                return Ok(());
+            if e1 == E::ENOENT {
+                if args.force {
+                    return Ok(());
+                }
+                // See the recursive branch: node's ENOENT for rm comes from the
+                // lstat() in validateRmOptions.
+                return Err(
+                    sys::Error::from_code(E::ENOENT, sys::Tag::lstat).with_path(args.path.slice())
+                );
             }
             return Err(sys::Error::from_code(map_rm_errno_narrow(e1), sys::Tag::rm)
                 .with_path(args.path.slice()));
@@ -9533,6 +9583,7 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
         "PermissionDenied" => E::EPERM,
+        "DirNotEmpty" => E::ENOTEMPTY,
         "FileTooBig" => E::EFBIG,
         "SymLinkLoop" => E::ELOOP,
         "ProcessFdQuotaExceeded" => E::ENFILE,
@@ -9777,6 +9828,28 @@ pub fn zig_delete_tree(
                                 treat_as_dir = false;
                                 continue 'handle_entry;
                             }
+                            #[cfg(target_os = "macos")]
+                            Err(e @ (E::EACCES | E::EPERM)) => {
+                                // Same as the pop-delete site below: node's rimraf
+                                // retries rmdir on the directory whose child could
+                                // not be opened and reports its ENOTEMPTY on macOS.
+                                let ancestor = &stack[top_idx];
+                                let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
+                                    sub_path
+                                } else {
+                                    &ancestor.name
+                                };
+                                if matches!(
+                                    dt_delete_dir(
+                                        sys::Dir::borrow(&ancestor.parent_dir),
+                                        ancestor_name
+                                    ),
+                                    Err(E::ENOTEMPTY | E::EEXIST)
+                                ) {
+                                    return Err(dt_err(E::ENOTEMPTY));
+                                }
+                                return Err(dt_err(e));
+                            }
                             Err(e) => return Err(dt_err(e)),
                         }
                     } else {
@@ -9795,6 +9868,30 @@ pub fn zig_delete_tree(
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
                             continue 'handle_entry;
+                        }
+                        #[cfg(target_os = "macos")]
+                        Err(e @ E::EACCES) => {
+                            // Same ancestor-rmdir retry as the directory sites:
+                            // node reports the containing directory's ENOTEMPTY on
+                            // macOS when a file child cannot be unlinked. EPERM is
+                            // NOT converted -- on macOS it can mean "target is a
+                            // directory" and must keep flowing to the caller.
+                            let ancestor = &stack[top_idx];
+                            let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
+                                sub_path
+                            } else {
+                                &ancestor.name
+                            };
+                            if matches!(
+                                dt_delete_dir(
+                                    sys::Dir::borrow(&ancestor.parent_dir),
+                                    ancestor_name
+                                ),
+                                Err(E::ENOTEMPTY | E::EEXIST)
+                            ) {
+                                return Err(dt_err(E::ENOTEMPTY));
+                            }
+                            return Err(dt_err(e));
                         }
                         // "EPERM because it's a directory" is OS-dependent
                         // (Linux returns EISDIR; macOS returns EPERM). We only
@@ -9829,6 +9926,28 @@ pub fn zig_delete_tree(
             // Some OSes report EEXIST instead of ENOTEMPTY for a non-empty
             // directory; treat it the same.
             Err(E::EEXIST) => need_to_retry = true,
+            #[cfg(target_os = "macos")]
+            Err(e @ (E::EACCES | E::EPERM)) => {
+                // Node's rimraf keeps going after a child deletion is denied and
+                // retries rmdir on the ancestor, so on macOS the error it reports
+                // for a read-only-but-searchable directory is the ancestor's
+                // ENOTEMPTY, not the child's EACCES. (On Linux node surfaces the
+                // child's EACCES, which the plain return below produces.)
+                if let Some(ancestor) = stack.last() {
+                    let ancestor_name: &[u8] = if ancestor.name_is_borrowed {
+                        sub_path
+                    } else {
+                        &ancestor.name
+                    };
+                    if matches!(
+                        dt_delete_dir(sys::Dir::borrow(&ancestor.parent_dir), ancestor_name),
+                        Err(E::ENOTEMPTY | E::EEXIST)
+                    ) {
+                        return Err(dt_err(E::ENOTEMPTY));
+                    }
+                }
+                return Err(dt_err(e));
+            }
             Err(e) => return Err(dt_err(e)),
         }
 

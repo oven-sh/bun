@@ -152,6 +152,7 @@ const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
     own_properties_only: true,
     observable: true,
     only_non_index_properties: false,
+    include_symbols: true,
 };
 
 impl Config {

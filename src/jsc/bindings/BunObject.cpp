@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSBase.h>
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/DeferTermination.h>
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/JSFunction.h>
@@ -316,6 +317,10 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
 
 static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
 {
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check. A
+    // TerminationException cannot be cleared, so defer it across the require.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
@@ -328,6 +333,10 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
 {
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check. A
+    // TerminationException cannot be cleared, so defer it across the require.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
@@ -359,6 +368,10 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 {
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check. A
+    // TerminationException cannot be cleared, so defer it across the call.
+    JSC::DeferTerminationForAWhile deferTermination(vm);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);

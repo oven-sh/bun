@@ -83,6 +83,85 @@ test(
   timeout,
 );
 
+// Regression: these properties are lazily built by JSC's reifyStaticProperty,
+// which performs no exception check. A terminate() that landed while a builder
+// was entering JS left a TerminationException pending (tryClearException()
+// cannot clear one), so the builder either tripped the caller's
+// `EXCEPTION_ASSERT(!scope.exception() || !hasSlot)` or handed the empty
+// JSValue to putDirect (a null JSCell deref).
+//
+// Each worker blocks in Bun.sleepSync so terminate() is requested while the
+// thread sits in native code with no JS safepoint ahead of the property read;
+// the builder then runs with the termination trap armed. A blocking call is
+// the point of the test, not a wait for a condition.
+//
+// One entry per builder shape: a process.* TopExceptionScope builder, a JS
+// property get, an internal-module require, a JSC::call, and a Rust-backed
+// getter behind the shared wrapper macro.
+const lazyProperties = [
+  "process.nextTick",
+  "process.mainModule",
+  "process.stdin",
+  "Bun.$",
+  "Bun.sql",
+  "Bun.SQL",
+  "Bun.argv",
+];
+const blockMs = slow ? 600 : 200;
+
+test(
+  "terminate() while a lazy property builder is entering JS does not abort",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const properties = ${JSON.stringify(lazyProperties)};
+        await Promise.all(
+          properties.map(property => {
+            const w = new Worker(
+              "data:text/javascript," +
+                encodeURIComponent(
+                  'postMessage("go");' +
+                    // Blocks the worker thread in native code; terminate() arms the
+                    // termination trap while we are parked here.
+                    "Bun.sleepSync(${blockMs});" +
+                    // First touch of the lazy property: its builder enters JS and is
+                    // terminated mid-call.
+                    property + ";",
+                ),
+            );
+            const { promise: closed, resolve, reject } = Promise.withResolvers();
+            w.addEventListener("close", resolve, { once: true });
+            // A worker that dies before reaching the property read would still
+            // fire close, and the test would pass having exercised nothing.
+            w.addEventListener("error", event => reject(event.error ?? new Error(property + ": " + event.message)), {
+              once: true,
+            });
+            w.addEventListener("message", () => w.terminate(), { once: true });
+            return closed;
+          }),
+        );
+        console.log("terminated " + properties.length);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: `terminated ${lazyProperties.length}\n`,
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  timeout,
+);
+
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and
 // EventListenerMap::releaseAssertOrSetThreadUID tripped because the listener

@@ -850,6 +850,10 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       let ag = new Error("leaf");
       for (let i = 0; i < 1000; i++) ag = new AggregateError([ag], "L" + i);
       console.log(ag);
+
+      let ev = new MessageEvent("message", { data: 1 });
+      for (let i = 0; i < 1000; i++) ev = new MessageEvent("message", { data: ev });
+      console.log(ev);
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
@@ -862,6 +866,7 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     expect(stdout).toContain("[Set ...]");
     expect(stdout).toContain("[Array ...]");
     expect(stdout).toContain("[Error ...]");
+    expect(stdout).toContain("[MessageEvent ...]");
     // Previously each of these produced megabytes of output or threw RangeError.
     expect(stdout.length).toBeLessThan(4096);
     expect(exitCode).toBe(0);
@@ -911,5 +916,37 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     expect(flat).toContain("error: a");
     expect(flat).toContain("error: b");
     expect(flat).not.toContain("[Error ...]");
+  });
+
+  it("nested MessageEvent/ErrorEvent respects max_depth", () => {
+    let me = new MessageEvent("message", { data: 1 });
+    for (let i = 0; i < 10; i++) me = new MessageEvent("message", { data: me });
+    const out = Bun.inspect(me, { depth: 2 });
+    expect(out).toContain("[MessageEvent ...]");
+    expect(out.length).toBeLessThan(400);
+    expect(Bun.inspect(me, { depth: Infinity })).toContain("data: 1");
+
+    let ee = new ErrorEvent("error", { error: 1 });
+    for (let i = 0; i < 10; i++) ee = new ErrorEvent("error", { error: ee });
+    expect(Bun.inspect(ee, { depth: 2 })).toContain("[ErrorEvent ...]");
+  });
+
+  it("deep AggregateError with depth: Infinity bails on stack limit instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let e = new Error("leaf");
+         for (let i = 0; i < 20000; i++) e = new AggregateError([e], "L" + i);
+         const out = Bun.inspect(e, { depth: Infinity });
+         console.log("len=" + out.length);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("len=");
+    expect(exitCode).toBe(0);
   });
 });

@@ -5222,6 +5222,55 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    #[inline]
+    fn should_keep_names(&self) -> bool {
+        self.options.features.minify_keep_names && self.options.features.allow_runtime
+    }
+
+    /// A user-written `static name` member owns `.name`; `__name()` must not clobber it.
+    pub fn class_has_custom_static_name(class: &G::Class) -> bool {
+        for prop in class.properties.iter() {
+            if !prop.flags.contains(Flags::Property::IsStatic)
+                || prop.flags.contains(Flags::Property::IsComputed)
+            {
+                continue;
+            }
+            if let Some(key) = prop.key {
+                if let js_ast::ExprData::EString(s) = key.data {
+                    if s.eql_comptime(b"name") {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub fn keep_stmt_symbol_name(
+        &mut self,
+        loc: bun_ast::Loc,
+        ref_: Ref,
+        original_name: &[u8],
+    ) -> Option<Stmt> {
+        if !self.should_keep_names() {
+            return None;
+        }
+        self.record_usage(ref_);
+        let name_str = self.new_expr(E::String::init(original_name), loc);
+        let call = self.call_runtime(
+            loc,
+            b"__name",
+            ExprNodeList::from_slice(&[Expr::init_identifier(ref_, loc), name_str]),
+        );
+        Some(self.s(
+            S::SExpr {
+                value: call,
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
     pub fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
         // Substitute "this" if we're inside a static class property initializer
         if self
@@ -5360,8 +5409,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn keep_expr_symbol_name(&mut self, _value: Expr, _name: &[u8]) -> Expr {
-        _value
+    pub fn keep_expr_symbol_name(&mut self, value: Expr, name: &[u8]) -> Expr {
+        if !self.should_keep_names() {
+            return value;
+        }
+        if let js_ast::ExprData::EClass(cls) = value.data {
+            if Self::class_has_custom_static_name(&cls) {
+                return value;
+            }
+        }
+        let loc = value.loc;
+        let name_str = self.new_expr(E::String::init(name), loc);
+        let target = self.runtime_identifier(loc, b"__name");
+        self.new_expr(
+            E::Call {
+                target,
+                args: ExprNodeList::from_slice(&[value, name_str]),
+                // The only side effect of `__name` is on `value` itself, so if the
+                // whole expression is unused tree-shaking may drop it.
+                can_be_unwrapped_if_unused: js_ast::e::CallUnwrap::IfUnused,
+                ..Default::default()
+            },
+            loc,
+        )
     }
 
     pub fn is_simple_parameter_list(args: &[G::Arg], has_rest_arg: bool) -> bool {

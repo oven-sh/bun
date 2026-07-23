@@ -107,55 +107,162 @@ describe("bundler", () => {
   itBundled("minify/KeepNamesPreservesNames", {
     files: {
       "/entry.js": /* js */ `
-        export var AB = function A() { };
-        export var CD = function B() { return 1; };
-        export var EF = function C() { C(); };
-        export var GH = function() { };
-        export var IJ = class D { };
-        export var KL = class E { constructor() {} };
-        export var MN = class F { method() { return F; } };
-        export var OP = class { };
+        var AB = function A() { };
+        var CD = function B() { return 1; };
+        var EF = function C() { C(); };
+        var GH = function() { };
+        var IJ = class D { };
+        var KL = class E { constructor() {} };
+        var MN = class F { method() { return F; } };
+        var OP = class { };
+        console.log(JSON.stringify({
+          AB: AB.name, CD: CD.name, EF: EF.name, GH: GH.name,
+          IJ: IJ.name, KL: KL.name, MN: MN.name, OP: OP.name,
+        }));
       `,
+    },
+    run: {
+      stdout: JSON.stringify({
+        AB: "A",
+        CD: "B",
+        EF: "C",
+        GH: "GH",
+        IJ: "D",
+        KL: "E",
+        MN: "F",
+        OP: "OP",
+      }),
     },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // With keepNames, all names should be preserved even when minifying
-      expect(code).toContain("function A()");
-      expect(code).toContain("function B()");
-      expect(code).toContain("function C()");
-      expect(code).toContain("class D");
-      expect(code).toContain("class E");
-      expect(code).toContain("class F");
-      // Anonymous functions/classes stay anonymous
-      expect(code).toMatch(/\w+ = function\(\) \{\}/); // GH stays anonymous
-      expect(code).toMatch(/\w+ = class \{\s*\}/); // OP stays anonymous
+      // The original names are carried as string arguments to __name().
+      for (const name of ["A", "B", "C", "GH", "D", "E", "F", "OP"]) {
+        expect(code).toContain(`"${name}"`);
+      }
     },
     minifySyntax: true,
-    minifyIdentifiers: false, // Don't minify identifiers to make testing easier
+    minifyIdentifiers: false,
     keepNames: true,
     target: "bun",
   });
   itBundled("minify/KeepNamesWithMinifyIdentifiers", {
     files: {
       "/entry.js": /* js */ `
-        export var AB = function A() { };
-        export var CD = function B() { return 1; };
-        export var EF = class C { };
+        class UserService {}
+        function makeThing() { return 1; }
+        const registry = new Map();
+        function register(k) { registry.set(k.name, k); }
+        register(UserService);
+        register(makeThing);
+        const arrow = () => 1;
+        let assigned;
+        assigned = function() {};
+        const NamedClassExpr = class Foo {};
+        const AnonClassExpr = class {};
+        class Base {}
+        class Derived extends Base {}
+        function* gen() {}
+        async function asyncFn() {}
+        console.log(JSON.stringify([
+          UserService.name,
+          makeThing.name,
+          arrow.name,
+          (function named(){}).name,
+          [...registry.keys()].sort().join("|"),
+          assigned.name,
+          NamedClassExpr.name,
+          AnonClassExpr.name,
+          Base.name,
+          Derived.name,
+          gen.name,
+          asyncFn.name,
+        ]));
+      `,
+    },
+    run: {
+      stdout: JSON.stringify([
+        "UserService",
+        "makeThing",
+        "arrow",
+        "named",
+        "UserService|makeThing",
+        "assigned",
+        "Foo",
+        "AnonClassExpr",
+        "Base",
+        "Derived",
+        "gen",
+        "asyncFn",
+      ]),
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesExportDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from './a.js';
+        import b from './b.js';
+        import c from './c.js';
+        import d from './d.js';
+        console.log(JSON.stringify({a: a.name, b: b.name, c: c.name, d: d.name}));
+      `,
+      "/a.js": `export default function myFunc() {}`,
+      "/b.js": `export default class MyClass {}`,
+      "/c.js": `export default () => {}`,
+      "/d.js": `export default class {}`,
+    },
+    run: {
+      stdout: JSON.stringify({ a: "myFunc", b: "MyClass", c: "default", d: "default" }),
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesSkipsStaticNameMember", {
+    files: {
+      "/entry.js": /* js */ `
+        class A { static name = "customA"; }
+        class B { static foo = 1; }
+        const C = class { static name = "customC"; };
+        const D = class Named { static name = "customD"; };
+        const E = class { static get name() { return "getE"; } };
+        console.log(JSON.stringify([A.name, B.name, C.name, D.name, E.name]));
+      `,
+    },
+    run: {
+      stdout: JSON.stringify(["customA", "B", "customC", "customD", "getE"]),
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesDisabledByDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        class UserService {}
+        function makeThing() {}
+        console.log(UserService.name, makeThing.name);
       `,
     },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // With keepNames + minifyIdentifiers, names are preserved but minified
-      // The original names A, B, C should still exist (though minified)
-      expect(code).toMatch(/function \w+\(\)/); // Functions should have names
-      expect(code).toMatch(/class \w+/); // Classes should have names
-      // Should not have anonymous functions/classes
-      expect(code).not.toContain("function()");
-      expect(code).not.toContain("class {");
+      // Without --keep-names there must be no __name runtime helper and no
+      // original-name string literals in the output.
+      expect(code).not.toContain('"UserService"');
+      expect(code).not.toContain('"makeThing"');
+      expect(code).not.toContain("defineProperty");
     },
     minifySyntax: true,
+    minifyWhitespace: true,
     minifyIdentifiers: true,
-    keepNames: true,
     target: "bun",
   });
   itBundled("minify/PrivateIdentifiersNameCollision", {

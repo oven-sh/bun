@@ -2630,6 +2630,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
+        let original_class_name = e_.class_name;
         let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
 
         // Lower standard decorators for class expressions
@@ -2652,6 +2653,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 == 0
         {
             e_.class_name = None;
+        }
+
+        if let Some(name) = original_class_name {
+            if !name.ref_.is_empty() && !Self::class_has_custom_static_name(&e_) {
+                let original_name: &[u8] = p.symbols[name.ref_.inner_index() as usize]
+                    .original_name
+                    .slice();
+                *e = p.keep_expr_symbol_name(expr, original_name);
+            }
         }
     }
 }

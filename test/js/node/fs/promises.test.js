@@ -491,6 +491,33 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     }
   });
 
+  // Aborting while a large buffer is being written must stop the write mid-stream.
+  // Node checks the signal between 512 KiB chunks (kWriteFileMaxChunkSize); a
+  // one-shot write that commits the whole buffer and only then rejects tells the
+  // caller the operation failed while leaving the full payload on disk.
+  test("writeFile aborted mid-write stops before the full buffer is committed", async () => {
+    const dir = tempDirWithFiles("fs-abort-writefile-midwrite", {});
+    const p = join(dir, "big.bin");
+    const SIZE = 128 * 1024 * 1024;
+    const buf = Buffer.alloc(SIZE, 7);
+    // The write runs on a thread-pool worker; busy-poll from the JS thread until
+    // the worker has opened the file, then abort. This lands the abort while the
+    // write loop is live without relying on a timer.
+    const ac = new AbortController();
+    const promise = fsPromises.writeFile(p, buf, { signal: ac.signal });
+    while (!fs.existsSync(p));
+    ac.abort();
+    let rejected;
+    try {
+      await promise;
+    } catch (err) {
+      rejected = err;
+    }
+    const size = fs.statSync(p).size;
+    expect({ name: rejected?.name, code: rejected?.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
+    expect(size).toBeLessThan(SIZE);
+  });
+
   test("writeFile of an async iterable with a pre-aborted signal", async () => {
     const dir = tempDirWithFiles("fs-abort-writefile-iter", {});
     const signal = AbortSignal.abort();

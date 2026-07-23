@@ -7429,6 +7429,13 @@ impl NodeFS {
         #[cfg(not(windows))]
         let mut written: usize = 0;
 
+        // Node checks the abort signal between chunks of this size
+        // (kWriteFileMaxChunkSize in lib/internal/fs/promises.js). Without the
+        // cap a single write() call can commit the whole buffer before the
+        // signal is ever consulted.
+        const WRITE_FILE_CHUNK_SIZE: usize = 512 * 1024;
+        let has_signal = args.signal.is_some();
+
         // Attempt to pre-allocate large files
         // Worthwhile after 6 MB at least on ext4 linux
         if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
@@ -7470,7 +7477,16 @@ impl NodeFS {
         // the bytes that did land.
         let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
-            match sys::write(fd, buf) {
+            let chunk = if has_signal {
+                if args.aborted() {
+                    write_err = Some(abort_err());
+                    break;
+                }
+                &buf[..buf.len().min(WRITE_FILE_CHUNK_SIZE)]
+            } else {
+                buf
+            };
+            match sys::write(fd, chunk) {
                 Err(err) => {
                     write_err = Some(err);
                     break;

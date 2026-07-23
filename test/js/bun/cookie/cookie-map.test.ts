@@ -267,6 +267,16 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
       expect(map.toSetCookieHeaders()).toEqual([]);
     });
 
+    test("empty iterable produces an empty CookieMap", () => {
+      for (const init of [new Map(), (function* () {})(), new Bun.CookieMap()]) {
+        const map = new Bun.CookieMap(init);
+        expect(map.size).toBe(0);
+        expect(map.get("name")).toBe(null);
+        expect([...map]).toEqual([]);
+        expect(map.toSetCookieHeaders()).toEqual([]);
+      }
+    });
+
     test("iterable yielding wrong-length pair throws", () => {
       expect(() => new Bun.CookieMap(new Set([["only-one"]]) as any)).toThrow(TypeError);
       expect(() => new Bun.CookieMap([["a", "b", "c"]] as any)).toThrow(TypeError);

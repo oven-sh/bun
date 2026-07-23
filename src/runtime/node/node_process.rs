@@ -241,7 +241,11 @@ mod _impl {
                         return false;
                     }
                     flags.push(arg[j]);
-                    let v = if arg[next] == b'=' { &arg[next + 1..] } else { &arg[next..] };
+                    let v = if arg[next] == b'=' {
+                        &arg[next + 1..]
+                    } else {
+                        &arg[next..]
+                    };
                     value = Some(v);
                     break;
                 }
@@ -332,7 +336,8 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                if !(arg.len() > 2 && arg[1] != b'-' && push_normalized_short_token(arg, &mut args)) {
+                if !(arg.len() > 2 && arg[1] != b'-' && push_normalized_short_token(arg, &mut args))
+                {
                     args.push(BunString::clone_utf8(arg));
                 }
                 prev = Some(arg);

@@ -829,7 +829,26 @@ impl FileSink {
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
             match (*this).writer.with_mut(|w| w.flush()) {
-                WriteResult::Err(_) | WriteResult::Done(_) => {
+                WriteResult::Err(err) => {
+                    (*this).update_ref(false);
+                    // `flush()` returns a write error without routing through the
+                    // writer's `_on_error`, so the pending slot still holds the
+                    // `Owned(consumed)` result `to_result` seeded and
+                    // `run_pending_later()` alone would resolve it as if every
+                    // buffered byte had reached the reader. Latch the error and
+                    // move the sink to its terminal state (mirrors `end_from_js`).
+                    (*this).done.set(true);
+                    if (*this).pending.get().state == streams::PendingState::Pending {
+                        (*this)
+                            .pending
+                            .with_mut(|p| p.result = streams::Writable::Err(err));
+                    }
+                    (*this).writer.with_mut(|w| w.end());
+                    (*this).run_pending_later();
+                    (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                    return false;
+                }
+                WriteResult::Done(_) => {
                     (*this).update_ref(false);
                     (*this).run_pending_later();
                 }

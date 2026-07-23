@@ -245,6 +245,12 @@ bun run <file or script>
   Set the maximum size of HTTP headers in bytes. Default is 16KiB
 </ParamField>
 
+<ParamField path="--max-old-space-size" type="number">
+  Set the maximum JavaScript heap size in megabytes, for Node.js compatibility. The process aborts with Node's
+  "JavaScript heap out of memory" fatal error when a full GC cannot keep the heap under the limit.
+  <code>--max_old_space_size</code> is accepted as an alias. 0 means no limit
+</ParamField>
+
 <ParamField path="--dns-result-order" type="string" default="verbatim">
   Set the default order of DNS lookup results. Valid orders: <code>verbatim</code> (default), <code>ipv4first</code>,{" "}
   <code>ipv6first</code>

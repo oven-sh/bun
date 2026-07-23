@@ -286,13 +286,19 @@ mod _impl {
             static MAP: std::sync::LazyLock<bun_collections::StringSet> =
                 std::sync::LazyLock::new(|| {
                     let mut set = bun_collections::StringSet::new();
+                    fn insert_long(set: &mut bun_collections::StringSet, name: &[u8]) {
+                        let mut k = Vec::with_capacity(2 + name.len());
+                        k.extend_from_slice(b"--");
+                        k.extend_from_slice(name);
+                        bun_core::handle_oom(set.insert(&k));
+                    }
                     for param in crate::cli::arguments::AUTO_PARAMS.iter() {
                         if param.takes_value != bun_clap::Values::None {
                             if let Some(name) = param.names.long {
-                                let mut k = Vec::with_capacity(2 + name.len());
-                                k.extend_from_slice(b"--");
-                                k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
+                                insert_long(&mut set, name);
+                            }
+                            for alias in param.names.long_aliases {
+                                insert_long(&mut set, alias);
                             }
                             if let Some(name) = param.names.short {
                                 bun_core::handle_oom(set.insert(&[b'-', name]));

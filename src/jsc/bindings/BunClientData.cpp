@@ -23,10 +23,61 @@
 
 #include "JSDOMWrapper.h"
 #include <JavaScriptCore/DeferredWorkTimer.h>
+#include <JavaScriptCore/HeapObserver.h>
 #include "NodeVM.h"
 #include "../../runtime/bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "NativePromiseContext.h"
+
+#if OS(WINDOWS)
+#include <stdlib.h>
+#else
+#include <unistd.h>
+#endif
+
+namespace Bun {
+
+// Enforces `--max-old-space-size`: when a full GC cannot keep the live heap
+// under the limit, fail fast with Node's fatal OOM message and exit code
+// instead of letting the process grow until the OS kills it.
+class HeapSizeLimitObserver final : public JSC::HeapObserver {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(HeapSizeLimitObserver);
+
+public:
+    HeapSizeLimitObserver(JSC::Heap& heap, size_t limit)
+        : m_heap(heap)
+        , m_limit(limit)
+    {
+    }
+
+    void willGarbageCollect() final {}
+
+    // May run on the collector thread; only reads heap counters and exits.
+    void didGarbageCollect(JSC::CollectionScope scope) final
+    {
+        if (scope != JSC::CollectionScope::Full)
+            return;
+        size_t sizeAfterGC = m_heap.sizeAfterLastFullCollection();
+        if (sizeAfterGC <= m_limit) [[likely]]
+            return;
+        fprintf(stderr,
+            "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n"
+            "(heap size %zu MB exceeded the limit of %zu MB set by --max-old-space-size)\n",
+            sizeAfterGC / (1024 * 1024), m_limit / (1024 * 1024));
+        fflush(stderr);
+        // Node exits with 134 (128 + SIGABRT) here; _exit keeps it
+        // deterministic and safe from any thread.
+        _exit(134);
+    }
+
+    JSC::Heap& heap() { return m_heap; }
+
+private:
+    JSC::Heap& m_heap;
+    size_t m_limit;
+};
+
+} // namespace Bun
 
 namespace WebCore {
 using namespace JSC;
@@ -93,8 +144,18 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
         delete heapData;
 }
 
+void JSVMClientData::enforceMaxOldSpaceSize(VM& vm, size_t limitBytes)
+{
+    ASSERT(!m_heapSizeLimitObserver);
+    m_heapSizeLimitObserver = makeUnique<Bun::HeapSizeLimitObserver>(vm.heap, limitBytes);
+    vm.heap.addObserver(m_heapSizeLimitObserver.get());
+}
+
 JSVMClientData::~JSVMClientData()
 {
+    if (m_heapSizeLimitObserver)
+        m_heapSizeLimitObserver->heap().removeObserver(m_heapSizeLimitObserver.get());
+
     m_clients.forEach([](auto& client) {
         client.willDestroyVM();
     });

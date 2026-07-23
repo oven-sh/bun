@@ -30,6 +30,10 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace Bun {
+class HeapSizeLimitObserver;
+}
+
 namespace WebCore {
 using namespace JSC;
 using namespace Zig;
@@ -91,6 +95,9 @@ public:
     virtual ~JSVMClientData();
 
     static void create(JSC::VM*, void*);
+
+    // Registers the --max-old-space-size observer with this VM's heap.
+    void enforceMaxOldSpaceSize(JSC::VM&, size_t limitBytes);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -170,6 +177,11 @@ private:
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
     WeakHashSet<JSVMClientDataClient> m_clients;
+
+    // Enforces --max-old-space-size. Registered with the heap by
+    // enforceMaxOldSpaceSize() (main thread VM only), unregistered in
+    // ~JSVMClientData (which ~VM runs while `heap` is alive).
+    std::unique_ptr<Bun::HeapSizeLimitObserver> m_heapSizeLimitObserver;
 };
 
 } // namespace WebCore

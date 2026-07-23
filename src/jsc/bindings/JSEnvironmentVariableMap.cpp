@@ -87,7 +87,9 @@ static void makeEnvAccessorEnumerable(VM& vm, JSGlobalObject* globalObject, JSOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned attributes = 0;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
+    // `object` is the [[Set]] receiver, which under Reflect.set(process.env, k, v, r)
+    // is `r`, not process.env: only re-put when the slot is actually our accessor.
+    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum) || !existing.isCustomGetterSetter())
         return;
     object->deleteProperty(globalObject, propertyName);
     RETURN_IF_EXCEPTION(scope, void());

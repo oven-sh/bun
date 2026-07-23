@@ -285,6 +285,35 @@ it("process.env: runtime-set TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERB
   expect(exitCode).toBe(0);
 });
 
+it("process.env: Reflect.set with a foreign receiver does not crash the TZ / TLS / verbose-fetch / proxy setters", async () => {
+  const vars = ["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH", "HTTP_PROXY"];
+  const childEnv = { ...bunEnv };
+  for (const k of vars) delete childEnv[k];
+
+  // The CustomAccessor setters receive the [[Set]] receiver as thisValue; a
+  // receiver with an own DontEnum data property at the same name used to hit
+  // ASSERT(value.isCustomGetterSetter()) in putDirectCustomAccessor.
+  const script = `
+    const vars = ${JSON.stringify(vars)};
+    for (const k of vars) {
+      const r = {};
+      Object.defineProperty(r, k, { value: "x", enumerable: false, configurable: true });
+      Reflect.set(process.env, k, "v", r);
+    }
+    process.stdout.write("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: childEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",

@@ -90,6 +90,10 @@ async function runProgram(program: string, cwd: string): Promise<Run> {
 function judge(r: Run): { kind: "crash" | "hang" | null; sig: string; detail: string } {
   const crash = detectCrash(r.stdout, r.stderr);
   if (crash && !/oom/.test(crash.kind)) return { kind: "crash", sig: `crash: ${crash.signature}`, detail: crash.detail };
+  // A hang carries no crash text to fingerprint - one shared "HANG" key made
+  // every hang after the first fold away. Return a placeholder; the caller
+  // keys hangs by seed (each distinct hanging program is its own finding
+  // until triage merges them).
   if (r.timedOut) return { kind: "hang", sig: "genrun HANG", detail: "generated program did not exit" };
   return { kind: null, sig: "", detail: "" };
 }
@@ -170,6 +174,7 @@ async function worker(w: number) {
     }
     if (j.kind === "crash") crashes++;
     else hangs++;
+    if (j.kind === "hang") j.sig = `genrun HANG seed:${seed}`; // per-program hang key
     console.log(`!! [seed ${seed}] ${j.kind} ${verified ? "VERIFIED" : "unverified"}: ${j.detail.slice(0, 90)}`);
     if (!verified) {
       // A seed IS a complete reproducer - never drop a first-run crash.

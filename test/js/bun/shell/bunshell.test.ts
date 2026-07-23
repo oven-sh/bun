@@ -506,11 +506,7 @@ describe("bunshell", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       return stdout.trim();
@@ -551,11 +547,7 @@ describe("bunshell", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       expect(await Bun.file(out).text()).toBe("via-fd\n");

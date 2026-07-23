@@ -101,6 +101,12 @@ const base = await runOnce({
   timeoutMs,
 });
 console.log(`  outcome=${base.outcome} exit=${base.exitCode} ${base.ms}ms`);
+// A program whose UNFAULTED baseline already emits a crash signature is
+// crashing on purpose (crash-handler tests trigger crashByPanic()/segv
+// deliberately): that signature is the program's intended behavior and a
+// faulted run reproducing it is not a finding.
+const baseCrashSig = base.crash ? (base.crashSig?.signature ?? "") : "";
+if (baseCrashSig) console.log(`  baseline crashes by design: ${baseCrashSig.slice(0, 70)}`);
 if (base.outcome !== "exit") {
   console.error("baseline did not exit cleanly; refusing to sweep a hanging baseline");
   process.exit(1);
@@ -377,7 +383,8 @@ async function worker(w: number) {
         // allocator-failure abort is by design, and a fault whose every
         // backtrace frame is a system DLL means we sabotaged system code
         // from inside its own machinery (mswsock's private threads etc.).
-        if (job.expect === "abort-expected") outcome = "expected-abort";
+        if (baseCrashSig && rr.crashSig?.signature === baseCrashSig) outcome = "expected-abort";
+        else if (job.expect === "abort-expected") outcome = "expected-abort";
         // Crash-on-OOM is by design; only an absurdly LARGE allocation
         // (oom-large: unvalidated size / runaway growth) is a real bug.
         else if (rr.crashSig?.kind === "oom") outcome = "expected-abort";

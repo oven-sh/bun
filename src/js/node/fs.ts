@@ -63,6 +63,12 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
 
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      return;
+    }
+
     fs.appendFile(path, data, options).then(nullcallback(callback), callback);
   },
   close = function close(fd, callback) {
@@ -334,6 +340,12 @@ var access = function access(path, mode, callback) {
     callback ||= options;
     ensureCallback(callback);
 
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      return;
+    }
+
     fs.readFile(path, options).then(function (data) {
       callback(null, data);
     }, callback);
@@ -341,6 +353,12 @@ var access = function access(path, mode, callback) {
   writeFile = function writeFile(path, data, options, callback) {
     callback ||= options;
     ensureCallback(callback);
+
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      return;
+    }
 
     fs.writeFile(path, data, options).then(nullcallback(callback), callback);
   },

@@ -570,6 +570,55 @@ describe("readFile/writeFile accept AbortSignal-shaped objects", () => {
     expect(writeErr).toBeNull();
   });
 
+  test("fs.watch", () => {
+    const dir = tempDirWithFiles("fs-duck-signal-watch", { "f.txt": "hello" });
+    const w = fs.watch(dir, { signal: duck });
+    w.close();
+  });
+
+  // node's fs.readFile checks `signal.aborted` on the object itself (not via a
+  // brand check), so a pre-aborted polyfill signal rejects with AbortError.
+  test("a pre-aborted signal-shaped object rejects with AbortError", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-preaborted", { "f.txt": "hello" });
+    const reason = new Error("stop");
+    const aborted = { aborted: true, reason, addEventListener() {}, removeEventListener() {} };
+    for (const op of [
+      () => fsPromises.readFile(join(dir, "f.txt"), { signal: aborted }),
+      () => fsPromises.writeFile(join(dir, "o.txt"), "x", { signal: aborted }),
+      () => fsPromises.appendFile(join(dir, "o.txt"), "x", { signal: aborted }),
+    ]) {
+      let err;
+      try {
+        await op();
+      } catch (e) {
+        err = e;
+      }
+      expect({ name: err?.name, code: err?.code, cause: err?.cause }).toEqual({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        cause: reason,
+      });
+    }
+  });
+
+  test("callback readFile/writeFile with a pre-aborted signal-shaped object", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-preaborted-cb", { "f.txt": "hello" });
+    const reason = new Error("stop");
+    const aborted = { aborted: true, reason, addEventListener() {}, removeEventListener() {} };
+    const readErr = await new Promise(resolve => fs.readFile(join(dir, "f.txt"), { signal: aborted }, resolve));
+    expect({ name: readErr?.name, code: readErr?.code, cause: readErr?.cause }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      cause: reason,
+    });
+    const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve));
+    expect({ name: writeErr?.name, code: writeErr?.code, cause: writeErr?.cause }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      cause: reason,
+    });
+  });
+
   test("values that fail node's shape check still throw ERR_INVALID_ARG_TYPE", async () => {
     const dir = tempDirWithFiles("fs-duck-signal-reject", { "f.txt": "hello" });
     for (const signal of [{}, 42, "x"]) {

@@ -1001,6 +1001,41 @@ describe("spyOn", () => {
     });
   }
 
+  test("throws when spying on a non-configurable own property (frozen object)", () => {
+    const obj = Object.freeze({
+      fn() {
+        return 42;
+      },
+    });
+    expect(() => spyOn(obj, "fn")).toThrow(/configurable/i);
+    // The original must be untouched.
+    expect(obj.fn()).toBe(42);
+  });
+
+  test("throws when spying on an inherited property of a non-extensible object", () => {
+    class C {
+      m() {
+        return 42;
+      }
+    }
+    const c = Object.preventExtensions(new C());
+    expect(() => spyOn(c, "m")).toThrow(/not extensible/i);
+    expect(c.m()).toBe(42);
+  });
+
+  test("still works on a non-extensible object when the own property is configurable", () => {
+    const obj = {
+      fn() {
+        return 1;
+      },
+    };
+    Object.preventExtensions(obj);
+    const spy = spyOn(obj, "fn");
+    expect(obj.fn()).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
   test("spyOn twice works", () => {
     var obj = {
       original() {

@@ -1708,9 +1708,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
+        // Jest compiles testNamePattern with the `i` flag; match that so `-t foo` finds `Foo`.
         let regex = match RegularExpression::init(
             bun_core::String::from_bytes(name_pattern),
-            RegexFlags::None,
+            RegexFlags::IgnoreCase,
         ) {
             Ok(r) => r,
             Err(_) => {

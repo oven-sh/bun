@@ -1962,6 +1962,11 @@ unsafe extern "system" {
 
     pub fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
 
+    pub fn GetNumberOfConsoleInputEvents(
+        hConsoleInput: HANDLE,
+        lpcNumberOfEvents: *mut DWORD,
+    ) -> BOOL;
+
     pub fn InitializeProcThreadAttributeList(
         lpAttributeList: *mut u8,
         dwAttributeCount: DWORD,

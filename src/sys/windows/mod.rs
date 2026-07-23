@@ -1027,6 +1027,7 @@ pub const ENABLE_ECHO_INPUT: DWORD = 0x004;
 pub const ENABLE_LINE_INPUT: DWORD = 0x002;
 pub const ENABLE_PROCESSED_INPUT: DWORD = 0x001;
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x200;
+pub const ENABLE_WINDOW_INPUT: DWORD = 0x008;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 
@@ -1519,6 +1520,7 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
     Ok(out)
 }
 pub use bun_windows_sys::externs::GetConsoleMode;
+pub use bun_windows_sys::externs::GetNumberOfConsoleInputEvents;
 pub use bun_windows_sys::externs::SetConsoleMode;
 
 #[derive(Default)]

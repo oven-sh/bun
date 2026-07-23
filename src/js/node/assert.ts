@@ -21,62 +21,32 @@
 
 "use strict";
 
-const { SafeMap, SafeSet } = require("internal/primordials");
-const {
-  isKeyObject,
-  isPromise,
-  isRegExp,
-  isMap,
-  isSet,
-  isDate,
-  isWeakSet,
-  isWeakMap,
-  isAnyArrayBuffer,
-} = require("node:util/types");
+const { isPromise, isRegExp } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 const { validateFunction, validateOneOf } = require("internal/validators");
 
-const ArrayFrom = Array.from;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
-const ArrayBufferIsView = ArrayBuffer.isView;
-const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-// Native brand check (inherits<JSDOMURL>) — immune to prototype and
-// Symbol.hasInstance tampering. The captured href getter reads the value.
-const isURL = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsURL", 1);
-// Ordered-with-gaps element containment for same-tag typed arrays,
-// DataViews, and ArrayBuffers (node kPartial), in native code.
-const partialTypedArrayEquiv = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionPartialTypedArrayEquiv", 2);
-const URLPrototypeHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href").get;
+// node's kPartial comparison, fully native (NodeUtilTypesModule.cpp).
+const nodePartialDeepStrictEqual = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionPartialDeepStrictEqual", 2);
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
-const NumberIsInteger = Number.isInteger;
-const ObjectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-// Reads the real typed-array tag, immune to faked Symbol.toStringTag properties.
-const TypedArrayPrototypeGetToStringTag = Object.getOwnPropertyDescriptor(
-  Object.getPrototypeOf(Uint8Array.prototype),
-  Symbol.toStringTag,
-)!.get!;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
-const ObjectPrototypePropertyIsEnumerable = Object.prototype.propertyIsEnumerable;
-const ObjectPrototypeToString = Object.prototype.toString;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
-const SymbolIterator = Symbol.iterator;
 
 type nodeAssert = typeof import("node:assert");
 
 const kOptions = Symbol("options");
 
-const { isDeepStrictEqual, withCycleGuard } = require("internal/util/comparisons");
+const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 function isDeepEqual(a, b) {
   return Bun.deepEquals(a, b, false);
@@ -452,294 +422,6 @@ Assert.prototype.notStrictEqual = function notStrictEqual(actual, expected, mess
   }
 };
 
-function isSpecial(obj) {
-  return obj == null || typeof obj !== "object" || Error.isError(obj) || isRegExp(obj) || isDate(obj);
-}
-
-const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
-const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
-const SafeMapPrototypeHas = SafeMap.prototype.has;
-const SafeMapPrototypeGet = SafeMap.prototype.get;
-
-/**
- * Compares two objects or values recursively to check if they are equal.
- * @param {any} actual - The actual value to compare.
- * @param {any} expected - The expected value to compare.
- * @param {Set} [comparedObjects=new Set()] - Set to track compared objects for handling circular references.
- * @returns {boolean} - Returns `true` if the actual value matches the expected value, otherwise `false`.
- * @example
- * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
- */
-function compareBranch(actual, expected, comparedObjects?) {
-  if (actual === expected) {
-    return actual !== 0 || ObjectIs(actual, expected);
-  }
-
-  // Distinct weak collections and promises are never partially equal.
-  if (
-    isWeakSet(actual) ||
-    isWeakMap(actual) ||
-    isPromise(actual) ||
-    isWeakSet(expected) ||
-    isWeakMap(expected) ||
-    isPromise(expected)
-  ) {
-    return false;
-  }
-
-  // Check for Map object equality (subset check for partialDeepStrictEqual)
-  if (isMap(actual) && isMap(expected)) {
-    if (expected.size > actual.size) {
-      return false; // `expected` can't be a subset if it has more elements
-    }
-
-    return withCycleGuard(actual, expected, comparedObjects, compareBranchMap);
-  }
-
-  // Typed arrays / ArrayBuffers: the expected contents must appear in the
-  // actual contents in order (with gaps), like node's kPartial mode.
-  const actualIsView = ArrayBufferIsView(actual);
-  const expectedIsView = ArrayBufferIsView(expected);
-  if (actualIsView || expectedIsView) {
-    if (actualIsView !== expectedIsView) {
-      return false;
-    }
-    const tag = TypedArrayPrototypeGetToStringTag.$call(actual);
-    if (tag !== TypedArrayPrototypeGetToStringTag.$call(expected)) {
-      return false;
-    }
-    if (tag === undefined) {
-      // DataViews have no indexed elements; compare raw bytes natively, then
-      // any own enumerable properties on the views themselves.
-      return (
-        partialTypedArrayEquiv(actual, expected) &&
-        withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
-      );
-    }
-    return partialTypedArrayEquiv(actual, expected);
-  }
-  const actualIsBuffer = isAnyArrayBuffer(actual);
-  const expectedIsBuffer = isAnyArrayBuffer(expected);
-  if (actualIsBuffer || expectedIsBuffer) {
-    if (
-      actualIsBuffer !== expectedIsBuffer ||
-      ObjectPrototypeToString.$call(actual) !== ObjectPrototypeToString.$call(expected)
-    ) {
-      return false;
-    }
-    // Compare contents natively, then any own enumerable properties.
-    return (
-      partialTypedArrayEquiv(actual, expected) && withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
-    );
-  }
-
-  if (isKeyObject(actual) || isKeyObject(expected)) {
-    return isKeyObject(actual) && isKeyObject(expected) && actual.equals(expected);
-  }
-
-  // URLs must both be URLs with the same href.
-  if (isURL(actual) || isURL(expected)) {
-    if (
-      !isURL(actual) ||
-      !isURL(expected) ||
-      URLPrototypeHrefGetter.$call(actual) !== URLPrototypeHrefGetter.$call(expected)
-    ) {
-      return false;
-    }
-    return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
-  }
-
-  // Errors compare name/message/cause/errors leniently: `undefined` (or an
-  // empty expected message) on the expected side is ignored.
-  if (Error.isError(actual) || Error.isError(expected)) {
-    if (!Error.isError(actual) || !Error.isError(expected)) {
-      return false;
-    }
-    for (const key of ["message", "name", "errors"]) {
-      const expectedValue = expected[key];
-      if (expectedValue === undefined || (key === "message" && expectedValue === "")) {
-        continue;
-      }
-      if (!compareBranch(actual[key], expectedValue, comparedObjects)) {
-        return false;
-      }
-    }
-    // An own `cause` on the expected error (even undefined) must exist on the
-    // actual error as well.
-    if (ObjectPrototypeHasOwnProperty.$call(expected, "cause")) {
-      if (
-        !ObjectPrototypeHasOwnProperty.$call(actual, "cause") ||
-        !compareBranch(actual.cause, expected.cause, comparedObjects)
-      ) {
-        return false;
-      }
-    }
-    return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
-  }
-
-  // Check for Set object equality
-  if (isSet(actual) && isSet(expected)) {
-    if (expected.size > actual.size) {
-      return false; // `expected` can't be a subset if it has more elements
-    }
-
-    const actualArray = ArrayFrom(SafeSetPrototypeIterator.$call(actual));
-    const expectedIterator = SafeSetPrototypeIterator.$call(expected);
-    const usedIndices = new SafeSet();
-
-    expectedIteration: for (const expectedItem of expectedIterator) {
-      for (let actualIdx = 0; actualIdx < actualArray.length; actualIdx++) {
-        if (!usedIndices.has(actualIdx) && Bun.deepEquals(actualArray[actualIdx], expectedItem, true)) {
-          usedIndices.add(actualIdx);
-          continue expectedIteration;
-        }
-      }
-      return false;
-    }
-
-    return true;
-  }
-
-  // The expected array must match a subsequence of the actual array, in order,
-  // with each element compared partially (Node's partialArrayEquiv).
-  if ($isArray(actual) !== $isArray(expected)) {
-    return false;
-  }
-  if ($isArray(actual) && $isArray(expected)) {
-    if (expected.length > actual.length) {
-      return false;
-    }
-
-    return withCycleGuard(actual, expected, comparedObjects, compareBranchArray);
-  }
-
-  // Comparison done when at least one of the values is not an object
-  if (isSpecial(actual) || isSpecial(expected)) {
-    return Bun.deepEquals(actual, expected, true);
-  }
-
-  // Objects with different type tags (e.g. an array vs a plain object) are
-  // never partially equal.
-  if (ObjectPrototypeToString.$call(actual) !== ObjectPrototypeToString.$call(expected)) {
-    return false;
-  }
-
-  return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
-}
-
-// A string key that is a canonical array index (0 <= i < 2**32 - 1).
-function isIndexKey(key) {
-  if (typeof key !== "string") return false;
-  const n = +key;
-  return NumberIsInteger(n) && n >= 0 && n < 4294967295 && String(n) === key;
-}
-
-// Own enumerable check on both sides, matching node's partial mode.
-function compareBranchOwnProperty(actual, expected, key, comparedObjects) {
-  return (
-    ObjectPrototypePropertyIsEnumerable.$call(actual, key) && compareBranch(actual[key], expected[key], comparedObjects)
-  );
-}
-
-function compareBranchMap(actual, expected, comparedObjects) {
-  let actualEntries;
-  const usedIndices = new SafeSet();
-  // Keys consumed by the identity fast path; without this, one actual entry
-  // could satisfy two expected entries (once by identity, once by deep
-  // equality through the index loop below).
-  const usedIdentityKeys = new SafeSet();
-  const expectedIterator = SafeMapPrototypeIterator.$call(expected);
-  entryIteration: for (const { 0: key, 1: expectedValue } of expectedIterator) {
-    // Fast path: identical key present on both sides.
-    if (!usedIdentityKeys.has(key) && SafeMapPrototypeHas.$call(actual, key)) {
-      // The identity entry may already have been consumed by the index loop
-      // below (matched by deep equality against an earlier expected entry);
-      // reserve its index so neither path can double-count it, like node.
-      let identityIndex = -1;
-      if (actualEntries !== undefined) {
-        for (let i = 0; i < actualEntries.length; i++) {
-          if (actualEntries[i][0] === key) {
-            identityIndex = i;
-            break;
-          }
-        }
-      }
-      if (identityIndex === -1 || !usedIndices.has(identityIndex)) {
-        const actualValue = SafeMapPrototypeGet.$call(actual, key);
-        if (compareBranch(actualValue, expectedValue, comparedObjects)) {
-          usedIdentityKeys.add(key);
-          if (identityIndex !== -1) {
-            usedIndices.add(identityIndex);
-          }
-          continue;
-        }
-      }
-    }
-    if (typeof key !== "object" || key === null) {
-      return false;
-    }
-    // Object keys are matched by partial deep equality, like node.
-    actualEntries ??= ArrayFrom(SafeMapPrototypeIterator.$call(actual));
-    for (let i = 0; i < actualEntries.length; i++) {
-      if (
-        !usedIndices.has(i) &&
-        !usedIdentityKeys.has(actualEntries[i][0]) &&
-        compareBranch(actualEntries[i][0], key, comparedObjects) &&
-        compareBranch(actualEntries[i][1], expectedValue, comparedObjects)
-      ) {
-        usedIndices.add(i);
-        continue entryIteration;
-      }
-    }
-    return false;
-  }
-  return true;
-}
-
-function compareBranchArray(actual, expected, comparedObjects) {
-  let actualPos = 0;
-  for (let i = 0; i < expected.length; i++) {
-    const lastCandidate = actual.length - expected.length + i;
-    while (actualPos <= lastCandidate && !compareBranch(actual[actualPos], expected[i], comparedObjects)) {
-      actualPos++;
-    }
-    if (actualPos > lastCandidate) {
-      return false;
-    }
-    actualPos++;
-  }
-  // node also compares own enumerable non-index properties.
-  for (const key of ObjectKeys(expected)) {
-    if (isIndexKey(key)) continue;
-    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
-      return false;
-    }
-  }
-  for (const key of ObjectGetOwnPropertySymbols(expected)) {
-    if (!ObjectPrototypePropertyIsEnumerable.$call(expected, key)) continue;
-    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function compareBranchObject(actual, expected, comparedObjects) {
-  // Own enumerable string and symbol properties only, like node's partial mode.
-  for (const key of ObjectKeys(expected)) {
-    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
-      return false;
-    }
-  }
-  for (const key of ObjectGetOwnPropertySymbols(expected)) {
-    if (!ObjectPrototypePropertyIsEnumerable.$call(expected, key)) continue;
-    if (!compareBranchOwnProperty(actual, expected, key, comparedObjects)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 /**
  * The strict equivalence assertion test between two objects
  * @param {any} actual
@@ -753,7 +435,7 @@ Assert.prototype.partialDeepStrictEqual = function partialDeepStrictEqual(actual
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
 
-  if (!compareBranch(actual, expected)) {
+  if (!nodePartialDeepStrictEqual(actual, expected)) {
     innerFail({
       actual,
       expected,

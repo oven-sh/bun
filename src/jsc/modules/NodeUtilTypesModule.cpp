@@ -1,6 +1,11 @@
 #include "BunClientData.h"
 #include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
+#include "node/crypto/JSKeyObject.h"
+#include <JavaScriptCore/JSMapIterator.h>
+#include <JavaScriptCore/JSSetIterator.h>
+#include <JavaScriptCore/ObjectPrototype.h>
+#include <cmath>
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "_NativeModule.h"
@@ -204,24 +209,23 @@ static ByteSpanResult byteSpanOf(JSC::JSValue value, std::span<const uint8_t>& o
     return ByteSpanResult::NotABufferLike;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialTypedArrayEquiv,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::CallFrame* callframe))
+// Ordered-with-gaps contents containment for same-kind typed arrays,
+// DataViews, and ArrayBuffers. Throws node's detached-buffer TypeError.
+static bool partialBufferContentsEquiv(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue actualValue, JSC::JSValue expectedValue)
 {
     std::span<const uint8_t> actual, expected;
     JSC::TypedArrayType actualType = JSC::TypedArrayType::NotTypedArray;
     JSC::TypedArrayType expectedType = JSC::TypedArrayType::NotTypedArray;
-    auto actualResult = byteSpanOf(callframe->argument(0), actual, actualType);
-    auto expectedResult = byteSpanOf(callframe->argument(1), expected, expectedType);
+    auto actualResult = byteSpanOf(actualValue, actual, actualType);
+    auto expectedResult = byteSpanOf(expectedValue, expected, expectedType);
     if (actualResult == ByteSpanResult::Detached || expectedResult == ByteSpanResult::Detached) {
         // node reaches this branch via `new Uint8Array(detached)`, which
         // throws; keep the exact error contract.
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
-        return {};
+        return false;
     }
     if (actualResult != ByteSpanResult::Ok || expectedResult != ByteSpanResult::Ok || actualType != expectedType)
-        return JSValue::encode(jsBoolean(false));
+        return false;
 
     bool result;
     switch (actualType) {
@@ -260,6 +264,531 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialTypedArrayEquiv,
         result = partialIntSequenceContains<uint8_t>(actual, expected);
         break;
     }
+    return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialTypedArrayEquiv,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    bool result = partialBufferContentsEquiv(globalObject, scope, callframe->argument(0), callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(result));
+}
+
+extern "C" bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::JSGlobalObject*);
+
+// ============================================================================
+// assert.partialDeepStrictEqual (node's kPartial mode), fully native.
+//
+// `expected` must be recursively contained in `actual`: objects match on
+// expected's own enumerable properties only, arrays and buffer contents as
+// ordered-with-gaps subsequences, Maps/Sets as subsets, Errors leniently on
+// name/message/errors/cause. Cycles are accepted only when both sides revisit
+// simultaneously. Ported from the previous JS implementation in
+// src/js/node/assert.ts, which was verified case-by-case against node
+// v26.3.0; the vendored upstream suite pins the behavior.
+// ============================================================================
+
+namespace PartialDeepEqual {
+
+struct CycleState {
+    WTF::Vector<JSC::JSCell*, 8> actualSeen;
+    WTF::Vector<JSC::JSCell*, 8> expectedSeen;
+};
+
+static bool compareBranch(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected);
+
+// Both-sides cycle guard: a cycle is accepted only when actual and expected
+// each cycle back on their own side together.
+template<typename Body>
+static bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Body body)
+{
+    JSC::JSCell* actualCell = actual.asCell();
+    JSC::JSCell* expectedCell = expected.asCell();
+    const bool hadActual = cycles.actualSeen.contains(actualCell);
+    const bool hadExpected = cycles.expectedSeen.contains(expectedCell);
+    if (hadActual && hadExpected)
+        return true;
+    if (hadActual || hadExpected)
+        return false;
+    cycles.actualSeen.append(actualCell);
+    cycles.expectedSeen.append(expectedCell);
+    const bool result = body(globalObject, gcBuffer, cycles, scope, actual, expected);
+    cycles.actualSeen.removeLast();
+    cycles.expectedSeen.removeLast();
+    return result;
+}
+
+// JS `actual[key]` guarded by `ObjectPrototypePropertyIsEnumerable`: the
+// property must be an own enumerable of `actual`, but the value read is an
+// ordinary get, exactly like the JS implementation.
+static bool ownEnumerableThenCompare(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, JSC::PropertyName propertyName)
+{
+    JSC::PropertySlot ownSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    bool owns = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, propertyName, ownSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!owns || (ownSlot.attributes() & JSC::PropertyAttribute::DontEnum))
+        return false;
+    JSValue actualValue = actualObject->get(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue expectedValue = expectedObject->get(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+}
+
+// Own enumerable string and symbol properties of `expected` only.
+static bool objectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    JSC::JSObject* actualObject = actual.getObject();
+    JSC::JSObject* expectedObject = expected.getObject();
+    if (!actualObject || !expectedObject)
+        return false;
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    expectedObject->methodTable()->getOwnPropertyNames(expectedObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (size_t i = 0; i < names.size(); i++) {
+        bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal)
+            return false;
+    }
+    return true;
+}
+
+// A string key that is a canonical array index (0 <= i < 2**32 - 1).
+static bool isIndexKey(JSC::JSGlobalObject* globalObject, const JSC::Identifier& identifier)
+{
+    if (identifier.isSymbol())
+        return false;
+    return JSC::parseIndex(const_cast<JSC::Identifier&>(identifier)).has_value();
+}
+
+// Expected's elements as a subsequence of actual's, in order with gaps, then
+// expected's own enumerable non-index properties.
+static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    JSC::JSObject* actualObject = actual.getObject();
+    JSC::JSObject* expectedObject = expected.getObject();
+    const uint64_t actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actualObject));
+    RETURN_IF_EXCEPTION(scope, false);
+    const uint64_t expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expectedObject));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (expectedLength > actualLength)
+        return false;
+
+    uint64_t actualPos = 0;
+    for (uint64_t i = 0; i < expectedLength; i++) {
+        const uint64_t lastCandidate = actualLength - expectedLength + i;
+        JSValue expectedElement = expectedObject->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool matched = false;
+        while (actualPos <= lastCandidate) {
+            JSValue actualElement = actualObject->getIndex(globalObject, actualPos);
+            RETURN_IF_EXCEPTION(scope, false);
+            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualElement, expectedElement);
+            RETURN_IF_EXCEPTION(scope, false);
+            actualPos++;
+            if (equal) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched)
+            return false;
+    }
+
+    JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    expectedObject->methodTable()->getOwnPropertyNames(expectedObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (size_t i = 0; i < names.size(); i++) {
+        if (isIndexKey(globalObject, names[i]))
+            continue;
+        if (!names[i].isSymbol() && names[i] == vm.propertyNames->length)
+            continue;
+        bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal)
+            return false;
+    }
+    return true;
+}
+
+// Expected's entries as a subset of actual's: identity keys fast-path with
+// index reservation so no actual entry is consumed twice; object keys match
+// by partial deep equality.
+static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    JSC::JSMap* actualMap = uncheckedDowncast<JSC::JSMap>(actual.asCell());
+    JSC::JSMap* expectedMap = uncheckedDowncast<JSC::JSMap>(expected.asCell());
+
+    // Materialized lazily, rooted in gcBuffer (keys then values, pairwise).
+    bool materialized = false;
+    size_t entriesStart = 0;
+    size_t entryCount = 0;
+    WTF::Vector<bool, 8> usedIndices;
+    JSC::MarkedArgumentBuffer usedIdentityKeys;
+
+    auto materialize = [&]() -> bool {
+        if (materialized)
+            return true;
+        materialized = true;
+        entriesStart = gcBuffer.size();
+        auto iter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), actualMap, JSC::IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue key, value;
+        while (iter->nextKeyValue(globalObject, key, value)) {
+            gcBuffer.append(key);
+            gcBuffer.append(value);
+            entryCount++;
+        }
+        usedIndices.fill(false, entryCount);
+        return true;
+    };
+
+    auto identityKeyUsed = [&](JSValue key) -> bool {
+        for (size_t i = 0; i < usedIdentityKeys.size(); i++) {
+            if (JSC::sameValue(globalObject, usedIdentityKeys.at(i), key))
+                return true;
+        }
+        return false;
+    };
+
+    auto expectedIter = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expectedMap, JSC::IterationKind::Entries);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue expectedKey, expectedValue;
+    while (expectedIter->nextKeyValue(globalObject, expectedKey, expectedValue)) {
+        bool consumed = false;
+        bool identityPresent = actualMap->has(globalObject, expectedKey);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (identityPresent && !identityKeyUsed(expectedKey)) {
+            // Reserve the identity entry's index so the deep-matching loop
+            // below cannot consume it twice.
+            size_t identityIndex = SIZE_MAX;
+            if (materialized) {
+                for (size_t i = 0; i < entryCount; i++) {
+                    if (JSC::sameValueZero(globalObject, gcBuffer.at(entriesStart + i * 2), expectedKey)) {
+                        identityIndex = i;
+                        break;
+                    }
+                }
+            }
+            if (identityIndex == SIZE_MAX || !usedIndices[identityIndex]) {
+                JSValue actualValue = actualMap->get(globalObject, expectedKey);
+                RETURN_IF_EXCEPTION(scope, false);
+                bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (equal) {
+                    usedIdentityKeys.append(expectedKey);
+                    if (identityIndex != SIZE_MAX)
+                        usedIndices[identityIndex] = true;
+                    consumed = true;
+                }
+            }
+        }
+        if (consumed)
+            continue;
+        if (!expectedKey.isObject())
+            return false;
+        if (!materialize())
+            return false;
+        RETURN_IF_EXCEPTION(scope, false);
+        if (usedIndices.size() < entryCount)
+            usedIndices.fill(false, entryCount);
+        bool matched = false;
+        for (size_t i = 0; i < entryCount; i++) {
+            if (usedIndices[i])
+                continue;
+            JSValue candidateKey = gcBuffer.at(entriesStart + i * 2);
+            bool candidateIsUsedIdentity = identityKeyUsed(candidateKey);
+            if (candidateIsUsedIdentity)
+                continue;
+            bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, candidateKey, expectedKey);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!keyEqual)
+                continue;
+            bool valueEqual = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(entriesStart + i * 2 + 1), expectedValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (valueEqual) {
+                usedIndices[i] = true;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched)
+            return false;
+    }
+    return true;
+}
+
+// Expected's items as a subset of actual's; item equality is full strict
+// deep equality (Bun.deepEquals strict), like the JS implementation.
+static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    JSC::JSSet* actualSet = uncheckedDowncast<JSC::JSSet>(actual.asCell());
+    JSC::JSSet* expectedSet = uncheckedDowncast<JSC::JSSet>(expected.asCell());
+
+    const size_t itemsStart = gcBuffer.size();
+    size_t itemCount = 0;
+    {
+        auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), actualSet, JSC::IterationKind::Keys);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue item;
+        while (iter->next(globalObject, item)) {
+            gcBuffer.append(item);
+            itemCount++;
+        }
+    }
+    WTF::Vector<bool, 8> usedIndices;
+    usedIndices.fill(false, itemCount);
+
+    auto expectedIter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue expectedItem;
+    while (expectedIter->next(globalObject, expectedItem)) {
+        bool matched = false;
+        for (size_t i = 0; i < itemCount; i++) {
+            if (usedIndices[i])
+                continue;
+            bool equal = JSC__JSValue__strictDeepEquals(JSValue::encode(gcBuffer.at(itemsStart + i)), JSValue::encode(expectedItem), globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (equal) {
+                usedIndices[i] = true;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched)
+            return false;
+    }
+    return true;
+}
+
+// Errors compare name/message/errors leniently: `undefined` (or an empty
+// expected message) on the expected side is ignored. An own `cause` on the
+// expected error (even undefined) must exist on the actual error as well.
+static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    JSC::JSObject* actualObject = actual.getObject();
+    JSC::JSObject* expectedObject = expected.getObject();
+
+    const JSC::Identifier keys[3] = {
+        vm.propertyNames->message,
+        vm.propertyNames->name,
+        JSC::Identifier::fromString(vm, "errors"_s),
+    };
+    for (const auto& key : keys) {
+        JSValue expectedValue = expectedObject->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (expectedValue.isUndefined())
+            continue;
+        if (key == vm.propertyNames->message && expectedValue.isString()) {
+            auto* str = JSC::asString(expectedValue);
+            if (!str->length())
+                continue;
+        }
+        JSValue actualValue = actualObject->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal)
+            return false;
+    }
+
+    const JSC::Identifier causeIdentifier = JSC::Identifier::fromString(vm, "cause"_s);
+    JSC::PropertySlot expectedCauseSlot(expectedObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, causeIdentifier, expectedCauseSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (expectedHasCause) {
+        JSC::PropertySlot actualCauseSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, causeIdentifier, actualCauseSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!actualHasCause)
+            return false;
+        JSValue actualCause = actualObject->get(globalObject, causeIdentifier);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue expectedCause = expectedObject->get(globalObject, causeIdentifier);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualCause, expectedCause);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal)
+            return false;
+    }
+    return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+}
+
+static bool isSpecialValue(JSValue value)
+{
+    // `typeof x !== "object"`: primitives, null, and callables are decided
+    // by full strict deep equality, like the JS implementation's isSpecial.
+    if (!value.isObject() || value.isCallable())
+        return true;
+    JSC::JSCell* cell = value.asCell();
+    const JSC::JSType type = cell->type();
+    return cell->inherits<JSC::ErrorInstance>() || type == JSC::ErrorInstanceType
+        || type == JSC::RegExpObjectType || type == JSC::JSDateType;
+}
+
+static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    auto& vm = globalObject->vm();
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        JSC::throwStackOverflowError(globalObject, scope);
+        return false;
+    }
+
+    bool referenceEqual = JSC::sameValueZero(globalObject, actual, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (referenceEqual) {
+        // `actual === expected` except +0 vs -0, which Object.is rejects.
+        if (actual.isNumber() && actual.asNumber() == 0)
+            return std::signbit(actual.asNumber()) == std::signbit(expected.asNumber());
+        // sameValueZero also accepts NaN === NaN, which the JS fast path
+        // (===) rejected — but every NaN pair falls through to isSpecial →
+        // strict deepEquals, which accepts it, so accepting here matches.
+        return true;
+    }
+
+    const JSC::JSType actualType = actual.isCell() ? actual.asCell()->type() : JSC::JSType(0);
+    const JSC::JSType expectedType = expected.isCell() ? expected.asCell()->type() : JSC::JSType(0);
+
+    // Distinct weak collections and promises are never partially equal.
+    if (actualType == JSC::JSWeakSetType || actualType == JSC::JSWeakMapType || actualType == JSC::JSPromiseType
+        || expectedType == JSC::JSWeakSetType || expectedType == JSC::JSWeakMapType || expectedType == JSC::JSPromiseType)
+        return false;
+
+    if (actualType == JSC::JSMapType && expectedType == JSC::JSMapType) {
+        if (uncheckedDowncast<JSC::JSMap>(expected.asCell())->size() > uncheckedDowncast<JSC::JSMap>(actual.asCell())->size())
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, mapSubset);
+    }
+
+    const bool actualIsView = actual.isCell() && JSC::isTypedArrayTypeIncludingDataView(actualType);
+    const bool expectedIsView = expected.isCell() && JSC::isTypedArrayTypeIncludingDataView(expectedType);
+    if (actualIsView || expectedIsView) {
+        if (actualIsView != expectedIsView || actualType != expectedType)
+            return false;
+        bool contents = partialBufferContentsEquiv(globalObject, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!contents)
+            return false;
+        if (actualType == JSC::DataViewType)
+            return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+        return true;
+    }
+
+    const bool actualIsBuffer = actualType == JSC::ArrayBufferType;
+    const bool expectedIsBuffer = expectedType == JSC::ArrayBufferType;
+    if (actualIsBuffer || expectedIsBuffer) {
+        if (actualIsBuffer != expectedIsBuffer)
+            return false;
+        JSC::JSString* actualTag = JSC::objectPrototypeToString(globalObject, actual);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSC::JSString* expectedTag = JSC::objectPrototypeToString(globalObject, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool tagsEqual = actualTag->equal(globalObject, expectedTag);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!tagsEqual)
+            return false;
+        bool contents = partialBufferContentsEquiv(globalObject, scope, actual, expected);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!contents)
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
+    const bool actualIsKeyObject = actual.isCell() && actual.asCell()->inherits<Bun::JSKeyObject>();
+    const bool expectedIsKeyObject = expected.isCell() && expected.asCell()->inherits<Bun::JSKeyObject>();
+    if (actualIsKeyObject || expectedIsKeyObject) {
+        if (!actualIsKeyObject || !expectedIsKeyObject)
+            return false;
+        // KeyObject.prototype.equals, called like the JS implementation did.
+        JSC::JSObject* actualObject = actual.getObject();
+        JSValue equalsFunction = actualObject->get(globalObject, JSC::Identifier::fromString(vm, "equals"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        auto callData = JSC::getCallData(equalsFunction);
+        if (callData.type == JSC::CallData::Type::None)
+            return false;
+        JSC::MarkedArgumentBuffer args;
+        args.append(expected);
+        JSValue result = JSC::call(globalObject, equalsFunction, callData, actual, args);
+        RETURN_IF_EXCEPTION(scope, false);
+        return result.toBoolean(globalObject);
+    }
+
+    const bool actualIsURL = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMURL>();
+    const bool expectedIsURL = expected.isCell() && expected.asCell()->inherits<WebCore::JSDOMURL>();
+    if (actualIsURL || expectedIsURL) {
+        if (!actualIsURL || !expectedIsURL)
+            return false;
+        auto& actualURL = uncheckedDowncast<WebCore::JSDOMURL>(actual.asCell())->wrapped();
+        auto& expectedURL = uncheckedDowncast<WebCore::JSDOMURL>(expected.asCell())->wrapped();
+        if (actualURL.href() != expectedURL.href())
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
+    const bool actualIsError = actual.isCell() && actual.asCell()->inherits<JSC::ErrorInstance>();
+    const bool expectedIsError = expected.isCell() && expected.asCell()->inherits<JSC::ErrorInstance>();
+    if (actualIsError || expectedIsError) {
+        if (!actualIsError || !expectedIsError)
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, errorSubset);
+    }
+
+    if (actualType == JSC::JSSetType && expectedType == JSC::JSSetType) {
+        if (uncheckedDowncast<JSC::JSSet>(expected.asCell())->size() > uncheckedDowncast<JSC::JSSet>(actual.asCell())->size())
+            return false;
+        return setSubset(globalObject, gcBuffer, scope, actual, expected);
+    }
+
+    bool actualIsArray = JSC::isArray(globalObject, actual);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool expectedIsArray = JSC::isArray(globalObject, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (actualIsArray != expectedIsArray)
+        return false;
+    if (actualIsArray)
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, arraySubsequence);
+
+    // At least one side is a primitive, null, Error, RegExp, or Date: full
+    // strict deep equality decides.
+    if (isSpecialValue(actual) || isSpecialValue(expected)) {
+        bool equal = JSC__JSValue__strictDeepEquals(JSValue::encode(actual), JSValue::encode(expected), globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        return equal;
+    }
+
+    // Objects with different type tags are never partially equal.
+    JSC::JSString* actualTag = JSC::objectPrototypeToString(globalObject, actual);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSC::JSString* expectedTag = JSC::objectPrototypeToString(globalObject, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool tagsEqual = actualTag->equal(globalObject, expectedTag);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!tagsEqual)
+        return false;
+
+    return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+}
+
+} // namespace PartialDeepEqual
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::MarkedArgumentBuffer gcBuffer;
+    PartialDeepEqual::CycleState cycles;
+    bool result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(result));
 }
 

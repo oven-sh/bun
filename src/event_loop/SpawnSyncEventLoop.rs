@@ -198,17 +198,6 @@ impl SpawnSyncEventLoop {
         self.event_loop
     }
 
-    /// Erased `*mut jsc::VirtualMachine` backref (set in `init`/`prepare`).
-    ///
-    /// Intentionally raw-ptr (no `&`-returning variant): the pointee type is
-    /// erased at this layer, and the VM is mutated re-entrantly during
-    /// `tick_with_timeout` (subprocess callbacks → JS) — a `&VirtualMachine`
-    /// here would alias under Stacked Borrows.
-    #[inline]
-    pub fn vm_ptr(&self) -> *mut () {
-        self.vm
-    }
-
     /// Shared borrow of the isolated `uws::Loop`.
     ///
     /// # Safety (invariant)
@@ -331,14 +320,6 @@ impl SpawnSyncEventLoop {
                 timer.unref();
             }
         }
-    }
-
-    /// Get an EventLoopHandle for this isolated loop
-    pub fn handle(&mut self) -> EventLoopHandle {
-        // `self.event_loop` is the live heap-owned `*mut jsc::EventLoop`
-        // created in `init` and freed only in `Drop` — never null while `self` exists.
-        debug_assert!(!self.event_loop.is_null(), "spawn-sync event loop");
-        EventLoopHandle::init(self.event_loop)
     }
 }
 
@@ -489,10 +470,5 @@ impl SpawnSyncEventLoop {
         }
 
         TickState::Completed
-    }
-
-    /// Check if the loop has any active handles
-    pub fn is_active(&self) -> bool {
-        self.uws_loop().is_active()
     }
 }

@@ -56,27 +56,6 @@ impl<T: Copy> Unaligned<T> {
         unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
     }
 
-    /// Reinterpret `&[Unaligned<T>]` as `&[T]` once the caller has proven
-    /// `ptr` is naturally aligned. Panics in debug if not.
-    /// Empty slices need no cast: their dangling pointer has align 1, not
-    /// `align_of::<T>()`, so they are returned as `&[]` directly.
-    #[inline]
-    pub fn slice_align_cast(slice: &[Unaligned<T>]) -> &[T] {
-        if slice.is_empty() {
-            return &[];
-        }
-        debug_assert!(
-            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
-            "Unaligned::slice_align_cast: pointer is not {}-byte aligned",
-            core::mem::align_of::<T>(),
-        );
-        // SAFETY: same address, same length, same element size; alignment
-        // precondition asserted above. `Unaligned<T>` is `repr(C, packed)`
-        // around a single `T`, so layout is byte-identical.
-        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast::<T>(), slice.len()) }
-    }
-
-    /// Mutable counterpart of [`slice_align_cast`].
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         if slice.is_empty() {
@@ -306,10 +285,6 @@ impl ZBox {
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0[..self.len()]
-    }
-    #[inline]
-    pub fn as_bytes_with_nul(&self) -> &[u8] {
-        &self.0
     }
     #[inline]
     pub fn as_ptr(&self) -> *const core::ffi::c_char {
@@ -642,9 +617,6 @@ pub struct Mutex<T>(std::sync::Mutex<T>);
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
-/// Alias for [`Mutex`].
-pub type Guarded<T> = Mutex<T>;
-
 impl<T> Mutex<T> {
     #[inline]
     pub const fn new(value: T) -> Self {
@@ -673,13 +645,6 @@ impl<T> Mutex<T> {
     pub fn get_mut(&mut self) -> &mut T {
         self.0
             .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.0
-            .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
@@ -752,8 +717,6 @@ pub type OSPathChar = u8;
 pub type OSPathSlice<'a> = &'a [OSPathChar];
 #[cfg(windows)]
 pub type OSPathSliceZ = WStr;
-#[cfg(not(windows))]
-pub type OSPathSliceZ = ZStr;
 
 pub use bun_alloc::SEP;
 
@@ -871,8 +834,6 @@ impl core::ops::DerefMut for WPathBuffer {
 }
 #[cfg(windows)]
 pub type OSPathBuffer = WPathBuffer;
-#[cfg(not(windows))]
-pub type OSPathBuffer = PathBuffer;
 
 /// Directory portion of `path` (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
@@ -1667,20 +1628,16 @@ pub mod S {
     pub const IFDIR: Mode = 0o040000;
     pub const IFCHR: Mode = 0o020000;
     pub const IFIFO: Mode = 0o010000;
-    pub const IFWHT: Mode = 0o160000; // BSD/Darwin whiteout
 
     pub const ISUID: Mode = 0o4000;
     pub const ISGID: Mode = 0o2000;
     pub const ISVTX: Mode = 0o1000;
-    pub const IRWXU: Mode = 0o0700;
     pub const IRUSR: Mode = 0o0400;
     pub const IWUSR: Mode = 0o0200;
     pub const IXUSR: Mode = 0o0100;
-    pub const IRWXG: Mode = 0o0070;
     pub const IRGRP: Mode = 0o0040;
     pub const IWGRP: Mode = 0o0020;
     pub const IXGRP: Mode = 0o0010;
-    pub const IRWXO: Mode = 0o0007;
     pub const IROTH: Mode = 0o0004;
     pub const IWOTH: Mode = 0o0002;
     pub const IXOTH: Mode = 0o0001;
@@ -1696,10 +1653,6 @@ pub mod S {
     #[inline]
     pub const fn ISCHR(m: Mode) -> bool {
         m & IFMT == IFCHR
-    }
-    #[inline]
-    pub const fn ISBLK(m: Mode) -> bool {
-        m & IFMT == IFBLK
     }
     #[inline]
     pub const fn ISFIFO(m: Mode) -> bool {
@@ -1795,13 +1748,6 @@ pub mod io {
             let _ = a.write_fmt(args);
             a.1
         }
-    }
-    /// WASM-only StreamType (output.rs `#[cfg(wasm32)]`).
-    #[repr(C)]
-    pub struct FixedBufferStream {
-        pub buf: *mut u8,
-        pub len: usize,
-        pub pos: usize,
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -2318,6 +2264,10 @@ unsafe extern "C" {
     /// directly.
     #[cfg(unix)]
     safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
+    /// Bun C++ shim over `QueryPerformanceCounter` (c-bindings.cpp). Infallible
+    /// on Windows XP+; out-params are `&mut i64` so pointer validity is typed.
+    #[cfg(windows)]
+    safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
 impl Default for StackCheck {
     /// `cached_stack_end` defaults to `0`, so
@@ -2649,13 +2599,6 @@ impl<T> Once<T, ()> {
     }
 }
 impl<T, A> Once<T, fn(A) -> T> {
-    pub const fn with_fn(f: fn(A) -> T) -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
-            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
-            f,
-        }
-    }
     /// Run the stored fn exactly once with `arg`; returns a borrow of the cached
     /// payload. Bound to `&'static self` because every call site is a `static`.
     #[inline(always)]
@@ -2696,8 +2639,6 @@ pub enum Pollable {
     NotReady,
     Hup,
 }
-/// Alias for [`Pollable`].
-pub type PollFlag = Pollable;
 
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
@@ -3062,13 +3003,6 @@ pub mod time {
             self.start.elapsed().as_nanos() as u64
         }
         #[inline]
-        pub fn lap(&mut self) -> u64 {
-            let now = std::time::Instant::now();
-            let ns = now.duration_since(self.start).as_nanos() as u64;
-            self.start = now;
-            ns
-        }
-        #[inline]
         pub fn reset(&mut self) {
             self.start = std::time::Instant::now();
         }
@@ -3276,16 +3210,6 @@ pub use bytemuck::NoUninit;
 #[inline]
 pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
     bytemuck::bytes_of(v)
-}
-
-/// Mutable counterpart of [`bytes_of`]: reinterpret `&mut T` as `&mut [u8]`.
-///
-/// Safe: the [`bytemuck::Pod`] bound guarantees `T` has no padding bytes and
-/// every bit pattern is a valid `T`, so writing arbitrary bytes through the
-/// returned slice cannot produce an invalid value.
-#[inline]
-pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
-    bytemuck::bytes_of_mut(v)
 }
 
 // ─── Slice reinterpretation (canonical) ───────────────────────────────────────
@@ -3534,10 +3458,6 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     pub fn to_optional(self) -> GenericIndexOptional<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
-    #[inline]
-    pub fn sort_fn_asc(_: (), a: &Self, b: &Self) -> bool {
-        a.0 < b.0
-    }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
     #[inline]
@@ -3574,10 +3494,6 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
-    #[inline]
-    pub fn some(i: GenericIndex<I, M>) -> Self {
-        i.to_optional()
-    }
     /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
     /// `bun_bundler::output_file::IndexOptional`.
     #[inline]
@@ -3597,14 +3513,6 @@ impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
             None
         } else {
             Some(GenericIndex(self.0, core::marker::PhantomData))
-        }
-    }
-    #[inline]
-    pub fn unwrap_get(self) -> Option<I> {
-        if self.0 == I::NULL_VALUE {
-            None
-        } else {
-            Some(self.0)
         }
     }
 }
@@ -3782,19 +3690,13 @@ pub fn fast_random() -> u64 {
 }
 
 // ── hash ──────────────────────────────────────────────────────────────────
-// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
-// the xxhash64 entry point that ETag/bundler need.
+// `bun.hash` one-shot Wyhash / XxHash64 wrappers over `bun_hash`.
 pub mod hash {
     pub use bun_hash::XxHash64;
     /// One-shot seeded XXH64 over `bytes`.
     #[inline]
     pub fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
         bun_hash::XxHash64::hash(seed, bytes)
-    }
-    /// Wyhash one-shot (`bun.hash`).
-    #[inline]
-    pub fn wyhash(bytes: &[u8]) -> u64 {
-        crate::deprecated::RapidHash::hash(0, bytes)
     }
 }
 
@@ -4533,29 +4435,6 @@ pub fn exit_thread() -> ! {
     }
 }
 
-/// Release thread-local pooled
-/// buffers (PathBuffer pool, ObjectPool, …) before the thread terminates so
-/// the backing storage is returned to mimalloc rather than leaked with the
-/// TLS block.
-///
-/// LAYERING: the actual pool registries live in higher-tier crates
-/// (`bun_paths`, `bun_collections`). They register a destructor here at init
-/// via [`register_thread_exit_pool_destructor`]; this fn just walks the list.
-static THREAD_EXIT_POOL_DESTRUCTORS: Mutex<Vec<fn()>> = Mutex::new(Vec::new());
-
-pub fn register_thread_exit_pool_destructor(f: fn()) {
-    THREAD_EXIT_POOL_DESTRUCTORS.lock().push(f);
-}
-
-pub fn delete_all_pools_for_thread_exit() {
-    // Snapshot under the lock so a destructor can't deadlock by
-    // re-registering.
-    let snapshot: Vec<fn()> = THREAD_EXIT_POOL_DESTRUCTORS.lock().clone();
-    for f in snapshot {
-        f();
-    }
-}
-
 /// Port of `bun.maybeHandlePanicDuringProcessReload`.
 #[inline(never)]
 pub fn maybe_handle_panic_during_process_reload() {
@@ -5265,10 +5144,9 @@ impl Timespec {
         }
     }
 
-    /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
-    /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
-    /// monotonic clock directly. Test-runner fake-timers write the mocked
-    /// nanosecond value via `mock_time::set` / `mock_time::clear`.
+    /// Monotonic clock (`CLOCK_MONOTONIC` / QPC). Boot-relative on every
+    /// platform; never compare against wall-clock epoch. Fake-timers override
+    /// via `mock_time::set` / `mock_time::clear`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
@@ -5297,13 +5175,14 @@ impl Timespec {
                 nsec: ts.tv_nsec,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let n = crate::time::nano_timestamp();
-            Timespec {
-                sec: (n / 1_000_000_000) as i64,
-                nsec: (n % 1_000_000_000) as i64,
-            }
+            // QPC via the c-bindings.cpp shim: the same monotonic clock libuv
+            // (uv_hrtime), uSockets' sweep and WTF::MonotonicTime::now use.
+            let mut sec: i64 = 0;
+            let mut nsec: i64 = 0;
+            clock_gettime_monotonic(&mut sec, &mut nsec);
+            Timespec { sec, nsec }
         }
     }
 
@@ -5329,7 +5208,6 @@ pub enum TimespecMockMode {
 /// the `Timespec::now_allow_mocked_time()` helper.
 pub mod timespec_mode {
     pub use super::TimespecMockMode::*;
-    pub type Mode = super::TimespecMockMode;
 }
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
@@ -5391,15 +5269,6 @@ pub mod mock_time {
 pub struct f16(pub u16);
 
 impl f16 {
-    #[inline]
-    pub const fn from_bits(bits: u16) -> Self {
-        Self(bits)
-    }
-    #[inline]
-    pub const fn to_bits(self) -> u16 {
-        self.0
-    }
-
     /// Widen to `f64` (exact).
     pub fn to_f64(self) -> f64 {
         let h = self.0 as u32;

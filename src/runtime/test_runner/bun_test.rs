@@ -349,8 +349,6 @@ pub mod js_fns {
         hook!(on_test_finished, OnTestFinished);
     }
 }
-/// Compat alias for sibling drafts (jest.rs) that referenced `bun_test::HookKind`.
-pub use js_fns::GenericHookTag as HookKind;
 
 /// `Rc<BunTestCell>`: single-thread, weak-capable, interior-mutable shared handle.
 ///
@@ -1450,11 +1448,6 @@ pub enum RefDataValue {
 }
 
 impl RefDataValue {
-    pub fn group<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ConcurrentGroup> {
-        let RefDataValue::Execution { group_index, .. } = self else { return None };
-        Some(&mut buntest.execution.groups[*group_index])
-    }
-
     pub fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
@@ -1995,17 +1988,6 @@ impl TestScheduleEntry {
     }
 }
 
-pub enum RunOneResult {
-    Done,
-    Execute { timeout: Timespec },
-}
-impl Default for RunOneResult {
-    fn default() -> Self {
-        RunOneResult::Execute { timeout: Timespec::EPOCH }
-    }
-}
-
-pub use super::timers::fake_timers::FakeTimers;
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
 pub use super::execution as Execution;

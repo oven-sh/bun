@@ -47,14 +47,6 @@ impl AdditionalOnAbortCallback {
 // as `AnyRequestContext` / `AnyServer`. The const params still pick which
 // variant `create()` constructs and gate H3-specific code paths.
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
-pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
-
-// Surface gaps `AnyResponse` doesn't expose yet — hand-dispatched here so the
-// state machine can call them without touching `bun_uws_sys`.
-pub trait AnyResponseExt {
-    fn has_responded(self) -> bool;
-    fn override_write_offset(self, offset: u64);
-}
 
 /// Extract the raw FFI pointer from an `AnyResponse` for C-ABI shims that
 /// take `*mut c_void` (e.g. `FetchHeaders::to_uws_response`, `CookieMap::write`).
@@ -64,34 +56,6 @@ fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
         uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
         uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
         uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-    }
-}
-
-impl AnyResponseExt for uws::AnyResponse {
-    #[inline]
-    fn has_responded(self) -> bool {
-        // S012: variant payloads are ZST opaques (`Response<SSL>` / `H3Response`);
-        // route the `*mut → &mut` deref through the const-asserted
-        // `bun_opaque::opaque_deref_mut` so dispatch is `unsafe`-free.
-        match self {
-            uws::AnyResponse::SSL(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::TCP(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-            uws::AnyResponse::H3(p) => bun_opaque::opaque_deref_mut(p).has_responded(),
-        }
-    }
-    #[inline]
-    fn override_write_offset(self, offset: u64) {
-        match self {
-            uws::AnyResponse::SSL(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-            uws::AnyResponse::TCP(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-            uws::AnyResponse::H3(p) => {
-                bun_opaque::opaque_deref_mut(p).override_write_offset(offset)
-            }
-        }
     }
 }
 
@@ -115,6 +79,7 @@ pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::E
 } else {
     2048
 };
+
 pub type RequestContextStackAllocator<
     ThisServer,
     const SSL: bool,
@@ -739,10 +704,6 @@ where
             return;
         }
 
-        if ctx.server.is_none() {
-            ctx.render_missing_invalid_response(value);
-            return;
-        }
         if value.is_empty_or_undefined_or_null() || !value.is_cell() {
             ctx.render_missing_invalid_response(value);
             return;
@@ -865,9 +826,7 @@ where
         }
 
         ctx_log!("deinit<d> ({:p})<r>", self);
-        if cfg!(debug_assertions) {
-            debug_assert!(self.flags.has_finalized());
-        }
+        debug_assert!(self.flags.has_finalized());
 
         // A response body stream suspended inside its `pull()` never settles the promise
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
@@ -1156,16 +1115,6 @@ where
         }
     }
 
-    pub fn render_response_buffer(&mut self) {
-        if let Some(resp) = self.resp {
-            // SAFETY: FFI handle
-            resp.on_writable(
-                |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
-                self,
-            );
-        }
-    }
-
     fn drain_response_buffer_and_metadata_corked(this: *mut Self) {
         // SAFETY: this is the live RequestContext threaded through cork user-data.
         unsafe { (*this).drain_response_buffer_and_metadata() };
@@ -1186,9 +1135,12 @@ where
         ctx_log!("end");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end(data, close_connection);
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1199,13 +1151,16 @@ where
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
             if resp.state().is_response_pending() {
                 resp.end_stream(close_connection);
             }
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1247,9 +1202,12 @@ where
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1259,9 +1217,12 @@ where
     pub fn force_close(&mut self) {
         if let Some(resp) = self.resp {
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.force_close();
+            // end_request_streaming_and_drain() must run after the last
+            // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
+            // and free the stream out from under the local `resp` copy.
+            self.end_request_streaming_and_drain();
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
@@ -1735,9 +1696,6 @@ where
             return;
         }
 
-        if self.resp.is_none() || self.server.is_none() {
-            return;
-        }
         // SAFETY: BACKREF
         let global_this = self.server().global_this();
         let resp = self.resp.expect("infallible: resp bound");
@@ -1919,8 +1877,8 @@ where
                     resp.write_header(b"accept-ranges", b"bytes");
                     let close = resp.should_close_connection();
                     self.detach_response();
-                    self.end_request_streaming_and_drain();
                     resp.end(b"", close);
+                    self.end_request_streaming_and_drain();
                     self.deref();
                     return;
                 }
@@ -1936,9 +1894,9 @@ where
             // SAFETY: FFI handle
             let close = resp.should_close_connection();
             self.detach_response();
-            self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end(b"", close);
+            self.end_request_streaming_and_drain();
             self.deref();
             return;
         }

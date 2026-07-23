@@ -41,27 +41,12 @@ impl PathToSourceIndexMap {
         self.map.get(text.as_ref()).copied()
     }
 
-    pub fn put_path(
-        &mut self,
-        path: &impl PathLike,
-        value: IndexInt,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self.put(path.path_text(), value)
-    }
-
     // Takes `&[u8]` (not `impl AsRef<[u8]>`)
     // to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
     pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
         // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
         self.map.put(text, value)
-    }
-
-    pub fn get_or_put_path(
-        &mut self,
-        path: &impl PathLike,
-    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        self.get_or_put(path.path_text())
     }
 
     pub fn get_or_put(
@@ -74,9 +59,5 @@ impl PathToSourceIndexMap {
 
     pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {
         self.map.remove(text.as_ref()).is_some()
-    }
-
-    pub fn remove_path(&mut self, path: &impl PathLike) -> bool {
-        self.remove(path.path_text())
     }
 }

@@ -1296,6 +1296,7 @@ export default {
   kOutHeaders,
   kErrored,
   kSocket,
+  kChunkedLength,
   kRejectNonStandardBodyWrites,
   parseUniqueHeadersOption,
   validateHeaderName,

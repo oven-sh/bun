@@ -85,6 +85,7 @@ const {
   kErrored,
   kHighWaterMark,
   kSocket,
+  kChunkedLength,
   kRejectNonStandardBodyWrites,
   kUniqueHeaders,
   parseUniqueHeadersOption,
@@ -3885,6 +3886,15 @@ Object.defineProperty(ServerResponse.prototype, "writableFinished", {
 Object.defineProperty(ServerResponse.prototype, "writableLength", {
   get() {
     if (this.writableFinished) return 0;
+    // Standalone path (no native handle, e.g. a socket adopted via
+    // server.emit('connection', duplex)): the OutgoingMessage accounting.
+    // OutgoingMessage.end() branches on this to decide whether 'finish' must
+    // be queued behind buffered output; the native shape below reports 0 for
+    // a queued standalone response and made 'finish' fire before the response
+    // was assigned its socket.
+    if (!this[kHandle]) {
+      return this.outputSize + this[kChunkedLength] + (this[kSocket]?.writableLength ?? 0);
+    }
     // Bytes handed off this event-loop turn (including chunked framing, like
     // Node.js's outputData accounting) plus whatever the native handle still
     // has buffered, plus anything buffered while queued behind a pipelined

@@ -120,6 +120,21 @@ test.concurrent("auto 400 on a pipelined request queued behind an in-flight resp
   expect(buf).toContain("ok:/a");
 });
 
+test.concurrent("queued pipelined response with Content-Length and write() before end()", async () => {
+  // The /b handler runs while its response is still queued behind /a's: with
+  // an explicit Content-Length and the body written before end(), 'finish'
+  // must wait until the response is assigned the socket and flushed.
+  using ctx = await setup(async (req, res) => {
+    if (req.url === "/a") await new Promise(r => setImmediate(r));
+    res.writeHead(200, { "Content-Length": "5" });
+    res.write("ok:" + req.url);
+    res.end();
+  });
+  ctx.client.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "GET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+  const buf = await ctx.reader.until("ok:/b");
+  expect(buf.indexOf("ok:/a")).toBeLessThan(buf.indexOf("ok:/b"));
+});
+
 test.concurrent("malformed request emits 'clientError'", async () => {
   using ctx = await setup();
   const clientError = new Promise<Error>((resolve, reject) => {
@@ -168,6 +183,10 @@ test.concurrent("upgrade request with a body spanning packets hands off after th
     socket.on("data", d => socket.write("D:" + d));
   });
   ctx.client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: tcp\r\nContent-Length: 5\r\n\r\nhel");
+  // Yield so the server reads the partial body before the rest arrives;
+  // back-to-back writes would coalesce into one 'data' event and skip the
+  // multi-chunk path this test exists for.
+  await new Promise(r => setImmediate(r));
   // Rest of the request body plus the first tunnel bytes in a second packet.
   ctx.client.write("loWORLD");
   await ctx.reader.until("B:hello|H:WORLD");
@@ -209,7 +228,10 @@ test.concurrent("Expect: 100-continue is answered before the body", async () => 
 
 test.concurrent("server sockets accepted natively are unaffected", async () => {
   const httpServer = http.createServer((req, res) => res.end("native:" + req.url));
-  await new Promise<void>(resolve => httpServer.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(0, "127.0.0.1", resolve);
+  });
   try {
     const port = (httpServer.address() as net.AddressInfo).port;
     const res = await fetch(`http://127.0.0.1:${port}/n`);

@@ -12,7 +12,7 @@ const listen = async (server: Server) => {
   return (server.address() as AddressInfo).port;
 };
 
-const handshake = async (port: number, ecdhCurve: string) => {
+const handshake = async (port: number, ecdhCurve?: string) => {
   const outcome = Promise.withResolvers<string>();
   const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ecdhCurve });
   client.once("secureConnect", () => {
@@ -25,6 +25,7 @@ const handshake = async (port: number, ecdhCurve: string) => {
     const code = (err as Error & { code?: string }).code ?? "error";
     outcome.resolve(code.includes("HANDSHAKE_FAILURE") ? "handshake_failure" : code);
   });
+  client.once("close", () => outcome.resolve("closed"));
   return outcome.promise;
 };
 
@@ -49,7 +50,7 @@ describe("tls ecdhCurve", () => {
         p384Only: "ok",
       });
     } finally {
-      server.close();
+      if (server.listening) server.close();
     }
   });
 
@@ -69,7 +70,7 @@ describe("tls ecdhCurve", () => {
         colonList: "ok",
       });
     } finally {
-      server.close();
+      if (server.listening) server.close();
     }
   });
 
@@ -110,7 +111,7 @@ describe("tls ecdhCurve", () => {
         message: "Failed to set ECDH curve",
       });
     } finally {
-      server.close();
+      if (server.listening) server.close();
     }
   });
 
@@ -128,7 +129,33 @@ describe("tls ecdhCurve", () => {
         p384: await handshake(port, "P-384"),
       }).toEqual({ x25519: "ok", p384: "ok" });
     } finally {
-      server.close();
+      if (server.listening) server.close();
+    }
+  });
+
+  it("reads tls.DEFAULT_ECDH_CURVE as the fallback when ecdhCurve is omitted", async () => {
+    const saved = tls.DEFAULT_ECDH_CURVE;
+    expect(saved).toBe("auto");
+    tls.DEFAULT_ECDH_CURVE = "P-384";
+    let server: Server | undefined;
+    try {
+      expect(tls.DEFAULT_ECDH_CURVE).toBe("P-384");
+      server = createServer({ ...COMMON_CERT }, socket => {
+        socket.on("error", () => {});
+        socket.end();
+      });
+      server.on("tlsClientError", () => {});
+      const port = await listen(server);
+      expect({
+        x25519Only: await handshake(port, "X25519"),
+        default: await handshake(port),
+      }).toEqual({
+        x25519Only: "handshake_failure",
+        default: "ok",
+      });
+    } finally {
+      tls.DEFAULT_ECDH_CURVE = saved;
+      if (server?.listening) server.close();
     }
   });
 });

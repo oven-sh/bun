@@ -542,6 +542,9 @@ function newNativeSecureContext(options, cached = false) {
     if (options.sessionTimeout == null) {
       options = { ...options, sessionTimeout: 0 };
     }
+    if (options.ecdhCurve === undefined) {
+      options = { ...options, ecdhCurve: DEFAULT_ECDH_CURVE };
+    }
     const rejectUnauthorized = options.rejectUnauthorized;
     if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
       options = { ...options, rejectUnauthorized: true };
@@ -1111,7 +1114,7 @@ function buildSharedCreds(server) {
       allowPartialTrustChain: server.allowPartialTrustChain,
       sessionTimeout: server.sessionTimeout,
       sigalgs: server.sigalgs,
-      ecdhCurve: server.ecdhCurve,
+      ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
       passphrase: server.passphrase,
       secureProtocol: server.secureProtocol,
       minVersion: server.minVersion,
@@ -1401,7 +1404,7 @@ function Server(options, secureConnectionListener): void {
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,
         sigalgs: this.sigalgs,
-        ecdhCurve: this.ecdhCurve,
+        ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
@@ -1473,7 +1476,7 @@ $toClass(Server, "Server", NetServer);
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-const DEFAULT_ECDH_CURVE = "auto";
+let DEFAULT_ECDH_CURVE = "auto";
 // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
 let DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3";
@@ -1801,7 +1804,12 @@ export default {
     }
     setTLSDefaultCiphers(value);
   },
-  DEFAULT_ECDH_CURVE,
+  get DEFAULT_ECDH_CURVE() {
+    return DEFAULT_ECDH_CURVE;
+  },
+  set DEFAULT_ECDH_CURVE(value) {
+    DEFAULT_ECDH_CURVE = value;
+  },
   // Accessors so `tls.DEFAULT_MAX_VERSION = 'TLSv1.2'` reaches the
   // module-level variables that context construction reads (Node mutates the
   // exports object the same way).

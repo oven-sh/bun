@@ -1,4 +1,4 @@
-import { bunRun, tempDirWithFiles } from "harness";
+import { bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -40,6 +40,48 @@ describe("require(specifier)", () => {
     it.todo("require('*.html') synchronously produces a string");
     it.todo("require('*.wasm') produces a WebAssembly.Module");
     it.todo("require('*.db') wraps a sqlite file in a Database object and exports it");
+  });
+
+  describe("when specifier is an ES module whose graph uses top-level await", () => {
+    // Loaders detect `err.code === "ERR_REQUIRE_ASYNC_MODULE"` to fall back to import().
+    // https://nodejs.org/api/errors.html#err_require_async_module
+    it("throws a node-style ERR_REQUIRE_ASYNC_MODULE error", () => {
+      using dir = tempDir("require-tla", {
+        "tla.mjs": `await new Promise(resolve => setTimeout(resolve, 1));\nexport const value = 1;\n`,
+      });
+      const specifier = path.join(String(dir), "tla.mjs");
+
+      let error: any;
+      try {
+        require(specifier);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(TypeError);
+      expect(error.name).toBe("Error");
+      expect(error.code).toBe("ERR_REQUIRE_ASYNC_MODULE");
+      expect(error.message).toContain(require.resolve(specifier));
+    });
+
+    it("throws ERR_REQUIRE_ASYNC_MODULE when only a transitive dependency has top-level await", () => {
+      using dir = tempDir("require-transitive-tla", {
+        "leaf.mjs": `await new Promise(resolve => setTimeout(resolve, 1));\nexport const value = 1;\n`,
+        "middle.mjs": `export { value } from "./leaf.mjs";\n`,
+      });
+      const specifier = path.join(String(dir), "middle.mjs");
+
+      let error: any;
+      try {
+        require(specifier);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toBe("ERR_REQUIRE_ASYNC_MODULE");
+    });
   });
 
   describe("require.main", () => {

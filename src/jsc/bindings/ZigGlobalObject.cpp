@@ -832,7 +832,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             WTF::Locker locker { loader->cellLock() };
             loader->removeEntry(key);
         }
-        return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
+        return Bun::throwRequireAsyncModuleError(globalObject, scope, keyString);
     }
     }
 

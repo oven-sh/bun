@@ -28,7 +28,7 @@ test("require(esm) rejects when a transitive dependency has top-level await", as
       try {
         require("./middle.mjs");
       } catch (e) {
-        threw = e instanceof TypeError && String(e.message).includes("async module");
+        threw = e instanceof Error && e.code === "ERR_REQUIRE_ASYNC_MODULE" && String(e.message).includes("async module");
       }
       if (!threw) throw new Error("expected require(transitive-TLA) to throw");
       console.log("ok");

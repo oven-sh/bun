@@ -4572,6 +4572,42 @@ describe("expect()", () => {
       test("notCloseTo return false if received is not number", () => {
         expect(expect.not.closeTo(1)).not.toEqual("a");
       });
+
+      // Jest keeps precision as a double: threshold = Math.pow(10, -precision) / 2.
+      // ToInt32 coercion would map Infinity/NaN to 0 (threshold 0.5) and truncate
+      // fractional precision, turning these into false passes.
+      test("Infinity precision: threshold is 0, never matches", () => {
+        expect(1.001).not.toEqual(expect.closeTo(1, Infinity));
+        expect(1).not.toEqual(expect.closeTo(1, Infinity));
+        expect(1.001).toEqual(expect.not.closeTo(1, Infinity));
+      });
+      test("NaN precision: threshold is NaN, never matches", () => {
+        expect(1.001).not.toEqual(expect.closeTo(1, NaN));
+        expect(1).not.toEqual(expect.closeTo(1, NaN));
+        expect(1.001).toEqual(expect.not.closeTo(1, NaN));
+      });
+      test("fractional precision is not truncated to an integer", () => {
+        expect(1.003).not.toEqual(expect.closeTo(1, 2.7));
+        expect(1.0005).toEqual(expect.closeTo(1, 2.7));
+        expect(1.003).toEqual(expect.closeTo(1, 2));
+      });
+      test("-Infinity precision: threshold is Infinity, any finite received matches", () => {
+        expect(1e300).toEqual(expect.closeTo(0, -Infinity));
+      });
+      test("precision beyond int32 range does not wrap via ToInt32", () => {
+        // ToInt32(4294967298) would be 2 (threshold 0.005, 0.001 matches); as a
+        // double the threshold underflows to 0.
+        expect(1.001).not.toEqual(expect.closeTo(1, 4294967298));
+      });
+      if (isBun) {
+        test("number and precision are printed as-is, not truncated to int32", () => {
+          expect(Bun.inspect(expect.closeTo(1.5, 2.7))).toBe("NumberCloseTo 1.5 (2.7 digits)");
+          expect(Bun.inspect(expect.closeTo(1, Infinity))).toBe("NumberCloseTo 1 (Infinity digits)");
+          expect(Bun.inspect(expect.closeTo(1, NaN))).toBe("NumberCloseTo 1 (NaN digits)");
+          expect(Bun.inspect(expect.closeTo(1, 1))).toBe("NumberCloseTo 1 (1 digit)");
+          expect(Bun.inspect(expect.not.closeTo(1.5, 2))).toBe("NumberNotCloseTo 1.5 (2 digits)");
+        });
+      }
     });
   });
 

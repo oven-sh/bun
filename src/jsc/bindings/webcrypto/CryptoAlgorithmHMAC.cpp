@@ -205,11 +205,9 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
         exceptionCallback(NotSupportedError, ""_s);
         return;
     }
-    if (!result) {
-        exceptionCallback(DataError, ""_s);
-        return;
-    }
-
+    // Both importRaw nullptr conditions (empty key, length mismatch) are
+    // rejected with specific errors in the format arms above.
+    ASSERT(result);
     callback(*result);
 }
 

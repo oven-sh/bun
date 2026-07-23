@@ -116,17 +116,6 @@ static std::optional<SubtleCrypto::KeyFormat> parseKeyFormatFromString(const Str
     return std::nullopt;
 }
 
-template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSGlobalObject& lexicalGlobalObject, JSValue value)
-{
-    auto stringValue = value.toWTFString(&lexicalGlobalObject);
-    return parseKeyFormatFromString(stringValue);
-}
-
-template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>()
-{
-    return "\"raw\", \"spki\", \"pkcs8\", \"jwk\", \"raw-secret\", \"raw-public\", \"raw-seed\""_s;
-}
-
 // Functions
 
 // Node reports an invalid KeyFormat with ERR_INVALID_ARG_VALUE and the

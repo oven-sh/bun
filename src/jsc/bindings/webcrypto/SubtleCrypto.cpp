@@ -637,6 +637,10 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
         return std::visit(
             WTF::makeVisitor(
                 [&promise](JsonWebKey&) -> std::optional<KeyData> {
+                    // The importKey binding rejects object keyData for buffer
+                    // formats with node's ERR_INVALID_ARG_TYPE before it can
+                    // reach this conversion.
+                    ASSERT_NOT_REACHED();
                     promise->reject(Exception { TypeError });
                     return std::nullopt;
                 },
@@ -1426,16 +1430,17 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
         return;
     }
 
-    // wrapKey re-uses the exportKey machinery, so it needs the same
-    // raw-public/raw-seed aliasing (subtle.wrapKey('raw-public', ...) works in
-    // Node for EC/OKP public keys).
-    if (!aliasExportKeyFormat(key, format, promise.get()))
-        return;
-
     if (!key.extractable()) {
         promise->reject(InvalidAccessError, "key is not extractable"_s);
         return;
     }
+
+    // wrapKey re-uses the exportKey machinery, so it needs the same
+    // raw-public/raw-seed aliasing (subtle.wrapKey('raw-public', ...) works in
+    // Node for EC/OKP public keys). After the extractable check, like
+    // exportKey: node rejects a non-extractable key first.
+    if (!aliasExportKeyFormat(key, format, promise.get()))
+        return;
 
     auto exportAlgorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
     auto wrapAlgorithm = CryptoAlgorithmRegistry::singleton().create(wrappingKey.algorithmIdentifier());

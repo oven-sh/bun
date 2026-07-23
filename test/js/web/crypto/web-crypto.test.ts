@@ -356,6 +356,46 @@ describe("Ed25519", () => {
 });
 
 describe("ChaCha20-Poly1305 and AKP review fixes", () => {
+  it("raw-public import of an RSA key reports Node's aliased-format message", async () => {
+    // Node aliases raw-public/raw-secret to raw for every algorithm (verified
+    // v26.3.0: HKDF accepts raw-public), so the rejection names "raw".
+    for (const name of ["RSA-OAEP", "RSA-PSS"]) {
+      const err = await crypto.subtle
+        .importKey("raw-public", new Uint8Array(32), { name, hash: "SHA-256" }, false, [])
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({
+        name: "NotSupportedError",
+        message: `Unable to import ${name} using raw format`,
+      });
+    }
+    // The broad aliasing itself: HKDF accepts raw-public like node.
+    const k = await crypto.subtle.importKey("raw-public", new Uint8Array(32), "HKDF", false, ["deriveBits"]);
+    expect(k.type).toBe("secret");
+  });
+
+  it("wrapKey rejects a non-extractable key before the format aliasing, like exportKey", async () => {
+    const ed = (await crypto.subtle.generateKey("Ed25519", false, ["sign", "verify"])) as CryptoKeyPair;
+    const kek = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-KW", false, ["wrapKey"]);
+    for (const op of [
+      () => crypto.subtle.exportKey("raw-seed", ed.privateKey),
+      () => crypto.subtle.wrapKey("raw-seed", ed.privateKey, kek, "AES-KW"),
+    ]) {
+      const err = await op().then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({
+        name: "InvalidAccessError",
+        message: "key is not extractable",
+      });
+    }
+  });
+
   it("HMAC JWK import reports Node's member-check messages in Node's order", async () => {
     const k = Buffer.alloc(32, 1).toString("base64url");
     const alg = { name: "HMAC", hash: "SHA-256" };

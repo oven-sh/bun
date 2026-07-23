@@ -133,7 +133,9 @@ void CryptoAlgorithmRSAES_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData&
         break;
     }
     default:
-        exceptionCallback(NotSupportedError, ""_s);
+        // Only raw reaches here: raw-secret/raw-public alias to raw and
+        // raw-seed is rejected by aliasImportKeyFormat before dispatch.
+        exceptionCallback(NotSupportedError, "Unable to import RSAES-PKCS1-v1_5 using raw format"_s);
         return;
     }
     if (!result) {

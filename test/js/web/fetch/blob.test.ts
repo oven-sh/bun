@@ -56,9 +56,10 @@ for (const info of [
     expect(blob.slice(0, Infinity).size).toBe(blob.size);
     expect(blob.slice(-Infinity).size).toBe(blob.size);
     expect(blob.slice(0, NaN).size).toBe(0);
+    // `start`/`end` go through ToNumber, so values it rejects throw like in Node and browsers
     // @ts-expect-error
-    expect(blob.slice(Symbol(), "-123").size).toBe(6);
-    expect(blob.slice(Object.create(null), "-123").size).toBe(6);
+    expect(() => blob.slice(Symbol(), "-123")).toThrow(TypeError);
+    expect(() => blob.slice(Object.create(null), "-123")).toThrow(TypeError);
     // @ts-expect-error
     expect(blob.slice(null, "-123").size).toBe(6);
     expect(blob.slice(0, 10).size).toBe(blob.size);
@@ -110,6 +111,97 @@ test("new Blob stringifies non-Blob object parts in order", async () => {
   expect(await new Blob(["a", {}, "b"]).text()).toBe("a[object Object]b");
   expect(await new Blob(["a", {}, "b", { toString: () => "X" }]).text()).toBe("a[object Object]bX");
   expect(await new Blob(["a", ["x", "y"], "b"]).text()).toBe("ax,yb");
+});
+
+test("new Blob stringifies null and undefined parts instead of dropping them", async () => {
+  expect(await new Blob([null] as any[]).text()).toBe("null");
+  expect(await new Blob([undefined] as any[]).text()).toBe("undefined");
+  expect(await new Blob(["a", null, "b", undefined] as any[]).text()).toBe("anullbundefined");
+  // a hole reads as `undefined`
+  expect(await new Blob([, "x"] as any[]).text()).toBe("undefinedx");
+
+  const blob = new Blob([null, undefined, 1, {}, true] as any[]);
+  expect(await blob.text()).toBe("nullundefined1[object Object]true");
+  expect(blob.size).toBe(33);
+
+  expect(await new File(["a", null] as any[], "f.txt").text()).toBe("anull");
+});
+
+test("new Blob(null) throws and new Blob(undefined) is an empty Blob", () => {
+  // null is not convertible to a sequence<BlobPart>
+  // @ts-expect-error
+  expect(() => new Blob(null)).toThrow(TypeError);
+  // @ts-expect-error
+  expect(() => new File(null, "f.txt")).toThrow(TypeError);
+  // undefined means the optional argument was omitted
+  expect(new Blob(undefined).size).toBe(0);
+  expect(new Blob().size).toBe(0);
+});
+
+test("new Blob accepts any iterable of parts", async () => {
+  expect(await new Blob(new Set(["a", "b"]) as any).text()).toBe("ab");
+  expect(await new Blob(new Map([["a", "b"]]) as any).text()).toBe("a,b");
+  expect(new Blob(new Set() as any).size).toBe(0);
+  expect(await new Blob(new Set([new Blob(["inner"]), "!"]) as any).text()).toBe("inner!");
+  expect(await new File(new Set(["a"]) as any, "f.txt").text()).toBe("a");
+
+  function* parts() {
+    yield "x";
+    yield null;
+    yield 3;
+    yield new Uint8Array([33]);
+  }
+  expect(await new Blob(parts() as any).text()).toBe("xnull3!");
+
+  // values produced by a generator are only reachable through the constructor
+  function* garbage() {
+    for (let i = 0; i < 16; i++) {
+      yield `chunk${i};`;
+      Bun.gc(true);
+    }
+  }
+  expect(await new Blob(garbage() as any).text()).toBe(Array.from({ length: 16 }, (_, i) => `chunk${i};`).join(""));
+
+  // errors thrown while iterating propagate
+  function* throws() {
+    yield "x";
+    throw new RangeError("mid-iteration");
+  }
+  expect(() => new Blob(throws() as any)).toThrow(RangeError);
+
+  // non-iterable objects and primitives are still rejected
+  expect(() => new Blob({} as any)).toThrow(TypeError);
+  expect(() => new Blob({ length: 1, 0: "a" } as any)).toThrow(TypeError);
+  expect(() => new Blob(123 as any)).toThrow(TypeError);
+  expect(() => new Blob("ab" as any)).toThrow(TypeError);
+});
+
+test("Blob.slice applies ToNumber to start/end and ToString to contentType", async () => {
+  const blob = new Blob(["hello world"]); // 11 bytes
+  // null is provided, so it coerces to 0 instead of being ignored
+  expect(blob.slice(null as any, null as any).size).toBe(0);
+  expect(blob.slice(0, null as any).size).toBe(0);
+  expect(await blob.slice(null as any, 3).text()).toBe("hel");
+  // objects coerce through valueOf
+  expect(await blob.slice({ valueOf: () => 2 } as any, 4).text()).toBe("ll");
+  expect(await blob.slice(false as any, true as any).text()).toBe("h");
+  // undefined still means "not provided"
+  expect(blob.slice(undefined, undefined).size).toBe(11);
+  expect(blob.slice(undefined, undefined, undefined).type).toBe("");
+  // a non-string contentType is stringified
+  expect(blob.slice(1, 3, 123 as any).type).toBe("123");
+  expect(blob.slice(1, 3, { toString: () => "text/x" } as any).type).toBe("text/x");
+  // values ToNumber rejects throw
+  expect(() => blob.slice(Symbol() as any)).toThrow(TypeError);
+
+  // arguments are converted before the empty-blob fast path returns
+  const empty = new Blob([]);
+  expect(() => empty.slice(Symbol() as any)).toThrow(TypeError);
+  let valueOfCalls = 0;
+  expect(empty.slice({ valueOf: () => (valueOfCalls++, 0) } as any).size).toBe(0);
+  expect(valueOfCalls).toBe(1);
+  expect(empty.slice(0, 0, 123 as any).type).toBe("123");
+  expect(empty.slice(0, 0, "text/HTML").type).toBe("text/html");
 });
 
 test("blob: can be fetched", async () => {

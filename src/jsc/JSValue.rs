@@ -2423,6 +2423,44 @@ impl JSValue {
     ) -> JsResult<()> {
         self.for_each(global, ctx, callback)
     }
+    /// Materialize an iterable into a new `JSArray` by running the JS
+    /// iteration protocol. The returned array keeps the yielded values
+    /// GC-reachable (values from a generator have no other root).
+    /// Iteration runs user JS and may throw.
+    pub fn to_array_from_iterable(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        struct Ctx {
+            array: JSValue,
+            index: u32,
+            error: Option<JsError>,
+        }
+        extern "C" fn append(
+            _: *mut crate::VM,
+            global: &JSGlobalObject,
+            ctx: *mut c_void,
+            item: JSValue,
+        ) {
+            // SAFETY: `ctx` is the stack `Ctx` passed to `for_each` below; it
+            // outlives the iteration.
+            let ctx = unsafe { &mut *ctx.cast::<Ctx>() };
+            if ctx.error.is_some() {
+                return;
+            }
+            match ctx.array.put_index(global, ctx.index, item) {
+                Ok(()) => ctx.index += 1,
+                Err(err) => ctx.error = Some(err),
+            }
+        }
+        let mut ctx = Ctx {
+            array: crate::JSArray::create_empty(global, 0)?,
+            index: 0,
+            error: None,
+        };
+        self.for_each(global, std::ptr::from_mut(&mut ctx).cast(), append)?;
+        if let Some(err) = ctx.error {
+            return Err(err);
+        }
+        Ok(ctx.array)
+    }
     /// `JSValue.forEachProperty` — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
     ///

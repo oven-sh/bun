@@ -2002,19 +2002,15 @@ impl BlobExt for Blob {
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_.ptr[..];
 
-        if self.size.get() == 0 {
-            let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
-            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
-        }
-
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let size = i64::try_from(self.size.get()).expect("int cast");
+        let mut relative_end: i64 = size;
 
-        // Mutate the fixed-3 args array in place to shift the string arg into [2].
+        // Bun extension (documented on `BunFile`/`S3File`): a string in the
+        // `start`/`end` position is the `contentType`, as in `slice(type)`
+        // and `slice(begin, type)`. Shift it into args[2] and clear its slot.
         if args[0].is_string() {
             args[2] = args[0];
             args[1] = JSValue::ZERO;
@@ -2024,49 +2020,75 @@ impl BlobExt for Blob {
             args[1] = JSValue::ZERO;
         }
 
+        // WebIDL `[Clamp] long long`: every provided, non-`undefined` value
+        // goes through ToNumber (`null` becomes 0, objects go through
+        // `valueOf`, symbols throw); NaN becomes 0. Absent and `undefined`
+        // keep the spec default.
+        fn relative_index(
+            value: JSValue,
+            global: &JSGlobalObject,
+            size: i64,
+            default: i64,
+        ) -> JsResult<i64> {
+            if value.is_empty() || value.is_undefined() {
+                return Ok(default);
+            }
+            let int = if value.is_number() {
+                value.to_int64()
+            } else {
+                let number = value.to_number(global)?;
+                // Saturating truncation, mirroring `JSValue::to_int64`.
+                if number.is_nan() { 0 } else { number as i64 }
+            };
+            Ok(if int < 0 {
+                int.wrapping_add(size).max(0)
+            } else {
+                int.min(size)
+            })
+        }
+
         let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
         if let Some(start_) = args_iter.next_eat() {
-            if start_.is_number() {
-                let start = start_.to_int64();
-                if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
-                } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
-                }
-            }
+            relative_start = relative_index(start_, global_this, size, relative_start)?;
         }
 
         if let Some(end_) = args_iter.next_eat() {
-            if end_.is_number() {
-                let end = end_.to_int64();
-                if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
-                } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
-                }
-            }
+            relative_end = relative_index(end_, global_this, size, relative_end)?;
         }
 
         let mut content_type = BlobContentType::default();
         if let Some(content_type_) = args_iter.next_eat() {
             'inner: {
-                if content_type_.is_string() {
-                    let zig_str = content_type_.get_zig_string(global_this)?;
-                    let slicer = zig_str.to_slice();
-                    let slice = slicer.slice();
-                    if !is_valid_blob_type(slice) {
-                        break 'inner;
-                    }
-                    content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
-                        Some(mime) => BlobContentType::from(mime),
-                        None => BlobContentType::from_lowercased(slice),
-                    };
+                // WebIDL `DOMString`: stringify any provided, non-`undefined`
+                // value (numbers included), not just string primitives.
+                if content_type_.is_empty() || content_type_.is_undefined() {
+                    break 'inner;
                 }
+                let content_type_str = content_type_.to_slice(global_this)?;
+                let slice = content_type_str.slice();
+                if !is_valid_blob_type(slice) {
+                    break 'inner;
+                }
+                content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
+                    Some(mime) => BlobContentType::from(mime),
+                    None => BlobContentType::from_lowercased(slice),
+                };
             }
+        }
+
+        // WebIDL converts every argument before the operation body runs, so
+        // the coercions above (and their side effects and exceptions) happen
+        // even when this Blob is empty; the provided type still applies.
+        if self.size.get() == 0 {
+            let blob = Blob::init_empty(global_this);
+            let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
+            blob.content_type.set(content_type);
+            blob.content_type_was_set
+                .set(self.content_type_was_set.get() || content_type_was_allocated);
+            let ptr = Blob::new(blob);
+            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
+            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
+            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
         Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
@@ -3249,6 +3271,14 @@ impl BlobExt for Blob {
     ) -> JsResult<Blob> {
         let mut current = arg;
         if current.is_undefined_or_null() {
+            // `new Blob(undefined)` omits the optional `blobParts` argument, but
+            // `null` is not convertible to a sequence (TypeError in the spec,
+            // Node, and browsers).
+            if REQUIRE_ARRAY && current.is_null() {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("new Blob() expects an Array"))
+                );
+            }
             return Ok(Blob::init_empty(global));
         }
 
@@ -3256,6 +3286,10 @@ impl BlobExt for Blob {
         let might_only_be_one_thing: bool;
         arg.ensure_still_alive();
         let _keep = jsc::EnsureStillAlive(arg);
+        // Set when a non-array iterable argument is materialized into a JSArray
+        // below: that array is the only GC root for values yielded by a
+        // generator, so it must stay alive until `joiner.done()`.
+        let mut _keep_iterable_parts = jsc::EnsureStillAlive(JSValue::UNDEFINED);
         let mut fail_if_top_value_is_not_typed_array_like = false;
         match current.js_type_loose() {
             jsc::JSType::Array | jsc::JSType::DerivedArray => {
@@ -3386,9 +3420,16 @@ impl BlobExt for Blob {
             // new Blob("ok")
             // new File("ok", "file.txt")
             if fail_if_top_value_is_not_typed_array_like {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("new Blob() expects an Array"))
-                );
+                // WebIDL `sequence<BlobPart>` accepts any iterable object
+                // (Set, Map, generators, ...): materialize it into a JS array
+                // and join it like one below. Non-iterables still throw.
+                if !top_value.is_object() || !top_value.is_iterable(global)? {
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("new Blob() expects an Array"))
+                    );
+                }
+                current = top_value.to_array_from_iterable(global)?;
+                _keep_iterable_parts = jsc::EnsureStillAlive(current);
             }
         }
 
@@ -3458,11 +3499,10 @@ impl BlobExt for Blob {
                     }
 
                     while let Some(item) = iter.next()? {
-                        if item.is_undefined_or_null() {
-                            continue;
-                        }
-
                         {
+                            // `null`/`undefined` parts are non-cells (`JSType::Cell`
+                            // here) and stringify to "null"/"undefined" below, per
+                            // WebIDL's ToString on non-Blob/BufferSource parts.
                             match item.js_type_loose() {
                                 jsc::JSType::NumberObject
                                 | jsc::JSType::Cell

@@ -1369,7 +1369,9 @@ session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; glob
   console.log(JSON.stringify({ pauses }));
 });`,
     ],
-    env: bunEnv,
+    // Children drive Runtime.evaluate — same validator-env strip as the
+    // sibling subprocess tests above.
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1405,7 +1407,9 @@ session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone
   console.log(JSON.stringify({ sawPausedDuringDispatch, evalOnFrame, result: res?.result?.value }));
 });`,
     ],
-    env: bunEnv,
+    // Children drive Runtime.evaluate — same validator-env strip as the
+    // sibling subprocess tests above.
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

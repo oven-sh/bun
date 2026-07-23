@@ -347,7 +347,6 @@ interface DisconnectNotifyState {
 class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
-  #nextBackendId = 1;
   #nextExceptionId = 1;
   #pending = new Map<
     number,
@@ -398,7 +397,7 @@ class InspectorCDPAdapter {
   // `allocateBackendId` lets several adapters share one backend whose
   // replies are broadcast to all of them (JSC's FrontendRouter): a shared
   // allocator keeps their command ids disjoint, so each claims only its own.
-  #allocateBackendId: (() => number) | undefined;
+  #allocateBackendId: () => number;
 
   constructor(
     writeToBackend: (message: string) => void,
@@ -409,7 +408,7 @@ class InspectorCDPAdapter {
       retaining: 0,
       adapters: undefined,
     },
-    allocateBackendId?: () => number,
+    allocateBackendId: () => number,
   ) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
@@ -781,7 +780,7 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
-    const id = this.#allocateBackendId !== undefined ? this.#allocateBackendId() : this.#nextBackendId++;
+    const id = this.#allocateBackendId();
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }

@@ -127,6 +127,11 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
+  /**
+   * Extra environment variables for the dev server process.
+   * Avoid if possible, this is to reproduce specific bugs.
+   */
+  env?: Record<string, string>;
 
   skip?: ("win32" | "darwin" | "linux" | "ci")[];
   /**

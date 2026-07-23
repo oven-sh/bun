@@ -406,6 +406,19 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
+        // PORT NOTE: locked — diverges from Zig spec (which scanned the
+        // `file_path` column unlocked; `WindowsWatcher.zig:217`). The JS
+        // thread, transpiler workers and the bundle thread append watch items
+        // under `this.mutex`, which can grow the MultiArrayList — freeing the
+        // old backing slab mid-scan — so the unlocked `items_file_path()` read
+        // raced the realloc and `is_parent_or_equal` dereferenced freed
+        // memory. Mirrors the locked snapshot in INotifyWatcher's
+        // `watch_loop_cycle`. The guard is dropped and re-acquired around
+        // `process_watch_event_batch`, which takes the same (non-recursive)
+        // mutex internally. This never holds the lock across a blocking wait:
+        // `platform.next()` runs before the guard is taken and `iter.next()`
+        // only parses the already-filled completion buffer.
+        let mut guard = this.mutex.lock_guard();
         bun_core::scoped_log!(
             watcher,
             "number of watched items: {}",
@@ -435,8 +448,18 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            let n_items = this.watchlist.items_file_path().len();
-            for item_idx in 0..n_items {
+            // The length is re-read every iteration: releasing the lock around
+            // `process_watch_event_batch` lets `on_file_update` evict entries
+            // and compact the watchlist. Known trade-off: that compaction is
+            // `swap_remove`-based, so a mid-batch flush can move a not-yet-
+            // scanned tail entry into a slot behind `item_idx`, skipping it
+            // for the *current* OS event (requires 128+ matches for one event
+            // plus a concurrent eviction below the cursor). Rescanning from 0
+            // instead would risk duplicate notifications; a missed coalesced
+            // event is the safer failure mode, and the next event for that
+            // path re-delivers.
+            let mut item_idx: usize = 0;
+            while item_idx < this.watchlist.items_file_path().len() {
                 // reshaped for borrowck — `rel` is computed in a scoped
                 // block so the borrows of `this.watchlist` / `this.platform.buf`
                 // are released before we touch `this.watch_events` or hand the
@@ -459,13 +482,16 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 };
                 // skip unrelated items
                 if rel == ParentEqual::Unrelated {
+                    item_idx += 1;
                     continue;
                 }
                 // if the event is for a parent dir of the item, only emit it if it's a delete or rename
 
                 // Check if we're about to exceed the watch_events array capacity
                 if event_id >= this.watch_events.len() {
-                    // Process current batch of events
+                    // Process current batch of events; it locks `this.mutex`
+                    // itself, so release our guard first (non-recursive mutex).
+                    drop(guard);
                     process_watch_event_batch(this, event_id)?;
                     // passing `this: &mut Watcher` above materialises a fresh Unique
                     // borrow over the whole `Watcher`, which under Stacked Borrows pops the
@@ -477,13 +503,17 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     iter.watcher = BackRef::new(&this.platform.watcher);
                     // Reset event_id to start a new batch
                     event_id = 0;
+                    guard = this.mutex.lock_guard();
+                    continue;
                 }
 
                 this.watch_events[event_id] =
                     create_watch_event(&event, item_idx as WatchItemIndex);
                 event_id += 1;
+                item_idx += 1;
             }
         }
+        drop(guard);
     }
 
     // Process any remaining events in the final batch

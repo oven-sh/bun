@@ -1019,11 +1019,29 @@ impl StatWatcher {
         // (`FileSystem::init` runs before any JS module loads).
         let top_level_dir = fs::FileSystem::get().top_level_dir;
         let parts: [&[u8]; 1] = [slice];
-        let file_path =
-            Path::join_abs_string_buf::<platform::Auto>(top_level_dir, &mut buf[..], &parts);
-
+        // The cwd-joined result can exceed the pooled buffer even when the raw
+        // path passed per-platform length validation; the unchecked join
+        // overflowed the buffer (panic) on such inputs. Fall back to a heap
+        // scratch sized like `join_abs_string_buf_checked`'s slow path: the
+        // watcher is still created and its stat polls fail with ENAMETOOLONG,
+        // so the listener observes zeroed stats — matching Node, which never
+        // throws for un-stat-able `watchFile` paths.
         // allocSentinel + memcpy → owned NUL-terminated copy (ZBox)
-        let alloc_file_path = ZBox::from_bytes(file_path);
+        let alloc_file_path = match Path::join_abs_string_buf_checked::<platform::Auto>(
+            top_level_dir,
+            &mut buf[..],
+            &parts,
+        ) {
+            Some(file_path) => ZBox::from_bytes(file_path),
+            None => {
+                let mut scratch = vec![0u8; top_level_dir.len() + slice.len() + 3];
+                ZBox::from_bytes(Path::join_abs_string_buf::<platform::Auto>(
+                    top_level_dir,
+                    &mut scratch,
+                    &parts,
+                ))
+            }
+        };
         // errdefer free → Drop handles it
 
         // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.

@@ -1,5 +1,3 @@
-use core::ffi::c_int;
-
 use bun_core::output as Output;
 use bun_sys::Fd;
 
@@ -54,7 +52,10 @@ pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
 }
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
-    use bun_sys::c;
+    // Zig: `defer Output.flush()` — flushes on the `?` early returns below
+    // too (mirrors INotifyWatcher's watch_loop_cycle).
+    let _flush = Output::flush_guard();
+
     let fd: Fd = this
         .platform
         .fd
@@ -65,42 +66,26 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut changelist_array: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
     let changelist = &mut changelist_array;
 
-    // SAFETY: fd is a valid kqueue fd; changelist points to CHANGELIST_COUNT zeroed entries
-    let mut count: c_int = unsafe {
-        c::kevent(
-            fd.native(),
-            changelist.as_ptr(),
-            0,
-            changelist.as_mut_ptr(),
-            CHANGELIST_COUNT as c_int,
-            core::ptr::null(), // timeout
-        )
-    };
+    // kevent(2) returns -1 on failure (e.g. EINTR). Zig called the raw syscall
+    // and let a negative count fall through `@max(0, count)` into an empty
+    // batch; the direct port's checked `usize::try_from(count)` panicked on
+    // that -1 instead. Use the EINTR-retrying `bun_sys::kevent` wrapper and
+    // propagate real errors to the watch loop.
+    let mut count: usize = bun_sys::kevent(fd, &[], changelist, None)?;
 
     // Give the events more time to coalesce
-    if count < 128 / 2 {
-        let remain: c_int = 128 - count;
-        let off = usize::try_from(count).expect("int cast");
+    if count < CHANGELIST_COUNT / 2 {
         let ts = libc::timespec {
             tv_sec: 0,
             tv_nsec: 100_000,
         }; // 0.0001 seconds
-        // SAFETY: off < CHANGELIST_COUNT (count < 64), remain entries fit in the buffer
-        let extra: c_int = unsafe {
-            c::kevent(
-                fd.native(),
-                changelist.as_ptr().add(off),
-                0,
-                changelist.as_mut_ptr().add(off),
-                remain,
-                &raw const ts,
-            )
-        };
-
-        count += extra;
+        // Best-effort coalescing read: deliver the events we already have even
+        // if this extra poll fails; a persistent kqueue error resurfaces on the
+        // next cycle's blocking call.
+        count += bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts)).unwrap_or(0);
     }
 
-    let changes_len = usize::try_from(count.max(0)).expect("int cast");
+    let changes_len = count;
     let changes = &changelist[0..changes_len];
     // Track out_len and slice once at the end to avoid overlapping &mut
     // borrows of `this`.
@@ -136,8 +121,5 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         (this.on_file_update)(this.ctx, &mut deduped, changed, &this.watchlist);
     }
 
-    // No early returns above, so flush once at the single exit point instead
-    // of via scopeguard.
-    Output::flush();
     Ok(())
 }

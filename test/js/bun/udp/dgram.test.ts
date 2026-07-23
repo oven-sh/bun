@@ -428,6 +428,48 @@ test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket
   wrap.close();
 });
 
+// IP_MULTICAST_TTL accepts 0 (confine multicast to the local host); IP_TTL does
+// not. Bun used to apply the unicast [1,255] range to both, rejecting
+// setMulticastTTL(0) with EINVAL where Node/libuv succeed.
+test("setTTL/setMulticastTTL range matches Node (node:dgram)", async () => {
+  const socket = createSocket("udp4");
+  const { promise, resolve } = Promise.withResolvers<void>();
+  socket.bind(0, "127.0.0.1", resolve);
+  await promise;
+  try {
+    expect(socket.setMulticastTTL(0)).toBe(0);
+    expect(socket.setMulticastTTL(1)).toBe(1);
+    expect(socket.setMulticastTTL(255)).toBe(255);
+    expect(() => socket.setMulticastTTL(-1)).toThrowWithCode(Error, "EINVAL");
+    expect(() => socket.setMulticastTTL(256)).toThrowWithCode(Error, "EINVAL");
+
+    expect(() => socket.setTTL(0)).toThrowWithCode(Error, "EINVAL");
+    expect(socket.setTTL(1)).toBe(1);
+    expect(socket.setTTL(255)).toBe(255);
+    expect(() => socket.setTTL(256)).toThrowWithCode(Error, "EINVAL");
+  } finally {
+    socket.close();
+  }
+});
+
+test("setTTL/setMulticastTTL range matches Node (Bun.udpSocket)", async () => {
+  const socket = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+  try {
+    expect(socket.setMulticastTTL(0)).toBe(0);
+    expect(socket.setMulticastTTL(1)).toBe(1);
+    expect(socket.setMulticastTTL(255)).toBe(255);
+    expect(() => socket.setMulticastTTL(-1)).toThrowWithCode(Error, "EINVAL");
+    expect(() => socket.setMulticastTTL(256)).toThrowWithCode(Error, "EINVAL");
+
+    expect(() => socket.setTTL(0)).toThrowWithCode(Error, "EINVAL");
+    expect(socket.setTTL(1)).toBe(1);
+    expect(socket.setTTL(255)).toBe(255);
+    expect(() => socket.setTTL(256)).toThrowWithCode(Error, "EINVAL");
+  } finally {
+    socket.close();
+  }
+});
+
 // Node throws an ErrnoException from the option setters of an unbound socket;
 // the error carries the syscall name and code, not a bare `Error`.
 test("setBroadcast()/setMulticastLoopback() before bind() throw EBADF", () => {

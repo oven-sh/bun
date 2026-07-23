@@ -608,3 +608,43 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
     server.close();
   }
 });
+
+// The types declare `error(socket, error)` (same shape as data/drain), but the
+// handler was being called with only `(error)`, so a handler written to the
+// contract saw `socket` bound to the Error and `error === undefined`.
+test("error handler is called with (socket, error)", async () => {
+  const { promise, resolve } = Promise.withResolvers<unknown[]>();
+  const server = await udpSocket({
+    port: 0,
+    hostname: "127.0.0.1",
+    socket: {
+      data() {
+        throw new Error("boom");
+      },
+      error(...args: unknown[]) {
+        resolve(args);
+      },
+    },
+  });
+  const client = await udpSocket({ port: 0, hostname: "127.0.0.1" });
+  try {
+    const retry = setInterval(() => client.send("ping", server.port, "127.0.0.1"), 20);
+    client.send("ping", server.port, "127.0.0.1");
+    const args = await promise;
+    clearInterval(retry);
+    expect({
+      length: args.length,
+      arg0IsServer: args[0] === server,
+      arg1IsError: args[1] instanceof Error,
+      message: (args[1] as Error | undefined)?.message,
+    }).toEqual({
+      length: 2,
+      arg0IsServer: true,
+      arg1IsError: true,
+      message: "boom",
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});

@@ -652,6 +652,62 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
   // req.trailers is exposed here) and leave the keep-alive connection ready
   // for the next request.
   describe("chunked request trailer-part", () => {
+    async function drive(
+      bodyWrites: readonly string[],
+      { pipeline }: { pipeline: boolean },
+    ): Promise<{ paths: string[]; received: string }> {
+      const paths: string[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          paths.push(new URL(req.url).pathname);
+          let body = "";
+          try {
+            body = await req.text();
+          } catch {}
+          return new Response("body=" + body + ".");
+        },
+      });
+      let received = "";
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          data(_s, d) {
+            received += d.toString();
+          },
+          async open(s) {
+            s.write("POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+            for (const segment of bodyWrites) {
+              s.write(segment);
+              s.flush();
+              // Yield to the I/O poll phase so the server sees each segment
+              // in its own recv() and the state machine actually resumes
+              // across packet boundaries.
+              await new Promise<void>(r => setImmediate(r));
+            }
+            if (pipeline) {
+              // Connection: close on the second request so the server closes
+              // after both responses are fully written; waiting on socket
+              // close avoids racing status-line counting against body
+              // delivery.
+              s.write("GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+              s.flush();
+            }
+          },
+          error(_s, err) {
+            reject(err);
+          },
+          close() {
+            resolve();
+          },
+        },
+      });
+      await promise;
+      return { paths, received };
+    }
+
     test.concurrentIf(!isASAN).each([
       ["one write", ["5\r\nhello\r\n0\r\nX-Trail: one\r\nX-More: two\r\n\r\n"]],
       ["split mid trailer name", ["5\r\nhello\r\n0\r\nX", "-Trail: one\r\nX-More: two\r\n\r\n"]],
@@ -660,101 +716,35 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
       ["split on terminating CR", ["5\r\nhello\r\n0\r\nX-Trail: one\r\nX-More: two\r\n\r", "\n"]],
       ["last-chunk with extension", ["5\r\nhello\r\n0;ext=v\r\nX-Trail: one\r\n\r\n"]],
     ] as const)("consumes trailer-part and preserves keep-alive (%s)", async (_, bodyWrites) => {
-      const bodyWritesJson = JSON.stringify(bodyWrites);
-      const script = `
-        const paths = [];
-        const server = Bun.serve({
-          port: 0,
-          async fetch(req) {
-            paths.push(new URL(req.url).pathname);
-            return new Response("body=" + (await req.text()) + ".");
-          },
-        });
-        const { promise, resolve } = Promise.withResolvers();
-        let received = "";
-        const socket = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: server.port,
-          socket: {
-            data(s, d) { received += d.toString(); },
-            async open(s) {
-              // Connection: close on the second request so the server closes
-              // after both responses are fully written; the test then waits on
-              // socket close instead of counting status lines, which can race
-              // ahead of the second response body.
-              s.write("POST /a HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
-              for (const segment of ${bodyWritesJson}) {
-                s.write(segment);
-                s.flush();
-                await new Promise(r => setImmediate(r));
-              }
-              s.write("GET /b HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-              s.flush();
-            },
-            error() {},
-            close() { resolve(); },
-          },
-        });
-        await promise;
-        server.stop();
-        console.log(JSON.stringify({ paths, bodies: received.match(/body=[a-z]*\\./g) || [] }));
-      `;
-
-      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout.trim())).toEqual({
+      const { paths, received } = await drive(bodyWrites, { pipeline: true });
+      expect({ paths, bodies: received.match(/body=[a-z]*\./g) ?? [] }).toEqual({
         paths: ["/a", "/b"],
         bodies: ["body=hello.", "body=."],
       });
-      expect(exitCode).toBe(0);
     });
 
     test.concurrentIf(!isASAN).each([
       ["bare LF on a trailer line", "5\r\nhello\r\n0\r\nX-T: 9\n\r\n"],
       ["CR not followed by LF", "5\r\nhello\r\n0\r\nX-T: 9\rZ\r\n\r\n"],
-      ["NUL on a trailer line", "5\r\nhello\r\n0\r\nX-T: a\x00b\r\n\r\n"],
     ])("rejects a malformed trailer-part (%s)", async (_, body) => {
-      const script = `
-        const paths = [];
-        const server = Bun.serve({
-          port: 0,
-          async fetch(req) {
-            paths.push(new URL(req.url).pathname);
-            try { await req.text(); } catch {}
-            return new Response("OK");
-          },
-        });
-        const { promise, resolve } = Promise.withResolvers();
-        let received = "";
-        const socket = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: server.port,
-          socket: {
-            data(s, d) { received += d.toString(); },
-            open(s) {
-              s.write("POST /a HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n" + ${JSON.stringify(body)});
-              s.flush();
-            },
-            error() {},
-            close() { resolve(); },
-          },
-        });
-        await promise;
-        server.stop();
-        console.log(JSON.stringify({ paths, status: (received.match(/HTTP\\/1\\.1 \\d+/) || [])[0] }));
-      `;
-
-      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout.trim())).toEqual({
+      const { paths, received } = await drive([body], { pipeline: false });
+      expect({ paths, status: received.match(/HTTP\/1\.1 \d+/)?.[0] }).toEqual({
         paths: ["/a"],
         status: "HTTP/1.1 400",
       });
-      expect(exitCode).toBe(0);
     });
+
+    test.concurrentIf(!isASAN)(
+      "rejects a trailer-part larger than the header-size limit with 431",
+      async () => {
+        const line = "X-T: " + Buffer.alloc(200, "v").toString() + "\r\n";
+        const trailer = Buffer.alloc(17 * 1024, line).toString();
+        const { paths, received } = await drive(["5\r\nhello\r\n0\r\n" + trailer + "\r\n"], { pipeline: true });
+        expect({ paths, status: received.match(/HTTP\/1\.1 \d+/)?.[0] }).toEqual({
+          paths: ["/a"],
+          status: "HTTP/1.1 431",
+        });
+      },
+    );
   });
 });

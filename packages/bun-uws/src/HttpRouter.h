@@ -72,7 +72,7 @@ private:
      *     given URL segment so iteration is never needed.
      *   - specialChildren: ':' param and '*' wildcard segments, kept ordered
      *     (':' before '*') and tried after the static match at the same priority.
-     * Each is further split by isHighPriority: [1] = HIGH_PRIORITY (upgrade
+     * Each is further split by priority tier: [1] = HIGH_PRIORITY (upgrade
      * routes), [0] = everything else. Matching tries [1] before [0].
      *
      * The child containers live behind a lazily-allocated Children block so a
@@ -90,7 +90,6 @@ private:
         std::string name = {};
         std::vector<uint32_t> handlers = {};
         std::unique_ptr<Children> children = {};
-        bool isHighPriority = false;
 
         explicit Node(std::string name) : name(std::move(name)) {}
 
@@ -132,7 +131,6 @@ private:
                 return it->second.get();
             }
             auto newNode = std::make_unique<Node>(std::string(child));
-            newNode->isHighPriority = isHighPriority;
             Node *ptr = newNode.get();
             map.emplace(ptr->name, std::move(newNode));
             return ptr;
@@ -145,7 +143,6 @@ private:
             }
         }
         auto newNode = std::make_unique<Node>(std::string(child));
-        newNode->isHighPriority = isHighPriority;
         /* Keep ':' before '*' so executeHandlers tries param before wildcard. */
         auto iter = std::upper_bound(vec.begin(), vec.end(), newNode, [this](auto &a, auto &b) {
             return lexicalOrder(b->name) < lexicalOrder(a->name);
@@ -319,7 +316,7 @@ private:
         return UINT32_MAX;
     }
 
-    /* Root's children are method names; all are isHighPriority=false. */
+    /* Root's children are method names; all live in the normal-priority tier. */
     Node *findMethodNode(std::string_view method) {
         if (!root.children) {
             return nullptr;

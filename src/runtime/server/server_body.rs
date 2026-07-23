@@ -3096,9 +3096,24 @@ where
             });
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
-                if let Some(mut s) = prefix {
-                    s.extend_from_slice(path);
-                    request_object.url.set(BunString::clone_utf8(&s));
+                if let Some(prefix) = prefix {
+                    // `prefix` already holds the HostFormatter-normalized
+                    // `https://{host}`; assemble straight into the WTF Latin-1
+                    // backing instead of extend + clone_utf8 (one alloc, one
+                    // copy) when both halves are ASCII.
+                    let url_len = prefix.len() + path.len();
+                    if strings::is_all_ascii(&prefix) && strings::is_all_ascii(path) {
+                        let (s, bytes) = BunString::create_uninitialized_latin1(url_len);
+                        let (a, b) = bytes.split_at_mut(prefix.len());
+                        a.copy_from_slice(&prefix);
+                        b.copy_from_slice(path);
+                        request_object.url.set(s);
+                    } else {
+                        let mut s = prefix;
+                        s.reserve_exact(path.len());
+                        s.extend_from_slice(path);
+                        request_object.url.set(BunString::clone_utf8(&s));
+                    }
                 } else {
                     request_object.url.set(BunString::clone_utf8(path));
                 }

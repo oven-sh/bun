@@ -118,12 +118,22 @@ pub fn write_request(
     drop(lower);
     drop(headers);
 
+    // Defer body bytes to `on_stream_writable`. `on_stream_open` can fire
+    // from inside `on_hsk_done` (which lsquic invokes from `ci_tick`'s
+    // crypto-read phase with `SC_BUFFER_STREAM` set) while the client's TLS
+    // Finished is still only on the HSK crypto stream's frab list. A large
+    // body written here fills the send controller so `write_is_possible()`
+    // goes false before `process_streams_write_events` ever dispatches the
+    // crypto stream, and the Finished is never packetized (the server stays
+    // a mini-conn and drops every 1-RTT packet). `on_write` is dispatched
+    // via lsquic's priority iterator, which serves the crypto stream first.
+    // This matches lsquic's reference `http_client.c:on_new_stream`.
     if has_inline_body {
         stream.pending_body = req_body;
-        drain_send_body(stream, qs);
+        qs.want_write(true);
     } else if is_streaming {
         stream.is_streaming_body = true;
-        drain_send_body(stream, qs);
+        qs.want_write(true);
     } else {
         stream.request_body_done = true;
     }

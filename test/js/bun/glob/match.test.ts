@@ -24,7 +24,7 @@
 
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 
 describe("Glob.match", () => {
@@ -358,6 +358,71 @@ describe("Glob.match", () => {
     glob = new Glob(Buffer.alloc(40_000, "{").toString());
     expect(glob.match("a")).toBeFalse();
     expect(glob.match("{")).toBeFalse();
+  });
+
+  test("many brace groups along one match path", () => {
+    // Sequential and per-segment brace groups accumulate one stack frame each
+    // along the matching path, so more than a handful used to silently stop
+    // matching. None of these hit nesting; they are flat groups in a row.
+    for (const n of [10, 11, 12, 32, 64]) {
+      const flat = Array.from({ length: n }, () => "{a,b}").join(""); // n sequential 2-way groups
+      const aRun = Buffer.alloc(n, "a").toString();
+      expect(new Glob(flat).match(aRun)).toBeTrue();
+
+      const perSegment = Array.from({ length: n }, () => "{a,b}").join("/");
+      const path = Array.from({ length: n }, () => "a").join("/");
+      expect(new Glob(perSegment).match(path)).toBeTrue();
+    }
+
+    // Realistic monorepo pattern: one brace per directory level plus a leaf.
+    const real = "{packages,apps}/{a,b}/{src,lib}/{x,y}/{u,v}/{p,q}/{c,d}/{e,f}/{g,h}/{i,j}/*.{ts,tsx}";
+    expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.ts")).toBeTrue();
+    expect(new Glob(real).match("packages/a/src/x/u/p/c/e/g/i/z.go")).toBeFalse();
+
+    // At the depth cap (MAX_BRACE_DEPTH = 256): 256 groups match, 257 do not.
+    const atCap = Array.from({ length: 256 }, () => "{a,b}").join("");
+    expect(new Glob(atCap).match(Buffer.alloc(256, "a").toString())).toBeTrue();
+    const pastCap = Array.from({ length: 257 }, () => "{a,b}").join("");
+    expect(new Glob(pastCap).match(Buffer.alloc(257, "a").toString())).toBeFalse();
+  });
+
+  test("literal comma or brace after sequential brace groups", () => {
+    // After 2+ sequential groups, a trailing literal `,` or `}` used to be
+    // misrouted as brace syntax (depth tracked recursion frames, not open
+    // braces). These agree with Node's path.matchesGlob.
+    expect(new Glob("{a,b}{c,d},e").match("ac,e")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},e").match("bd,e")).toBeTrue();
+    expect(new Glob("{a,b}{c,d},e").match("ac,x")).toBeFalse();
+    expect(new Glob("{a,b}{c,d}}").match("ac}")).toBeTrue();
+    expect(new Glob("{a,b}{c,d}}").match("bd}")).toBeTrue();
+    expect(new Glob("{a,b}{c,d}}").match("acx")).toBeFalse();
+
+    // Nested braces still match their open-brace depth correctly.
+    expect(new Glob("{a,{b,c}}").match("a")).toBeTrue();
+    expect(new Glob("{a,{b,c}}").match("b")).toBeTrue();
+    expect(new Glob("{a,{b,c}}").match("c")).toBeTrue();
+    expect(new Glob("{a,{b,c}}").match("ac")).toBeFalse();
+  });
+
+  test("pathologically deep brace patterns do not overflow the stack", async () => {
+    // Each group along a match path adds a native recursion frame; thousands
+    // of sequential groups used to segfault. Run in a child so a regression
+    // is a clean failure instead of crashing the whole test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const n = 5000;
+         const flat = Array.from({ length: n }, () => "{a,b}").join("");
+         if (new Bun.Glob(flat).match(Buffer.alloc(n, "a").toString()) !== false) process.exit(2);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The depth cap returns false (exit 0); no crash (signalCode null).
+    expect({ exitCode, signalCode: proc.signalCode, stdout, stderr }).toMatchObject({ exitCode: 0, signalCode: null });
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

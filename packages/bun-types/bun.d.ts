@@ -8213,7 +8213,7 @@ declare module "bun" {
    * - `{a,b}`
    *     Match one of the patterns contained in the braces.
    *     The sub-patterns can use any of the other wildcards.
-   *     Braces may be nested up to 10 levels deep.
+   *     Braces may be nested and chained.
    * - `!`
    *     Negates the result when at the start of the pattern.
    *     Multiple "!" characters negate the pattern multiple times.

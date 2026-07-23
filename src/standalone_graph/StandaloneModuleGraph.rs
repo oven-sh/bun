@@ -448,14 +448,27 @@ fn exit_early_if_self_exe_truncated_cold() {
     let file_size = st.st_size as u64;
 
     let mut buf = [0u8; 4096];
-    // SAFETY: `fd` is open for reading; `buf` is a valid writable buffer.
-    let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    let mut filled: usize = 0;
+    while filled < buf.len() {
+        // SAFETY: `fd` is open for reading; `buf[filled..]` is a valid writable buffer.
+        let n = unsafe {
+            libc::read(
+                fd,
+                buf.as_mut_ptr().add(filled).cast(),
+                buf.len() - filled,
+            )
+        };
+        if n <= 0 {
+            break;
+        }
+        filled += n as usize;
+    }
     // SAFETY: `fd` is a valid owned descriptor.
     unsafe { libc::close(fd) };
-    if n < 64 {
+    if filled < 64 {
         return;
     }
-    let data = &buf[..n as usize];
+    let data = &buf[..filled];
 
     // Minimal ELF64 LE parse: e_phoff/e_phentsize/e_phnum and, per phdr,
     // p_type/p_offset/p_filesz at their fixed offsets.
@@ -504,8 +517,16 @@ fn exit_early_if_self_exe_truncated_cold() {
             file_size, required,
         ),
     );
-    // SAFETY: stderr (fd 2) is always writable; `msg` is a valid readable buffer.
-    unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
+    let mut off: usize = 0;
+    while off < msg.len() {
+        // SAFETY: stderr (fd 2) is always a valid descriptor; `msg[off..]` is a
+        // valid readable buffer.
+        let n = unsafe { libc::write(2, msg.as_ptr().add(off).cast(), msg.len() - off) };
+        if n <= 0 {
+            break;
+        }
+        off += n as usize;
+    }
     // SAFETY: `_exit` is async-signal-safe and never returns.
     unsafe { libc::_exit(1) };
 }

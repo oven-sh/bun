@@ -101,6 +101,18 @@ pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -
     wrote
 }
 
+/// WHATWG forgiving-base64 decode (https://infra.spec.whatwg.org/#forgiving-base64-decode).
+/// Returns `None` when the input is not valid forgiving-base64; otherwise the decoded bytes.
+pub fn decode_forgiving(input: &[u8]) -> Option<Vec<u8>> {
+    let mut buf = vec![0u8; decode_lenient_len(input.len())];
+    let result = simdutf::base64::decode(input, &mut buf, false);
+    if !result.is_successful() {
+        return None;
+    }
+    buf.truncate(result.count);
+    Some(buf)
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeAllocError {
     #[error("DecodingFailed")]

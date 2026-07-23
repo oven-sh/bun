@@ -49,7 +49,7 @@ use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
+use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
@@ -74,7 +74,7 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
-use bun_resolver::data_url::DataURL;
+use bun_resolver::data_url::{DataURL, FetchDataURL};
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
@@ -179,46 +179,49 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValue {
-    let data_url = data_url_;
+fn data_url_response(
+    data_url: FetchDataURL,
+    url: BunString,
+    global_this: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    let content_type: std::sync::Arc<[u8]> = std::sync::Arc::from(data_url.mime_type);
 
-    let data = match data_url.decode_data() {
-        Ok(d) => d,
-        Err(_) => {
-            let err =
-                global_this.create_error_instance(format_args!("failed to fetch the data URL"));
-            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global_this,
-                err,
-            );
-        }
-    };
-    let blob = Blob::init(data, global_this);
-
-    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+    let blob = Blob::init(data_url.body, global_this);
     blob.content_type
-        .set(crate::webcore::blob::BlobContentType::from(mime_type));
+        .set(crate::webcore::blob::BlobContentType::Owned(
+            std::sync::Arc::clone(&content_type),
+        ));
+
+    // Materialize `Content-Type` now: the lazy path in `get_or_create_headers`
+    // reads it off the body's Blob, which is gone once the body is consumed.
+    let mut headers = response::HeadersRef::create_empty();
+    headers.put(
+        HTTPHeaderName::ContentType,
+        &BunString::borrow_utf8(&content_type),
+        global_this,
+    )?;
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK").into(),
+            headers: Some(headers),
             ..Default::default()
         },
         Body::new(BodyValue::Blob(blob)),
-        data_url.url.dupe_ref(),
+        url.dupe_ref(),
         false,
     )));
 
     // Ownership of the boxed Response is transferred to the JS GC via
     // `make_maybe_pooled` (which stores the raw `*mut Response` in the wrapper
     // and finalizes it). Dropping a `Box<Response>` here would be a UAF.
-    JSPromise::resolved_promise_value(
+    Ok(JSPromise::resolved_promise_value(
         global_this,
         // SAFETY: `response` is a freshly allocated heap `Response`; ownership
         // transfers to JSC.
         Response::make_maybe_pooled(global_this, response),
-    )
+    ))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -572,26 +575,52 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if url_str.has_prefix_comptime(b"data:") {
+        // https://fetch.spec.whatwg.org/#data-urls runs on the URL serialized
+        // with exclude-fragment set to true, so normalize via the WHATWG URL
+        // parser and strip the fragment before processing.
         let url_slice = url_str.to_utf8_without_ref();
-        // `defer url_slice.deinit()` → Drop.
-
-        let data_url = match DataURL::parse_without_check(url_slice.slice()) {
-            Ok(d) => d,
-            Err(_) => {
-                let err = ctx.create_error_instance(format_args!("failed to fetch the data URL"));
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        err,
-                    ),
-                );
-            }
+        let mut _href = bun_core::OwnedString::default();
+        let mut _href_slice = ZigStringSlice::default();
+        let data_url = 'process: {
+            // Fast path: for an opaque-path data URL with no `?` and every byte
+            // in [0x21, 0x7E] the WHATWG URL parser is a no-op, so large base64
+            // payloads can skip it.
+            let input = if url_slice.slice().get(5) != Some(&b'/')
+                && url_slice
+                    .slice()
+                    .iter()
+                    .all(|&b| (0x21..=0x7E).contains(&b) && b != b'?')
+            {
+                url_slice.slice()
+            } else {
+                _href = bun_core::OwnedString::new(jsc::URL::href_from_string(url_str.get()));
+                if _href.tag() == BunStringTag::Dead {
+                    break 'process None;
+                }
+                _href_slice = _href.to_utf8_without_ref();
+                _href_slice.slice()
+            };
+            let input = match bun_core::strings::index_of_char(input, b'#') {
+                Some(i) => &input[..i as usize],
+                None => input,
+            };
+            DataURL::process_for_fetch(input)
         };
-        let mut data_url = data_url;
+        let Some(data_url) = data_url else {
+            let err = ctx.to_type_error(
+                jsc::ErrorCode::INVALID_URL,
+                format_args!("failed to fetch the data URL"),
+            );
+            return Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    err,
+                ),
+            );
+        };
         // `data_url_response` `dupe_ref()`s this, so pass a borrowed view (no
         // extra ref); `url_str`'s scope-exit deref balances it.
-        data_url.url = url_str.get();
-        return Ok(data_url_response(data_url, global_this));
+        return data_url_response(data_url, url_str.get(), global_this);
     }
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we

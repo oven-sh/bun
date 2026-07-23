@@ -549,6 +549,43 @@ test("run(): an uncaught exception during a pending body fails that test instead
   expect(fails).toContainEqual({ name: "pending body uncaught", failureType: "uncaughtException" });
 }, 30_000);
 
+test("run(): a user test writing the run-event marker cannot error the run stream", async () => {
+  using dir = tempDir("node-test-marker-inject", {
+    "fixture.test.mjs": `
+      import test from 'node:test';
+      test('writes hostile marker lines', () => {
+        process.stdout.write('\\0bun:test:run\\0null\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'x' }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'x', data: null }) + '\\n');
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./fixture.test.mjs', import.meta.url))] });
+      const seen = { passes: [], streamError: null };
+      stream.on('test:pass', function onPass(d) { seen.passes.push(d.name); });
+      stream.on('error', function onError(err) { seen.streamError = String(err); });
+      for await (const _ of stream);
+      console.log(JSON.stringify(seen));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const seen = JSON.parse(stdout.trim() || "{}");
+  expect({ streamError: seen.streamError, passes: seen.passes, exitCode }).toEqual({
+    streamError: null,
+    passes: ["writes hostile marker lines"],
+    exitCode: 0,
+  });
+}, 30_000);
+
 test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned grandchildren", async () => {
   using dir = tempDir("node-test-env-leak", {
     "inner.test.js": `

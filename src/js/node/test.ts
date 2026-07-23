@@ -525,6 +525,9 @@ async function runOneFile(
     } catch {
       continue;
     }
+    // A user test can write the marker itself; skip anything that is not a
+    // shaped event rather than throwing in the parent (errors the run stream).
+    if (event == null || typeof event.data !== "object" || event.data === null) continue;
     // node's parent swallows each child's root plan and emits one run-level
     // plan at the end (runner.js #skipReporting + Test.postRun).
     if (event.type === "test:plan" && event.data?.nesting === 0) continue;

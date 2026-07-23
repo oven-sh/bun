@@ -1519,7 +1519,8 @@ function connectionListenerInternal(server, socket) {
 
   // If the user has added a listener to the server, request, or response,
   // then it's their responsibility. Otherwise, destroy on timeout by default.
-  if (server.timeout && typeof socket.setTimeout === "function") socket.setTimeout(server.timeout);
+  const serverTimeout = server.timeout;
+  if (serverTimeout && typeof socket.setTimeout === "function") socket.setTimeout(serverTimeout);
   socket.on("timeout", socketOnTimeout);
 
   const parser = parsers.alloc();
@@ -1529,8 +1530,9 @@ function connectionListenerInternal(server, socket) {
   socket.parser = parser;
 
   // Propagate headers limit from server instance to parser
-  if (typeof server.maxHeadersCount === "number") {
-    parser.maxHeaderPairs = server.maxHeadersCount << 1;
+  const { maxHeadersCount } = server;
+  if (typeof maxHeadersCount === "number") {
+    parser.maxHeaderPairs = maxHeadersCount << 1;
   }
 
   const state = {
@@ -1580,7 +1582,8 @@ function socketOnDrain(socket, state) {
   // If we previously paused, then start reading again.
   if (socket._paused && !needPause) {
     socket._paused = false;
-    if (socket.parser) socket.parser.resume();
+    const { parser } = socket;
+    if (parser) parser.resume();
     socket.resume();
   }
 
@@ -1624,15 +1627,18 @@ function abortOutgoing(outgoing) {
 function socketOnEnd(server, socket, parser, state) {
   const ret = parser.finish();
 
+  const { outgoing } = state;
+  const outgoingLength = outgoing.length;
+  const message = socket._httpMessage;
   if (ret instanceof Error) {
     // socketOnError has additional logic and will call socket.destroy(err).
     socketOnError.$call(socket, ret);
   } else if (!server.httpAllowHalfOpen) {
     socket.end();
-  } else if (state.outgoing.length) {
-    state.outgoing[state.outgoing.length - 1]._last = true;
-  } else if (socket._httpMessage) {
-    socket._httpMessage._last = true;
+  } else if (outgoingLength) {
+    outgoing[outgoingLength - 1]._last = true;
+  } else if (message) {
+    message._last = true;
   } else {
     socket.end();
   }
@@ -1644,12 +1650,13 @@ function socketOnData(server, socket, parser, state, d) {
 }
 
 function onParserExecuteCommon(server, socket, parser, state, ret, d) {
+  const { incoming } = parser;
   if (ret instanceof Error) {
     prepareError(ret, parser, d);
     socketOnError.$call(socket, ret);
-  } else if (parser.incoming?.upgrade) {
+  } else if (incoming?.upgrade) {
     // Upgrade or CONNECT
-    const req = parser.incoming;
+    const req = incoming;
     const bytesParsed = ret;
 
     if (!d) d = parser.getCurrentBuffer();
@@ -1672,14 +1679,16 @@ function onParserExecuteCommon(server, socket, parser, state, ret, d) {
       // Got upgrade or CONNECT method, but have no handler.
       socket.destroy();
     }
-  } else if (parser.incoming && parser.incoming.method === "PRI") {
+  } else if (incoming && incoming.method === "PRI") {
     // An HTTP/2 connection preface on an HTTP/1 connection.
     socket.destroy();
   }
 
-  if (socket._paused && socket.parser) {
+  // Re-read socket.parser: the upgrade branch freed it (freeParser nulls it).
+  const socketParser = socket.parser;
+  if (socket._paused && socketParser) {
     // onIncoming paused the socket, we should pause the parser as well
-    socket.parser.pause();
+    socketParser.pause();
   }
 }
 
@@ -1820,15 +1829,16 @@ function parserOnIncoming(server, socket, state, req, keepAlive) {
       res.maxRequestsOnConnectionReached = server.maxRequestsPerSocket <= state.requestsCount;
     }
 
+    const { expect } = req.headers;
     if (isRequestsLimitSet && server.maxRequestsPerSocket < state.requestsCount) {
       handled = true;
       server.emit("dropRequest", req, socket);
       res.writeHead(503);
       res.end();
-    } else if (req.headers.expect !== undefined) {
+    } else if (expect !== undefined) {
       handled = true;
 
-      if (continueExpression.test(req.headers.expect)) {
+      if (continueExpression.test(expect)) {
         res._expect_continue = true;
         if (server.listenerCount("checkContinue") > 0) {
           server.emit("checkContinue", req, res);

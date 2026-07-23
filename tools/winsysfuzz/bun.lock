@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "winsysfuzz",
+      "devDependencies": {
+        "@types/node": "22",
+      },
+    },
+  },
+  "packages": {
+    "@types/node": ["@types/node@22.20.1", "https://artifactory.infra.ant.dev:443/artifactory/api/npm/npm-all/@types/node/-/node-22.20.1.tgz", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q=="],
+
+    "undici-types": ["undici-types@6.21.0", "https://artifactory.infra.ant.dev:443/artifactory/api/npm/npm-all/undici-types/-/undici-types-6.21.0.tgz", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
+  }
+}

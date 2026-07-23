@@ -41,6 +41,20 @@ export interface Callable {
 const files = readdirSync(typesDir)
   .filter(f => f.endsWith(".d.ts"))
   .map(f => join(typesDir, f));
+// node: module surfaces from @types/node - where most Windows-specific code
+// (libuv fs, spawn/pipes, net) actually lives. Each named export becomes a
+// callable "<module>.<fn>" the generator reaches via require("<module>").
+const NODE_MODULES = ["fs", "child_process", "net", "dgram", "dns", "zlib", "crypto", "worker_threads", "os", "readline", "tty", "http", "https", "http2", "stream", "path"];
+const nodeTypesDir = join(here, "..", "node_modules", "@types", "node");
+const nodeFiles: string[] = [];
+try {
+  for (const m of NODE_MODULES) {
+    const f = join(nodeTypesDir, `${m.replace("/", "")}.d.ts`);
+    if (readdirSync(nodeTypesDir).includes(`${m.replace("/", "")}.d.ts`)) nodeFiles.push(f);
+  }
+} catch {}
+files.push(...nodeFiles);
+if (nodeFiles.length) console.log(`  including ${nodeFiles.length} node module declaration file(s)`);
 const program = ts.createProgram(files, { noResolve: false, target: ts.ScriptTarget.ESNext, lib: ["lib.esnext.d.ts"] });
 const checker = program.getTypeChecker();
 void checker;
@@ -84,7 +98,35 @@ function recordMembers(container: string, members: ts.NodeArray<ts.TypeElement> 
 }
 
 for (const sf of program.getSourceFiles()) {
-  if (!sf.fileName.replace(/\\/g, "/").includes("packages/bun-types")) continue;
+  const fname = sf.fileName.replace(/\\/g, "/");
+  // node modules: exported functions inside `declare module "fs" { ... }`
+  if (fname.includes("@types/node")) {
+    const visitNode = (node: ts.Node) => {
+      if (ts.isModuleDeclaration(node) && node.body && ts.isModuleBlock(node.body)) {
+        const modName = txt(node.name).replace(/^["']|["']$/g, "").replace(/^node:/, "");
+        if (NODE_MODULES.includes(modName)) {
+          for (const st of node.body.statements) {
+            if (ts.isFunctionDeclaration(st) && st.name && st.body === undefined) {
+              const name = txt(st.name);
+              if (/^_|Promises$/.test(name)) continue;
+              record({
+                path: `${modName.replace("/", "_")}.${name}`,
+                container: `node:${modName}`,
+                name,
+                params: paramsOf(st),
+                returns: st.type ? txt(st.type) : "unknown",
+                isMethod: false,
+              });
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, visitNode);
+    };
+    ts.forEachChild(sf, visitNode);
+    continue;
+  }
+  if (!fname.includes("packages/bun-types")) continue;
   const visit = (node: ts.Node) => {
     // `declare module "bun" { ... }` and `declare namespace Bun { ... }`
     if (ts.isModuleDeclaration(node) && node.body && ts.isModuleBlock(node.body)) {

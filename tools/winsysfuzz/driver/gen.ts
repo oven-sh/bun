@@ -89,7 +89,16 @@ const EXCLUDE_FN =
 // (1) self-alias Bun.write(f,f) CopyFileWindows aliasing; (2) any missing/
 // unopenable source -> on_copy_file ENOENT retry loop. Both reported.
 const KNOWN_BROKEN_FN = /^(write)$/;
-const fnCalls = spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name));
+// node module callables ("node:fs" containers): fs.readFileSync(...),
+// child_process.spawn(...). Names that block the process (readline
+// prompts, tty raw mode) or reach the network are excluded by name.
+const EXCLUDE_NODE_FN = /^(fs\.(watch|watchFile|unwatchFile)|child_process\.(exec|execFile)|.*\.(createInterface|clearScreenDown)|tty\..*|dns\.(lookup|resolve.*|reverse)|net\.(connect|createConnection)|http.*\.(get|request)|worker_threads\..*)$/;
+const nodeFns = spec.callables.filter(c => /^node:/.test(c.container) && !EXCLUDE_NODE_FN.test(c.path));
+const NODE_MODS = [...new Set(nodeFns.map(c => c.container.replace(/^node:/, "")))];
+const fnCalls = [
+  ...spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name)),
+  ...nodeFns,
+];
 const methodsByKind = new Map<string, Callable[]>();
 for (const c of spec.callables) {
   if (!c.isMethod || EXCLUDE_CONTAINER.test(c.container)) continue;
@@ -368,6 +377,7 @@ emit(`const BIG = new Uint8Array(256 * 1024).map((_, i) => i % 251);`);
 emit(`writeFileSync(P("data.txt"), "the quick brown fox jumps over the lazy dog\\n".repeat(20));`);
 emit(`writeFileSync(P("big.bin"), BIG); writeFileSync(P("empty.txt"), ""); writeFileSync(P("uni-ë-🐰.txt"), "unicode name");`);
 emit(`const SPAWN = [process.execPath, "-e", "process.stdin.pipe(process.stdout); setTimeout(()=>{}, 200)"];`);
+for (const m of NODE_MODS) emit(`const ${m} = require("node:${m}");`);
 emit(`let $n = 0; const $i = () => ++$n;`);
 emit(`const $stats = { ok: 0, threw: 0, kinds: new Set(), calls: 0 };`);
 emit(`const $poolMap = new Map();`);

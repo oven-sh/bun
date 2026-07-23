@@ -336,6 +336,28 @@ async function worker(w: number) {
         } catch {}
         continue;
       }
+      // Solo re-check of the ACTUAL program: a heavy program (workers,
+      // servers) can starve under N-way engine load where the trivial
+      // control does not. Hold the verify lock so siblings pause, then
+      // require the program to hang again on the quiet box.
+      verifying++;
+      try {
+        const soloDir = join(dir, "solo");
+        mkdirSync(soloDir, { recursive: true });
+        const soloProg = join(soloDir, "program.js");
+        await Bun.write(soloProg, await Bun.file(program).text());
+        const solo = await runProgram(soloProg, soloDir);
+        if (!solo.timedOut) {
+          console.log(`   [seed ${seed}] program completes solo (${(solo.ms / 1000).toFixed(1)}s) - load-induced timeout, discarded`);
+          verifying--;
+          try {
+            rmSync(dir, { recursive: true, force: true });
+          } catch {}
+          continue;
+        }
+      } finally {
+        verifying--;
+      }
     }
     console.log(`!! [seed ${seed}] ${j.kind} ${verified ? "VERIFIED" : "unverified"}: ${j.detail.slice(0, 90)}`);
     if (!verified) {

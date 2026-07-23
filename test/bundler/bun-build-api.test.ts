@@ -100,9 +100,7 @@ describe("Bun.build", () => {
         define: { X: value },
       });
       const messages = result.logs.map(l => l.message).join("\n");
-      expect(messages).toContain(
-        `define value "${value}" must be a valid JSON literal or identifier`,
-      );
+      expect(messages).toContain(`define value "${value}" must be a valid JSON literal or identifier`);
       expect(result.success).toBe(false);
     });
 
@@ -131,14 +129,8 @@ describe("Bun.build", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
-      expect(stderr).toContain(
-        'define value "60 * 60 * 1000" must be a valid JSON literal or identifier',
-      );
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('define value "60 * 60 * 1000" must be a valid JSON literal or identifier');
       expect(stdout).not.toContain("console.log(60,");
       expect(exitCode).not.toBe(0);
     });

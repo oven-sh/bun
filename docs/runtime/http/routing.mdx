@@ -218,14 +218,13 @@ To send part of a file, use the [`slice(start, end)`](https://developer.mozilla.
 ```ts
 Bun.serve({
   fetch(req) {
-    // parse `Range` (this example handles "start-end" and open-ended "start-", not suffix "-N" ranges)
+    // parse `Range` header
     const [start = 0, end = Infinity] = req.headers
       .get("Range") // "bytes=0-100"
       .split("=") // ["bytes", "0-100"]
       .at(-1) // "0-100"
       .split("-") // ["0", "100"]
-      // an open-ended range like "bytes=100-" has an empty end; keep it as Infinity
-      .map((value, index) => (index === 1 && value === "" ? Infinity : Number(value))); // [0, 100]
+      .map(Number); // [0, 100]
 
     // return a slice of the file.
     // `Range` is end-inclusive, but `slice`'s end is exclusive, so add 1.

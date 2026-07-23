@@ -457,10 +457,14 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
 /// dist-tags; `1.x`, `1.2.3-beta`, `1 || 2` pass.
 pub(crate) fn is_semver_range_like(dep: &[u8]) -> bool {
     debug_assert!(dep.first().is_some_and(u8::is_ascii_digit));
-    // node-semver (loose) drops invalid arms of a `||` union, so `2x || 1` is
-    // still a range. `|` is also forbidden in npm dist-tag names, so any spec
+    // node-semver (loose) drops invalid comparators from both `||` unions and
+    // whitespace-separated sets, so `2x || 1` and `2x 1` are ranges. `|` and
+    // whitespace are also forbidden in npm dist-tag names, so any spec
     // containing one is range syntax regardless of the first component.
-    if strings::index_of_char(dep, b'|').is_some() {
+    if dep
+        .iter()
+        .any(|&b| matches!(b, b'|' | b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C))
+    {
         return true;
     }
     let mut i = 0;
@@ -486,9 +490,8 @@ pub(crate) fn is_semver_range_like(dep: &[u8]) -> bool {
         match dep[i] {
             b'.' if part < 3 => i += 1,
             // node-semver (loose) accepts `+build` metadata after any
-            // component, an immediate prerelease after patch (`1.2.3rc1`),
-            // and any `\s` between comparators.
-            b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | b'+' => return true,
+            // component and an immediate prerelease after patch (`1.2.3rc1`).
+            b'+' => return true,
             _ => return part >= 3,
         }
     }

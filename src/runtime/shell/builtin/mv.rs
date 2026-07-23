@@ -211,9 +211,12 @@ impl Mv {
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let (sources_start, target_idx) = {
+                let (sources_start, target_idx, no_overwrite) = {
                     let me = Self::state_mut(interp, cmd);
-                    (me.args.sources_start, me.args.target_idx)
+                    // `-i` has no prompt in Bun Shell; a non-tty/EOF answer is
+                    // "no", so it behaves as `-n` here.
+                    let no_overwrite = me.opts.no_overwrite || me.opts.interactive_mode;
+                    (me.args.sources_start, me.args.target_idx, no_overwrite)
                 };
                 let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
@@ -232,6 +235,7 @@ impl Mv {
                         target: ZBox::from_bytes(target),
                         target_fd: maybe_fd,
                         cwd,
+                        no_overwrite,
                         error_signal: None,
                         err: None,
                         task: ShellTask::new(evtloop),
@@ -435,6 +439,8 @@ pub struct ShellMvBatchedTask {
     pub target: ZBox,
     pub target_fd: Option<bun_sys::Fd>,
     pub cwd: bun_sys::Fd,
+    /// `-n`/`-i`: skip (exit 0) when the destination already exists.
+    pub no_overwrite: bool,
     /// Back-reference into `MvState::Executing::error_signal`. The owning
     /// `MvState` outlives every batched task (tasks are joined / counted in
     /// `batched_move_task_done` before the state transitions), so the
@@ -461,6 +467,7 @@ impl ShellMvBatchedTask {
                 dir,
                 this.target.as_bytes(),
                 &this.sources[0],
+                this.no_overwrite,
                 &mut buf,
             ) {
                 this.err = Some(e);
@@ -468,6 +475,13 @@ impl ShellMvBatchedTask {
             return;
         }
         // Rename single entry to a new path (target was not a directory).
+        if this.no_overwrite && bun_sys::lstatat(this.cwd, &this.target).is_ok() {
+            // Still surface a missing source; `-n` only suppresses overwrite.
+            this.err = bun_sys::lstatat(this.cwd, &this.sources[0])
+                .err()
+                .map(|e| e.with_path(this.sources[0].as_bytes()));
+            return;
+        }
         if let Err(e) = bun_sys::renameat(this.cwd, &this.sources[0], this.cwd, &this.target) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
@@ -486,6 +500,7 @@ impl ShellMvBatchedTask {
         target_fd: bun_sys::Fd,
         target: &[u8],
         src: &ZStr,
+        no_overwrite: bool,
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
@@ -499,6 +514,12 @@ impl ShellMvBatchedTask {
         }
         buf[len] = 0;
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
+        if no_overwrite && bun_sys::lstatat(target_fd, path_in_dir).is_ok() {
+            // Still surface a missing source; `-n` only suppresses overwrite.
+            return bun_sys::lstatat(cwd, src)
+                .map(drop)
+                .map_err(|e| e.with_path(src.as_bytes()));
+        }
         bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
             let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
@@ -526,6 +547,7 @@ impl ShellMvBatchedTask {
                 dir,
                 self.target.as_bytes(),
                 &self.sources[i],
+                self.no_overwrite,
                 &mut buf,
             ) {
                 self.err = Some(e);

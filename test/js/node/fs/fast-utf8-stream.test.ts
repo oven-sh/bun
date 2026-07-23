@@ -47,10 +47,20 @@ describe("fs.Utf8Stream contentMode: buffer", () => {
 });
 
 describe("fs.Utf8Stream periodicFlush", () => {
+  // Utf8Stream's periodicFlush interval is unref()'d. On Windows, bun:test's
+  // event loop doesn't drive unref'd timers while a test awaits a promise
+  // with no ref'd handles outstanding; keep one ref'd interval alive so the
+  // periodic tick actually fires.
+  function keepAlive() {
+    const t = setInterval(() => {}, 50);
+    return { [Symbol.dispose]: () => clearInterval(t) };
+  }
+
   // The periodicFlush timer used to call this.flush(null), which bypasses the
   // default cb argument and then fails validateFunction(cb). Every timer tick
   // would throw an uncaught ERR_INVALID_ARG_TYPE instead of flushing.
   test.each([true, false])("timer tick flushes buffered data (sync=%p)", async sync => {
+    using _ = keepAlive();
     using dir = tempDir("utf8stream-periodic", {});
     const dest = join(String(dir), "out.log");
     const fd = openSync(dest, "w");
@@ -72,6 +82,7 @@ describe("fs.Utf8Stream periodicFlush", () => {
   });
 
   test("timer tick flushes buffered data (contentMode: buffer)", async () => {
+    using _ = keepAlive();
     using dir = tempDir("utf8stream-periodic-buffer", {});
     const dest = join(String(dir), "out.log");
     const fd = openSync(dest, "w");
@@ -94,6 +105,7 @@ describe("fs.Utf8Stream periodicFlush", () => {
   // fix that routed the timer through flush()'s default no-op cb would call
   // fs.fsync on every tick and accumulate listeners under sustained writes.
   test("timer tick does not fsync or accumulate drain listeners", async () => {
+    using _ = keepAlive();
     using dir = tempDir("utf8stream-periodic-nolisten", {});
     const dest = join(String(dir), "out.log");
     const fd = openSync(dest, "w");

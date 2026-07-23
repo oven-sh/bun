@@ -1886,8 +1886,10 @@ it("tls.createServer keeps enforcing its rejectUnauthorized default under NODE_T
     // The server trusts no CA, so the client's certificate is unverifiable
     // and must be rejected before 'secureConnection'.
     let sawSecureConnection = false;
+    let tlsClientError = null;
     const server = tls.createServer({ key, cert: certChain, requestCert: true }, s => s.end());
     server.on("secureConnection", () => { sawSecureConnection = true; });
+    server.on("tlsClientError", err => { tlsClientError = err.code; });
     server.listen(0, "127.0.0.1", () => {
       const client = tls.connect({
         port: server.address().port,
@@ -1898,7 +1900,7 @@ it("tls.createServer keeps enforcing its rejectUnauthorized default under NODE_T
       });
       client.on("error", () => {}); // the server resets the connection
       client.on("close", () => {
-        console.log(JSON.stringify({ sawSecureConnection }));
+        console.log(JSON.stringify({ sawSecureConnection, tlsClientError }));
         server.close();
       });
     });
@@ -1911,6 +1913,11 @@ it("tls.createServer keeps enforcing its rejectUnauthorized default under NODE_T
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // stderr carries Node's one-time NODE_TLS_REJECT_UNAUTHORIZED warning.
   expect(stderr).toContain("NODE_TLS_REJECT_UNAUTHORIZED");
-  expect(JSON.parse(stdout)).toEqual({ sawSecureConnection: false });
+  // The teardown must be the certificate-verification rejection, not some
+  // unrelated handshake failure.
+  expect(JSON.parse(stdout)).toEqual({
+    sawSecureConnection: false,
+    tlsClientError: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  });
   expect(exitCode).toBe(0);
 });

@@ -258,47 +258,6 @@ for (const f of ["triaged.jsonl", "queue.jsonl"]) {
   }
 }
 
-// Leak judgment needs a baseline of STANDING handles: every bun test process
-// holds the crypto devices (KsecDD/CNG), COM/OLE and winsock-catalog
-// registry keys and the test-tree directory handles at exit by design - an
-// absolute count fires on all of them. One unfaulted probe run supplies the
-// standing set for the whole wide pass; only surpluses over it can leak.
-const harnessPath = /\\runs\\|\\cwd\b|\\wsf-\d+\.log|\\(stdout|stderr)\.txt|\bwsfwide\b/i;
-const notWorkloadIo = /(Local\\|Global\\|BaseNamedObjects|WilError|\\SM0:|\.mui\b|\.dll\b|\.nls\b|\.(ts|tsx|js|mjs|cjs|mts|cts|jsx)$)/i;
-const normLeak = (l: string) =>
-  l
-    .trim()
-    .replace(/(\\pipe\\uv\\\d+)-\d+/i, "$1-<pid>")
-    .replace(/^([fpks]) .*\\(test|node_modules)\\.*$/i, "$1 <tree-dir>"); // any dir under the test tree
-const workloadLeaks = (leaks: string[]) =>
-  leaks.map(normLeak).filter(l => !harnessPath.test(l) && !notWorkloadIo.test(l));
-const countKinds = (leaks: string[]) => {
-  const m = new Map<string, number>();
-  for (const l of workloadLeaks(leaks)) m.set(l, (m.get(l) ?? 0) + 1);
-  return m;
-};
-// The standing set: one clean run of the first file, no schedule.
-const probeDir = join(workRoot, "runs", "standing-probe");
-await replayCoordinate({ bun, args: ["test", files[0]], schedule: "", dir: probeDir, timeoutMs, capture: false }).catch(
-  () => null,
-);
-const standingTrace = await readTraceDir(probeDir, { faultsOnly: true }).catch(() => null);
-// Standing set = max per-process counts across the probe's processes.
-const standing = new Map<string, number>();
-for (const proc of standingTrace?.leaksByProc ?? [standingTrace?.leaks ?? []])
-  for (const [k, n] of countKinds(proc)) standing.set(k, Math.max(standing.get(k) ?? 0, n));
-console.log(`  standing handle kinds at exit (from probe): ${standing.size}`);
-// Per-PROCESS judgment: a test spawning N children has N standing sets;
-// only a process whose OWN handles exceed the standing counts leaks.
-const leakSurplus = (leaksByProc: string[][]): string[] => {
-  const worst = new Map<string, number>();
-  for (const proc of leaksByProc)
-    for (const [k, n] of countKinds(proc)) {
-      const over = n - (standing.get(k) ?? 0);
-      if (over > 0) worst.set(k, Math.max(worst.get(k) ?? 0, over));
-    }
-  return [...worst].map(([k, over]) => (over > 1 ? `${k} x${over}` : k));
-};
 
 // --- one file, one schedule -------------------------------------------------
 type Hit = { file: string; schedule: string[]; outcome: string; key: string; detail: string; stacks: string[] };

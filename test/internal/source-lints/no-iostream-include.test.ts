@@ -28,9 +28,9 @@ test("C++ sources compiled into Bun do not include <iostream>", async () => {
 
   const iostreamInclude = /^\s*#\s*include\s*<iostream>/m;
   const violations: string[] = [];
-  let scanned = 0;
 
   for (const root of roots) {
+    let scanned = 0;
     const glob = new Glob("**/*.{h,hpp,hxx,cpp,cc,cxx}");
     for await (const rel of glob.scan({ cwd: path.join(repoRoot, root) })) {
       scanned++;
@@ -41,11 +41,11 @@ test("C++ sources compiled into Bun do not include <iostream>", async () => {
         violations.push(relFromRepo);
       }
     }
+    // Guard against repoRoot resolving wrong (test file moved) or a scanned
+    // root going away, which would make the ban below pass vacuously.
+    expect(scanned).toBeGreaterThan(0);
   }
 
-  // Guard against repoRoot resolving wrong (test file moved) or a scanned root
-  // going away, which would make the ban below pass vacuously.
-  expect(scanned).toBeGreaterThan(0);
   violations.sort();
   expect(violations).toEqual([]);
 });

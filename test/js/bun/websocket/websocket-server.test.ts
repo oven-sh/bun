@@ -1528,6 +1528,114 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
       });
     });
   });
+
+  // publish() returns the WORST subscriber status: one stalled subscriber makes
+  // the call return 0 while every healthy subscriber still receives the
+  // message. Retrying on 0 would re-deliver to healthy subscribers.
+  it("healthy subscribers still receive messages when publish() returns 0", async () => {
+    const opened = { slow: Promise.withResolvers<void>(), healthy: Promise.withResolvers<void>() };
+    await using server = serve<string, {}>({
+      port: 0,
+      websocket: {
+        backpressureLimit: 64 * 1024,
+        idleTimeout: 0,
+        open(ws) {
+          ws.subscribe("t");
+          opened[ws.data]?.resolve();
+        },
+        message() {},
+      },
+      fetch(req, server) {
+        if (server.upgrade(req, { data: new URL(req.url).pathname.slice(1) })) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+    });
+
+    // Healthy subscriber: a real WebSocket client that reads everything.
+    let received = 0;
+    const allReceived = Promise.withResolvers<void>();
+    let expectedTotal = Infinity;
+    const healthy = new WebSocket(`ws://127.0.0.1:${server.port}/healthy`);
+    healthy.binaryType = "arraybuffer";
+    healthy.onmessage = () => {
+      received++;
+      if (received >= expectedTotal) allReceived.resolve();
+    };
+    {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      healthy.onopen = () => resolve();
+      healthy.onerror = e => reject(e);
+      healthy.onclose = () => reject(new Error("healthy closed before open"));
+      await promise;
+    }
+
+    // Stalled subscriber: raw RFC6455 client that handshakes then pauses its
+    // read side so the server accumulates backpressure for it and it alone.
+    const handshake = Promise.withResolvers<void>();
+    const slow = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
+      slow.write(
+        "GET /slow HTTP/1.1\r\n" +
+          "Host: x\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Version: 13\r\n\r\n",
+      );
+    });
+    let response = "";
+    slow.on("data", (d: Buffer) => {
+      response += d.toString("latin1");
+      if (!response.includes("\r\n\r\n")) return;
+      if (response.includes(" 101 ")) {
+        slow.pause();
+        handshake.resolve();
+      } else {
+        handshake.reject(new Error("upgrade failed: " + response));
+      }
+    });
+    slow.on("error", handshake.reject);
+    slow.on("close", () => handshake.reject(new Error("slow socket closed before upgrade")));
+
+    try {
+      await handshake.promise;
+      await opened.slow.promise;
+      await opened.healthy.promise;
+
+      // 20KB takes the direct (>=16KB) path; yielding to the event loop
+      // between publishes lets the in-process healthy client read so only the
+      // stalled subscriber is ever over the limit.
+      const tick = () => new Promise<void>(r => setImmediate(r));
+      const payload = new Uint8Array(20000);
+      const results: number[] = [];
+      let zeros = 0;
+      for (let i = 0; i < 400 && zeros < 20; i++) {
+        const rc = server.publish("t", payload);
+        results.push(rc);
+        if (rc === 0) zeros++;
+        await tick();
+      }
+      expectedTotal = results.length;
+      if (received >= expectedTotal) allReceived.resolve();
+      await allReceived.promise;
+
+      const h = histogram(results);
+      expect({
+        histogram: h,
+        healthyReceived: received,
+        // Every publish() landed on the healthy subscriber, including the ones
+        // that returned 0 because the stalled subscriber was over its limit.
+        healthyMissedAnyDropped: received < results.length,
+      }).toEqual({
+        histogram: { ...h, other: 0 },
+        healthyReceived: results.length,
+        healthyMissedAnyDropped: false,
+      });
+      expect(h.dropped).toBeGreaterThan(0);
+    } finally {
+      healthy.close();
+      slow.destroy();
+    }
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/34158

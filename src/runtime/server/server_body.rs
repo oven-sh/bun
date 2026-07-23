@@ -1987,10 +1987,12 @@ where
         }
 
         // RFC 6455 §4.2.1: validate the client's opening handshake.
-        // A request whose |Upgrade| token is not "websocket", or whose
-        // |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a WebSocket
-        // handshake; fall through so the caller's fetch() can respond.
-        if !strings::eql_case_insensitive_ascii(upgrade_header.slice(), b"websocket", true) {
+        // A request that does not name "websocket" in its |Upgrade| token list,
+        // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
+        // WebSocket handshake; fall through so the caller's fetch() can respond.
+        if !upgrade_header.slice().split(|&c| c == b',').any(|t| {
+            strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true)
+        }) {
             return Ok(JSValue::FALSE);
         }
         if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {

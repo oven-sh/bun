@@ -1619,7 +1619,9 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
     // Upgrade token is case-insensitive.
     expect((await rawHandshake(["Upgrade: WebSocket", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
-    expect(opened).toBe(2);
+    // Upgrade is an RFC 7230 token list; any "websocket" token suffices.
+    expect((await rawHandshake(["Upgrade: keep-alive, websocket", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
+    expect(opened).toBe(3);
 
     // Upgrade token other than "websocket": not a WebSocket handshake.
     expect((await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
@@ -1627,8 +1629,8 @@ describe("server.upgrade() validates the opening handshake", () => {
     // Sec-WebSocket-Key is not valid base64 of 16 bytes.
     for (const key of [
       "!!!!!!!!!!!!!!!!!!!!!!==", // non-alphabet bytes
-      "dGhlIHNhbXBsZSBub25jZQ=A", // wrong padding
-      "dGhlIHNhbXBsZSBub25j", // too short
+      "dGhlIHNhbXBsZSBub25jZQ=A", // byte 23 != '='
+      "dGhlIHNhbXBsZSBub25jZQA=", // byte 22 != '='
     ]) {
       expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${key}`, V])).status).toBe(400);
     }
@@ -1645,7 +1647,7 @@ describe("server.upgrade() validates the opening handshake", () => {
     }
 
     // None of the rejected handshakes reached open().
-    expect(opened).toBe(2);
+    expect(opened).toBe(3);
   });
 
   it("returns false for an invalid handshake even when fetch() is async", async () => {
@@ -1664,8 +1666,15 @@ describe("server.upgrade() validates the opening handshake", () => {
       websocket: { message() {} },
     });
 
-    const { status } = await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V]);
-    expect(status).toBe(400);
+    const h2c = await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V]);
+    expect(h2c.status).toBe(400);
+    expect(upgradeResult).toBe(false);
+
+    // The 426 path writes the response itself and detaches it; the Response
+    // returned from fetch() after the await must not be written a second time.
+    const v8 = await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, "Sec-WebSocket-Version: 8"]);
+    expect(v8.status).toBe(426);
+    expect(v8.headers.toLowerCase()).toContain("sec-websocket-version: 13");
     expect(upgradeResult).toBe(false);
   });
 });

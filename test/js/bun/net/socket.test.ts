@@ -3243,12 +3243,11 @@ describe("TLS handshake callback throw", () => {
   // gets its uncaughtException semantics in net.ts, not in the shared native
   // dispatch.
   it("is delivered to the socket's own error handler", async () => {
-    const { tls: certs } = require("harness");
     const { promise, resolve, reject } = Promise.withResolvers<Error>();
     const server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
-      tls: certs,
+      tls,
       socket: {
         data() {},
         error() {},

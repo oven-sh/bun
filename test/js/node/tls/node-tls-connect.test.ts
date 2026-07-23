@@ -1158,7 +1158,6 @@ describe("throwing 'secureConnect' listener", () => {
   // against node v26.3.0.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   it("becomes uncaughtException, not a socket 'error'", async () => {
-    const { bunEnv, bunExe, tls: certs } = require("harness");
     const script = `
       const tlsMod = require("node:tls");
       const state = { uncaught: null, socketError: null };
@@ -1170,7 +1169,7 @@ describe("throwing 'secureConnect' listener", () => {
         state.uncaught = err.message;
         setImmediate(finish);
       });
-      const server = tlsMod.createServer(${JSON.stringify(certs)}, function onConn() {});
+      const server = tlsMod.createServer(${JSON.stringify(COMMON_CERT_)}, function onConn() {});
       server.listen(0, "127.0.0.1", function onListen() {
         const client = tlsMod.connect({
           port: server.address().port,

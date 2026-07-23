@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -2132,7 +2132,6 @@ describe("throwing 'secureConnection' listener", () => {
   // 'error'. Verified against node v26.3.0.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   it("becomes uncaughtException, not tlsClientError or a socket 'error'", async () => {
-    const { bunEnv, bunExe, tls: certs } = require("harness");
     const script = `
       const tlsMod = require("node:tls");
       const state = { uncaught: null, tlsClientError: null, socketError: null };
@@ -2144,7 +2143,7 @@ describe("throwing 'secureConnection' listener", () => {
         state.uncaught = err.message;
         setImmediate(finish);
       });
-      const server = tlsMod.createServer(${JSON.stringify(certs)}, function onConn(sock) {
+      const server = tlsMod.createServer(${JSON.stringify(cert1)}, function onConn(sock) {
         sock.on("error", function onSockErr(err) {
           state.socketError = err.message;
           setImmediate(finish);

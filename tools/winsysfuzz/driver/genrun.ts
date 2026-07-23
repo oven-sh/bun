@@ -109,10 +109,20 @@ async function crashesText(text: string, dir: string): Promise<boolean> {
   await Bun.write(f, text);
   for (let k = 0; k < 2; k++) {
     const r = await runProgram(f, dir);
-    if (judge(r).kind === "crash") return true;
+    const jk = judge(r);
+    console.log(`     cand: ${text.split("\n").length}L exit=${r.exit} to=${r.timedOut} kind=${jk.kind ?? "none"} ${r.ms}ms`);
+    if (jk.kind === "crash") return true;
   }
   return false;
 }
+// One minimization at a time across ALL workers (a reduction runs the
+// target hundreds of times; concurrent reductions and 24 sibling workers
+// would fight it). Independent of the verify lock so verify remains cheap.
+let minimizeBusy = false;
+const acquireMinimize = async () => {
+  while (minimizeBusy) await Bun.sleep(500);
+  minimizeBusy = true;
+};
 async function minimizeProgram(text: string, dir: string): Promise<string> {
   let cur = text.split("\n");
   let n = 2;
@@ -257,12 +267,14 @@ async function worker(w: number) {
       // Minimize SOLO (hold the verify lock: siblings pause) - a reduction
       // runs the target hundreds of times and must not compete with 24
       // workers, nor should crashes race under it.
+      await acquireMinimize();
       verifying++;
       try {
         console.log(`   minimizing seed ${seed}...`);
         minimalText = await minimizeProgram(await Bun.file(program).text(), dir);
       } finally {
         verifying--;
+        minimizeBusy = false;
       }
       const cs = callSetOf(minimalText);
       j.sig = `gencrash{${cs || j.sig}}`;

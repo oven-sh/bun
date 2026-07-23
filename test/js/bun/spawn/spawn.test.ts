@@ -85,6 +85,60 @@ for (let [gcTick, label] of [
           });
         }).toThrow("no such file or directory");
       });
+
+      // https://github.com/oven-sh/bun/issues/8024
+      it("error path is the cwd when cwd does not exist", () => {
+        let err: any;
+        try {
+          spawnSync({
+            cmd: [bunExe(), "-e", "1"],
+            env: bunEnv,
+            cwd: "/something/that/doesnt/exist",
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeDefined();
+        expect({ code: err.code, path: err.path }).toEqual({
+          code: "ENOENT",
+          path: "/something/that/doesnt/exist",
+        });
+        expect(err.message).toContain("/something/that/doesnt/exist");
+      });
+
+      it("error path is argv[0] when binary does not exist but cwd does", () => {
+        let err: any;
+        try {
+          spawnSync({
+            cmd: ["./definitely-not-a-real-binary-xyz"],
+            env: bunEnv,
+            cwd: tmp,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeDefined();
+        expect(err.code).toBe("ENOENT");
+        expect(err.path).not.toBe(tmp);
+        expect(err.path).toContain("definitely-not-a-real-binary-xyz");
+      });
+
+      it("error path is the cwd when cwd is a file", () => {
+        const file = path.join(tmp, "i-am-a-file.txt");
+        writeFileSync(file, "hello");
+        let err: any;
+        try {
+          spawnSync({
+            cmd: [bunExe(), "-e", "1"],
+            env: bunEnv,
+            cwd: file,
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeDefined();
+        expect(err.path).toBe(file);
+      });
     });
 
     describe("spawn", () => {
@@ -576,6 +630,26 @@ for (let [gcTick, label] of [
             cwd: "./this-should-not-exist",
           });
         }).toThrow("no such file or directory");
+      });
+
+      // https://github.com/oven-sh/bun/issues/8024
+      it("error path is the cwd when cwd does not exist", () => {
+        let err: any;
+        try {
+          spawn({
+            cmd: [bunExe(), "-e", "1"],
+            env: bunEnv,
+            cwd: "/something/that/doesnt/exist",
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeDefined();
+        expect({ code: err.code, path: err.path }).toEqual({
+          code: "ENOENT",
+          path: "/something/that/doesnt/exist",
+        });
+        expect(err.message).toContain("/something/that/doesnt/exist");
       });
     });
   });

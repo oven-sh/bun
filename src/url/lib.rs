@@ -22,13 +22,13 @@ use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
-    // name/value borrow from the route template + the live request
-    // path; lifetime-generic so `bun_router` (the only producer) can fill them
-    // from non-'static buffers. Downstream that only stores literals can use
-    // `Param<'static>`.
+    /// A matched dynamic-route parameter.
+    ///
+    /// `name` slices the route template (resolver-interned, process lifetime);
+    /// `value` slices the live request path.
     #[derive(Clone, Copy)]
     pub struct Param<'a> {
-        pub name: &'a [u8],
+        pub name: &'static [u8],
         pub value: &'a [u8],
     }
     // SoA (`MultiArrayList`) layout would be a perf optimization only; a plain

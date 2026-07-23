@@ -20,7 +20,7 @@ pub mod kind_enum {
 }
 
 use bun_paths::strings;
-use core::cell::UnsafeCell;
+use core::ops::Range;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
@@ -603,16 +603,10 @@ impl FileSystemRouter {
             return Ok(JSValue::NULL);
         }
 
-        // SAFETY: self-ref construction prelude — `route` below borrows these bytes via
-        // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` Box that stores
-        // `route`. Borrowck can't see that the allocation travels with the borrow, so we
-        // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
-        // never dropped on any path between here and `MatchedRoute::init` taking ownership
-        // (early returns above this point already dropped/replaced `path`), except when
-        // `URLPath::parse` percent-decoded — in that case nothing borrows `path_bytes`
-        // anymore and `path` is swapped for the decode buffer below.
-        let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
-        let mut url_path = match URLPath::parse(path_bytes) {
+        // `path` is already an owned allocation; if `parse()` has to percent-decode, it
+        // allocates a second buffer and `URLPath` owns that instead — recovered below via
+        // `into_owned_buffer`.
+        let url_path = match URLPath::parse(path.slice()) {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this.throw(format_args!(
@@ -626,7 +620,7 @@ impl FileSystemRouter {
         // `defer params.deinit(allocator)` → Drop
         // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
-        // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
+        // `Match<'p>` borrows `params`/`url_path`, not `*router`, so the
         // exclusive borrow ends at the `;`.
         let Some(route) = unsafe { this.router.get_mut() }
             .routes
@@ -635,34 +629,18 @@ impl FileSystemRouter {
             return Ok(JSValue::NULL);
         };
 
-        // If `URLPath::parse` had to percent-decode, `route.pathname`/`query_string` and
-        // the param values borrow the decode buffer — not `path` — and that buffer would
-        // be freed when `url_path` drops at the end of this call. Take ownership of it and
-        // make it the backing allocation instead. (`Box<[u8]>` -> `Vec<u8>` ->
-        // `ZigStringSlice::Owned` reuses the same heap allocation, so the borrowed slices
-        // stay valid; nothing in `route` points into the original encoded `path` once a
-        // decode happened.)
-        if let Some(decoded) = url_path.take_decoded_storage() {
-            path = ZigStringSlice::init_owned(decoded.into_vec());
-        }
+        // `MatchedRoute::init` records `route`'s request-path slices as offset ranges, so
+        // after it returns nothing borrows `url_path`/`params` and the backing buffer can
+        // be moved into the result.
+        let pathname_len = route.pathname.len();
+        let mut result =
+            MatchedRoute::init(&route, this.origin, this.asset_prefix, this.base_dir.unwrap());
+        result.pathname = match url_path.into_owned_buffer() {
+            Some(decoded) => decoded.into_boxed_slice(),
+            None => path.into_vec().into_boxed_slice(),
+        };
+        debug_assert_eq!(result.pathname.len(), pathname_len);
 
-        // MOVE `path`
-        // into `MatchedRoute` so the bytes that `route.pathname`/`query_string`/param
-        // values borrow are owned by the same heap-stable Box and freed on finalize.
-        let result = MatchedRoute::init(
-            route,
-            path,
-            this.origin,
-            this.asset_prefix,
-            this.base_dir.unwrap(),
-        )
-        .expect("unreachable");
-
-        // Note: `result` is a self-referential `Box<MatchedRoute>` (`route` points
-        // at `route_holder` inside this very allocation). The trait `JsClass::to_js(self)`
-        // would deref-move the value OUT of the Box and re-box it at a new address,
-        // leaving the self-ref pointers dangling (ASAN use-after-poison). Hand the
-        // existing allocation straight to the C++ wrapper instead.
         // Ownership transfers to the GC wrapper (freed via
         // `MatchedRouteClass__finalize`); the leak lives once in `to_js_boxed`.
         Ok(MatchedRoute::to_js_boxed(result, global_this))
@@ -721,32 +699,35 @@ impl FileSystemRouter {
     }
 }
 
+/// Dynamic-route parameter stored as an offset range into
+/// [`MatchedRoute::pathname`], so `MatchedRoute` owns its request bytes outright
+/// rather than borrowing them.
+struct MatchedParam {
+    /// Slices the route template (resolver-interned, process lifetime).
+    name: &'static [u8],
+    /// Range into `MatchedRoute::pathname`.
+    value: Range<u32>,
+}
+
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct MatchedRoute {
-    /// Self-referential: always points at `self.route_holder`. See `init`.
-    // Note: `Match<'a>` borrows (a) the resolver's process-lifetime DirnameStore for
-    // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
-    // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
-    // the stored `'static` is the standard self-referential erasure — see `init`.
-    pub route: *const RouterMatch<'static>,
-    // Note: `route_holder`/`params_list_holder` are wrapped in `UnsafeCell` because
-    // `route` (above) and `route_holder.params` hold raw self-referential pointers into
-    // them. Without `UnsafeCell`, taking `&mut MatchedRoute` (as `get_params`/`get_query`
-    // do) would assert unique access to these fields under Stacked Borrows and invalidate
-    // the stored pointers — UB on next deref.
-    pub route_holder: UnsafeCell<RouterMatch<'static>>,
+    /// Owns the full request pathname (possibly percent-decoded). `query_string`
+    /// and each `params[_].value` are offset ranges into this buffer.
+    pathname: Box<[u8]>,
+    query_string: Range<u32>,
+    /// Route name, like `"posts/[id]"` — resolver-interned, process lifetime.
+    name: &'static [u8],
+    /// Absolute filesystem path — resolver-interned, process lifetime.
+    file_path: &'static [u8],
+    params: Vec<MatchedParam>,
+
     // R-2: lazily populated by `get_query`/`get_params` (now `&self`).
     pub query_string_map: JsCell<Option<QueryStringMap>>,
     pub param_map: JsCell<Option<QueryStringMap>>,
-    pub params_list_holder: UnsafeCell<route_param::List<'static>>,
-    /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
-    /// `params_list_holder` borrow. Freed by Drop on finalize.
-    pub pathname_backing: ZigStringSlice,
     // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
-    // `deinit`). The interned allocation outlives every `MatchedRoute`.
+    // `finalize`). The interned allocation outlives every `MatchedRoute`.
     pub origin: Option<BackRef<RefString>>,
     pub asset_prefix: Option<BackRef<RefString>>,
-    pub needs_deinit: bool,
     pub base_dir: Option<BackRef<RefString>>,
 }
 
@@ -755,72 +736,63 @@ impl MatchedRoute {
     // wired by `#[bun_jsc::JsClass]` — deleted.
 
     #[inline]
-    fn route(&self) -> &RouterMatch<'static> {
-        // SAFETY: `self.route` always points at `self.route_holder` (UnsafeCell, set in
-        // `init`); the Box is never moved after construction (heap-stable), and no `&mut`
-        // to `route_holder`'s contents is live concurrently with this read.
-        unsafe { &*self.route }
+    fn query_string(&self) -> &[u8] {
+        &self.pathname[self.query_string.start as usize..self.query_string.end as usize]
     }
 
     #[inline]
-    fn params(&self) -> &route_param::List<'static> {
-        // SAFETY: `route().params` always points at `self.params_list_holder` (UnsafeCell,
-        // set in `init`); heap-stable Box, no concurrent `&mut` to its contents.
-        unsafe { &*self.route().params }
+    fn pathname_without_leading_slash(&self) -> &[u8] {
+        strings::trim_left(&self.pathname, b"/")
+    }
+
+    /// Materialize `params` as slices borrowing `self.pathname` for the
+    /// `CombinedScanner` API.
+    fn params_list(&self) -> route_param::List<'_> {
+        self.params
+            .iter()
+            .map(|p| route_param::Param {
+                name: p.name,
+                value: &self.pathname[p.value.start as usize..p.value.end as usize],
+            })
+            .collect()
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_name(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().name, global_this))
+        Ok(zs_to_js(this.name, global_this))
     }
 
+    /// Build a `MatchedRoute` from a router `Match`. `match_.query_string` and every
+    /// `match_.params[_].value` are sub-slices of `match_.pathname`; they are recorded
+    /// here as offset ranges so this struct can own the pathname buffer outright. The
+    /// caller moves that buffer in as `pathname` once `match_`'s borrow of it has been
+    /// released (see the call site).
     pub fn init(
-        match_: RouterMatch<'_>,
-        pathname_backing: ZigStringSlice,
+        match_: &RouterMatch<'_>,
         origin: Option<BackRef<RefString>>,
         asset_prefix: Option<BackRef<RefString>>,
         base_dir: BackRef<RefString>,
-    ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
-        // SAFETY: `match_.params` points at the caller's stack `route_param::List`, which is
-        // live for this call. Clone its contents into our own holder before re-pointing.
-        let params_list = unsafe { (*match_.params).clone() };
+    ) -> Box<MatchedRoute> {
+        fn range_in(outer: &[u8], inner: &[u8]) -> Range<u32> {
+            match bun_core::range_of_slice_in_buffer(inner, outer) {
+                Some([off, len]) => off..off + len,
+                None => {
+                    debug_assert!(inner.is_empty());
+                    0..0
+                }
+            }
+        }
 
-        // SAFETY: self-referential lifetime erasure — `RouterMatch<'_>` borrows two
-        // backing stores —
-        //   (a) `name`/`file_path`/`basename`/`path` slice the resolver's DirnameStore
-        //       (process-lifetime arena — `bun_router` paths are `Interned`), so are
-        //       genuinely `'static`;
-        //   (b) `pathname`/`query_string` and the param `value`s slice `pathname_backing`,
-        //       which we move into the same heap-stable Box below. The Box is never moved
-        //       after construction (JsClass m_ctx payload), so those bytes are valid for
-        //       `Self`'s lifetime.
-        // `params` is a raw `*mut`; re-pointed at `params_list_holder` below before any
-        // read through it. This is the standard Rust self-referential pattern (no
-        // `Pin`/ouroboros because JsClass codegen owns the Box<Self>); it does NOT extend
-        // a borrow past its allocation — ownership was transferred, not leaked.
-        let match_static: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
-        // `route_param::List<'a>` = `Vec<Param<'a>>`; rebuild from raw parts to
-        // erase the element lifetime (identical layout, no realloc).
-        let params_list: route_param::List<'static> = {
-            let mut v = core::mem::ManuallyDrop::new(params_list);
-            let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
-            // SAFETY: same allocation, same element layout; per the SAFETY note
-            // above, every `Param`'s borrowed bytes outlive `Self`.
-            unsafe { Vec::from_raw_parts(ptr.cast::<route_param::Param<'static>>(), len, cap) }
-        };
+        let query_string = range_in(match_.pathname, match_.query_string);
+        let params: Vec<MatchedParam> = match_
+            .params
+            .iter()
+            .map(|p| MatchedParam {
+                name: p.name,
+                value: range_in(match_.pathname, p.value),
+            })
+            .collect();
 
-        let mut route = Box::new(MatchedRoute {
-            route_holder: UnsafeCell::new(match_static),
-            route: core::ptr::null(),
-            asset_prefix,
-            origin,
-            base_dir: Some(base_dir),
-            query_string_map: JsCell::new(None),
-            param_map: JsCell::new(None),
-            params_list_holder: UnsafeCell::new(params_list),
-            pathname_backing,
-            needs_deinit: true,
-        });
         // Note: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — bump refcounts.
         // Each is a live interned `RefString` (caller-provided BackRef).
         base_dir.ref_();
@@ -830,67 +802,47 @@ impl MatchedRoute {
         if let Some(p) = asset_prefix {
             p.ref_();
         }
-        // Self-referential wiring: `route` → `route_holder`; `route_holder.params` →
-        // `params_list_holder`. Both targets are `UnsafeCell` so the raw pointers stay
-        // valid under Stacked Borrows across later `&mut MatchedRoute` accesses.
-        route.route = route.route_holder.get();
-        // SAFETY: sole access to `route_holder` contents at this point.
-        unsafe { (*route.route_holder.get()).params = route.params_list_holder.get() };
 
-        Ok(route)
+        Box::new(MatchedRoute {
+            pathname: Box::default(),
+            query_string,
+            name: match_.name,
+            file_path: match_.file_path,
+            params,
+            asset_prefix,
+            origin,
+            base_dir: Some(base_dir),
+            query_string_map: JsCell::new(None),
+            param_map: JsCell::new(None),
+        })
     }
 
-    // Note: `deinit` is called only from `finalize`; not exposed as `Drop` because
-    // `MatchedRoute` is a JsClass m_ctx payload (finalize owns teardown per PORTING.md).
-    fn deinit(this: *mut MatchedRoute) {
-        // SAFETY: called from finalize on mutator thread.
-        let this_ref = unsafe { &mut *this };
-        this_ref.query_string_map.set(None);
-        this_ref.param_map.set(None);
-        if this_ref.needs_deinit {
-            // We own the `path` allocation from `match` as
-            // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
-            // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
-            this_ref.pathname_backing = ZigStringSlice::EMPTY;
-            *this_ref.params_list_holder.get_mut() = route_param::List::default();
-        }
-
-        if let Some(p) = this_ref.origin.take() {
+    #[allow(clippy::boxed_local)]
+    pub fn finalize(self: Box<Self>) {
+        if let Some(p) = &self.origin {
             p.get().deref();
         }
-        if let Some(p) = this_ref.asset_prefix.take() {
+        if let Some(p) = &self.asset_prefix {
             p.get().deref();
         }
-        if let Some(p) = this_ref.base_dir.take() {
+        if let Some(p) = &self.base_dir {
             p.get().deref();
         }
-
-        // SAFETY: `this` was heap-allocated by codegen at construction.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_file_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().file_path, global_this))
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        // `deinit` frees the allocation itself; hand ownership back so its
-        // existing raw-ptr teardown path stays intact.
-        Self::deinit(Box::into_raw(self));
+        Ok(zs_to_js(this.file_path, global_this))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(this.route().pathname, global_this))
+        Ok(zs_to_js(&this.pathname, global_this))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(
-            kind_enum::classify(this.route().name),
-            global_this,
-        ))
+        Ok(zs_to_js(kind_enum::classify(this.name), global_this))
     }
 
     pub fn create_query_object(
@@ -953,7 +905,7 @@ impl MatchedRoute {
             URL::default()
         };
         bun_object::get_public_path_with_asset_prefix(
-            this.route().file_path,
+            this.file_path,
             if let Some(ref base_dir) = this.base_dir {
                 base_dir.leak()
             } else {
@@ -973,17 +925,17 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_params(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if this.params().is_empty() {
+        if this.params.is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));
         }
 
         if this.param_map.get().is_none() {
-            let route = this.route();
+            let params = this.params_list();
             let scanner = CombinedScanner::init(
                 b"",
-                route.pathname_without_leading_slash(),
-                route.name,
-                this.params(),
+                this.pathname_without_leading_slash(),
+                this.name,
+                &params,
             );
             this.param_map
                 .set(QueryStringMap::init_with_scanner(scanner)?);
@@ -997,27 +949,26 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_query(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let route = this.route();
-        if route.query_string.is_empty() && this.params().is_empty() {
+        if this.query_string().is_empty() && this.params.is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));
-        } else if route.query_string.is_empty() {
+        } else if this.query_string().is_empty() {
             return Self::get_params(this, global_this);
         }
 
         if this.query_string_map.get().is_none() {
-            let route = this.route();
-            if !this.params().is_empty() {
+            if !this.params.is_empty() {
+                let params = this.params_list();
                 let scanner = CombinedScanner::init(
-                    route.query_string,
-                    route.pathname_without_leading_slash(),
-                    route.name,
-                    this.params(),
+                    this.query_string(),
+                    this.pathname_without_leading_slash(),
+                    this.name,
+                    &params,
                 );
                 this.query_string_map
                     .set(QueryStringMap::init_with_scanner(scanner)?);
             } else {
                 this.query_string_map
-                    .set(QueryStringMap::init(route.query_string)?);
+                    .set(QueryStringMap::init(this.query_string())?);
             }
         }
 

@@ -224,11 +224,11 @@ impl Routes {
     pub fn match_page_with_allocator<'p>(
         &mut self,
         _: &[u8],
-        url_path: &URLPath,
+        url_path: &'p URLPath<'_>,
         params: &'p mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
-        let mut path = url_path.path;
+        let mut path = url_path.path();
         let mut redirect = false;
 
         // Normalize trailing slash
@@ -268,11 +268,11 @@ impl Routes {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
-                    params: std::ptr::from_mut(params),
+                    params,
                     name: index.name,
-                    pathname: url_path.pathname,
+                    pathname: url_path.pathname(),
                     file_path: index.abs_path.as_bytes(),
-                    query_string: url_path.query_string,
+                    query_string: url_path.query_string(),
                 });
             }
 
@@ -284,11 +284,11 @@ impl Routes {
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
-                params: std::ptr::from_mut(params),
+                params,
                 name: route.name,
-                pathname: url_path.pathname,
+                pathname: url_path.pathname(),
                 file_path: route.abs_path.as_bytes(),
-                query_string: url_path.query_string,
+                query_string: url_path.query_string(),
             });
         }
 
@@ -1068,53 +1068,16 @@ thread_local! {
 pub struct Match<'a> {
     /// raw url path from the request
     pub pathname: &'a [u8],
-    /// absolute filesystem path to the entry point
-    pub file_path: &'a [u8],
-    /// route name, like `"posts/[id]"`
-    pub name: &'a [u8],
-
-    // NOTE: raw `*mut` (not `&'a mut`).
-    // `MatchedRoute` (bun_runtime) stores this self-referentially — a
-    // `&'a mut List` here would be invalidated under Stacked Borrows the
-    // moment any `&mut MatchedRoute` is taken.
-    pub params: *mut route_param::List<'a>,
+    /// absolute filesystem path to the entry point — resolver-interned, process lifetime
+    pub file_path: &'static [u8],
+    /// route name, like `"posts/[id]"` — resolver-interned, process lifetime
+    pub name: &'static [u8],
+    /// filled by [`Routes::match_page_with_allocator`]; `value`s slice `pathname`
+    pub params: &'a route_param::List<'a>,
     pub query_string: &'a [u8],
 }
 
 impl<'a> Match<'a> {
-    /// Widen all borrowed slices to `'static` for self-referential storage.
-    ///
-    /// Field-by-field move (no bitwise reinterpret). Used by `MatchedRoute`
-    /// (bun_runtime), which moves the backing `pathname_backing` buffer into
-    /// the same heap-stable `Box` that holds this `Match` — see the SAFETY
-    /// note at that call site for the full invariant.
-    ///
-    /// # Safety
-    /// Caller guarantees every borrowed slice (and `*params`' element slices)
-    /// outlives the returned value.
-    #[inline]
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn detach_lifetime(self) -> Match<'static> {
-        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
-        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
-        // so the direct call sites below need no per-line `unsafe { }`.
-        #[inline(always)]
-        unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY: caller contract on `detach_lifetime` — every borrowed
-            // slice outlives the returned `Match<'static>`.
-            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
-        }
-        Match {
-            pathname: d(self.pathname),
-            file_path: d(self.file_path),
-            name: d(self.name),
-            // Raw pointer; lifetime parameter on the pointee is phantom for the
-            // pointer value itself.
-            params: self.params.cast::<route_param::List<'static>>(),
-            query_string: d(self.query_string),
-        }
-    }
-
     pub fn pathname_without_leading_slash(&self) -> &[u8] {
         strings::trim_left(self.pathname, b"/")
     }
@@ -1159,8 +1122,8 @@ pub mod pattern {
         pub fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
-            // case-sensitive, must not have a leading slash
-            name: &'a [u8],
+            // case-sensitive, must not have a leading slash — resolver-interned
+            name: &'static [u8],
             // case-insensitive, must not have a leading slash
             match_name: &[u8],
             params: &mut route_param::List<'a>,
@@ -1904,7 +1867,7 @@ mod tests {
             ),
         ];
 
-        fn run(list: &[(&[u8], &[u8], &[Entry])]) -> usize {
+        fn run(list: &[(&'static [u8], &'static [u8], &[Entry])]) -> usize {
             let mut parameters = route_param::List::default();
             let mut failures: usize = 0;
             for (pattern, pathname, entries) in list.iter() {

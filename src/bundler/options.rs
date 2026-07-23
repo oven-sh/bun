@@ -2043,8 +2043,6 @@ impl Env {
         }
     }
 
-    // For reading from API
-
     pub fn to_api(&self) -> api::LoadedEnvConfig {
         let slice = self.defaults.slice();
 

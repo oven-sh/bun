@@ -88,6 +88,11 @@ export function pgAuthenticationCleartextPassword(): Buffer {
   return buf;
 }
 
+// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
+export function pgParameterStatus(name: string, value: string): Buffer {
+  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+}
+
 // PostgreSQL FE/BE protocol §55.7 ReadyForQuery: Byte1('Z') Int32(5) Byte1(status)
 export function pgReadyForQuery(status: "I" | "T" | "E" = "I"): Buffer {
   const buf = Buffer.alloc(6);

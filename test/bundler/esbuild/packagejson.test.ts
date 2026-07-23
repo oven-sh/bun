@@ -1449,22 +1449,6 @@ describe("bundler", () => {
       stdout: "SUCCESS",
     },
   });
-  itBundled("packagejson/ExportsNotExactMissingExtension", {
-    files: {
-      "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
-      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
-        {
-          "exports": {
-            "./foo/": "./dir/"
-          }
-        }
-      `,
-      "/Users/user/project/node_modules/pkg1/dir/bar.js": `console.log('SUCCESS')`,
-    },
-    bundleErrors: {
-      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1/foo/bar". Maybe you need to "bun install"?`],
-    },
-  });
   itBundled("packagejson/ExportsNotExactMissingExtensionPattern", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,

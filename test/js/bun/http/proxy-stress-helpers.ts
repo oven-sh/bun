@@ -703,20 +703,48 @@ export function errcode(e: unknown): string {
   return typeof any?.code === "string" ? any.code : typeof any?.name === "string" ? any.name : String(e);
 }
 
+export interface DeadPort {
+  port: number;
+  [Symbol.dispose](): void;
+}
+
 /**
- * A port that's definitely closed. We bind and immediately release a port,
- * then return it; nothing reuses it in the microseconds before the caller
- * dials. Good enough for "connect refused" assertions without racing other
- * tests on a fixed well-known-closed port.
+ * A port on 127.0.0.1 that refuses connections for as long as the returned
+ * handle is alive.
+ *
+ * The port is held as the *local* side of a live TCP connection: bound, so
+ * the kernel's ephemeral allocator will not hand it to a concurrent
+ * `listen(0)`, and not listening, so `connect()` to it is refused. The
+ * previous bind-close-return implementation raced with the file's other
+ * `test.concurrent` `listen(0)` calls, which the kernel happily satisfied
+ * with the just-freed port before the caller got to dial it (build 77839:
+ * a live origin answered 200, build 78501: an auth-requiring proxy answered
+ * 407).
  */
-export async function deadPort(): Promise<number> {
-  const s = net.createServer();
-  s.listen(0, "127.0.0.1");
-  await once(s, "listening");
-  const port = (s.address() as net.AddressInfo).port;
-  s.close();
-  await once(s, "close");
-  return port;
+export async function deadPort(): Promise<DeadPort> {
+  let accepted: net.Socket | undefined;
+  const sink = net.createServer(s => {
+    accepted = s;
+    s.on("error", () => {});
+  });
+  sink.listen(0, "127.0.0.1");
+  await once(sink, "listening");
+  const holder = net.connect({ host: "127.0.0.1", port: (sink.address() as net.AddressInfo).port });
+  holder.on("error", () => {});
+  await once(holder, "connect");
+  const port = (holder.address() as net.AddressInfo).port;
+  // `sink` has served its purpose (giving `holder` something to connect to);
+  // stop accepting so its listening port can be recycled. The established
+  // connection — and with it `holder`'s local-port binding — survives
+  // server.close().
+  sink.close();
+  return {
+    port,
+    [Symbol.dispose]() {
+      holder.destroy();
+      accepted?.destroy();
+    },
+  };
 }
 
 /**

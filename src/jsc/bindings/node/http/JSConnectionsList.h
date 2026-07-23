@@ -32,10 +32,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSConnectionsList, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSConnectionsList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSConnectionsList = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSConnectionsList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSConnectionsList = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSConnectionsList; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSConnectionsList; });
     }
 
     DECLARE_INFO;

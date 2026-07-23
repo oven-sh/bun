@@ -180,58 +180,49 @@ SPECIALIZE_TYPE_TRAITS_END()
 
 namespace WebCore {
 
-template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename GetClient, typename SetClient, typename GetServer, typename SetServer>
-ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient getClient, SetClient setClient, GetServer getServer, SetServer setServer, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
+// Out-of-line slow path shared by every subspaceForImpl<T> instantiation.
+// The template wrapper keeps only the fast-path cache check inline and
+// forwards the T-dependent constants + slot addresses here on a miss, so
+// the lock + IsoSubspace construction is emitted once instead of per-class.
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(
+    JSC::VM&,
+    JSVMClientData&,
+    std::unique_ptr<JSC::GCClient::IsoSubspace>& clientSlot,
+    std::unique_ptr<JSC::IsoSubspace>& serverSlot,
+    const JSC::HeapCellType&,
+    size_t cellSize,
+    uint8_t numberOfLowerTierPreciseCells,
+    bool hasOutputConstraints);
+
+template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename ClientSlot, typename ServerSlot>
+ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, ClientSlot clientSlot, ServerSlot serverSlot, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
 {
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);
-    auto& clientSubspaces = clientData.clientSubspaces();
-    if (auto* clientSpace = getClient(clientSubspaces))
+    std::unique_ptr<JSC::GCClient::IsoSubspace>& clientSlotRef = clientSlot(clientData.clientSubspaces());
+    if (auto* clientSpace = clientSlotRef.get())
         return clientSpace;
 
+    static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
+
     auto& heapData = clientData.heapData();
-    Locker locker { heapData.lock() };
+    const JSC::HeapCellType* heapCellType;
+    if constexpr (useCustomHeapCellType == UseCustomHeapCellType::Yes)
+        heapCellType = &getCustomHeapCellType(heapData);
+    else if constexpr (std::is_base_of_v<JSC::JSDestructibleObject, T>)
+        heapCellType = &vm.heap.destructibleObjectHeapCellType;
+    else
+        heapCellType = &vm.heap.cellHeapCellType;
 
-    auto& subspaces = heapData.subspaces();
-    JSC::IsoSubspace* space = getServer(subspaces);
-    if (!space) {
-        JSC::Heap& heap = vm.heap;
-        std::unique_ptr<JSC::IsoSubspace> uniqueSubspace;
-        static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
-        if constexpr (useCustomHeapCellType == UseCustomHeapCellType::Yes)
-            uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, getCustomHeapCellType(heapData), T);
-        else {
-            if constexpr (std::is_base_of_v<JSC::JSDestructibleObject, T>)
-                uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, heap.destructibleObjectHeapCellType, T);
-            else
-                uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, T);
-        }
-        space = uniqueSubspace.get();
-        setServer(subspaces, WTF::move(uniqueSubspace));
+    IGNORE_WARNINGS_BEGIN("unreachable-code")
+    IGNORE_WARNINGS_BEGIN("tautological-compare")
+    void (*myVisitOutputConstraint)(JSC::JSCell*, JSC::SlotVisitor&) = T::visitOutputConstraints;
+    void (*jsCellVisitOutputConstraint)(JSC::JSCell*, JSC::SlotVisitor&) = JSC::JSCell::visitOutputConstraints;
+    bool hasOutputConstraints = myVisitOutputConstraint != jsCellVisitOutputConstraint;
+    IGNORE_WARNINGS_END
+    IGNORE_WARNINGS_END
 
-        IGNORE_WARNINGS_BEGIN("unreachable-code")
-        IGNORE_WARNINGS_BEGIN("tautological-compare")
-        void (*myVisitOutputConstraint)(JSC::JSCell*, JSC::SlotVisitor&) = T::visitOutputConstraints;
-        void (*jsCellVisitOutputConstraint)(JSC::JSCell*, JSC::SlotVisitor&) = JSC::JSCell::visitOutputConstraints;
-        if (myVisitOutputConstraint != jsCellVisitOutputConstraint)
-            heapData.outputConstraintSpaces().append(space);
-        IGNORE_WARNINGS_END
-        IGNORE_WARNINGS_END
-    }
-
-    auto uniqueClientSubspace = makeUnique<JSC::GCClient::IsoSubspace>(*space);
-    auto* clientSpace = uniqueClientSubspace.get();
-    setClient(clientSubspaces, WTF::move(uniqueClientSubspace));
-    return clientSpace;
+    return subspaceForImplSlow(vm, clientData, clientSlotRef, serverSlot(heapData.subspaces()), *heapCellType, sizeof(T), T::numberOfLowerTierPreciseCells, hasOutputConstraints);
 }
-
-// template<typename T, UseCustomHeapCellType useCustomHeapCellType, typename GetClient, typename SetClient, typename GetServer, typename SetServer>
-// ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient getClient, SetClient setClient, GetServer getServer, SetServer setServer, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
-// {
-//     static NeverDestroyed<JSC::IsoSubspacePerVM> perVM([](JSC::Heap& heap) {
-//         return ISO_SUBSPACE_PARAMETERS(heap.destructibleObjectHeapCellType, T);
-//     });
-//     return &perVM.get().clientIsoSubspaceforVM(vm);
-// }
 
 static JSVMClientData* clientData(JSC::VM& vm)
 {

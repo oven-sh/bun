@@ -88,10 +88,8 @@ GCClient::IsoSubspace* JSReadRequest::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadRequest, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadRequest = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadRequest; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadRequest; });
 }
 
 DEFINE_VISIT_CHILDREN(JSReadRequest);
@@ -284,10 +282,8 @@ GCClient::IsoSubspace* JSReadIntoRequest::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadIntoRequest, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadIntoRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadIntoRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadIntoRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadIntoRequest = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadIntoRequest; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadIntoRequest; });
 }
 
 DEFINE_VISIT_CHILDREN(JSReadIntoRequest);

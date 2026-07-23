@@ -149,10 +149,8 @@ JSC::GCClient::IsoSubspace* JSBakeResponse::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSBakeResponse, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBakeResponse.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBakeResponse = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBakeResponse.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBakeResponse = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForBakeResponse; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForBakeResponse; });
 }
 
 JSBakeResponse::JSBakeResponse(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)

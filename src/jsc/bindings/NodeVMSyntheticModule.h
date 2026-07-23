@@ -21,10 +21,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<NodeVMSyntheticModule, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMSyntheticModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMSyntheticModule = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNodeVMSyntheticModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMSyntheticModule = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeVMSyntheticModule; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeVMSyntheticModule; });
     }
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);

@@ -45,10 +45,8 @@ GCClient::IsoSubspace* JSStreamFromIterableContext::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSStreamFromIterableContext, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStreamFromIterableContext.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStreamFromIterableContext = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStreamFromIterableContext.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamFromIterableContext = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForStreamFromIterableContext; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForStreamFromIterableContext; });
 }
 
 DEFINE_VISIT_CHILDREN(JSStreamFromIterableContext);

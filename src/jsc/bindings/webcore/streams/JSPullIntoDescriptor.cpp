@@ -51,10 +51,8 @@ GCClient::IsoSubspace* JSPullIntoDescriptor::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSPullIntoDescriptor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPullIntoDescriptor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPullIntoDescriptor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPullIntoDescriptor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPullIntoDescriptor = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForPullIntoDescriptor; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForPullIntoDescriptor; });
 }
 
 } // namespace WebCore

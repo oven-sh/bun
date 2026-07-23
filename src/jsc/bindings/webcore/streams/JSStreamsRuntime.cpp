@@ -62,10 +62,8 @@ GCClient::IsoSubspace* JSStreamsRuntime::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSStreamsRuntime, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStreamsRuntime.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStreamsRuntime = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStreamsRuntime.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamsRuntime = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForStreamsRuntime; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForStreamsRuntime; });
 }
 
 void JSStreamsRuntime::finishCreation(VM& vm, Zig::GlobalObject*)

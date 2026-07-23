@@ -319,10 +319,8 @@ JSC::GCClient::IsoSubspace* JSCloseEvent::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSCloseEvent, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCloseEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCloseEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCloseEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCloseEvent = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForCloseEvent; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForCloseEvent; });
 }
 
 void JSCloseEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

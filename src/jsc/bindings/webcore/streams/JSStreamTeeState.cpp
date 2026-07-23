@@ -46,10 +46,8 @@ GCClient::IsoSubspace* JSStreamTeeState::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSStreamTeeState, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStreamTeeState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStreamTeeState = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStreamTeeState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamTeeState = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForStreamTeeState; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForStreamTeeState; });
 }
 
 DEFINE_VISIT_CHILDREN(JSStreamTeeState);

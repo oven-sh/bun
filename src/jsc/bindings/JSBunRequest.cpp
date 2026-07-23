@@ -72,10 +72,8 @@ JSC::GCClient::IsoSubspace* JSBunRequest::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSBunRequest, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBunRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBunRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBunRequest = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForBunRequest; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForBunRequest; });
 }
 
 JSObject* JSBunRequest::params() const

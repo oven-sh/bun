@@ -23,8 +23,12 @@ afterEach(async () => {
   fault.clear();
   for (const p of spawned.splice(0)) {
     p.stdin?.end();
-    p.kill();
-    await p.exited;
+    const killTimer = setTimeout(() => p.kill(), 500);
+    try {
+      await p.exited;
+    } finally {
+      clearTimeout(killTimer);
+    }
   }
 });
 

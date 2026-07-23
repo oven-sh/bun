@@ -119,8 +119,12 @@ async function withServer(serve: object, fn: (origin: string) => Promise<void>) 
     await fn(`127.0.0.1:${port}`);
   } finally {
     proc.stdin?.end();
-    await Promise.race([proc.exited, Bun.sleep(500).then(() => proc.kill())]);
-    await proc.exited;
+    const killTimer = setTimeout(() => proc.kill(), 500);
+    try {
+      await proc.exited;
+    } finally {
+      clearTimeout(killTimer);
+    }
   }
 }
 

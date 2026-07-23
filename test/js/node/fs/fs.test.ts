@@ -5704,12 +5704,15 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent("keeps a non-callable symlink callback as an ignored handler (Bun divergence: node throws)", async () => {
-    const { stdout, exitCode } = await runScript(`
+  it.concurrent(
+    "keeps a non-callable symlink callback as an ignored handler (Bun divergence: node throws)",
+    async () => {
+      const { stdout, exitCode } = await runScript(`
       require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
       setTimeout(() => console.log("quiet"), 50);
     `);
-    expect(stdout).toBe("quiet");
-    expect(exitCode).toBe(0);
-  });
+      expect(stdout).toBe("quiet");
+      expect(exitCode).toBe(0);
+    },
+  );
 });

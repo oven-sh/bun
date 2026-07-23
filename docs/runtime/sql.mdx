@@ -118,8 +118,8 @@ new SQL("mysql://user:pass@localhost/database"); // Default port 3306
 // mysql2:// protocol (compatibility with mysql2 npm package)
 new SQL("mysql2://user:pass@localhost:3306/database");
 
-// With query parameters
-new SQL("mysql://user:pass@localhost/db?ssl=true");
+// With SSL (see "SSL Modes Overview" for the full list of modes)
+new SQL("mysql://user:pass@localhost/db?sslmode=require");
 
 // Unix socket connection
 new SQL("mysql://user:pass@/database?socket=/var/run/mysqld/mysqld.sock");
@@ -622,12 +622,16 @@ const sql = new SQL({
   connectionTimeout: 30, // Timeout when establishing new connections
 
   // SSL/TLS options
-  ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
+  // `tls` accepts a boolean, a TLSOptions object, or a Bun.BunFile.
+  // To pick an SSL mode (disable | prefer | require | verify-ca | verify-full),
+  // use the `sslmode` query parameter on the connection URL — see "SSL Modes"
+  // below. Passing `tls: true` requires an encrypted connection (`require`).
+  tls: true,
   // tls: {
   //   rejectUnauthorized: true,
-  //   ca: "path/to/ca.pem",
-  //   key: "path/to/key.pem",
-  //   cert: "path/to/cert.pem",
+  //   ca: Bun.file("path/to/ca.pem"),
+  //   key: Bun.file("path/to/key.pem"),
+  //   cert: Bun.file("path/to/cert.pem"),
   // },
 
   // Callbacks
@@ -671,9 +675,9 @@ const sql = new SQL({
   // tls: {
   //   rejectUnauthorized: true,
   //   requestCert: true,
-  //   ca: "path/to/ca.pem",
-  //   key: "path/to/key.pem",
-  //   cert: "path/to/cert.pem",
+  //   ca: Bun.file("path/to/ca.pem"),
+  //   key: Bun.file("path/to/key.pem"),
+  //   cert: Bun.file("path/to/cert.pem"),
   //   checkServerIdentity(hostname, cert) {
   //     ...
   //   },
@@ -882,28 +886,9 @@ Bun supports SCRAM-SHA-256 (SASL), MD5, and Clear Text authentication. SASL is r
 
 ### SSL Modes Overview
 
-PostgreSQL's SSL/TLS modes control whether a secure connection is required and how much certificate verification is performed.
+PostgreSQL and MySQL support different SSL/TLS modes to control how secure connections are established. These modes determine the behavior when connecting and the level of certificate verification performed.
 
-```ts
-const sql = new SQL({
-  hostname: "localhost",
-  username: "user",
-  password: "password",
-  ssl: "disable", // | "prefer" | "require" | "verify-ca" | "verify-full"
-});
-```
-
-| SSL Mode      | Description                                                                                                          |
-| ------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `disable`     | No SSL/TLS used. Connections fail if server requires SSL. Default mode if none specified.                            |
-| `prefer`      | Tries SSL first, falls back to non-SSL if SSL fails.                                                                 |
-| `require`     | Requires SSL without certificate verification. Fails if SSL cannot be established.                                   |
-| `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
-| `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |
-
-### Using With Connection Strings
-
-You can also set the SSL mode in the connection string:
+The SSL mode is selected via the `sslmode` query parameter on the connection URL:
 
 ```ts
 // Using prefer mode
@@ -912,6 +897,31 @@ const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=prefer");
 // Using verify-full mode
 const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full");
 ```
+
+| SSL Mode      | Description                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `disable`     | No SSL/TLS used. Connections fail if server requires SSL. This is the default if `sslmode` is not specified.         |
+| `prefer`      | Tries SSL first, falls back to non-SSL if SSL fails.                                                                 |
+| `require`     | Requires SSL without certificate verification. Fails if SSL cannot be established.                                   |
+| `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
+| `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |
+
+### Customizing The TLS Configuration
+
+To customize certificate verification, provide CA/key/cert material, or toggle `rejectUnauthorized`, pass a `tls` object on the options. This can be combined with an `sslmode=` on the URL:
+
+```ts
+const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full", {
+  tls: {
+    ca: Bun.file("path/to/ca.pem"),
+    key: Bun.file("path/to/key.pem"),
+    cert: Bun.file("path/to/cert.pem"),
+    rejectUnauthorized: true,
+  },
+});
+```
+
+Passing `tls: true` (or an object) with no `sslmode=` on the URL requires an encrypted connection (`require` mode): if the server declines TLS the connection is aborted rather than downgraded to plaintext. Certificate verification is enabled only when you ask for it, either via a `verify-ca`/`verify-full` `sslmode` or by passing a `ca` or `rejectUnauthorized: true` in the `tls` object (both escalate to `verify-full`). The `ssl` option is accepted as a deprecated alias for `tls`; it takes the same shapes (`boolean | TLSOptions | BunFile`) and is **not** where the mode string goes.
 
 ---
 

@@ -472,4 +472,128 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/31015
+  describe("SSL mode and TLS option parsing", () => {
+    // Keep these mirrored with the SSLMode const enum in
+    // src/js/internal/sql/shared.ts.
+    const SSLMode = {
+      disable: 0,
+      prefer: 1,
+      require: 2,
+      verify_ca: 3,
+      verify_full: 4,
+    } as const;
+
+    test.each([
+      ["disable", SSLMode.disable],
+      ["prefer", SSLMode.prefer],
+      ["require", SSLMode.require],
+      ["verify-ca", SSLMode.verify_ca],
+      ["verify-full", SSLMode.verify_full],
+    ])("URL ?sslmode=%s selects SSLMode.%s", (mode, expected) => {
+      const options = new SQL(`postgres://user:pass@localhost/mydb?sslmode=${mode}`);
+      expect(options.options.sslMode).toBe(expected);
+    });
+
+    test("sslMode defaults to disable when no mode and no tls are set", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+      });
+      expect(options.options.sslMode).toBe(SSLMode.disable);
+      expect(options.options.tls).toBeUndefined();
+    });
+
+    test("tls: true coerces sslMode to require", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: true,
+      });
+      expect(options.options.sslMode).toBe(SSLMode.require);
+      expect(options.options.tls).toBe(true);
+    });
+
+    test("tls: { rejectUnauthorized: false } keeps the object and coerces sslMode to require", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { rejectUnauthorized: false },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.require);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: false });
+    });
+
+    test("tls: { rejectUnauthorized: true } escalates sslMode to verify-full", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { rejectUnauthorized: true },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_full);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: true, serverName: "localhost" });
+    });
+
+    test("tls: { ca } escalates sslMode to verify-full", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { ca: "-----BEGIN CERTIFICATE-----" },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_full);
+      expect(options.options.tls).toEqual({ ca: "-----BEGIN CERTIFICATE-----", serverName: "localhost" });
+    });
+
+    test("URL sslmode >= verify-ca survives a tls object requesting verification", () => {
+      const options = new SQL("postgres://user:pass@localhost/mydb?sslmode=verify-ca", {
+        tls: { rejectUnauthorized: true },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_ca);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: true, serverName: "localhost" });
+    });
+
+    test("URL sslmode < verify-ca is escalated by a tls object requesting verification", () => {
+      const options = new SQL("postgres://user:pass@localhost/mydb?sslmode=require", {
+        tls: { rejectUnauthorized: true },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_full);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: true, serverName: "localhost" });
+    });
+
+    test("ssl option is an alias for tls (deprecated)", () => {
+      const withSsl = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        ssl: { rejectUnauthorized: false } as Bun.TLSOptions,
+      });
+      const withTls = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { rejectUnauthorized: false },
+      });
+      expect(withSsl.options.sslMode).toBe(withTls.options.sslMode);
+      expect(withSsl.options.tls).toEqual(withTls.options.tls as object);
+    });
+
+    test("URL sslmode=invalid throws ERR_INVALID_ARG_VALUE", () => {
+      expect(() => new SQL("postgres://user:pass@localhost/mydb?sslmode=bogus")).toThrow(
+        /must be one of: disable, prefer, require, verify-ca, verify-full/,
+      );
+    });
+  });
 });

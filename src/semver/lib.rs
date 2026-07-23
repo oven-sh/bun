@@ -8,8 +8,6 @@ pub use crate::version::VersionType;
 pub use crate::semver_query::Query;
 pub use crate::semver_range::Range;
 pub use crate::sliced_string::SlicedString;
-// `SemverObject` re-export from `../semver_jsc/` deleted — *_jsc
-// extension traits live in the `bun_semver_jsc` crate, not here.
 
 #[path = "SemverQuery.rs"]
 pub mod semver_query;
@@ -540,8 +538,6 @@ pub mod semver_string {
             let masked: u64 = bits & MAX_ADDRESSABLE_SPACE_MASK;
             Pointer::from_bits(masked)
         }
-
-        // `toJS` deleted — lives in bun_semver_jsc (tier-6; deferred to Pass C).
 
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]

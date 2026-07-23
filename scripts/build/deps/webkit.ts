@@ -3,16 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
-// -lto variants built with ThinLTO (per-module summaries for cross-language
-// importing), every x64 at the nehalem floor (no separate -baseline variant),
-// typed-array constructor ClassInfo kept address-unique under LTO, the
-// Windows ICU data table filtered + per-item zstd compressed, eager timezone
-// prewarm skipped under USE_BUN_JSC_ADDITIONS, the stray simdutf scalar/base64
-// <iostream> include dropped, <iostream> banned at compile time for non-Debug
-// USE_BUN_JSC_ADDITIONS builds (see src/banned-includes/iostream), and the
-// WebAssembly namespace object created lazily.
-export const WEBKIT_VERSION = "af2e8dc6393ce244eb1865e34e7636225744cfba";
+export const WEBKIT_VERSION = "a40d462206e1caf8388062120acde61e37a4ae7d";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

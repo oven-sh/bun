@@ -278,6 +278,11 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
+#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+#include <JavaScriptCore/ExecutableAllocator.h>
+extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
+#endif
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
@@ -357,6 +362,15 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
+
+#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+        // JSC::initialize() registered unwind info + a language-specific SEH
+        // handler for the JIT pool. Route that handler to the crash reporter
+        // so a hardware fault under a JIT frame is reported deterministically
+        // at the JSC boundary. LLInt is not yet covered (needs build-time
+        // offlineasm .seh_* emission).
+        JSC::setJITExceptionHandlerWin(&Bun__crashHandlerFromJSCFrame);
+#endif
     }); // end std::call_once lambda
 
     // NOLINTEND

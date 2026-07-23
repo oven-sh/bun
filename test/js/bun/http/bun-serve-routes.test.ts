@@ -1114,4 +1114,28 @@ describe("many routes", () => {
     expect(await fetch(`${base}/api/other`).then(r => r.text())).toBe("param:other");
     expect(await fetch(`${base}/api/a/b`).then(r => r.text())).toBe("wild");
   });
+
+  test("reload() replaces a large route table and routes correctly afterwards", async () => {
+    const n = 1000;
+    using server = Bun.serve({ port: 0, routes: buildFlatTable(n) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    expect(await fetch(`${base}/leaf0`).then(r => r.text())).toBe("0");
+    expect(await fetch(`${base}/leaf${n - 1}`).then(r => r.text())).toBe(String(n - 1));
+
+    const replacement: Record<string, () => Response> = {};
+    for (let i = 0; i < n; i++) {
+      replacement[`/other${i}`] = () => new Response(`other${i}`);
+    }
+    server.reload({ routes: replacement });
+
+    expect((await fetch(`${base}/leaf0`)).status).toBe(404);
+    expect(await fetch(`${base}/other0`).then(r => r.text())).toBe("other0");
+    expect(await fetch(`${base}/other${n - 1}`).then(r => r.text())).toBe(`other${n - 1}`);
+
+    server.reload({ routes: buildFlatTable(n) });
+
+    expect((await fetch(`${base}/other0`)).status).toBe(404);
+    expect(await fetch(`${base}/leaf500`).then(r => r.text())).toBe("500");
+  });
 });

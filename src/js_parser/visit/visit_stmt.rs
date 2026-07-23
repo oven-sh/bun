@@ -817,6 +817,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             data.default_name = p.create_default_name(stmt.loc);
                         }
 
+                        // Decorator-name injection, `lower_class`, and the server-components
+                        // wrap all mutate `class.class` in place; capture what keep-names
+                        // needs while it still reflects the user-written shape.
+                        let has_custom_static_name =
+                            Self::class_has_custom_static_name(&class.class);
+                        let keep_name: &[u8] = match class.class.class_name {
+                            Some(n) if !n.ref_.is_empty() => p.load_name_from_ref(n.ref_),
+                            _ => js_ast::ClauseItem::DEFAULT_ALIAS,
+                        };
+
                         // We only inject a name into classes when decorator lowering
                         // needs one: legacy TS decorators (`has_decorators`) or
                         // standard decorator lowering, which also covers classes with
@@ -830,15 +840,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 class.class.class_name = Some(data.default_name);
                             }
                         }
-
-                        // `lower_class` / server-components wrapping mutate `class.class`
-                        // in place; capture what keep-names needs first.
-                        let has_custom_static_name =
-                            Self::class_has_custom_static_name(&class.class);
-                        let keep_name: &[u8] = match class.class.class_name {
-                            Some(n) if !n.ref_.is_empty() => p.load_name_from_ref(n.ref_),
-                            _ => js_ast::ClauseItem::DEFAULT_ALIAS,
-                        };
 
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
@@ -860,6 +861,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data.value = js_ast::StmtOrExpr::Stmt(class_stmts[class_stmt_idx]);
                         stmts.push(*stmt);
 
+                        // `__name()` must land before the decorator suffix so decorator
+                        // callbacks observe the preserved name.
+                        if !has_custom_static_name {
+                            if let Some(keep) =
+                                p.keep_stmt_symbol_name(stmt.loc, data.default_name.ref_, keep_name)
+                            {
+                                stmts.push(keep);
+                            }
+                        }
+
                         // Emit any suffix statements after the export default
                         if class_stmt_idx + 1 < class_stmts.len() {
                             stmts.extend_from_slice(&class_stmts[class_stmt_idx + 1..]);
@@ -874,14 +885,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(class_expr, b"default"),
                             );
-                        }
-
-                        if !has_custom_static_name {
-                            if let Some(keep) =
-                                p.keep_stmt_symbol_name(stmt.loc, data.default_name.ref_, keep_name)
-                            {
-                                stmts.push(keep);
-                            }
                         }
 
                         restore_dead!();
@@ -1098,18 +1101,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
         if !mark_as_dead || was_export_inside_namespace {
-            // Lower class field syntax for browsers that don't support it
-            stmts.extend_from_slice(lowered);
-            if let Some(name) = data.class.class_name {
-                if !has_custom_static_name {
+            // `__name()` must land immediately after the class so lowered decorator
+            // callbacks (which run after the class) observe the preserved name.
+            let keep = data
+                .class
+                .class_name
+                .filter(|_| !has_custom_static_name)
+                .and_then(|name| {
                     let original_name = p.symbols[name.ref_.inner_index() as usize]
                         .original_name
                         .slice();
-                    if let Some(keep) = p.keep_stmt_symbol_name(stmt.loc, name.ref_, original_name)
-                    {
-                        stmts.push(keep);
-                    }
-                }
+                    p.keep_stmt_symbol_name(stmt.loc, name.ref_, original_name)
+                });
+            if let Some(keep) = keep {
+                let class_idx = lowered
+                    .iter()
+                    .position(|cs| matches!(cs.data, StmtData::SClass(_)))
+                    .unwrap_or(0);
+                stmts.extend_from_slice(&lowered[..=class_idx]);
+                stmts.push(keep);
+                stmts.extend_from_slice(&lowered[class_idx + 1..]);
+            } else {
+                stmts.extend_from_slice(lowered);
             }
         } else {
             let ref_ = data

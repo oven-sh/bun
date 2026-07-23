@@ -550,6 +550,54 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
 ) -> bool {
+    is_filtered_dependency_or_workspace_inner(
+        dep_id,
+        parent_pkg_id,
+        workspace_filters,
+        install_root_dependencies,
+        manager,
+        lockfile,
+        resolutions,
+        false,
+    )
+}
+
+/// Hard-constraint filter for dependencies explicitly listed in
+/// `packages_to_install` (currently the security-scanner bootstrap install).
+/// Skips the `dep.behavior.is_enabled(dep_features)` check so that a dev-only
+/// scanner still installs under `--production`; disabled/bundled/workspace
+/// filters still apply.
+pub fn is_filtered_dependency_or_workspace_requested(
+    dep_id: DependencyID,
+    parent_pkg_id: PackageID,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+) -> bool {
+    is_filtered_dependency_or_workspace_inner(
+        dep_id,
+        parent_pkg_id,
+        workspace_filters,
+        install_root_dependencies,
+        manager,
+        lockfile,
+        resolutions,
+        true,
+    )
+}
+
+fn is_filtered_dependency_or_workspace_inner(
+    dep_id: DependencyID,
+    parent_pkg_id: PackageID,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    skip_feature_filter: bool,
+) -> bool {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
         let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
@@ -596,15 +644,17 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    let dep_features = match parent_res.tag {
-        crate::resolution::Tag::Root
-        | crate::resolution::Tag::Workspace
-        | crate::resolution::Tag::Folder => manager.options.local_package_features,
-        _ => manager.options.remote_package_features,
-    };
+    if !skip_feature_filter {
+        let dep_features = match parent_res.tag {
+            crate::resolution::Tag::Root
+            | crate::resolution::Tag::Workspace
+            | crate::resolution::Tag::Folder => manager.options.local_package_features,
+            _ => manager.options.remote_package_features,
+        };
 
-    if !dep.behavior.is_enabled(dep_features) {
-        return true;
+        if !dep.behavior.is_enabled(dep_features) {
+            return true;
+        }
     }
 
     // Filtering only applies to the root package dependencies. Also
@@ -750,15 +800,42 @@ impl Tree {
 
             // filter out disabled dependencies
             if METHOD == BuilderMethod::Filter {
-                if is_filtered_dependency_or_workspace(
-                    dep_id,
-                    parent_pkg_id,
-                    builder.workspace_filters,
-                    builder.install_root_dependencies,
-                    builder.manager.expect("manager set when METHOD == Filter"),
-                    lockfile,
-                    &*builder.resolutions,
-                ) {
+                // A non-None `packages_to_install` is the security-scanner
+                // bootstrap install — narrow to exactly those root-parent
+                // pkgs and skip dev-dependency feature filtering so a dev
+                // scanner still installs under `--production` (issue #31028).
+                let is_requested_install = match builder.packages_to_install {
+                    Some(packages_to_install) if parent_pkg_id == 0 => {
+                        if !packages_to_install.contains(&pkg_id) {
+                            continue;
+                        }
+                        true
+                    }
+                    _ => false,
+                };
+
+                let filtered = if is_requested_install {
+                    is_filtered_dependency_or_workspace_requested(
+                        dep_id,
+                        parent_pkg_id,
+                        builder.workspace_filters,
+                        builder.install_root_dependencies,
+                        builder.manager.expect("manager set when METHOD == Filter"),
+                        lockfile,
+                        &*builder.resolutions,
+                    )
+                } else {
+                    is_filtered_dependency_or_workspace(
+                        dep_id,
+                        parent_pkg_id,
+                        builder.workspace_filters,
+                        builder.install_root_dependencies,
+                        builder.manager.expect("manager set when METHOD == Filter"),
+                        lockfile,
+                        &*builder.resolutions,
+                    )
+                };
+                if filtered {
                     continue;
                 }
 
@@ -766,22 +843,6 @@ impl Tree {
                 // their chance to resolve.
                 if pkg_id == invalid_package_id {
                     continue;
-                }
-
-                if let Some(packages_to_install) = builder.packages_to_install {
-                    if parent_pkg_id == 0 {
-                        let mut found = false;
-                        for &package_to_install in packages_to_install {
-                            if pkg_id == package_to_install {
-                                found = true;
-                                break;
-                            }
-                        }
-
-                        if !found {
-                            continue;
-                        }
-                    }
                 }
             }
 

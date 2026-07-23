@@ -2312,7 +2312,10 @@ pub fn ipc_serialize(
 }
 
 #[track_caller]
-pub fn ipc_tag_advanced_buffers(global_object: &JSGlobalObject, message: JSValue) -> JsResult<JSValue> {
+pub fn ipc_tag_advanced_buffers(
+    global_object: &JSGlobalObject,
+    message: JSValue,
+) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`; returns null when the message holds no
     // Buffers, else the `[message, buffers]` envelope (see Ipc.ts).
     crate::cpp::IPCTagAdvancedBuffers(global_object, message)

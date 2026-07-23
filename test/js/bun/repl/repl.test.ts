@@ -1535,21 +1535,25 @@ describe.concurrent("--interactive", () => {
     [["-i"], "bare bun -i"],
     [["run", "-i", "--interactive"], "bun run -i --interactive"],
     [["-i", "-e", ""], "bun -i -e ''"],
-  ])("%# %s reaches the REPL", async (extra, _label) => {
-    // The three -i spellings the install-meaning predicate must classify as
-    // REPL-bound (Arguments.rs repl_bound_i).
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...extra],
-      env,
-      stdin: Buffer.from("1+1\n"),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("Welcome to Bun");
-    expect(stdout).toContain("2");
-    expect({ stderrHasError: stderr.includes("error"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
-  }, interactiveTimeout);
+  ])(
+    "%# %s reaches the REPL",
+    async (extra, _label) => {
+      // The three -i spellings the install-meaning predicate must classify as
+      // REPL-bound (Arguments.rs repl_bound_i).
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...extra],
+        env,
+        stdin: Buffer.from("1+1\n"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("2");
+      expect({ stderrHasError: stderr.includes("error"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
+    },
+    interactiveTimeout,
+  );
 
   test.each(["module", "commonjs", "module-typescript", "commonjs-typescript"])(
     "--input-type=%s with a file entry is ignored like node",

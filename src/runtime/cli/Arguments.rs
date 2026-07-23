@@ -1155,7 +1155,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // wrong module semantics. A file entry point ignores the option
             // and the REPL rejects it, both like node.
             if args.option(b"--eval").is_some() || args.option(b"--print").is_some() {
-                bun_core::pretty_errorln!("--input-type is not supported with --eval/--print input in bun");
+                bun_core::pretty_errorln!(
+                    "--input-type is not supported with --eval/--print input in bun"
+                );
                 Output::flush();
                 Global::exit(1);
             }

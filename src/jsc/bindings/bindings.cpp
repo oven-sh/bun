@@ -480,15 +480,16 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
         JSArray* expectedArray = dynamicDowncast<JSArray>(expectedArrayValue);
+
+        // Jest: an empty sample matches any received value, including non-arrays.
+        if (expectedArray && expectedArray->length() == 0) {
+            return AsymmetricMatcherResult::PASS;
+        }
+
         JSArray* otherArray = dynamicDowncast<JSArray>(otherProp);
         if (expectedArray && otherArray) {
             unsigned expectedLength = expectedArray->length();
             unsigned otherLength = otherArray->length();
-
-            // A empty array is all array's subset
-            if (expectedLength == 0) {
-                return AsymmetricMatcherResult::PASS;
-            }
 
             // O(m*n) but works for now
             for (unsigned m = 0; m < expectedLength; m++) {

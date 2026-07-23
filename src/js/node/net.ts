@@ -1971,6 +1971,13 @@ Socket.prototype.connect = function connect(...args) {
     initSocketHandle(this);
   }
 
+  // node creates the TCP/Pipe wrap synchronously in connect(), so a socket
+  // that is still resolving DNS or waiting on SYN is already visible to
+  // getActiveResourcesInfo(); destroy() unregisters on connect failure and
+  // the open handler's registerHandle is a no-op re-link once established.
+  this[kHandleKind] = pipe ? "PipeWrap" : "TCPSocketWrap";
+  registerHandle(this, this[kHandleKind], kUserUnrefed);
+
   if (!pipe) {
     lookupAndConnect(this, options);
   } else {

@@ -2341,3 +2341,69 @@ describe("NODE_NO_WARNINGS", () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
 });
+
+it("getActiveResourcesInfo reports connecting sockets and pending dns lookups like node", async () => {
+  // node v26.3.0:
+  //   - a socket with a pending SYN (TEST-NET-1 blackhole) reports
+  //     "TCPSocketWrap" immediately after connect() dispatch;
+  //   - an in-flight dns.lookup reports "GetAddrInfoReqWrap" in
+  //     getActiveResourcesInfo() and a wrap with that constructor name in
+  //     _getActiveRequests(), and both disappear once the lookup settles.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const dns = require("dns");
+       const out = {};
+       const socket = net.connect(80, "203.0.113.1");
+       socket.on("error", () => {});
+       out.connecting = process.getActiveResourcesInfo().filter(x => x === "TCPSocketWrap").length;
+       socket.destroy();
+       out.afterDestroy = process.getActiveResourcesInfo().filter(x => x === "TCPSocketWrap").length;
+       dns.lookup("localhost", () => {
+         out.dnsSettled = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+         out.reqsSettled = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;
+         console.log(JSON.stringify(out));
+       });
+       out.dnsPending = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+       out.reqsPending = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    connecting: 1,
+    afterDestroy: 0,
+    dnsPending: 1,
+    reqsPending: 1,
+    dnsSettled: 0,
+    reqsSettled: 0,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("_getActiveRequests entries carry node's request-wrap constructor names", async () => {
+  // node v26.3.0 names pending fs requests FSReqCallback/FSReqPromise; Bun's
+  // fs callback API wraps the promise API natively, so both report
+  // FSReqCallback (documented divergence) - but the entries must be named
+  // wraps, not plain objects, so constructor-name filtering works.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+       fs.readFile("/dev/null", () => {});
+       const names = process._getActiveRequests().map(r => r.constructor.name);
+       console.log(JSON.stringify({ named: names.length > 0 && names.every(n => n === "FSReqCallback") }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"named":true}');
+  expect(exitCode).toBe(0);
+});

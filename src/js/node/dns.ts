@@ -1,5 +1,6 @@
 // Hardcoded module "node:dns"
 const dns = Bun.dns;
+let activeHandles;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
 const {
@@ -314,9 +315,14 @@ function lookup(hostname, options, callback) {
     return;
   }
 
+  // node parks a GetAddrInfoReqWrap for every in-flight lookup, visible via
+  // process.getActiveResourcesInfo()/_getActiveRequests() until it settles.
+  activeHandles ??= require("internal/active_handles");
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap());
   dns
     .lookup(hostname, options)
     .then(res => {
+      activeHandles.noteRequestEnd(reqWrap);
       throwIfEmpty(res);
 
       if (options.order == "ipv4first") {
@@ -333,6 +339,7 @@ function lookup(hostname, options, callback) {
       }
     })
     .catch(err => {
+      activeHandles.noteRequestEnd(reqWrap);
       if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
       // Node.js getaddrinfo errors (DNSException) carry the looked-up
       // hostname both as a property and at the end of the message.
@@ -357,11 +364,15 @@ function lookupService(address, port, callback) {
   validateString(address);
   validatePort(port, "port");
 
+  activeHandles ??= require("internal/active_handles");
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap());
   dns.lookupService(address, +port).then(
     results => {
+      activeHandles.noteRequestEnd(reqWrap);
       callback(null, ...results);
     },
     error => {
+      activeHandles.noteRequestEnd(reqWrap);
       callback(withTranslatedError(error));
     },
   );

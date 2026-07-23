@@ -23,6 +23,24 @@ const head: any = {};
 head[kPrev] = head;
 head[kNext] = head;
 
+// Request wraps, named like node's so ecosystem constructor-name filtering
+// works on process._getActiveRequests(). fs requests are count-derived from
+// the native pool, so instances are created on demand; dns lookups register
+// live wraps at dispatch and drop them at settle.
+class FSReqCallback {}
+class GetAddrInfoReqWrap {}
+class GetNameInfoReqWrap {}
+const pendingRequestWraps = new Set();
+
+function noteRequestStart(wrap) {
+  pendingRequestWraps.add(wrap);
+  return wrap;
+}
+
+function noteRequestEnd(wrap) {
+  pendingRequestWraps.delete(wrap);
+}
+
 function registerHandle(handle, kind, unrefFlag) {
   handle[kUnrefFlag] = unrefFlag;
   if (handle[kKind] != null) {
@@ -71,7 +89,13 @@ function getActiveResourcesInfo() {
   // FSReqCallback/FSReqPromise split does not exist here.
   const resources: string[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
+    // Bun's fs callback API wraps the promise API in native code, so node's
+    // FSReqCallback/FSReqPromise split is not recoverable here: every pending
+    // fs request reports as FSReqCallback.
     resources.push("FSReqCallback");
+  }
+  for (const wrap of pendingRequestWraps) {
+    resources.push(wrap.constructor.name);
   }
   forEachActive(resources, true);
   for (let i = 0, n = getActiveTimeoutCount(); i < n; i++) {
@@ -84,12 +108,16 @@ function getActiveResourcesInfo() {
 }
 
 function getActiveRequests() {
-  // One entry per real in-flight async fs request. Node returns its live
-  // FSReqCallback wrap objects; Bun's requests complete through a native
-  // promise with no user-visible wrap, so each entry is a fresh plain object.
+  // One entry per in-flight async request. fs requests complete through a
+  // native promise with no user-visible wrap, so each fs entry is a fresh
+  // FSReqCallback instance; dns entries are the live wraps registered at
+  // dispatch.
   const requests: unknown[] = [];
   for (let i = 0, n = getPendingFsRequestCount(); i < n; i++) {
-    requests.push({});
+    requests.push(new FSReqCallback());
+  }
+  for (const wrap of pendingRequestWraps) {
+    requests.push(wrap);
   }
   return requests;
 }
@@ -97,6 +125,10 @@ function getActiveRequests() {
 export default {
   registerHandle,
   unregisterHandle,
+  noteRequestStart,
+  noteRequestEnd,
+  GetAddrInfoReqWrap,
+  GetNameInfoReqWrap,
   getActiveHandles,
   getActiveRequests,
   getActiveResourcesInfo,

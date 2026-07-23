@@ -675,7 +675,11 @@ export async function replayCoordinate(opts: {
       }
     }
     proc.kill(9);
-    Bun.spawnSync(["taskkill", "/F", "/IM", bunImage, "/T"], { stdout: "ignore", stderr: "ignore" });
+    // Kill THIS run's tree by pid - never by image name: the driver itself
+    // may be running as the same image (bun.exe driving a bun.exe target),
+    // and a machine-wide /IM sweep took the drivers down with every
+    // timed-out run of the release binary.
+    if (proc.pid) Bun.spawnSync(["taskkill", "/F", "/PID", String(proc.pid), "/T"], { stdout: "ignore", stderr: "ignore" });
   }, opts.timeoutMs);
   await proc.exited;
   clearTimeout(timer);
@@ -801,8 +805,9 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
   const timer = setTimeout(() => {
     timedOut = true;
     proc.kill(9);
-    // wsfrun's death does not take the target with it; kill the tree by image.
-    Bun.spawnSync(["taskkill", "/F", "/IM", basename(o.bun), "/T"], { stdout: "ignore", stderr: "ignore" });
+    // wsfrun's death does not take the target with it; kill this run's own
+    // process tree by pid (never by image name - see runOnce).
+    if (proc.pid) Bun.spawnSync(["taskkill", "/F", "/PID", String(proc.pid), "/T"], { stdout: "ignore", stderr: "ignore" });
   }, o.timeoutMs);
   await proc.exited;
   clearTimeout(timer);

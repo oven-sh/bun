@@ -6,6 +6,7 @@ const path = require("node:path");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const settleClusterAck = $newRustFunction("node_cluster_binding.rs", "settleClusterAck", 2);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
 const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
@@ -182,11 +183,14 @@ cluster.fork = function (env) {
   // so a cluster command whose '$internal' send option was lost (a user
   // wrapper around process.send that truncates arguments) arrives external
   // and is classified by cmd on the receive side - route it like node does.
-  // Limitation: only the act-bearing half is recoverable here; {ack: N}
-  // replies resolve per-seq callbacks that live in the native internal-frame
-  // queue, which this JS path cannot reach.
   worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
     if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
+      // {ack: N} replies settle per-seq callbacks parked in the native
+      // internal-frame queue; act-bearing traffic dispatches through the JS
+      // method table like the Internal-framed path does.
+      if (message.ack !== undefined && settleClusterAck(worker.process[kHandle], message)) {
+        return;
+      }
       onmessage.$call(worker, message, handle);
     }
   });

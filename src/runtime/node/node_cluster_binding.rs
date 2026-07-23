@@ -193,6 +193,55 @@ pub(crate) fn on_internal_message_primary(
     Ok(JSValue::UNDEFINED)
 }
 
+#[bun_jsc::host_fn]
+pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // Externally-framed cluster replies ({cmd:'NODE_CLUSTER', ack: N} arriving
+    // as ordinary JSON-framed messages) reach the JS internalMessage fallback
+    // in internal/cluster/primary.ts instead of the Internal-framed path
+    // below. This settles the same per-seq callback the Internal path would
+    // have: returns true when a parked callback was found and invoked, false
+    // when the ack matched nothing (already settled, or not ours).
+    let arguments = frame.arguments_old::<2>().ptr;
+    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(JSValue::FALSE);
+    };
+    let Some(ipc_data) = subprocess.ipc() else {
+        return Ok(JSValue::FALSE);
+    };
+    if !ipc_data.internal_msg_queue.is_ready() {
+        return Ok(JSValue::FALSE);
+    }
+    let message = arguments[1];
+    let Some(p) = message.get(global, "ack")? else {
+        return Ok(JSValue::FALSE);
+    };
+    if p.is_undefined() {
+        return Ok(JSValue::FALSE);
+    }
+    let ack = p.to_int32();
+    let entry = ipc_data
+        .internal_msg_queue
+        .callbacks
+        .get(&ack)
+        .map(|s| s.get());
+    let Some(callback_opt) = entry else {
+        return Ok(JSValue::FALSE);
+    };
+    ipc_data.internal_msg_queue.callbacks.swap_remove(&ack);
+    let cb = callback_opt.unwrap();
+    let event_loop = global.bun_vm().event_loop_mut();
+    event_loop.run_callback(
+        cb,
+        global,
+        ipc_data.internal_msg_queue.worker.get().unwrap(),
+        &[
+            message,
+            JSValue::NULL, // handle
+        ],
+    );
+    Ok(JSValue::TRUE)
+}
+
 pub(crate) fn handle_internal_message_primary(
     global: &JSGlobalObject,
     subprocess: &Subprocess<'_>,

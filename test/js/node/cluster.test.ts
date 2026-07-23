@@ -1136,3 +1136,66 @@ if (cluster.isPrimary) {
   // worker's own listen.
   expect(stdout).toContain("relisten code: EADDRINUSE syscall: bind");
 });
+
+test("externally-framed cluster acks settle the primary's parked reply callbacks", async () => {
+  // A newconn reply that arrives as an ordinary user-framed message
+  // ({cmd:'NODE_CLUSTER', ack: N} via plain process.send) must settle the
+  // per-seq callback the primary parked in the native internal-frame queue —
+  // otherwise the round-robin handoff never re-arms and every connection
+  // after the first hangs.
+  using dir = tempDir("cluster-external-ack", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  cluster.schedulingPolicy = cluster.SCHED_RR;
+  const worker = cluster.fork();
+  worker.on("message", async (m) => {
+    if (!m || !m.port) return;
+    const roundTrip = () =>
+      new Promise((resolve, reject) => {
+        const c = net.connect(m.port, "127.0.0.1");
+        c.on("close", resolve);
+        c.on("error", reject);
+        setTimeout(() => reject(new Error("connection never settled")), 5000).unref();
+      });
+    await roundTrip();
+    await roundTrip();
+    console.log("OK");
+    worker.kill();
+    process.exit(0);
+  });
+  worker.on("error", (e) => { console.error(e); process.exit(1); });
+} else {
+  const server = net.createServer(() => {});
+  server.listen(0, "127.0.0.1", () => {
+    const port = server.address().port;
+    // Take over newconn handling: reply through the user-framed channel so
+    // the ack reaches the primary's externally-framed fallback, then drop
+    // the connection so the client observes the close.
+    process.removeAllListeners("internalMessage");
+    process.on("internalMessage", (m, handle) => {
+      if (m && m.cmd === "NODE_CLUSTER" && m.act === "newconn") {
+        process.send({ cmd: "NODE_CLUSTER", ack: m.seq, accepted: true });
+        if (handle) {
+          if (typeof handle.destroy === "function") handle.destroy();
+          else if (typeof handle.close === "function") handle.close();
+        }
+      }
+    });
+    process.send({ port });
+  });
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});

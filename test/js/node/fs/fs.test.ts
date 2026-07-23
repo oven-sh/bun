@@ -1273,16 +1273,7 @@ describe("promises.readFile", async () => {
 
   it("& fs.promises.writefile encodes & decodes", async () => {
     const results = [];
-    for (let encoding of [
-      "utf8",
-      "utf-8",
-      "utf16le",
-      "latin1",
-      "binary",
-      "base64",
-      "base64url",
-      "hex",
-    ] as const) {
+    for (let encoding of ["utf8", "utf-8", "utf16le", "latin1", "binary", "base64", "base64url", "hex"] as const) {
       for (let text of ["ascii", "utf16 🍇 🍈 🍉 🍊 🍋", "👍"]) {
         const correct = Buffer.from(text, encoding);
         const outfile = join(

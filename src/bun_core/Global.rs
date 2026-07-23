@@ -335,9 +335,26 @@ impl SignalCode {
         }
         #[cfg(not(unix))]
         {
+            // Windows numbering: the CRT's <signal.h> sparse set plus the
+            // synthetic SIGHUP/SIGQUIT/SIGKILL/SIGWINCH our libuv header
+            // defines (src/jsc/bindings/libuv/uv/win.h) — the same values
+            // BunProcess.cpp's signal maps compile against. The enum
+            // discriminants are Linux numbers and must not leak here:
+            // SIGABRT is 22 on Windows, not 6. Everything else has no
+            // Windows number, mirroring the unix arm's None for SIGPWR.
+            use SignalCode as S;
             match self {
-                Self::SIG16 => None,
-                _ => Some(self as u8 as i32),
+                S::SIGHUP => Some(1),
+                S::SIGINT => Some(2),
+                S::SIGQUIT => Some(3),
+                S::SIGILL => Some(4),
+                S::SIGABRT => Some(22),
+                S::SIGFPE => Some(8),
+                S::SIGKILL => Some(9),
+                S::SIGSEGV => Some(11),
+                S::SIGTERM => Some(15),
+                S::SIGWINCH => Some(28),
+                _ => None,
             }
         }
     }

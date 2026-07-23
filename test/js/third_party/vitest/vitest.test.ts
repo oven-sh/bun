@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -10,10 +9,11 @@ import { join } from "node:path";
 // just the protocol surface.
 const testRoot = join(import.meta.dirname, "..", "..", "..");
 const testNodeModules = join(testRoot, "node_modules");
-const expectedVitestVersion = JSON.parse(readFileSync(join(testRoot, "package.json"), "utf8")).devDependencies.vitest;
+const testPackageJson = JSON.parse(readFileSync(join(testRoot, "package.json"), "utf8"));
+const expectedVitestVersion = testPackageJson.dependencies?.vitest ?? testPackageJson.devDependencies?.vitest;
 
-// This PR bumps test/package.json's vitest; a container whose test/node_modules
-// was populated from an older lockfile would otherwise link the wrong version.
+// Fail fast with a clear remedy if test/node_modules was populated from an
+// older lockfile; reaching the network from a test would violate hermeticity.
 function ensureVitestInstalled() {
   const vitestPackageJson = join(testNodeModules, "vitest", "package.json");
   const coverageV8 = join(testNodeModules, "@vitest", "coverage-v8", "package.json");
@@ -21,10 +21,10 @@ function ensureVitestInstalled() {
     ? JSON.parse(readFileSync(vitestPackageJson, "utf8")).version
     : undefined;
   if (installed === expectedVitestVersion && existsSync(coverageV8)) return;
-  const result = spawnSync(bunExe(), ["install", "--frozen-lockfile"], { cwd: testRoot, env: bunEnv, stdio: "pipe" });
-  if (result.status !== 0) {
-    throw new Error(`bun install in test/ failed: ${result.stderr?.toString()}`);
-  }
+  throw new Error(
+    `test/node_modules has vitest ${installed ?? "<missing>"} but test/package.json requires ${expectedVitestVersion}. ` +
+      `Run 'bun install' in test/ before running this test.`,
+  );
 }
 ensureVitestInstalled();
 

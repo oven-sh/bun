@@ -117,7 +117,7 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
     let unrolled = text.len() - (text.len() % SCAN_BIG_CHUNK_SIZE);
     let (chunks, remain) = text.split_at(unrolled);
 
-    for chunk in chunks.chunks_exact(SCAN_BIG_CHUNK_SIZE) {
+    for chunk in chunks.as_chunks::<SCAN_BIG_CHUNK_SIZE>().0 {
         // PERF: candidate for unrolling — profile
         for i in 0..SCAN_BIG_CHUNK_SIZE {
             deltas[chunk[i] as usize] += delta;

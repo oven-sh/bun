@@ -61,6 +61,7 @@ import {
   isMacOS,
   isWindows,
   isX64,
+  markBuildkiteStepReported,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -698,6 +699,7 @@ async function runTests() {
     }
 
     if (options["bail"]) {
+      markBuildkiteStepReported();
       process.exit(getExitCode("fail"));
     }
 
@@ -1371,6 +1373,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     TMPDIR: tmpdirPath,
     BUN_TMPDIR: tmpdirPath,
     USER: username,
+    USERNAME: isWindows ? username : undefined, // %USERNAME% for ported Windows tests
     HOME: homedir,
     SHELL: shellPath,
     FORCE_COLOR: "1",
@@ -1793,10 +1796,16 @@ function parseTestStdout(stdout, testPath) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunInstall(execPath, options) {
+  // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
+  // are hermetic. This function only runs the runner's own dependency setup
+  // (root, test/, vendor), which should hit the image's baked cache when one
+  // exists (bootstrap.{sh,ps1} set BUN_INSTALL_CACHE_DIR machine-wide).
+  const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
+    env: { ...options.env, ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }) },
   });
   if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);
@@ -2146,10 +2155,16 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     try {
       const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
       const step = options["step"] || "";
-      const lane = step.includes("asan") ? "asan" : isWindows || step.includes("windows") ? "windows" : "default";
+      const lane = step.includes("asan")
+        ? "asan"
+        : step.includes("musl")
+          ? "musl"
+          : isWindows || step.includes("windows")
+            ? "windows"
+            : "default";
       for (const [path, entry] of Object.entries(raw)) {
         if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.windows;
+        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
         if (typeof ms === "number") durations[path] = ms;
       }
     } catch (e) {
@@ -2648,6 +2663,7 @@ function isAlwaysFailure(error) {
 function onExit(signal) {
   const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
   startGroup(label, () => {
+    markBuildkiteStepReported();
     process.exit(getExitCode("cancel"));
   });
 }
@@ -3002,6 +3018,7 @@ export async function main() {
     await new Promise(resolve => setTimeout(resolve, 60_000));
   }
 
+  markBuildkiteStepReported();
   process.exit(getExitCode(ok ? "pass" : "fail"));
 }
 

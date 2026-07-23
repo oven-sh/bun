@@ -57,12 +57,6 @@ impl Scripts {
         ]
     }
 
-    /// Alias of [`hooks`].
-    #[inline]
-    pub fn iter_all(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
-        self.hooks()
-    }
-
     #[inline]
     pub fn hooks_mut(&mut self) -> [&mut SemverString; SCRIPT_NAMES_LEN] {
         [
@@ -468,9 +462,7 @@ impl List {
     }
 
     pub fn first(&self) -> &[u8] {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.items[self.first_index as usize].is_some());
-        }
+        debug_assert!(self.items[self.first_index as usize].is_some());
         self.items[self.first_index as usize].as_ref().unwrap()
     }
 

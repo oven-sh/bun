@@ -6,59 +6,32 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_jsc::{
-    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
-    MarkedArgumentBuffer, PlatformEventLoop,
-};
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
-// `VirtualMachine`/`MiniEventLoop` are re-exported as *modules* by bun_jsc; pull the inner types.
 use bun_core::strings;
 use bun_core::{OwnedString, String as BunString, ZStr};
-use bun_jsc::MiniEventLoop::MiniEventLoop;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::StringJsc as _;
+use bun_jsc::{
+    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
+    MarkedArgumentBuffer,
+};
 use bun_simdutf_sys::simdutf;
-use bun_sys::{self as sys, Fd, SystemError};
+use bun_sys::{self as sys, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 
 pub use super::interpreter as interpret;
 pub use super::subproc; // declared once in `shell/mod.rs`
 
-pub use super::{EnvMap, EnvStr, ParsedShellScript};
-pub use interpret::{ExitCode, Interpreter, unreachable_state};
-pub use interpret::{IOReader, IOWriter};
-pub use subproc::ShellSubprocess as Subprocess;
-
-pub use super::yield_;
-pub use yield_::Yield;
-
 // ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
 // The encoding-agnostic lex/parse/AST surface lives in the lower-tier
 // `bun_shell_parser` crate so `Interpreter::parse` can compile without the
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
-pub use bun_shell_parser::parse::ast as AST;
 pub use bun_shell_parser::parse::{
-    BACKSLASHABLE_CHARS, BacktrackSnapshot, CharState, EscapeUtf16Result, IfClauseTok, InputChar,
-    JSValueRaw, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexError, LexResult, Lexer, LexerAscii,
-    LexerError, LexerUnicode, ParseError, Parser, ParserError, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
-    ShellCharIter, SmolList, Src, SrcAscii, SrcUnicode, StringEncoding, SubShellKind, SubshellKind,
-    TextRange, Token, TokenTag, assert_special_char, ast, escape_8bit, escape_bun_str,
-    escape_utf16, has_eq_sign, is_if_clause_keyword_bunstr, is_valid_var_name, needs_escape_bunstr,
-    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
+    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexerAscii, LexerUnicode, ParseError,
+    Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
+    needs_escape_utf8_ascii_latin1,
 };
 
-// Glob walker configured for SyscallAccessor + sentinel (NUL-terminated) paths.
-pub type GlobWalker = bun_glob::BunGlobWalkerZ;
-
-pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
-
-/// Using these instead of the file descriptor decl literals to make sure we use LibUV fds on Windows
-pub const STDIN_FD: Fd = Fd::from_uv(0);
-pub const STDOUT_FD: Fd = Fd::from_uv(1);
-pub const STDERR_FD: Fd = Fd::from_uv(2);
-
-pub const POSIX_DEV_NULL: &ZStr = bun_core::zstr!("/dev/null");
 pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 
 // ───────────────────────────── ShellErr ─────────────────────────────
@@ -169,338 +142,6 @@ impl fmt::Display for ShellErr {
 // `throw_mini` / `deinit` taking `self` by value; the `Box<[u8]>` payloads free
 // on ordinary drop, and `.sys` is released exactly once on whichever consume
 // path runs.
-
-// ───────────────────────────── Result ─────────────────────────────
-
-pub enum ShellResult<T> {
-    Result(T),
-    Err(Box<ShellErr>),
-}
-
-impl<T: Default> ShellResult<T> {
-    pub fn success() -> Self {
-        // PORTING.md forbids zeroed::<T>() for generic T
-        // (no #[repr(C)] POD guarantee, may contain NonNull/NonZero/enum). Default is the safe
-        // mapping; dropped `const` since Default::default is not const-callable on generic T.
-        ShellResult::Result(T::default())
-    }
-}
-
-impl<T> ShellResult<T> {
-    pub fn as_err(self) -> Option<ShellErr> {
-        match self {
-            ShellResult::Err(e) => Some(*e),
-            ShellResult::Result(_) => None,
-        }
-    }
-}
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ShellError {
-    #[error("Init")]
-    Init,
-    #[error("Process")]
-    Process,
-    #[error("GlobalThisThrown")]
-    GlobalThisThrown,
-    #[error("Spawn")]
-    Spawn,
-}
-
-/// `[0]` => read end, `[1]` => write end
-pub type Pipe = [Fd; 2];
-
-bun_core::define_scoped_log!(log, SHELL, hidden);
-
-// ───────────────────────────── GlobalJS ─────────────────────────────
-
-#[derive(Clone, Copy)]
-pub struct GlobalJS<'a> {
-    pub global_this: &'a JSGlobalObject,
-}
-
-impl<'a> GlobalJS<'a> {
-    #[inline]
-    pub fn init(g: &'a JSGlobalObject) -> Self {
-        Self { global_this: g }
-    }
-
-    #[inline]
-    pub fn event_loop_ctx(self) -> &'a VirtualMachine {
-        // SAFETY: `bun_vm()` is non-null for a Bun-owned global; lifetime tied to 'a.
-        self.global_this.bun_vm()
-    }
-
-    #[inline]
-    pub fn throw_invalid_arguments(self, args: fmt::Arguments<'_>) -> ShellErr {
-        let mut v = Vec::new();
-        write!(&mut v, "{}", args).expect("infallible: in-memory write");
-        ShellErr::InvalidArguments {
-            val: v.into_boxed_slice(),
-        }
-    }
-
-    #[inline]
-    pub fn throw_todo(self, msg: &[u8]) -> ShellErr {
-        ShellErr::Todo(Box::<[u8]>::from(msg))
-    }
-
-    #[inline]
-    pub fn throw_error(self, err: &sys::Error) {
-        self.global_this.throw_value(err.to_js(self.global_this));
-    }
-
-    #[inline]
-    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
-        let mut v = Vec::new();
-        write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
-        ShellErr::Custom(v.into_boxed_slice())
-    }
-
-    #[inline]
-    pub fn throw(self, args: fmt::Arguments<'_>) -> ShellErr {
-        let mut v = Vec::new();
-        write!(&mut v, "{}", args).expect("infallible: in-memory write");
-        ShellErr::Custom(v.into_boxed_slice())
-    }
-
-    #[inline]
-    pub fn create_null_delimited_env_map(
-        self,
-    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
-        // long-lived `*mut Loader` owned by the VM.
-        unsafe {
-            (*self.global_this.bun_vm().as_mut().transpiler.env)
-                .map
-                .create_null_delimited_env_map()
-        }
-    }
-
-    #[inline]
-    pub fn enqueue_task_concurrent_wait_pid<T: bun_event_loop::Taskable>(self, task: *mut T) {
-        // SAFETY: bun_vm_concurrently() returns a valid &VirtualMachine; we need &mut for the
-        // intrusive concurrent queue push (which is itself thread-safe). The VM outlives the call.
-        let vm = self
-            .global_this
-            .bun_vm_concurrently()
-            .cast_const()
-            .cast_mut();
-        let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
-        // SAFETY: see above — `vm` is a live VM pointer.
-        unsafe { &mut *vm }.enqueue_task_concurrent(concurrent);
-    }
-
-    #[inline]
-    pub fn top_level_dir(self) -> &'a [u8] {
-        bun_resolver::fs::FileSystem::get().top_level_dir
-    }
-
-    #[inline]
-    pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        // `env_loader()` returns `&'static Loader<'static>`; `'static` widens to `'a`.
-        self.global_this.bun_vm().as_mut().env_loader()
-    }
-
-    #[inline]
-    pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        let vm = self.event_loop_ctx();
-        #[cfg(windows)]
-        // SAFETY: uv_loop() returns the live libuv loop owned by the VM; lifetime tied to 'a.
-        unsafe {
-            return &*vm.uv_loop();
-        }
-        #[cfg(not(windows))]
-        // SAFETY: `event_loop_handle` is set during VM init and never freed before the VM.
-        unsafe {
-            &*vm.event_loop_handle.expect("event_loop_handle is null")
-        }
-    }
-
-    #[inline]
-    pub fn actually_throw(self, shellerr: ShellErr) {
-        let _ = shellerr.throw_js(self.global_this);
-    }
-}
-
-// ───────────────────────────── GlobalMini ─────────────────────────────
-
-#[derive(Clone, Copy)]
-pub struct GlobalMini<'a> {
-    pub mini: &'a MiniEventLoop<'a>,
-}
-
-impl<'a> GlobalMini<'a> {
-    #[inline]
-    pub fn init(g: &'a MiniEventLoop<'a>) -> Self {
-        Self { mini: g }
-    }
-
-    #[inline]
-    pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the
-        // loop (see `MiniEventLoop::env_ptr` invariant). Caller must not hold the
-        // returned `&Loader` across a path that takes `&mut Loader` from the same
-        // allocation (e.g. `create_null_delimited_env_map`); current callers scope
-        // it to read-only env-var lookups.
-        unsafe { self.mini.env_ptr().unwrap().as_ref() }
-    }
-
-    #[inline]
-    pub fn event_loop_ctx(self) -> &'a MiniEventLoop<'a> {
-        self.mini
-    }
-
-    #[inline]
-    pub fn throw_todo(self, msg: &[u8]) -> ShellErr {
-        ShellErr::Todo(Box::<[u8]>::from(msg))
-    }
-
-    #[inline]
-    pub fn throw_invalid_arguments(self, args: fmt::Arguments<'_>) -> ShellErr {
-        let mut v = Vec::new();
-        write!(&mut v, "{}", args).expect("infallible: in-memory write");
-        ShellErr::InvalidArguments {
-            val: v.into_boxed_slice(),
-        }
-    }
-
-    #[inline]
-    pub fn handle_error(self, err: &crate::Error, suffix: &str) -> ShellErr {
-        let mut v = Vec::new();
-        write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
-        ShellErr::Custom(v.into_boxed_slice())
-    }
-
-    #[inline]
-    pub fn create_null_delimited_env_map(
-        self,
-    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
-        // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
-        unsafe { self.mini.env.unwrap().as_mut() }
-            .map
-            .create_null_delimited_env_map()
-    }
-
-    #[inline]
-    pub fn enqueue_task_concurrent_wait_pid<T: 'static>(
-        self,
-        task: *mut T,
-        // Callers pass `T::run_from_main_thread_mini` explicitly (see
-        // `AnyTaskWithExtraContext::from`).
-        run_from_main_thread_mini: fn(*mut T, *mut ()),
-    ) {
-        use bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-        let anytask = bun_core::heap::into_raw(Box::new(AnyTaskWithExtraContext::default()));
-        // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
-        unsafe { (*anytask).from(task, run_from_main_thread_mini) };
-        // SAFETY: `mini` is a long-lived loop; `anytask` was just heap-allocated
-        // (non-null); the concurrent queue is thread-safe.
-        unsafe {
-            (*(std::ptr::from_ref::<MiniEventLoop<'a>>(self.mini) as *mut MiniEventLoop<'a>))
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(anytask))
-        };
-    }
-
-    #[inline]
-    pub fn top_level_dir(self) -> &'a [u8] {
-        &self.mini.top_level_dir
-    }
-
-    #[inline]
-    pub fn throw(self, args: fmt::Arguments<'_>) -> ShellErr {
-        let mut v = Vec::new();
-        write!(&mut v, "{}", args).expect("infallible: in-memory write");
-        ShellErr::Custom(v.into_boxed_slice())
-    }
-
-    #[inline]
-    pub fn actually_throw(self, shellerr: ShellErr) {
-        shellerr.throw_mini();
-    }
-
-    #[inline]
-    pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        #[cfg(windows)]
-        // SAFETY: see `MiniEventLoop::loop_ptr()` invariant; `uv_loop` is its
-        // embedded libuv loop, set once by `us_create_loop` and immutable.
-        unsafe {
-            return &*(*self.mini.loop_ptr()).uv_loop;
-        }
-        #[cfg(not(windows))]
-        // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
-        unsafe {
-            &*self.mini.loop_ptr()
-        }
-    }
-}
-
-// ───────────────────────────── CmdEnvIter ─────────────────────────────
-
-pub struct CmdEnvIter<'a> {
-    pub env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>,
-    pub iter: bun_collections::array_hash_map::Iter<'a, Box<[u8]>, Box<ZStr>>,
-}
-
-pub struct CmdEnvEntry<'a> {
-    pub key: CmdEnvKey<'a>,
-    pub value: CmdEnvValue<'a>,
-}
-
-pub struct CmdEnvValue<'a> {
-    pub val: &'a ZStr,
-}
-
-impl fmt::Display for CmdEnvValue<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // BStr already implements Display over raw bytes (no heap alloc, no lossy UTF-8 round-trip).
-        write!(f, "{}", bstr::BStr::new(self.val.as_bytes()))
-    }
-}
-
-pub struct CmdEnvKey<'a> {
-    pub val: &'a [u8],
-}
-
-impl fmt::Display for CmdEnvKey<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", bstr::BStr::new(self.val))
-    }
-}
-
-impl CmdEnvKey<'_> {
-    pub fn eql_comptime(&self, str: &'static [u8]) -> bool {
-        self.val == str
-    }
-}
-
-impl<'a> CmdEnvIter<'a> {
-    pub fn from_env(env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
-        // Note: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
-        // struct can hold both the map ref and the iterator.
-        let env_ptr: *mut _ = env;
-        // SAFETY: `env` outlives `'a` and is not mutated through `self.env` while `iter`
-        // walks the backing arrays.
-        let iter = unsafe { (*env_ptr).iterator() };
-        Self { env, iter }
-    }
-
-    pub fn len(&self) -> usize {
-        self.env.len()
-    }
-
-    pub fn next(&mut self) -> Option<CmdEnvEntry<'a>> {
-        let entry = self.iter.next()?;
-        Some(CmdEnvEntry {
-            key: CmdEnvKey {
-                val: &**entry.key_ptr,
-            },
-            value: CmdEnvValue {
-                val: &**entry.value_ptr,
-            },
-        })
-    }
-}
 
 // ───────────────────────────── Test ─────────────────────────────
 
@@ -662,7 +303,6 @@ pub mod test {
         Fmt(tokens)
     }
 }
-pub use test as Test;
 
 // ───────────────────────────── JS bridge ─────────────────────────────
 
@@ -1172,7 +812,7 @@ pub mod testing_apis {
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);
-            return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+            return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
         }
 
         let mut test_tokens: Vec<test::TestToken> = Vec::with_capacity(lex_result.tokens.len());
@@ -1248,12 +888,12 @@ pub mod testing_apis {
                 // `out_lex_result` is populated by `parse()` only on lex errors.
                 if let Some(lex) = out_lex_result.as_ref() {
                     let str = lex.combine_errors(&arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));
@@ -1269,9 +909,6 @@ pub mod testing_apis {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }
 }
-pub use testing_apis as TestingAPIs;
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the codegen splits on capitalisation runs).
 pub use testing_apis as testing_ap_is;
-
-pub use subproc::ShellSubprocess;

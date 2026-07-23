@@ -309,7 +309,7 @@ it("import override to bun", async () => {
   expect(await import("#bun")).toBeDefined();
 });
 
-it.todo("import override to bun:test", async () => {
+it("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
 });
@@ -586,6 +586,63 @@ describe("wildcard exports with @ in matched subpath", () => {
     expect(Bun.resolveSync("@my/pkg@1.0.0/sub/index.js", root)).toBe(
       join(root, "node_modules/@my/pkg/dist/sub/index.js"),
     );
+  });
+});
+
+describe("package.json exports target percent-encoding", () => {
+  // ESModule.finalize short-circuits when the resolved path contains no '%'.
+  // These cases exercise both that branch and the decode branch to keep them in lockstep.
+  const resolveError = (spec: string, root: string) => {
+    try {
+      return { resolved: Bun.resolveSync(spec, root) };
+    } catch (e: any) {
+      return { name: e.name, code: e.code };
+    }
+  };
+
+  it.concurrent("resolves a plain target and rejects a directory target", () => {
+    using dir = tempDir("resolver-exports-finalize-plain", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./ok": "./lib/ok.js", "./dir": "./lib/" },
+      }),
+      "node_modules/test-pkg/lib/ok.js": "module.exports = 1;",
+      "node_modules/test-pkg/lib/index.js": "module.exports = 2;",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/ok", root)).toBe(join(root, "node_modules/test-pkg/lib/ok.js"));
+    // lib/index.js exists; rejection must come from the directory-target check, not a missing file.
+    expect(resolveError("test-pkg/dir", root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+  });
+
+  it.concurrent("decodes a percent-encoded target and rejects encoded path separators", () => {
+    using dir = tempDir("resolver-exports-finalize-percent", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: {
+          "./space": "./lib/with%20space.js",
+          "./sep-2f": "./lib%2ffile.js",
+          "./sep-2F": "./lib%2Ffile.js",
+          "./sep-5c": "./lib%5cfile.js",
+          "./sep-5C": "./lib%5Cfile.js",
+          "./bad": "./lib/%%.js",
+        },
+      }),
+      "node_modules/test-pkg/lib/with space.js": "module.exports = 1;",
+      // lib/file.js exists; rejection must come from the encoded-separator check, not a missing file.
+      "node_modules/test-pkg/lib/file.js": "module.exports = 2;",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/space", root)).toBe(join(root, "node_modules/test-pkg/lib/with space.js"));
+    for (const sub of ["sep-2f", "sep-2F", "sep-5c", "sep-5C", "bad"]) {
+      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+    }
   });
 });
 

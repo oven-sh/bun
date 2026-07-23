@@ -302,13 +302,6 @@ impl<'a> AnsiRenderer<'a> {
         r
     }
 
-    pub fn to_owned_slice(&mut self) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-        if self.out.oom {
-            return Err(bun_alloc::AllocError);
-        }
-        Ok(core::mem::take(&mut self.out.list).into_boxed_slice())
-    }
-
     pub fn renderer(&mut self) -> Renderer<'_> {
         Renderer { ptr: self }
     }

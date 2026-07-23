@@ -25,19 +25,6 @@ use super::{FetchHeaders, ReadableStream, Request};
 pub use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
-// C++ helper functions for AsyncLocalStorage integration
-unsafe extern "C" {
-    pub safe fn Response__getAsyncLocalStorageStore(
-        global: &JSGlobalObject,
-        als: JSValue,
-    ) -> JSValue;
-    pub safe fn Response__mergeAsyncLocalStorageOptions(
-        global: &JSGlobalObject,
-        als_store: JSValue,
-        init_options: JSValue,
-    );
-}
-
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
 ///
 /// Holds exactly one ref on the C++ intrusive refcount; `Drop` releases it via
@@ -566,10 +553,6 @@ impl Response {
 
 // ─── getters & header helpers ───────────────────────────────────────────────
 impl Response {
-    pub fn redirect_location(&self) -> Option<ZigString> {
-        self.header(HTTPHeaderName::Location)
-    }
-
     pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
         // reshaped for borrowck — `FetchHeaders::fast_get` takes
         // `&mut self` (FFI writes through an out-param), so we return the
@@ -1453,26 +1436,6 @@ impl Init {
 
         Ok(Some(result))
     }
-}
-
-pub fn status_404(global_this: &JSGlobalObject) -> *mut Response {
-    empty_with_status(global_this, 404)
-}
-
-pub fn status_200(global_this: &JSGlobalObject) -> *mut Response {
-    empty_with_status(global_this, 200)
-}
-
-#[inline]
-fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
-    bun_core::heap::into_raw(Box::new(Response {
-        body: JsCell::new(Body::new(BodyValue::Null)),
-        init: JsCell::new(Init {
-            status_code: status,
-            ..Default::default()
-        }),
-        ..Default::default()
-    }))
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers

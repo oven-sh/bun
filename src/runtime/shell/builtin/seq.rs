@@ -23,7 +23,6 @@ pub struct Seq {
     /// argv outlives the builtin — `RawSlice` invariant.
     separator: bun_ptr::RawSlice<u8>,
     terminator: bun_ptr::RawSlice<u8>,
-    fixed_width: bool,
 }
 
 impl Default for Seq {
@@ -36,7 +35,6 @@ impl Default for Seq {
             increment: 1.0,
             separator: bun_ptr::RawSlice::new(b"\n"),
             terminator: bun_ptr::RawSlice::EMPTY,
-            fixed_width: false,
         }
     }
 }
@@ -85,7 +83,6 @@ impl Seq {
                 continue;
             }
             if arg == b"-w" || arg == b"--fixed-width" {
-                Self::state_mut(interp, cmd).fixed_width = true;
                 idx += 1;
                 continue;
             }

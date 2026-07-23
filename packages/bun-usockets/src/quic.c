@@ -495,6 +495,9 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     ctx->loop->num_polls++;
 #endif
     ctx->conn_count++;
+    /* Arm the sweep-timer refcount so DateHeaderTimer runs for h3-only
+     * servers; the TCP path does this per-socket in context.c. */
+    us_internal_enable_sweep_timer(ctx->loop);
     qs->next = ctx->conns;
     ctx->conns = qs;
     if (ctx->on_open) ctx->on_open(qs);
@@ -516,6 +519,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     ctx->loop->num_polls--;
 #endif
     ctx->conn_count--;
+    us_internal_disable_sweep_timer(ctx->loop);
     /* During graceful drain the UDP fd is the only thing left holding the
      * loop; release it when the last conn closes so the process can exit. */
     if (ctx->closing && ctx->conn_count == 0) {

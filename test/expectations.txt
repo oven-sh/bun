@@ -62,26 +62,13 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 # test-http-max-http-headers.js is vendored.
 test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns test-http-max-http-headers.js which is not vendored
 
-# Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
-# the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
-# swallowed by the silent-exit-0 eval bug (uncaught throw in a CJS -e script
-# exited 0 with empty stderr), so this test false-passed everywhere - the
-# same ~14KB-per-watch growth (~70MB over 5000 iterations) reproduces on
-# unmodified main once the error actually surfaces. Needs a PathWatcher
-# investigation; the #29854 resolved_path fix covers only the ~path-length
-# portion.
-[ DARWIN ] test/js/node/watch/fs.watch.test.ts [ FAIL ] # pre-existing leak, false-positive pass before the eval exception fix
-
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
-[ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
-[ ASAN ] test/js/node/worker_threads/worker_destruction.test.ts [ CRASH ] # After: bun closes cleanly when Bun.connect is used in a Worker that is terminating
 [ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ CRASH ]
 [ ASAN ] test/integration/next-pages/test/next-build.test.ts [ CRASH ]
 [ ASAN ] test/js/third_party/next-auth/next-auth.test.ts [ CRASH ]
-[ ASAN ] test/js/node/watch/fs.watch.test.ts [ CRASH ]
 
 # Tests failed due to ASAN: SEGV on unknown address
 [ ASAN ] test/integration/next-pages/test/dev-server.test.ts [ CRASH ]
@@ -105,11 +92,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts [ CRASH ] # #34690: ExceptionScope::assertNoException during worker terminate bootstrap
 
 # Tests failed due to ASAN: use-after-poison
-[ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
-[ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
-[ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ CRASH ]
-[ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
 
 # Tests failed due to ASAN: unknown-crash
 [ ASAN ] test/js/sql/tls-sql.test.ts [ CRASH ] # After: Throws on illegal transactions
@@ -117,16 +100,12 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests timed out due to ASAN
 [ ASAN ] test/js/bun/spawn/spawn.test.ts [ TIMEOUT ]
 [ ASAN ] test/cli/inspect/inspect.test.ts [ TIMEOUT ]
-[ ASAN ] test/cli/test/parallel.test.ts [ TIMEOUT ] # 24 spawns × N workers each × LSAN exit overhead
-[ ASAN ] test/cli/test/isolation.test.ts [ TIMEOUT ] # 14 spawns × LSAN exit overhead
-[ ASAN ] test/js/bun/typescript/type-export.test.ts [ TIMEOUT ] # bun build --compile is slow under ASAN
 
 # Tests failed due to memory leaks
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
 [ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ LEAK ] # should not leak memory with already aborted signals
 [ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
-[ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
 
 # Windows-only gaps in named-pipe / socket teardown for ported Node net tests
 # (these pass on Linux and macOS): half-close (FIN) handling on named pipes,
@@ -143,10 +122,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # server.close() (via `await using`) waits forever. The assertion itself passes;
 # only the teardown hangs. Passes on Linux and macOS.
 
-# The 10 MB socket write in this test is an order of magnitude slower under
-# AddressSanitizer and exceeds the per-test timeout; it passes on regular builds.
-[ ASAN ] test/js/node/test/parallel/test-net-error-twice.js [ SKIP ] # ASAN-instrumented 10 MB write exceeds the timeout
-
 # The localAddress/localPort bind-before-connect and the SO_ERROR read on a
 # connecting socket that was reset during establishment are implemented in the
 # POSIX (kqueue/epoll + BSD socket) connect path; Windows connects through
@@ -158,23 +133,4 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # primary distributing accepted connections; the upstream test's expectations
 # only hold on the distributing model. Passes on macOS, Windows and FreeBSD.
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
-
-# Pre-existing on main (flagged [pre-existing] by ci:errors, e.g. build 61989 on
-# darwin-14-aarch64 and build 62204 on darwin-26-aarch64, both at the
-# `expect(e.name).toBe("TimeoutError")` assertions). The two connect-race cases
-# assume connect() to TEST-NET-1 (192.0.2.1) stays in EINPROGRESS so the
-# AbortSignal.timeout wins; that only holds when the host has a default route that
-# silently blackholes the SYN. The darwin CI agents have no route to 192.0.2.1 and
-# return an immediate ENETUNREACH/EHOSTUNREACH, so the connect error wins the race
-# and fetch rejects with a generic "Error" instead of "TimeoutError" (verified: a
-# fast-failing connect to 127.0.0.1:1 reproduces the same connect-error-beats-timeout
-# outcome locally — correct behavior, not a bun abort bug). Consistently fails on
-# darwin-26 (no route), intermittently on darwin-14 (routing varies per agent).
-# Quarantined on darwin; still runs on Linux/Windows where the route blackholes
-# reliably. Follow-up: rewrite without the external-IP dependence (repo rule forbids
-# contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
-
-
-# node:http servers cannot listen on Windows named pipes yet (ENOENT from
-# uv_pipe bind), so common.PIPE-based http tests cannot run there.

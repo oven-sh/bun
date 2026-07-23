@@ -1117,7 +1117,6 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 // via `UnsafeCell`); `ZigException` is a `#[repr(C)]` out-param the C++ side
 // reads/fills in-place.
 unsafe extern "C" {
-    safe fn Bun__LifecycleAgentReportReload(agent: &mut LifecycleHandle);
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
         exception: &mut ZigException,
@@ -1125,11 +1124,6 @@ unsafe extern "C" {
 }
 
 impl LifecycleHandle {
-    pub fn report_reload(&mut self) {
-        bun_core::scoped_log!(LifecycleAgent, "reportReload");
-        Bun__LifecycleAgentReportReload(self)
-    }
-
     pub fn report_error(&mut self, exception: &mut ZigException) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)

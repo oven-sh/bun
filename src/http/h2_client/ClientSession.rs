@@ -63,6 +63,12 @@ pub struct ClientSession {
     pub read_buffer: Vec<u8>,
 
     pub streams: ArrayHashMap<u31, *mut Stream>,
+    /// Secondary index over `streams` keyed by the owning client's
+    /// `async_http_id`, so the per-chunk wakeups from the JS thread
+    /// (`stream_body_by_http_id` / `resume_receive_by_http_id` /
+    /// `drain_response_body_by_http_id` / `abort_by_http_id`) resolve in O(1)
+    /// instead of scanning every live stream on the session.
+    pub by_http_id: ArrayHashMap<u32, *mut Stream>,
     pub next_stream_id: u31,
     /// Stream id whose CONTINUATION sequence is in progress; 0 = none.
     pub expecting_continuation: u31,
@@ -243,6 +249,7 @@ impl ClientSession {
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
+            by_http_id: ArrayHashMap::default(),
             next_stream_id: 1,
             expecting_continuation: 0,
             pending_attach: Vec::new(),
@@ -400,8 +407,17 @@ impl ClientSession {
 
         let send_window = i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE))
             .expect("int cast");
+        // Only clients with an abort-signal store are ever looked up by id
+        // (the HTTP-thread wake paths key off `abort_tracker()`); mirror that
+        // gate so unsignaled callers sharing the `0` sentinel never collide.
+        let async_http_id = client
+            .signals
+            .aborted
+            .is_some()
+            .then_some(client.async_http_id);
         let stream = bun_core::heap::into_raw(Stream::new(
             self.next_stream_id,
+            async_http_id,
             std::ptr::from_mut(self),
             Some(client.as_erased_ptr()),
             send_window,
@@ -410,6 +426,9 @@ impl ClientSession {
         self.next_stream_id = self.next_stream_id.saturating_add(2);
         let stream_ref = stream_mut(stream);
         let _ = self.streams.put(stream_ref.id, stream);
+        if let Some(id) = async_http_id {
+            let _ = self.by_http_id.put(id, stream);
+        }
         client.h2 = NonNull::new(stream);
         client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
@@ -422,8 +441,7 @@ impl ClientSession {
         // DATA-frame encoding may yield mid-body — compress into the Vec so the
         // cursor stays valid across event-loop ticks.
         if let Err(e) = client.compress_body_for_send(false) {
-            self.streams.swap_remove(&stream_ref.id);
-            drop_stream(stream);
+            self.remove_stream(stream);
             client.h2 = None;
             client.fail(e);
             return;
@@ -437,8 +455,7 @@ impl ClientSession {
             // never opened (RST on an idle stream is a connection error per
             // RFC 9113 §5.1).
             self.encoder_poisoned = true;
-            self.streams.swap_remove(&stream_ref.id);
-            drop_stream(stream);
+            self.remove_stream(stream);
             client.h2 = None;
             client.h2_fail(err);
             // The poisoned session is dead for new work; bounce any waiters
@@ -492,6 +509,9 @@ impl ClientSession {
             self.orphan_header_block = core::mem::take(&mut s.header_block);
         }
         self.streams.swap_remove(&s.id);
+        if let Some(id) = s.async_http_id {
+            self.by_http_id.swap_remove(&id);
+        }
         drop_stream(stream);
     }
 
@@ -549,31 +569,30 @@ impl ClientSession {
         self.socket.set_timeout(want);
     }
 
+    /// O(1) lookup in the `by_http_id` secondary index. Returns the raw
+    /// stream pointer (owned by `self.streams`) so callers can re-borrow
+    /// `&mut self` afterwards without an outstanding shared borrow.
+    #[inline]
+    fn stream_for_http_id(&self, async_http_id: u32) -> Option<*mut Stream> {
+        self.by_http_id.get(&async_http_id).copied()
+    }
+
     /// HTTP-thread wake-up from `scheduleResponseBodyDrain`: JS just enabled
     /// `response_body_streaming`, so flush any body bytes that arrived between
     /// metadata delivery and `getReader()`.
     pub fn drain_response_body_by_http_id(&mut self, async_http_id: u32) {
         let _guard = self.ref_scope();
-        for &stream in self.streams.values() {
-            let Some(client) = stream_mut(stream).client_mut() else {
-                continue;
-            };
-            if client.async_http_id != async_http_id {
-                continue;
-            }
-            client.h2_drain_response_body(self.socket);
+        let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
+        };
+        if let Some(client) = stream_mut(stream).client_mut() {
+            client.h2_drain_response_body(self.socket);
         }
     }
 
     pub fn resume_receive_by_http_id(&mut self, async_http_id: u32) {
         let _guard = self.ref_scope();
-        let found = self.streams.values().iter().any(|&s| {
-            stream_mut(s)
-                .client_ref()
-                .is_some_and(|c| c.async_http_id == async_http_id)
-        });
-        if !found {
+        if self.stream_for_http_id(async_http_id).is_none() {
             return;
         }
         self.replenish_window();
@@ -588,34 +607,22 @@ impl ClientSession {
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         let _guard = self.ref_scope();
-        // Collect the target stream ptr first so no borrow of `self.streams`
-        // is held while mutating `self` below.
-        let mut target: Option<*mut Stream> = None;
-        for &stream in self.streams.values() {
+        let Some(stream) = self.stream_for_http_id(async_http_id) else {
+            return;
+        };
+        {
             let Some(client) = stream_mut(stream).client_mut() else {
-                continue;
-            };
-            if client.async_http_id != async_http_id {
-                continue;
-            }
-            if !matches!(
-                client.state.original_request_body,
-                HTTPRequestBody::Stream(_)
-            ) {
                 return;
-            }
-            if let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body {
-                st.ended = ended;
-            }
-            target = Some(stream);
-            break;
+            };
+            let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body else {
+                return;
+            };
+            st.ended = ended;
         }
-        if let Some(stream) = target {
-            self.rearm_timeout();
-            encode::drain_send_body(self, stream_mut(stream), usize::MAX);
-            if let Err(err) = self.flush() {
-                self.fail_all(err);
-            }
+        self.rearm_timeout();
+        encode::drain_send_body(self, stream_mut(stream), usize::MAX);
+        if let Err(err) = self.flush() {
+            self.fail_all(err);
         }
     }
 
@@ -837,6 +844,7 @@ impl ClientSession {
             }
         }
         self.streams.clear_retaining_capacity();
+        self.by_http_id.clear_retaining_capacity();
         // SAFETY: `self: &mut Self` carries write provenance to the Box alloc.
         unsafe { ClientSession::deref(self) };
     }
@@ -876,19 +884,7 @@ impl ClientSession {
             self.maybe_release();
             return;
         }
-        // Find the target before detaching so no borrow of `self.streams` is
-        // held across the mutation.
-        let mut target: Option<*mut Stream> = None;
-        for &e in self.streams.values() {
-            if stream_ref(e)
-                .client_ref()
-                .is_some_and(|c| c.async_http_id == async_http_id)
-            {
-                target = Some(e);
-                break;
-            }
-        }
-        if let Some(stream) = target {
+        if let Some(stream) = self.stream_for_http_id(async_http_id) {
             self.detach_with_failure(stream, crate::Error::Aborted);
         }
         self.rearm_timeout();
@@ -1113,7 +1109,10 @@ impl ClientSession {
         if stream.remote_closed() {
             stream.client = None;
             client.h2 = None;
-            client.state.flags.received_last_chunk = true;
+            if let Err(err) = client.state.finalize_body_on_eof() {
+                client.h2_fail(err);
+                return true;
+            }
             return self.finish_stream(stream, client);
         }
 

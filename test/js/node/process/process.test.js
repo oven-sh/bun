@@ -2344,8 +2344,9 @@ describe("NODE_NO_WARNINGS", () => {
 
 it("getActiveResourcesInfo reports connecting sockets and pending dns lookups like node", async () => {
   // node v26.3.0:
-  //   - a socket with a pending SYN (TEST-NET-1 blackhole) reports
-  //     "TCPSocketWrap" immediately after connect() dispatch;
+  //   - a socket with a connect still in flight reports "TCPSocketWrap"
+  //     immediately after connect() dispatch (sampled synchronously, before
+  //     any routing outcome can arrive, so a closed local port works);
   //   - an in-flight dns.lookup reports "GetAddrInfoReqWrap" in
   //     getActiveResourcesInfo() and a wrap with that constructor name in
   //     _getActiveRequests(), and both disappear once the lookup settles.
@@ -2356,7 +2357,7 @@ it("getActiveResourcesInfo reports connecting sockets and pending dns lookups li
       `const net = require("net");
        const dns = require("dns");
        const out = {};
-       const socket = net.connect(80, "203.0.113.1");
+       const socket = net.connect(1, "127.0.0.1");
        socket.on("error", () => {});
        out.connecting = process.getActiveResourcesInfo().filter(x => x === "TCPSocketWrap").length;
        socket.destroy();

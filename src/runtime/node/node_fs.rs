@@ -1785,6 +1785,13 @@ mod _async_tasks {
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 return Ok(());
             }
+            // SAFETY: self was Box::leak'd in create*(); destroy() runs exactly once on
+            // scope exit — including the early-return reject arms below, which
+            // previously skipped the tail destroy and leaked the task (and left the
+            // PENDING_ASYNC_REQUESTS counter permanently high), like its AsyncFSTask
+            // sibling already guards against.
+            let _deinit =
+                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
             let go_ptr = self.evtloop.global_object();
             if go_ptr.is_null() {
                 panic!(
@@ -1795,9 +1802,10 @@ mod _async_tasks {
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
-            // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
-            // resolve/reject. The `JSPromise` itself lives on the JS heap
-            // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
+            // Captured as a raw pointer because the scope guard's `destroy(self)`
+            // drops the `Strong` wrapper at function exit. The `JSPromise` itself
+            // lives on the JS heap and is kept alive past that point by
+            // `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = match self.result.get_mut() {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
@@ -1824,10 +1832,8 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
-            // valid after `destroy` dropped only the `Strong` wrapper.
+            // SAFETY: `promise` points at a GC-rooted JS heap cell (see above); the
+            // scope guard's destroy at function exit drops only the `Strong` wrapper.
             let promise = unsafe { &mut *promise };
             if success {
                 promise.resolve(global_object, result)?;
@@ -2634,6 +2640,12 @@ mod _async_tasks {
         }
 
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
+            // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on
+            // scope exit — including the early-return reject arms below, which
+            // previously skipped the tail destroy and leaked the task (and left the
+            // PENDING_ASYNC_REQUESTS counter permanently high).
+            let _deinit =
+                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
             // NOTE: cannot route through `self.global_object()` here -- the returned
             // borrow would be tied to `&self` and conflict with the `&mut self.*`
             // field accesses below, and it must also stay valid past `Self::destroy`.
@@ -2643,8 +2655,9 @@ mod _async_tasks {
             let success = self.pending_err.is_none();
             let promise_value = self.promise.value();
             // Raw-pointer capture: see `AsyncCpTask::run_from_js_thread` for rationale —
-            // `Self::destroy` must run before resolve/reject, and the `JSPromise` cell
-            // outlives the `Strong` wrapper via `promise_value.ensure_still_alive()`.
+            // the guard's `Self::destroy` at scope exit drops only the `Strong`
+            // wrapper; the `JSPromise` cell outlives it via
+            // `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = if let Some(err) = &mut self.pending_err {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
@@ -2682,9 +2695,7 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
+            // SAFETY: GC-rooted JS heap cell, valid past the guard's destroy (see above).
             let promise = unsafe { &mut *promise };
             if success {
                 promise.resolve(global_object, result)?;

@@ -166,10 +166,7 @@ impl AnyEventLoop {
 // ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────
 // `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
 // these four methods. `AnyEventLoop` forwards through `from_any` instead of
-// duplicating each `match`. Bound to `'static` because `from_any` stores
-// `BackRef<MiniEventLoop>`; every concrete `AnyEventLoop`
-// instantiation in the tree is already `'static` (verified: install, patch,
-// build_command, ChangedFilesFilter, `js()`/`js_current()`).
+// duplicating each `match`.
 impl AnyEventLoop {
     #[inline]
     pub fn r#loop(&mut self) -> *mut UwsLoop {

@@ -75,6 +75,7 @@ pub struct MiniEventLoop {
     /// Mutable; callers (shell spawn,
     /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
+    /// mutable provenance.
     pub env: Option<NonNull<DotEnvLoader>>,
     // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,

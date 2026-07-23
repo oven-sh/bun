@@ -1319,9 +1319,9 @@ export { greeting };`,
 // tear down the arena-allocated `Transpiler` and AST allocator it created on
 // the way in. The arena bulk-free skips `Drop`, so without an explicit
 // `drop_in_place` on the error path every failed call leaks the transpiler's
-// owned options/resolver state. `new Bun.Transpiler` additionally used to
-// write the define-parse error to a stale stack `options.log` and leak the
-// `Msg`. The assertion compares leaked bytes between a 1-iteration and a
+// owned options/resolver state. `new Bun.Transpiler` additionally wrote the
+// define-parse error through a moved-from stack slot (`set_log` never reseated
+// `options.log`). The assertion compares leaked bytes between a 1-iteration and a
 // 21-iteration run so unrelated one-time at-exit allocations cancel out.
 test.skipIf(!isASAN)(
   "Bun.build / Bun.Transpiler configure_bundler error path does not leak the transpiler",

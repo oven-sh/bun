@@ -988,14 +988,6 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   terminate() {
-    // Temporary workaround for CTRL + C error appearing in next dev with turobpack
-    //
-    // > ⨯ unhandledRejection:  TypeError: undefined is not an object (evaluating 'this.#state')
-    // > at terminate (ws:611:30)
-    // > at Promise (null)
-    //
-    if (!this) return;
-
     let state = this.#state;
     if (state === ReadyState_CLOSED) return;
     if (state === ReadyState_CONNECTING) {

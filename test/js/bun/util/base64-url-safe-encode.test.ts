@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Scalar RFC 4648 §5 base64url reference (no padding), independent of any
 // native base64 implementation. `bun_base64::encode_url_safe` (simdutf's
@@ -69,6 +72,21 @@ describe("URL-safe base64 encoding", () => {
     for (const len of [32 * 1024, 32 * 1024 + 1, 32 * 1024 + 2]) {
       const bytes = fillDeterministic(new Uint8Array(len));
       expect(Buffer.from(bytes).toString("base64url")).toBe(base64UrlReference(bytes));
+    }
+  });
+
+  test("fs.readFileSync(path, 'base64url') matches Buffer.toString", () => {
+    // readFileSync goes through `to_bun_string_from_owned_slice` rather than
+    // Buffer.prototype.toString; the two must agree for every length.
+    using dir = tempDir("base64url-fs", {});
+    const path = join(String(dir), "bytes.bin");
+    const source = fillDeterministic(new Uint8Array(513));
+    for (const len of [0, 1, 2, 3, 4, 5, 6, 7, 8, 510, 511, 512, 513, 32 * 1024, 32 * 1024 + 1, 32 * 1024 + 2]) {
+      const bytes = len <= source.length ? source.subarray(0, len) : fillDeterministic(new Uint8Array(len));
+      writeFileSync(path, bytes);
+      const expected = base64UrlReference(bytes);
+      expect(readFileSync(path, "base64url")).toBe(expected);
+      expect(Buffer.from(bytes).toString("base64url")).toBe(expected);
     }
   });
 

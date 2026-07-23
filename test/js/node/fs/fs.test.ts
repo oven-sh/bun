@@ -14,7 +14,6 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
-import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
   constants,
@@ -1199,6 +1198,51 @@ describe("promises.readFile", async () => {
       "out": "asci",
     },
     {
+      "encoding": "base64",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [186, 215, 245, 232, 97, 200, 36],
+      },
+      "out": "utf16GHIJA==",
+    },
+    {
+      "encoding": "base64",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
+      "encoding": "base64url",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [106, 199, 34],
+      },
+      "out": "asci",
+    },
+    {
+      "encoding": "base64url",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [186, 215, 245, 232, 97, 200, 36],
+      },
+      "out": "utf16GHIJA",
+    },
+    {
+      "encoding": "base64url",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
       "encoding": "hex",
       "text": "ascii",
       "correct": {
@@ -1236,12 +1280,10 @@ describe("promises.readFile", async () => {
       "latin1",
       "binary",
       "base64",
-      /* TODO: "base64url", */ "hex",
+      "base64url",
+      "hex",
     ] as const) {
       for (let text of ["ascii", "utf16 🍇 🍈 🍉 🍊 🍋", "👍"]) {
-        if (encoding === "base64" && !isAscii(Buffer.from(text)))
-          // TODO: output does not match Node.js, and it's not a problem with readFile specifically.
-          continue;
         const correct = Buffer.from(text, encoding);
         const outfile = join(
           tmpdir(),

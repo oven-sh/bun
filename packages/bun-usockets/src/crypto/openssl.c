@@ -38,6 +38,7 @@ void *sni_find(void *sni, const char *hostname);
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/pkcs12.h>
+#include <openssl/pool.h>
 #elif LIBUS_USE_WOLFSSL
 #include <wolfssl/openssl/bio.h>
 #include <wolfssl/openssl/dh.h>
@@ -902,6 +903,256 @@ end:
   return ret;
 }
 
+/* ── multi-identity key/cert arrays ──────────────────────────────────────── */
+
+/* One (certificate chain, private key) identity parsed out of the array form
+ * of Node's `key`/`cert` options. `extra` holds the intermediates that
+ * followed the leaf in the same PEM document. */
+struct us_identity {
+  X509 *leaf;
+  STACK_OF(X509) *extra;
+  EVP_PKEY *key;
+};
+
+static void us_identities_free(struct us_identity *ids, unsigned int count) {
+  if (!ids) return;
+  for (unsigned int i = 0; i < count; i++) {
+    X509_free(ids[i].leaf);
+    sk_X509_pop_free(ids[i].extra, X509_free);
+    EVP_PKEY_free(ids[i].key);
+  }
+  us_free(ids);
+}
+
+/* Split one PEM document into its leaf certificate and the intermediates that
+ * follow it. Mirrors us_ssl_ctx_use_certificate_chain, but hands the chain
+ * back instead of writing it into the context's single legacy slot. */
+static int us_parse_cert_chain(SSL_CTX *ctx, const char *content, X509 **out_leaf,
+                               STACK_OF(X509) **out_extra) {
+  BIO *in = NULL;
+  X509 *leaf = NULL;
+  X509 *ca = NULL;
+  STACK_OF(X509) *extra = NULL;
+  uint32_t err;
+  int ok = 0;
+
+  *out_leaf = NULL;
+  *out_extra = NULL;
+  if (content == NULL) return 0;
+
+  in = BIO_new_mem_buf(content, strlen(content));
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    goto end;
+  }
+  leaf = PEM_read_bio_X509_AUX(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                               SSL_CTX_get_default_passwd_cb_userdata(ctx));
+  if (leaf == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
+    goto end;
+  }
+  extra = sk_X509_new_null();
+  if (extra == NULL) goto end;
+  while ((ca = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                 SSL_CTX_get_default_passwd_cb_userdata(ctx))) != NULL) {
+    if (!sk_X509_push(extra, ca)) goto end;
+    ca = NULL; /* `extra` owns it now */
+  }
+  err = ERR_peek_last_error();
+  if (ERR_GET_LIB(err) != ERR_LIB_PEM || ERR_GET_REASON(err) != PEM_R_NO_START_LINE) {
+    goto end;
+  }
+  ERR_clear_error();
+  ok = 1;
+
+end:
+  X509_free(ca);
+  BIO_free(in);
+  if (!ok) {
+    X509_free(leaf);
+    sk_X509_pop_free(extra, X509_free);
+    return 0;
+  }
+  *out_leaf = leaf;
+  *out_extra = extra;
+  return 1;
+}
+
+static int us_parse_privatekey(SSL_CTX *ctx, const char *content, EVP_PKEY **out_key) {
+  BIO *in;
+  EVP_PKEY *pkey;
+
+  *out_key = NULL;
+  if (content == NULL) return 0;
+  in = BIO_new_mem_buf(content, strlen(content));
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    return 0;
+  }
+  pkey = PEM_read_bio_PrivateKey(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                 SSL_CTX_get_default_passwd_cb_userdata(ctx));
+  BIO_free(in);
+  if (pkey == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
+    return 0;
+  }
+  *out_key = pkey;
+  return 1;
+}
+
+/* SSL_CREDENTIAL_set1_cert_chain takes CRYPTO_BUFFERs; i2d_X509 returns the
+ * certificate's cached DER, so the bytes on the wire are unchanged. */
+static CRYPTO_BUFFER *us_x509_to_buffer(X509 *x) {
+  uint8_t *der = NULL;
+  CRYPTO_BUFFER *buf;
+  int len = i2d_X509(x, &der);
+  if (len <= 0) return NULL;
+  buf = CRYPTO_BUFFER_new(der, (size_t)len, NULL);
+  OPENSSL_free(der);
+  return buf;
+}
+
+static int us_ctx_add_identity_credential(SSL_CTX *ctx, const struct us_identity *id) {
+  SSL_CREDENTIAL *cred = SSL_CREDENTIAL_new_x509();
+  size_t num_certs = 1 + (id->extra ? (size_t)sk_X509_num(id->extra) : 0);
+  CRYPTO_BUFFER **chain = NULL;
+  size_t filled = 0;
+  size_t i;
+  int ok = 0;
+
+  if (cred == NULL) goto end;
+  chain = (CRYPTO_BUFFER **)us_calloc(num_certs, sizeof(CRYPTO_BUFFER *));
+  if (chain == NULL) goto end;
+  for (i = 0; i < num_certs; i++) {
+    chain[i] = us_x509_to_buffer(i == 0 ? id->leaf : sk_X509_value(id->extra, i - 1));
+    if (chain[i] == NULL) goto end;
+    filled = i + 1;
+  }
+  /* Chain before key: SSL_CREDENTIAL_set1_private_key checks the key against
+   * the public half extracted from the leaf. */
+  if (!SSL_CREDENTIAL_set1_cert_chain(cred, chain, num_certs) ||
+      !SSL_CREDENTIAL_set1_private_key(cred, id->key) ||
+      !SSL_CTX_add1_credential(ctx, cred)) {
+    goto end;
+  }
+  ok = 1;
+
+end:
+  for (i = 0; i < filled; i++) CRYPTO_BUFFER_free(chain[i]);
+  us_free(chain);
+  SSL_CREDENTIAL_free(cred);
+  return ok;
+}
+
+/* BoringSSL serves the first credential in the list that the client can use,
+ * where OpenSSL ranks the installed identities by its signature-algorithm
+ * preference, which puts ECDSA and EdDSA ahead of RSA. Mirror that preference
+ * in the list order so a TLS 1.3 client is served the same leaf Node serves. */
+static int us_identity_rank(const struct us_identity *id) {
+  switch (EVP_PKEY_id(id->key)) {
+    case EVP_PKEY_EC:
+    case EVP_PKEY_ED25519:
+      return 0;
+    case EVP_PKEY_RSA:
+      return 1;
+    default:
+      return 2;
+  }
+}
+
+/* Install the legacy credential so SSL_CTX_get0_certificate/_privatekey/
+ * _chain_certs keep answering for this context (tlsSocket.setKeyCert() and
+ * ncrypto's X509View read them). It duplicates the already-preferred identity
+ * at the tail of the credential list, where it can never be reached first. */
+static int us_ctx_use_legacy_identity(SSL_CTX *ctx, const struct us_identity *id) {
+  size_t num_extra = id->extra ? sk_X509_num(id->extra) : 0;
+  if (!SSL_CTX_use_certificate(ctx, id->leaf)) return 0;
+  if (!SSL_CTX_clear_chain_certs(ctx)) return 0;
+  for (size_t i = 0; i < num_extra; i++) {
+    if (!SSL_CTX_add1_chain_cert(ctx, sk_X509_value(id->extra, i))) return 0;
+  }
+  return SSL_CTX_use_PrivateKey(ctx, id->key);
+}
+
+/* X509_check_private_key queues its own reason on each failed probe, so the
+ * first one usually explains the pairing failure. A leaf with no key left to
+ * probe against leaves the queue empty: say what went wrong. */
+static void us_put_pairing_error(void) {
+  if (ERR_peek_error() == 0) {
+    OPENSSL_PUT_ERROR(X509, X509_R_KEY_VALUES_MISMATCH);
+  }
+}
+
+/* Node lets `key` and `cert` be arrays so one server can hold several
+ * identities — typically an RSA leaf for legacy clients and an ECDSA leaf for
+ * modern ones. OpenSSL keeps one slot per key algorithm and pairs the two
+ * arrays by algorithm rather than by index, so the orders need not line up.
+ * BoringSSL has a single legacy slot plus an explicit credential list, so pair
+ * the arrays here (by which key actually matches which leaf) and install one
+ * credential per identity. Returns 0 with the reason on the error queue. */
+static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *certs,
+                                     unsigned int cert_count, const char *const *keys,
+                                     unsigned int key_count) {
+  struct us_identity *ids = NULL;
+  EVP_PKEY **pkeys = NULL;
+  int installed = 0;
+  int ok = 0;
+
+  ERR_clear_error();
+  ids = (struct us_identity *)us_calloc(cert_count, sizeof(struct us_identity));
+  pkeys = (EVP_PKEY **)us_calloc(key_count, sizeof(EVP_PKEY *));
+  if (!ids || !pkeys) goto end;
+
+  for (unsigned int i = 0; i < cert_count; i++) {
+    if (!us_parse_cert_chain(ctx, certs[i], &ids[i].leaf, &ids[i].extra)) goto end;
+  }
+  for (unsigned int i = 0; i < key_count; i++) {
+    if (!us_parse_privatekey(ctx, keys[i], &pkeys[i])) goto end;
+  }
+
+  /* Claim the key that belongs to each leaf. A leaf with no key, or a key that
+   * belongs to no leaf, leaves the configuration half-specified: report the
+   * mismatch the way loading the pair one slot at a time used to. */
+  for (unsigned int i = 0; i < cert_count; i++) {
+    for (unsigned int j = 0; j < key_count; j++) {
+      if (pkeys[j] == NULL) continue;
+      if (X509_check_private_key(ids[i].leaf, pkeys[j]) == 1) {
+        ids[i].key = pkeys[j];
+        pkeys[j] = NULL;
+        ERR_clear_error();
+        break;
+      }
+    }
+    if (ids[i].key == NULL) {
+      us_put_pairing_error();
+      goto end;
+    }
+  }
+  for (unsigned int j = 0; j < key_count; j++) {
+    if (pkeys[j] != NULL) {
+      us_put_pairing_error();
+      goto end;
+    }
+  }
+
+  for (int rank = 0; rank <= 2; rank++) {
+    for (unsigned int i = 0; i < cert_count; i++) {
+      if (us_identity_rank(&ids[i]) != rank) continue;
+      if (!us_ctx_add_identity_credential(ctx, &ids[i])) goto end;
+      if (installed++ == 0 && !us_ctx_use_legacy_identity(ctx, &ids[i])) goto end;
+    }
+  }
+  ok = 1;
+
+end:
+  for (unsigned int j = 0; j < key_count; j++) {
+    if (pkeys) EVP_PKEY_free(pkeys[j]);
+  }
+  us_free(pkeys);
+  us_identities_free(ids, cert_count);
+  return ok;
+}
+
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   /* Always continue; the user inspects via us_socket_verify_error after
    * on_handshake. Returning 1 defers the decision to JS without aborting
@@ -965,24 +1216,19 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * (see passphrase_cb), matching Node's key-decryption error shape. */
   SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
 
-  /* Multiple identities (e.g. an RSA and an EC pair, the way Node accepts
-   * arrays of key/cert or several pfx entries) must be loaded pair-wise:
-   * loading every certificate first and then every key makes BoringSSL check
-   * each key against the last certificate loaded and fail with
-   * KEY_TYPE_MISMATCH on a mixed configuration. With pair-wise loading the
-   * later identity replaces the earlier one in the legacy slot, which is the
-   * documented BoringSSL behaviour the adapted tests expect. */
-  int interleave_identities = !options.cert_file_name && !options.key_file_name &&
-                              options.cert && options.key &&
-                              options.cert_count == options.key_count &&
-                              options.cert_count > 1;
-  if (interleave_identities) {
-    for (unsigned int i = 0; i < options.cert_count; i++) {
-      if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1 ||
-          us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i], SSL_FILETYPE_PEM) != 1) {
-        ssl_ctx_build_fail(ssl_context);
-        return NULL;
-      }
+  /* The array form of `key`/`cert` describes several identities, each of which
+   * has to reach the handshake: BoringSSL's single legacy slot only holds the
+   * last one. us_ssl_ctx_use_identities pairs the arrays and installs a
+   * credential per identity. */
+  int multi_identity = !options.cert_file_name && !options.key_file_name &&
+                       options.cert && options.key && options.cert_count > 0 &&
+                       options.key_count > 0 &&
+                       (options.cert_count > 1 || options.key_count > 1);
+  if (multi_identity) {
+    if (!us_ssl_ctx_use_identities(ssl_context, options.cert, options.cert_count, options.key,
+                                   options.key_count)) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
     }
   } else {
     if (options.cert_file_name) {

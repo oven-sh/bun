@@ -5394,21 +5394,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            if !self.expr_can_be_removed_if_unused_without_dce_check(
-                property.key.as_ref().expect("unreachable"),
-            ) {
+            // ToPropertyKey on a computed key can run user code unless it's a primitive literal.
+            if property.flags.contains(Flags::Property::IsComputed)
+                && !property
+                    .key
+                    .map(|key| key.unwrap_inlined().is_primitive_literal())
+                    .unwrap_or(false)
+            {
                 return false;
             }
 
-            if let Some(val) = &property.value {
-                if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
-                    return false;
+            // Non-static values/initializers only run on construction or access, never for an unused class.
+            if property.flags.contains(Flags::Property::IsStatic) {
+                if let Some(val) = &property.value {
+                    if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
+                        return false;
+                    }
                 }
-            }
 
-            if let Some(val) = &property.initializer {
-                if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
-                    return false;
+                if let Some(val) = &property.initializer {
+                    if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
+                        return false;
+                    }
                 }
             }
         }

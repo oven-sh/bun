@@ -61,6 +61,11 @@ static BUN_DEBUG_RESTORE_FROM_CACHE: AtomicBool = AtomicBool::new(false);
 
 const SEED: u64 = 42;
 
+/// `input_hash` seed for parses with `Features::inject_jest_globals` set, so
+/// those entries land under a different cache *filename* than plain-run
+/// entries for the same bytes (see `get`).
+const INJECT_JEST_GLOBALS_SEED: u64 = u64::from_le_bytes(*b"bun:test");
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub enum ModuleType {
@@ -943,7 +948,26 @@ impl RuntimeTranspilerCache {
             return false;
         }
 
-        let input_hash = self.input_hash.unwrap_or_else(|| hash(&source.contents));
+        // `bun test` sets `inject_jest_globals` for every module it loads, and
+        // bare `describe`/`test`/`expect` only work because the parser injects
+        // an import from "bun:test" — so an entry transpiled by a plain
+        // `bun <file>` run (no injection) must never be replayed by the test
+        // runner, or the file silently registers zero tests. Key such parses
+        // to a different cache filename via a distinct hash seed, rather than
+        // folding the flag into `features_hash`: the filename is derived from
+        // `input_hash` alone and a stored-features mismatch *deletes* the
+        // entry, so a features-level split would make alternating `bun x.js` ↔
+        // `bun test` evict and re-transpile every shared dependency on each
+        // switch, while distinct filenames let both entries coexist. Parses
+        // where the injection actually fires still never write an entry at all
+        // (`input_hash` is cleared after injecting, see parse_entry.rs).
+        let input_hash = self.input_hash.unwrap_or_else(|| {
+            if parser_options.features.inject_jest_globals {
+                Wyhash::hash(INJECT_JEST_GLOBALS_SEED, &source.contents)
+            } else {
+                hash(&source.contents)
+            }
+        });
         self.input_hash = Some(input_hash);
         self.input_byte_length = Some(source.contents.len() as u64);
 

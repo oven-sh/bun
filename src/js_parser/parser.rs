@@ -380,7 +380,10 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                // `inject_jest_globals` is deliberately absent: parses with it
+                // set are keyed to a different cache *filename* instead (see
+                // `RuntimeTranspilerCache::get`), so plain-run and `bun test`
+                // entries coexist rather than evicting each other.
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.

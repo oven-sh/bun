@@ -570,12 +570,12 @@ static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(CryptoKeyUsage usage)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>& usages)
+CryptoKeyUsageBitmap SubtleCrypto::toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>& usages)
 {
     CryptoKeyUsageBitmap result = 0;
     // Maybe we shouldn't silently bypass duplicated usages?
     for (auto usage : usages)
-        result |= toCryptoKeyUsageBitmap(usage);
+        result |= WebCore::toCryptoKeyUsageBitmap(usage);
 
     return result;
 }
@@ -618,7 +618,7 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
 static void normalizeJsonWebKey(JsonWebKey& webKey)
 {
     // Maybe we shouldn't silently bypass duplicated usages?
-    webKey.usages = webKey.key_ops ? toCryptoKeyUsageBitmap(webKey.key_ops.value()) : 0;
+    webKey.usages = webKey.key_ops ? SubtleCrypto::toCryptoKeyUsageBitmap(webKey.key_ops.value()) : 0;
 }
 
 // FIXME: This returns an std::optional<KeyData> and takes a promise, rather than returning an

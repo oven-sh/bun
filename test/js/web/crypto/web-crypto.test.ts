@@ -392,12 +392,27 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     expect(a).toEqual(b);
   });
 
-  it.each(["ML-DSA-65", "ML-KEM-768"])("getPublicKey round-trips the %s public key", async alg => {
-    const usages = alg.startsWith("ML-DSA") ? ["sign", "verify"] : ["encapsulateBits", "decapsulateBits"];
-    const pubUsages = alg.startsWith("ML-DSA") ? ["verify"] : ["encapsulateBits"];
-    const pair = (await crypto.subtle.generateKey(alg, true, usages as KeyUsage[])) as CryptoKeyPair;
-    const pub = await crypto.subtle.getPublicKey(pair.privateKey, pubUsages as KeyUsage[]);
+  // One case per branch of SubtleCrypto::getPublicKey: AKP (ML-DSA/ML-KEM),
+  // RSA, EC, and the Ed25519/X25519 owned-EVP_PKEY path. X25519 public keys
+  // carry no usages in Node v26.3.0, so its pubUsages is empty.
+  const getPublicKeyCases: [string, AlgorithmIdentifier, KeyUsage[], KeyUsage[]][] = [
+    ["ML-DSA-65", "ML-DSA-65", ["sign", "verify"], ["verify"]],
+    ["ML-KEM-768", "ML-KEM-768", ["encapsulateBits", "decapsulateBits"], ["encapsulateBits"]],
+    [
+      "RSA-PSS",
+      { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      ["sign", "verify"],
+      ["verify"],
+    ],
+    ["ECDSA P-256", { name: "ECDSA", namedCurve: "P-256" }, ["sign", "verify"], ["verify"]],
+    ["Ed25519", "Ed25519", ["sign", "verify"], ["verify"]],
+    ["X25519", "X25519", ["deriveBits"], []],
+  ];
+  it.each(getPublicKeyCases)("getPublicKey round-trips the %s public key", async (_label, alg, usages, pubUsages) => {
+    const pair = (await crypto.subtle.generateKey(alg, true, usages)) as CryptoKeyPair;
+    const pub = await crypto.subtle.getPublicKey(pair.privateKey, pubUsages);
     expect(pub.type).toBe("public");
+    expect(pub.usages).toEqual(pubUsages);
     const a = new Uint8Array(await crypto.subtle.exportKey("spki", pub));
     const b = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
     expect(a).toEqual(b);

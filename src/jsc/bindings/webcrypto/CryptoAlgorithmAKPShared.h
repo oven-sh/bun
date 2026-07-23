@@ -54,6 +54,8 @@ inline void importAkpKey(CryptoAlgorithmIdentifier identifier, const AkpAlgorith
     String name = CryptoAlgorithmRegistry::singleton().name(identifier);
     auto unsupportedUsage = [&](bool isPublic) {
         if (usages & ~(isPublic ? traits.publicUsages : traits.privateUsages)) {
+            // Node v26.3.0 says "for a ML-..." on importKey/toCryptoKey but
+            // "for an ML-..." in generateKey; match each path verbatim.
             exceptionCallback(SyntaxError, makeString("Unsupported key usage for a "_s, name, " key"_s));
             return true;
         }

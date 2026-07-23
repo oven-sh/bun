@@ -911,52 +911,6 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
     }
 }
 
-static WebCore::CryptoKeyUsageBitmap toWebCryptoUsageBitmap(const Vector<WebCore::CryptoKeyUsage>& usages)
-{
-    WebCore::CryptoKeyUsageBitmap bitmap = 0;
-    for (auto usage : usages) {
-        switch (usage) {
-        case WebCore::CryptoKeyUsage::Encrypt:
-            bitmap |= WebCore::CryptoKeyUsageEncrypt;
-            break;
-        case WebCore::CryptoKeyUsage::Decrypt:
-            bitmap |= WebCore::CryptoKeyUsageDecrypt;
-            break;
-        case WebCore::CryptoKeyUsage::Sign:
-            bitmap |= WebCore::CryptoKeyUsageSign;
-            break;
-        case WebCore::CryptoKeyUsage::Verify:
-            bitmap |= WebCore::CryptoKeyUsageVerify;
-            break;
-        case WebCore::CryptoKeyUsage::DeriveKey:
-            bitmap |= WebCore::CryptoKeyUsageDeriveKey;
-            break;
-        case WebCore::CryptoKeyUsage::DeriveBits:
-            bitmap |= WebCore::CryptoKeyUsageDeriveBits;
-            break;
-        case WebCore::CryptoKeyUsage::WrapKey:
-            bitmap |= WebCore::CryptoKeyUsageWrapKey;
-            break;
-        case WebCore::CryptoKeyUsage::UnwrapKey:
-            bitmap |= WebCore::CryptoKeyUsageUnwrapKey;
-            break;
-        case WebCore::CryptoKeyUsage::EncapsulateKey:
-            bitmap |= WebCore::CryptoKeyUsageEncapsulateKey;
-            break;
-        case WebCore::CryptoKeyUsage::EncapsulateBits:
-            bitmap |= WebCore::CryptoKeyUsageEncapsulateBits;
-            break;
-        case WebCore::CryptoKeyUsage::DecapsulateKey:
-            bitmap |= WebCore::CryptoKeyUsageDecapsulateKey;
-            break;
-        case WebCore::CryptoKeyUsage::DecapsulateBits:
-            bitmap |= WebCore::CryptoKeyUsageDecapsulateBits;
-            break;
-        }
-    }
-    return bitmap;
-}
-
 static std::optional<Vector<uint8_t>> marshalAsymmetricKey(const ncrypto::EVPKeyPointer& pkey, bool isPublic)
 {
     return WebCore::marshalEVPKey(pkey.get(), isPublic);
@@ -973,7 +927,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     bool extractable = extractableValue.toBoolean(lexicalGlobalObject);
     auto keyUsages = WebCore::convert<WebCore::IDLSequence<WebCore::IDLEnumeration<WebCore::CryptoKeyUsage>>>(*lexicalGlobalObject, keyUsagesValue);
     RETURN_IF_EXCEPTION(scope, {});
-    auto usagesBitmap = toWebCryptoUsageBitmap(keyUsages);
+    auto usagesBitmap = WebCore::SubtleCrypto::toCryptoKeyUsageBitmap(keyUsages);
 
     auto throwDOMException = [&](WebCore::ExceptionCode code, const String& message) -> JSValue {
         WebCore::propagateException(*lexicalGlobalObject, scope, WebCore::Exception { code, message });
@@ -1053,6 +1007,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
                     ? WebCore::CryptoKeyUsageEncapsulateKey | WebCore::CryptoKeyUsageEncapsulateBits
                     : WebCore::CryptoKeyUsageDecapsulateKey | WebCore::CryptoKeyUsageDecapsulateBits;
             if (usagesBitmap & ~allowedUsages)
+                // Node v26.3.0 says "for a ML-..." here (toCryptoKey) but "for an ML-..." in generateKey.
                 return throwDOMException(WebCore::SyntaxError, makeString("Unsupported key usage for a "_s, WebCore::CryptoAlgorithmRegistry::singleton().name(identifier), " key"_s));
             if (EVP_PKEY_id(asymmetricKey().get()) != WebCore::CryptoKeyAKP::nidForIdentifier(identifier))
                 return throwDOMException(WebCore::DataError, "Invalid key type"_s);

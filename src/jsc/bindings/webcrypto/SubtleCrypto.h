@@ -29,6 +29,7 @@
 
 #include "ContextDestructionObserver.h"
 #include "CryptoKeyFormat.h"
+#include "CryptoKeyUsage.h"
 #include "ExceptionOr.h"
 #include <JavaScriptCore/Strong.h>
 #include <optional>
@@ -56,7 +57,6 @@ class CryptoKey;
 class DeferredPromise;
 
 enum class CryptoAlgorithmIdentifier : uint8_t;
-enum class CryptoKeyUsage;
 
 class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto>, public CanMakeWeakPtr<SubtleCrypto> {
 public:
@@ -93,6 +93,9 @@ public:
     // KeyObject.prototype.toCryptoKey needs Node's "importKey" normalization
     // from outside this file.
     static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeImportParameters(JSC::JSGlobalObject&, AlgorithmIdentifier&&);
+
+    // KeyObject.prototype.toCryptoKey also reuses the usage-bitmap mapping.
+    static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>&);
 
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);

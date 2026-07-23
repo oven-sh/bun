@@ -799,7 +799,6 @@ pub(crate) fn uv_eai_errno(e: c_ares::Error) -> i32 {
     const UV_EAI_NODATA: i32 = -3007;
     const UV_EAI_NONAME: i32 = -3008;
     const UV_EAI_SERVICE: i32 = -3010;
-    const UV_EAI_SOCKTYPE: i32 = -3011;
     const UV_EAI_BADHINTS: i32 = -3013;
     match e {
         c_ares::Error::ENODATA => UV_EAI_NODATA,
@@ -813,10 +812,12 @@ pub(crate) fn uv_eai_errno(e: c_ares::Error) -> i32 {
         c_ares::Error::EBADHINTS => UV_EAI_BADHINTS,
         c_ares::Error::ENOMEM => UV_EAI_MEMORY,
         c_ares::Error::ESERVICE => UV_EAI_SERVICE,
-        c_ares::Error::ECONNREFUSED => UV_EAI_SOCKTYPE,
         c_ares::Error::ETIMEOUT => UV_EAI_AGAIN,
         c_ares::Error::ECANCELLED => UV_EAI_CANCELED,
         c_ares::Error::EBADSTR => UV_EAI_BADHINTS,
+        // ARES_ECONNREFUSED ("could not contact DNS servers") and the
+        // remaining c-ares-specific codes have no getaddrinfo(3) equivalent;
+        // Node's dns.lookup can only surface them as EAI_FAIL.
         _ => UV_EAI_FAIL,
     }
 }

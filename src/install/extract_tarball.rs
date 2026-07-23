@@ -77,6 +77,16 @@ impl ExtractTarball {
                     result.integrity = Integrity::for_bytes(bytes);
                 }
             }
+            // Same fallback for npm packages whose manifest carried no usable
+            // integrity (missing, unsupported algorithm, or malformed), so they
+            // don't stay permanently unverified. `--no-verify` opts out.
+            ResolutionTag::Npm => {
+                if self.integrity.tag.is_supported() {
+                    result.integrity = self.integrity;
+                } else if !self.skip_verify {
+                    result.integrity = Integrity::for_bytes(bytes);
+                }
+            }
             _ => {}
         }
 

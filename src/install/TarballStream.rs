@@ -211,11 +211,14 @@ impl TarballStream {
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
         // lockfile even when there is no expected value to verify against,
-        // matching `ExtractTarball.run`.
+        // matching `ExtractTarball.run`. npm packages get the same fallback so
+        // a registry manifest with no usable integrity still ends up pinned,
+        // unless the user opted out of integrity work with `--no-verify`.
         let compute_if_missing = matches!(
             tarball.resolution.tag,
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball
-        );
+        ) || (tarball.resolution.tag == ResolutionTag::Npm
+            && !tarball.skip_verify);
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         let want_first_dirname = tarball.resolution.tag == ResolutionTag::Github;
@@ -1171,7 +1174,8 @@ impl TarballStream {
             };
 
             match tarball.resolution.tag {
-                ResolutionTag::Github
+                ResolutionTag::Npm
+                | ResolutionTag::Github
                 | ResolutionTag::RemoteTarball
                 | ResolutionTag::LocalTarball => {
                     if tarball.integrity.tag.is_supported() {

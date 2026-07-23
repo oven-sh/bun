@@ -341,6 +341,19 @@ impl PackageManager {
                     let _ = scripts;
                 }
 
+                // Persist the integrity computed during extraction (registry
+                // manifest carried no usable integrity) so the lockfile pins
+                // the tarball content.
+                if resolution.tag == ResolutionTag::Npm
+                    && *package_id != INVALID_PACKAGE_ID
+                    && data.integrity.tag.is_supported()
+                {
+                    let meta = &mut self.lockfile.packages.items_meta_mut()[*package_id as usize];
+                    if !meta.integrity.tag.is_supported() {
+                        meta.integrity = data.integrity;
+                    }
+                }
+
                 None
             }
         }

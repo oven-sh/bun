@@ -751,6 +751,219 @@ describe.concurrent("tarball integrity metadata forms", () => {
   });
 });
 
+describe.concurrent("npm registry without usable integrity metadata", () => {
+  function octal(n: number, width: number) {
+    return n.toString(8).padStart(width - 1, "0") + "\0";
+  }
+  function tarHeader(name: string, size: number) {
+    const buf = Buffer.alloc(512, 0);
+    buf.write(name, 0, 100, "utf8");
+    buf.write(octal(0o644, 8), 100);
+    buf.write(octal(0, 8), 108);
+    buf.write(octal(0, 8), 116);
+    buf.write(octal(size, 12), 124);
+    buf.write(octal(0, 12), 136);
+    buf.fill(" ", 148, 156);
+    buf.write("0", 156);
+    buf.write("ustar\0", 257);
+    buf.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += buf[i];
+    buf.write(octal(sum, 8), 148);
+    return buf;
+  }
+  function pad512(len: number) {
+    return Buffer.alloc((512 - (len % 512)) % 512, 0);
+  }
+  function buildTarball(body: Buffer) {
+    const tar = Buffer.concat([
+      tarHeader("package/package.json", body.length),
+      body,
+      pad512(body.length),
+      Buffer.alloc(1024, 0),
+    ]);
+    return gzipSync(tar);
+  }
+
+  // The registry advertises an integrity value Bun cannot use (unsupported
+  // algorithm or malformed base64) — or none at all. Bun must compute and pin
+  // its own SHA-512 of the downloaded tarball so a later swap of the tarball
+  // bytes is detected. The third variant forces the streaming extractor
+  // (normally reserved for tarballs >= 2 MiB) so both extract paths are
+  // covered.
+  for (const [label, dist, extraEnv] of [
+    ["unsupported algorithm", { integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==" }, {}],
+    ["malformed base64", { integrity: "sha512-!!!" }, {}],
+    [
+      "unsupported algorithm, streaming",
+      { integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==" },
+      { BUN_INSTALL_STREAMING_MIN_SIZE: "1" },
+    ],
+  ] as const) {
+    it(`pins a computed sha512 when the manifest integrity is unparseable (${label}) and rejects a swapped tarball on reinstall`, async () => {
+      const tarballA = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+      const tarballB = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0","swapped":true}\n'));
+
+      let tarballRequests = 0;
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname.endsWith("/pkg")) {
+            return Response.json({
+              name: "pkg",
+              "dist-tags": { latest: "1.0.0" },
+              versions: {
+                "1.0.0": {
+                  name: "pkg",
+                  version: "1.0.0",
+                  dist: {
+                    ...dist,
+                    tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
+                  },
+                },
+              },
+            });
+          }
+          if (url.pathname.endsWith("/pkg-1.0.0.tgz")) {
+            tarballRequests++;
+            const tgz = tarballRequests <= 1 ? tarballA : tarballB;
+            return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+          }
+          return new Response("Not found", { status: 404 });
+        },
+      });
+
+      using dir = tempDir("npm-integrity-unparseable", {
+        "package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { pkg: "1.0.0" },
+        }),
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\nlinker = "hoisted"\n`,
+      });
+      const cacheDir = join(String(dir), ".cache");
+
+      // First install: the unparseable manifest integrity must not leave the
+      // package permanently unverified — Bun computes a SHA-512 of the bytes
+      // it downloaded and records it in the lockfile.
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--save-text-lockfile"],
+          cwd: String(dir),
+          env: { ...env, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("Saved lockfile");
+        expect(exitCode).toBe(0);
+      }
+
+      const lockContent = await file(join(String(dir), "bun.lock")).text();
+      expect(lockContent).toMatch(/"sha512-[A-Za-z0-9+/]+=*"/);
+
+      // Second install from scratch: the server now serves different bytes.
+      // The pin recorded on the first install must reject the swap.
+      await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+      await rm(cacheDir, { recursive: true, force: true });
+
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: { ...env, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect(stderr + stdout).toContain("Integrity check failed");
+        expect(stdout).not.toContain("1 package installed");
+        expect(exitCode).not.toBe(0);
+      }
+    });
+  }
+
+  it("does not re-save the lockfile on reinstall when the registry provides no integrity metadata", async () => {
+    const tarball = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/pkg")) {
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                // No dist.integrity and no dist.shasum.
+                dist: { tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/pkg-1.0.0.tgz")) {
+          return new Response(tarball, { headers: { "content-length": String(tarball.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("npm-integrity-no-resave", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\nlinker = "hoisted"\n`,
+    });
+    const cacheDir = join(String(dir), ".cache");
+
+    // First install: pins the computed SHA-512 into the lockfile.
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toMatch(/"sha512-[A-Za-z0-9+/]+=*"/);
+
+    // Second install of the unchanged project, forcing a re-download and
+    // re-extract: the lockfile already contains the pin, so it must not be
+    // dirtied and re-saved again.
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    await rm(cacheDir, { recursive: true, force: true });
+
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).not.toContain("Saved lockfile");
+      expect(stderr + stdout).not.toContain("Integrity check failed");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
+  });
+});
+
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {
   it("should fail (not hang) when registry returns 404 for tarball", async () => {
     await withContext({ linker }, async ctx => {

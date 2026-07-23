@@ -92,9 +92,9 @@ describe("udpSocket()", () => {
   test.each([-1, 0, 65536, 99999, NaN, Infinity, "abc"] as const)(
     "connect with out-of-range port %p rejects",
     async port => {
-      await expect(
-        Promise.resolve().then(() => udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } })),
-      ).rejects.toThrow('Expected "connect.port" to be an integer between 1 and 65535');
+      const result = udpSocket({ connect: { hostname: "127.0.0.1", port: port as number } });
+      expect(result).toBeInstanceOf(Promise);
+      await expect(result).rejects.toThrow('Expected "connect.port" to be an integer between 1 and 65535');
     },
   );
 
@@ -138,9 +138,12 @@ describe("udpSocket()", () => {
         const socket = await udpSocket({ hostname: "127.0.0.1", port: holder.port, socket: {} }).catch(() =>
           udpSocket({ hostname: "127.0.0.1", port: 0, socket: {} }),
         );
-        expect(socket.port).toBeInteger();
-        expect(socket.port).not.toBe(holder.port);
-        socket.close();
+        try {
+          expect(socket.port).toBeInteger();
+          expect(socket.port).not.toBe(holder.port);
+        } finally {
+          socket.close();
+        }
       } finally {
         holder.close();
       }
@@ -166,6 +169,7 @@ describe("udpSocket()", () => {
       );
       expect(rejection).not.toBeNull();
       expect(rejection.syscall).toBe("bind");
+      expect(rejection.code).toBe("EADDRNOTAVAIL");
     });
 
     test("invalid options", async () => {
@@ -196,10 +200,13 @@ describe("udpSocket()", () => {
           udpSocket({ hostname: "127.0.0.1", port: holder.port, socket: {} }),
           udpSocket({ hostname: "127.0.0.1", port: 0, socket: {} }),
         ]);
-        expect(results[0].status).toBe("rejected");
-        expect((results[0] as PromiseRejectedResult).reason.code).toBe("EADDRINUSE");
-        expect(results[1].status).toBe("fulfilled");
-        (results[1] as PromiseFulfilledResult<any>).value.close();
+        try {
+          expect(results[0].status).toBe("rejected");
+          expect((results[0] as PromiseRejectedResult).reason.code).toBe("EADDRINUSE");
+          expect(results[1].status).toBe("fulfilled");
+        } finally {
+          for (const r of results) if (r.status === "fulfilled") r.value.close();
+        }
       } finally {
         holder.close();
       }

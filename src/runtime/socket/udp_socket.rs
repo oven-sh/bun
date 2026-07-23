@@ -566,8 +566,9 @@ impl UDPSocket {
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         let err = match Self::udp_socket_impl(global_this, options) {
             Ok(v) => return Ok(v),
-            Err(bun_jsc::JsError::Terminated) => return Err(bun_jsc::JsError::Terminated),
-            Err(bun_jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+            Err(e @ (bun_jsc::JsError::Terminated | bun_jsc::JsError::OutOfMemory)) => {
+                return Err(e);
+            }
             Err(bun_jsc::JsError::Thrown) => match global_this.try_take_exception() {
                 Some(exc) if exc.is_termination_exception() => {
                     return Err(bun_jsc::JsError::Terminated);

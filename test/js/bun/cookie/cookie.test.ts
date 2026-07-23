@@ -181,8 +181,8 @@ describe("Bun.Cookie.parse Expires (RFC 6265bis §5.1.1 cookie-date)", () => {
     expect(viaCtor("21 Oct 65 07:28:00 GMT")).toBe("2065-10-21T07:28:00.000Z");
     expect(viaCtor("21 Oct 2015 07:28:00 CET")).toBe("2015-10-21T07:28:00.000Z");
     expect(viaCtor("21 Oct 2015 07:28:00 +0500")).toBe("2015-10-21T07:28:00.000Z");
-    // §5.1.1 rejects a date with no time component; the fallback keeps accepting it.
-    expect(viaCtor("Wed, 21 Oct 2015")).toBe("2015-10-21T00:00:00.000Z");
+    // §5.1.1 rejects HH:MM without seconds; the fallback keeps accepting it (GMT so TZ-stable).
+    expect(viaCtor("Wed, 21 Oct 2015 07:28 GMT")).toBe("2015-10-21T07:28:00.000Z");
     expect(() => new Bun.Cookie("a", "v", { expires: "tomorrow" })).toThrow("Invalid cookie expiration date");
 
     const cookie = new Bun.Cookie("a", "v");

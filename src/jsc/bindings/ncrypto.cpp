@@ -6,6 +6,7 @@
 #include "ncrypto.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -2395,6 +2396,51 @@ EVPKeyPointer::ParseKeyResult TryParsePublicKeyInner(const BIOPointer& bp,
     return EVPKeyPointer::ParseKeyResult(WTF::move(pkey));
 }
 
+// BoringSSL's d2i_PUBKEY rejects EC SPKI with specifiedCurve (explicit) parameters
+// while OpenSSL/Node.js accept them. Reuse EC_KEY_parse_parameters (which BoringSSL
+// already uses for PKCS#8/SEC1 private keys) to map them to a named curve.
+EVP_PKEY* TryParseECSubjectPublicKeyInfo(const unsigned char* der, size_t der_len)
+{
+    MarkPopErrorOnReturn mark_pop_error_on_return;
+
+    CBS cbs, spki, algorithm, oid, key;
+    CBS_init(&cbs, der, der_len);
+    if (!CBS_get_asn1(&cbs, &spki, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0
+        || !CBS_get_asn1(&spki, &algorithm, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&algorithm, &oid, CBS_ASN1_OBJECT)) {
+        return nullptr;
+    }
+
+    // id-ecPublicKey OBJECT IDENTIFIER ::= { 1.2.840.10045.2.1 }
+    static constexpr uint8_t kIdEcPublicKey[] = { 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01 };
+    if (!CBS_mem_equal(&oid, kIdEcPublicKey, sizeof(kIdEcPublicKey))) {
+        return nullptr;
+    }
+
+    const EC_GROUP* group = EC_KEY_parse_parameters(&algorithm);
+    if (group == nullptr || CBS_len(&algorithm) != 0) {
+        return nullptr;
+    }
+
+    uint8_t padding;
+    if (!CBS_get_asn1(&spki, &key, CBS_ASN1_BITSTRING) || CBS_len(&spki) != 0
+        || !CBS_get_u8(&key, &padding) || padding != 0) {
+        return nullptr;
+    }
+
+    auto eckey = ECKeyPointer::New(group);
+    if (!eckey || !EC_KEY_oct2key(eckey.get(), CBS_data(&key), CBS_len(&key), nullptr)) {
+        return nullptr;
+    }
+
+    auto pkey = EVPKeyPointer::New();
+    if (!pkey || !EVP_PKEY_assign_EC_KEY(pkey.get(), eckey.get())) {
+        return nullptr;
+    }
+    eckey.release();
+    return pkey.release();
+}
+
 constexpr bool IsASN1Sequence(const unsigned char* data,
     size_t size,
     size_t* data_offset,
@@ -2459,8 +2505,15 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
     if (auto ret = TryParsePublicKeyInner(
             bp,
             "PUBLIC KEY",
-            [](const unsigned char** p, long l) { // NOLINT(runtime/int)
-                return d2i_PUBKEY(nullptr, p, l);
+            [](const unsigned char** p, long l) -> EVP_PKEY* { // NOLINT(runtime/int)
+                const unsigned char* der = *p;
+                if (EVP_PKEY* key = d2i_PUBKEY(nullptr, p, l)) return key;
+                if (EVP_PKEY* key = TryParseECSubjectPublicKeyInfo(der, l)) {
+                    // Discard d2i_PUBKEY's decode error since the fallback succeeded.
+                    ERR_clear_error();
+                    return key;
+                }
+                return nullptr;
             })) {
         return ret;
     }
@@ -2509,8 +2562,14 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 
-    if (config.type == PKEncodingType::SPKI && (key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
-        return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+    if (config.type == PKEncodingType::SPKI) {
+        if ((key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
+            return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+        }
+        if ((key = TryParseECSubjectPublicKeyInfo(buffer.data, buffer.len))) {
+            ERR_clear_error();
+            return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+        }
     }
 
     return ParseKeyResult(PKParseError::FAILED);

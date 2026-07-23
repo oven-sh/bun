@@ -86,13 +86,17 @@ it.skipIf(isDebug)(
       const baseline = spinRounds(8);
       const after = spinRounds(15);
       const growth = after - baseline;
+      const MB = 1024 * 1024;
+      console.log(
+        `Peak RSS: warmup ${(baseline / MB) | 0} MB -> measured ${(after / MB) | 0} MB, ` +
+          `delta ${(growth / MB) | 0} MB`,
+      );
 
       // Unpatched, the BIO leak alone is ~800 bytes/call; over the 75k
       // abbreviated iterations measured here the peak climbs by ~100MB.
       // With the fix in place the peak is flat within ~3MB across 20 runs,
       // so the threshold sits well above that noise and well below the leak.
-      const threshold = 1024 * 1024 * (isASAN ? 40 : 32);
-      expect(growth).toBeLessThan(threshold);
+      expect(growth).toBeLessThan(MB * (isASAN ? 40 : 32));
     } finally {
       client.end();
       serverSocket.end();

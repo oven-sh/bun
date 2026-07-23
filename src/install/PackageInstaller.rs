@@ -2409,12 +2409,23 @@ fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
             continue;
         }
         let name = entry.basename.as_bytes();
-        let needs_sign = if name.len() > 3 {
-            name.ends_with(b".so") || name.ends_with(b".node")
-        } else {
-            false
+        // Sign any ELF file — not just .so/.node. Postinstall scripts
+        // download/compile executables (esbuild, node-gyp output, .bin links)
+        // that also need signing. Check the ELF magic bytes.
+        let is_elf = {
+            let mut full = Vec::with_capacity(pkg_dir.len() + 1 + name.len());
+            full.extend_from_slice(pkg_dir);
+            full.push(b'/');
+            full.extend_from_slice(name);
+            let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
+            let p = std::path::Path::new(full_str);
+            if let Ok(bytes) = std::fs::read(p) {
+                bytes.len() > 4 && bytes[..4] == [0x7f, 0x45, 0x4c, 0x46]
+            } else {
+                false
+            }
         };
-        if !needs_sign {
+        if !is_elf {
             continue;
         }
         let mut full = Vec::with_capacity(pkg_dir.len() + 1 + name.len());

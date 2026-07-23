@@ -88,7 +88,8 @@ const EXCLUDE_FN =
 // reduction and masks whatever lies behind it. Bun.write on Windows:
 // (1) self-alias Bun.write(f,f) CopyFileWindows aliasing; (2) any missing/
 // unopenable source -> on_copy_file ENOENT retry loop. Both reported.
-const KNOWN_BROKEN_FN = process.env.WSF_ALLOW_BROKEN ? /^$/ : /^(write)$/;
+const WRITE_MODE = process.env.WSF_GEN_MODE === "write";
+const KNOWN_BROKEN_FN = process.env.WSF_ALLOW_BROKEN || WRITE_MODE ? /^$/ : /^(write)$/;
 // node module callables ("node:fs" containers): fs.readFileSync(...),
 // child_process.spawn(...). Names that block the process (readline
 // prompts, tty raw mode) or reach the network are excluded by name.
@@ -108,8 +109,8 @@ const DEPTH_MODE = process.env.WSF_GEN_MODE === "depth";
 const FS_KEEP = /^(node:fs|node:child_process|node:zlib|node:stream)$|^Bun$/;
 const FS_BUN_FN = /^(file|write|spawn|spawnSync|mmap|openInEditor|resolveSync|resolve|pathToFileURL|fileURLToPath|which|readableStreamTo\w*|inspect|deflateSync|gzipSync|inflateSync|gunzipSync|zstdCompressSync|zstdDecompressSync|indexOfLine|stringWidth|escapeHTML|hash|allocUnsafe)$/;
 const fnCalls = [
-  ...spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name) && (!FS_MODE || FS_BUN_FN.test(c.name))),
-  ...nodeFns.filter(c => !FS_MODE || FS_KEEP.test(c.container)),
+  ...spec.callables.filter(c => c.container === "Bun" && !EXCLUDE_FN.test(c.name) && !KNOWN_BROKEN_FN.test(c.name) && (!FS_MODE || FS_BUN_FN.test(c.name)) && (!WRITE_MODE || /^(write|file)$/.test(c.name))),
+  ...nodeFns.filter(c => (!FS_MODE || FS_KEEP.test(c.container)) && !WRITE_MODE),
 ];
 let emitComment = "";
 // Depth mode: restrict the whole program to a single family chosen by seed.
@@ -427,13 +428,13 @@ function argList(c: Callable): string {
   // ...and never a reserved device / non-file source (COM1, AUX, PhysicalDrive,
   // UNC, ADS, relative-drive): every unopenable-source shape lands in the same
   // reported uv_fs_copyfile ENOENT/retry site.
-  if (c.path === "Bun.write" && args.length >= 2 && (/Bun\.file\(|\$pool2?\("BunFile"\)/.test(args[1]) || /"COM1"|"AUX"|"NUL"|"CON"|PhysicalDrive|ads:|localhost|relative-to-cwd/.test(args[1]))) {
+  if (!WRITE_MODE && c.path === "Bun.write" && args.length >= 2 && (/Bun\.file\(|\$pool2?\("BunFile"\)/.test(args[1]) || /"COM1"|"AUX"|"NUL"|"CON"|PhysicalDrive|ads:|localhost|relative-to-cwd/.test(args[1]))) {
     args[1] = pick([`Bun.file(P("data.txt"))`, `Bun.file(P("big.bin"))`, `Bun.file(P("empty.txt"))`]);
   }
   // Known-reported: Bun.write(x, x) with one pooled object as both
   // destination and source (aliased self-copy). Break the alias so the
   // engine explores past it instead of re-finding it in every program.
-  if (c.path === "Bun.write" && args.length >= 2 && args[0] === args[1] && /\$pool\(/.test(args[0])) {
+  if (!WRITE_MODE && c.path === "Bun.write" && args.length >= 2 && args[0] === args[1] && /\$pool\(/.test(args[0])) {
     args[1] = args[1].replace(/\$pool\((\"[A-Za-z]+\")\)/, "$pool2($1)");
   }
   return args.join(", ");
@@ -668,6 +669,12 @@ emit(`// --- generated statements ----------------------------------------------
 for (let i = 0; i < Math.min(6, Math.max(3, Math.floor(nStatements / 8))); i++) genCreate();
 for (let i = 0; i < nStatements; i++) {
   const r = rnd();
+  if (WRITE_MODE) {
+    // Bun.write / Bun.file depth: every call, every source shape
+    if (r < 0.75) genCall();
+    else genCreate();
+    continue;
+  }
   if (DEPTH_MODE) {
     // hammer the chosen family: mostly plain calls with hostile args
     if (r < 0.7) genCall();

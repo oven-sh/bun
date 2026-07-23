@@ -1370,6 +1370,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
         enqueue_task_concurrent(task) => (*this).enqueue_task_concurrent(task),
+        concurrent_poster_end() => (*this).concurrent_poster_end(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>

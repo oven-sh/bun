@@ -178,9 +178,24 @@ function skipProtoMapEquiv(map1, map2, memos) {
   const used = new SafeSet();
   const iterator1 = SafeMapPrototypeIterator.$call(map1);
   entryIteration: for (const { 0: key1, 1: value1 } of iterator1) {
-    // Fast path: identical key present on both sides.
+    // Fast path: identical key present on both sides. Consume the matched
+    // entry's index so the deep-equality loop below cannot reuse it (sizes
+    // are equal, so double-consumption would leave another entry unmatched
+    // and wrongly report the maps equal).
     if (SafeMapPrototypeHas.$call(map2, key1)) {
-      if (skipProtoDeepStrictEqual(value1, SafeMapPrototypeGet.$call(map2, key1), memos)) {
+      let identityIndex = -1;
+      for (let i = 0; i < entries2.length; i++) {
+        if (entries2[i][0] === key1) {
+          identityIndex = i;
+          break;
+        }
+      }
+      if (
+        identityIndex !== -1 &&
+        !used.has(identityIndex) &&
+        skipProtoDeepStrictEqual(value1, entries2[identityIndex][1], memos)
+      ) {
+        used.add(identityIndex);
         continue;
       }
     }

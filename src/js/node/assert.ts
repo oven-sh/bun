@@ -661,10 +661,27 @@ function compareBranchMap(actual, expected, comparedObjects) {
   entryIteration: for (const { 0: key, 1: expectedValue } of expectedIterator) {
     // Fast path: identical key present on both sides.
     if (!usedIdentityKeys.has(key) && SafeMapPrototypeHas.$call(actual, key)) {
-      const actualValue = SafeMapPrototypeGet.$call(actual, key);
-      if (compareBranch(actualValue, expectedValue, comparedObjects)) {
-        usedIdentityKeys.add(key);
-        continue;
+      // The identity entry may already have been consumed by the index loop
+      // below (matched by deep equality against an earlier expected entry);
+      // reserve its index so neither path can double-count it, like node.
+      let identityIndex = -1;
+      if (actualEntries !== undefined) {
+        for (let i = 0; i < actualEntries.length; i++) {
+          if (actualEntries[i][0] === key) {
+            identityIndex = i;
+            break;
+          }
+        }
+      }
+      if (identityIndex === -1 || !usedIndices.has(identityIndex)) {
+        const actualValue = SafeMapPrototypeGet.$call(actual, key);
+        if (compareBranch(actualValue, expectedValue, comparedObjects)) {
+          usedIdentityKeys.add(key);
+          if (identityIndex !== -1) {
+            usedIndices.add(identityIndex);
+          }
+          continue;
+        }
       }
     }
     if (typeof key !== "object" || key === null) {

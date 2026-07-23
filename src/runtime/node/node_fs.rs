@@ -1605,6 +1605,11 @@ mod _async_tasks {
             }
             task.tracker.did_schedule(global_object);
 
+            // Counted so shutdown's `wait_for_concurrent_posters` covers the
+            // count-to-zero completion post; paired in `on_subtask_done`'s Js
+            // arm (the mini path never touches the JS event loop).
+            // SAFETY: `event_loop()` is a value field of the live `vm`.
+            unsafe { (*vm.event_loop()).concurrent_poster_begin() };
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
             raw
@@ -1701,7 +1706,7 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
-            if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
+            if let EventLoopHandle::Js { owner } = this_ref.evtloop {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     js: ConcurrentTask::from_callback(this, |p| {
                         // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
@@ -1710,6 +1715,11 @@ mod _async_tasks {
                     })
                     .as_ptr(),
                 });
+                // Pairs with `concurrent_poster_begin` in `create_with_shell_task`.
+                // The JS thread may free the task the moment the post above is
+                // popped and may tear the VM down once the count hits zero —
+                // this is the pool thread's last touch of the loop.
+                owner.concurrent_poster_end();
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
@@ -2385,6 +2395,10 @@ mod _async_tasks {
             task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
+            // Counted so shutdown's `wait_for_concurrent_posters` covers the
+            // single CAS-gated completion post; paired in `finish_concurrently`.
+            // SAFETY: `event_loop()` is a value field of the live `vm`.
+            unsafe { (*vm.event_loop()).concurrent_poster_begin() };
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
             promise
         }
@@ -2555,6 +2569,11 @@ mod _async_tasks {
             vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
                 Self,
             >(self))));
+            // Pairs with `concurrent_poster_begin` in `create()`. The JS thread
+            // may free `self` the moment the task above is popped, and may tear
+            // the VM down once this count reaches zero — last touch of both.
+            // SAFETY: `event_loop()` is a value field of the process-static VM.
+            unsafe { (*vm.event_loop()).concurrent_poster_end() };
         }
 
         fn clear_result_list(&mut self) {

@@ -154,28 +154,18 @@ export function requireResolve(
     // node resolves builtin ids before validating `paths`
     // (lib/internal/modules/cjs/loader.js, Module._resolveFilename), so
     // `require.resolve("node:fs", { paths: [0] })` must not throw.
-    if (typeof id === "string") {
-      if (id.startsWith("node:") || id.startsWith("bun:")) {
-        return $resolveSync(
-          id,
-          typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
-          false,
-          true,
-          undefined,
-        );
-      }
-      const builtins = require("node:module").builtinModules;
-      for (let i = 0; i < builtins.length; i++) {
-        if (builtins[i] === id) {
-          return $resolveSync(
-            id,
-            typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
-            false,
-            true,
-            undefined,
-          );
-        }
-      }
+    // Node gates the bypass on BuiltinModule.normalizeRequirableId succeeding,
+    // so a prefixed non-builtin like "node:nope" still validates `paths`
+    // (ERR_INVALID_ARG_TYPE for paths[0], not MODULE_NOT_FOUND).
+    // `isBuiltin` covers prefixed and unprefixed ids, including bun:*.
+    if (typeof id === "string" && require("node:module").isBuiltin(id)) {
+      return $resolveSync(
+        id,
+        typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""),
+        false,
+        true,
+        undefined,
+      );
     }
     if (!$isArray(paths)) {
       throw $ERR_INVALID_ARG_VALUE("options.paths", paths);

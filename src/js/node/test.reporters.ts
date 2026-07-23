@@ -488,9 +488,10 @@ class SpecReporter extends Transform {
 // junit
 // ---------------------------------------------------------------------------
 function escapeAttribute(s = "") {
-  // escapeContent first so the &quot; inserted below is not re-escaped to
-  // &amp;quot; (its lookahead spares numeric refs only); matches node's order.
-  return escapeContent(s.replace(/\n/g, "&#10;")).replace(/"/g, "&quot;");
+  // Quotes are escaped before the & pass, so a literal quote emits as
+  // &amp;quot; (escapeContent's lookahead spares only numeric refs like the
+  // &#10; below) — byte-for-byte node v26.3.0 junit output.
+  return escapeContent(s.replace(/\n/g, "&#10;").replace(/"/g, "&quot;"));
 }
 
 function escapeContent(s = "") {

@@ -367,6 +367,13 @@ function runSucceeded(counts: Record<string, number>): boolean {
   return counts.failed === 0 && counts.cancelled === 0 && counts.failedSuites === 0;
 }
 
+// node's test:summary counts carry exactly these keys; failedSuites is
+// port-internal bookkeeping for runSucceeded and never crosses the stream.
+function publicRunCounts(counts: Record<string, number>) {
+  const { tests, failed, passed, cancelled, skipped, todo, topLevel, suites } = counts;
+  return { __proto__: null, tests, failed, passed, cancelled, skipped, todo, topLevel, suites };
+}
+
 function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number>, durationMs: number) {
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `tests ${counts.tests}` });
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `suites ${counts.suites}` });
@@ -384,6 +391,9 @@ type RunInterruptState = {
   interrupted: boolean;
   childProc: { kill: () => void } | null;
   fileNode: Record<string, unknown> | null;
+  // Cumulative nesting-0 verdict number across every file in the run (node's
+  // runner renumbers pass/fail run-wide; test:complete keeps per-file numbers).
+  verdictNumber: number;
 };
 
 // Runs each file in its own `bun test` child and republishes the child's events
@@ -391,7 +401,7 @@ type RunInterruptState = {
 async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
   const started = performance.now();
   const counts = makeRunCounts();
-  const state: RunInterruptState = { interrupted: false, childProc: null, fileNode: null };
+  const state: RunInterruptState = { interrupted: false, childProc: null, fileNode: null, verdictNumber: 0 };
 
   // run() returns the stream before any file starts, and callers attach their
   // listeners synchronously on the returned stream. Yield first so the earliest
@@ -416,7 +426,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     try {
       for (let i = 0; i < files.length; i++) {
         if (state.interrupted) break;
-        await runOneFile(files[i], opts, reporter, counts, state);
+        await runOneFile(files[i], opts, reporter, counts, state, i + 1);
       }
     } finally {
       process.off("SIGINT", onInterrupt);
@@ -440,7 +450,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     reporter.emitMessage("test:summary", {
       __proto__: null,
       success: runSucceeded(counts),
-      counts,
+      counts: publicRunCounts(counts),
       duration_ms: durationMs,
       file: undefined,
     });
@@ -457,6 +467,7 @@ async function runOneFile(
   reporter: TestsStream,
   counts: Record<string, number>,
   state: RunInterruptState,
+  ordinal: number,
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
@@ -532,7 +543,7 @@ async function runOneFile(
     // node's parent swallows each child's root plan and emits one run-level
     // plan at the end (runner.js #skipReporting + Test.postRun).
     if (event.type === "test:plan" && event.data.nesting === 0) continue;
-    republishChildEvent(event, absolute, reporter, fileCounts);
+    republishChildEvent(event, absolute, reporter, fileCounts, state);
   }
 
   await drainStderr;
@@ -565,7 +576,7 @@ async function runOneFile(
     reporter.emitMessage("test:summary", {
       __proto__: null,
       success: fileSucceeded,
-      counts: fileCounts,
+      counts: publicRunCounts(fileCounts),
       duration_ms: fileDuration,
       file: absolute,
     });
@@ -582,7 +593,9 @@ async function runOneFile(
     __proto__: null,
     ...fileNode,
     type: undefined,
-    testNumber: fileCounts.topLevel,
+    // node models the file as a top-level test; its completion carries the
+    // file's ordinal in the run, not the file's own top-level count.
+    testNumber: ordinal,
     details: {
       __proto__: null,
       duration_ms: fileDuration,
@@ -597,7 +610,7 @@ async function runOneFile(
       __proto__: null,
       ...fileNode,
       type: undefined,
-      testNumber: fileCounts.topLevel,
+      testNumber: ++state.verdictNumber,
       details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
     });
   }
@@ -609,7 +622,10 @@ function rebuildError(serialized: any, depth = 0): Error {
     serialized;
   const error = new Error(message) as Record<string, unknown> & Error;
   error.stack = stack;
-  if (name !== undefined && name !== "Error") error.name = name;
+  // v8-deserialized errors keep name non-enumerable (an AssertionError cause
+  // inspects as `AssertionError: msg`, not as a props entry).
+  if (name !== undefined && name !== "Error")
+    Object.defineProperty(error, "name", { value: name, writable: true, configurable: true });
   // Enumerable-property order mirrors node's AssertionError inspect.
   if (generatedMessage !== undefined) error.generatedMessage = generatedMessage;
   if (code !== undefined) error.code = code;
@@ -618,7 +634,8 @@ function rebuildError(serialized: any, depth = 0): Error {
   if (operator !== undefined) error.operator = operator;
   if (diff !== undefined) error.diff = diff;
   if (failureType !== undefined) error.failureType = failureType;
-  if (cause !== undefined && depth < 8) error.cause = rebuildError(cause, depth + 1);
+  if (cause !== undefined && depth < 8)
+    error.cause = cause?.nonError === true ? cause.value : rebuildError(cause, depth + 1);
   return error;
 }
 
@@ -627,6 +644,7 @@ function republishChildEvent(
   file: string,
   reporter: TestsStream,
   counts: Record<string, number>,
+  numbering: { verdictNumber: number },
 ) {
   const { type, data } = event;
   Object.setPrototypeOf(data, null);
@@ -634,12 +652,13 @@ function republishChildEvent(
   const isVerdict = type === "test:pass" || type === "test:fail";
   if (isVerdict || type === "test:complete") {
     const isSuite = data.type === "suite";
-    // node's parent renumbers top-level entries across files (runner.js).
-    // complete arrives before its verdict, so peek (don't increment) there.
+    // node's parent renumbers nesting-0 verdicts cumulatively across every
+    // file in the run (runner.js); test:complete keeps the child's own
+    // per-file number, so peek the per-file count (don't increment) there.
     if (data.nesting === 0) {
       if (isVerdict) {
         counts.topLevel++;
-        data.testNumber = counts.topLevel;
+        data.testNumber = ++numbering.verdictNumber;
       } else {
         data.testNumber = counts.topLevel + 1;
       }
@@ -796,6 +815,14 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
+// A non-Error cause crosses the pipe by value (node's v8 serializer preserves
+// primitives and plain objects); the envelope tags it so the parent does not
+// rebuild it as an Error.
+function serializeRunCause(cause: unknown, depth: number) {
+  if (Error.isError(cause)) return serializeRunError(cause, depth);
+  return { __proto__: null, nonError: true, value: cause };
+}
+
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
 const kSerializedErrorExtras = ["generatedMessage", "actual", "expected", "operator", "diff"];
 function serializeRunError(error: unknown, depth = 0) {
@@ -808,7 +835,7 @@ function serializeRunError(error: unknown, depth = 0) {
       code: (error as { code?: string }).code,
       failureType: (error as { failureType?: string }).failureType,
       name: error.name,
-      cause: cause !== undefined && depth < 8 ? serializeRunError(cause, depth + 1) : undefined,
+      cause: cause !== undefined && depth < 8 ? serializeRunCause(cause, depth + 1) : undefined,
     };
     // Only JSON-safe primitives survive the pipe (node uses the v8 serializer).
     for (const key of kSerializedErrorExtras) {
@@ -905,12 +932,17 @@ function reportCancelledNode(node: TestNode) {
   noteRunChildDone(node.parent, true);
 }
 
-// node tags failures thrown by before/after hooks with failureType
-// 'hookFailed' instead of testCodeFailure.
-function wrapHookError(error: unknown): Error {
-  const wrapped = wrapTestError(error) as { failureType?: string };
-  wrapped.failureType = "hookFailed";
-  return wrapped as Error;
+// node wraps a failure thrown by a before/after hook in a fresh
+// ERR_TEST_FAILURE with the fixed message `failed running <kind> hook`
+// (failureType hookFailed); the thrown error is kept on cause.
+function wrapHookError(error: unknown, kind: "before" | "after"): Error {
+  const wrapper = new Error(`failed running ${kind} hook`);
+  (wrapper as { code?: string }).code = "ERR_TEST_FAILURE";
+  (wrapper as { failureType?: string }).failureType = "hookFailed";
+  (wrapper as { cause?: unknown }).cause = error;
+  // node's wrapper hides its internal frames; reporters use the cause's stack.
+  wrapper.stack = `Error [ERR_TEST_FAILURE]: ${wrapper.message}`;
+  return wrapper;
 }
 
 // True when any enclosing suite's before() failed in run-child mode: node
@@ -1020,6 +1052,11 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   // A todo suite's advisory results never fail it (or the run) in node.
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
   if (isTodo) suite.childrenFailed = 0;
+  // A suite under a failed before() reports cancelledByParent with zero
+  // duration, like its tests (node's Suite#cancel); write the failure back so
+  // the parent's accounting sees it even when the suite has no children.
+  const cancelledByHookFailure = !isTodo && hasHookFailedAncestorSuite(suite);
+  if (cancelledByHookFailure && suite.childrenFailed === 0) suite.childrenFailed = 1;
   let suiteFailed = suite.childrenFailed > 0;
   const failedCount = suite.childrenFailed;
   // node's Suite.pass(): an expectFailure suite with no error still fails
@@ -1045,14 +1082,17 @@ function maybeCompleteSuite(suite: TestNode): boolean {
     skip: suite.skipped ? (suite.directiveMessage ?? true) : undefined,
     todo: isTodo ? (suite.directiveMessage ?? true) : undefined,
     expectFailure: xfail,
-    duration_ms: suite.startedAtMs > 0 ? roundDurationMs(performance.now() - suite.startedAtMs) : 0,
+    duration_ms:
+      !cancelledByHookFailure && suite.startedAtMs > 0 ? roundDurationMs(performance.now() - suite.startedAtMs) : 0,
     tags: suite.tags,
-    error: suiteFailed
-      ? (forcedError ??
-        (suite.error != null
-          ? wrapTestError(suite.error)
-          : makeTestFailure(`${failedCount} subtest${failedCount > 1 ? "s" : ""} failed`, "subtestsFailed")))
-      : undefined,
+    error: cancelledByHookFailure
+      ? makeCancelledByParentError()
+      : suiteFailed
+        ? (forcedError ??
+          (suite.error != null
+            ? wrapTestError(suite.error)
+            : makeTestFailure(`${failedCount} subtest${failedCount > 1 ? "s" : ""} failed`, "subtestsFailed")))
+        : undefined,
   };
   // node's order around a finishing suite: its completion, the plan covering
   // its children, then its own verdict. The chain calls are no-ops when a
@@ -3300,7 +3340,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
     const files = discoverRunFiles(opts);
-    standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts);
+    standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, { verdictNumber: 0 });
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
     callerRoot.started = true;
@@ -3390,7 +3430,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     reporter.emitMessage("test:summary", {
       __proto__: null,
       success: runSucceeded(counts),
-      counts,
+      counts: publicRunCounts(counts),
       duration_ms: durationMs,
       file: undefined,
     });
@@ -3423,8 +3463,14 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   }
 }
 
-function inProcessSinkImpl(reporter: TestsStream, counts: Record<string, number>, type: string, data: unknown) {
-  republishChildEvent({ type, data }, activeRunFile ?? Bun.main, reporter, counts);
+function inProcessSinkImpl(
+  reporter: TestsStream,
+  counts: Record<string, number>,
+  numbering: { verdictNumber: number },
+  type: string,
+  data: unknown,
+) {
+  republishChildEvent({ type, data }, activeRunFile ?? Bun.main, reporter, counts, numbering);
 }
 
 async function runStandalone() {
@@ -3435,7 +3481,7 @@ async function runStandalone() {
   // The standalone sink feeds the same restructuring path the run() parent
   // uses, so reporters see node's event shapes. Hoisted fn + bind, per the
   // builtin convention for long-lived callbacks.
-  standaloneSink = standaloneSinkImpl.bind(undefined, stream, counts);
+  standaloneSink = standaloneSinkImpl.bind(undefined, stream, counts, { verdictNumber: 0 });
 
   // All pipes attach before any test emits: node awaits setupTestReporters()
   // during bootstrap, otherwise a custom reporter's import() yields with an
@@ -3461,7 +3507,7 @@ async function runStandalone() {
     stream.emitMessage("test:summary", {
       __proto__: null,
       success: runSucceeded(counts),
-      counts,
+      counts: publicRunCounts(counts),
       duration_ms: durationMs,
       file: undefined,
     });
@@ -3477,8 +3523,14 @@ async function runStandalone() {
   }
 }
 
-function standaloneSinkImpl(stream: TestsStream, counts: Record<string, number>, type: string, data: unknown) {
-  republishChildEvent({ type, data }, Bun.main, stream, counts);
+function standaloneSinkImpl(
+  stream: TestsStream,
+  counts: Record<string, number>,
+  numbering: { verdictNumber: number },
+  type: string,
+  data: unknown,
+) {
+  republishChildEvent({ type, data }, Bun.main, stream, counts, numbering);
 }
 
 async function runStandaloneEntry(entry: StandaloneEntry) {
@@ -3536,7 +3588,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
         // A todo suite's hook failure is advisory, like in the run() child.
         if (!isTodoSuite) {
           node.childrenFailed++;
-          node.error = wrapHookError(err);
+          node.error = wrapHookError(err, "before");
           setupFailed = true;
           break;
         }
@@ -3558,7 +3610,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error = wrapHookError(err);
+        node.error = wrapHookError(err, "after");
       }
     }
   }
@@ -3994,6 +4046,12 @@ function addSuite(
             suiteNode.error = err;
             noteSuiteCollectionSettled(suiteNode);
             if (isTodoAdvisory) return undefined;
+            if (runChildReporterEnabled) {
+              // Async twin of the sync body-throw path above: a rejecting
+              // describe callback cancels the declared children, not the file.
+              suiteNode.hookSetupFailed = true;
+              return undefined;
+            }
             throw err;
           }
           let built: unknown;
@@ -4001,12 +4059,19 @@ function addSuite(
             built = runWithNode(suiteNode, buildWrappedSuiteFn);
           } catch (err) {
             // Settle so the suite (and every enclosing suite's childrenDone
-            // accounting) still completes; bun:test's own describe-error path
-            // reports the throw.
+            // accounting) still completes.
             suiteNode.childrenFailed++;
             suiteNode.error = err;
             noteSuiteCollectionSettled(suiteNode);
             if (isTodoAdvisory) return undefined;
+            if (runChildReporterEnabled) {
+              // node attributes a throwing describe body to the suite
+              // (testCodeFailure) and cancels the children it declared before
+              // throwing; swallow it from bun:test, whose describe-error path
+              // would fail the whole file instead.
+              suiteNode.hookSetupFailed = true;
+              return undefined;
+            }
             throw err;
           }
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
@@ -4157,7 +4222,7 @@ function before(arg0: unknown, arg1: unknown) {
         // its children; swallow it from bun:test so the verdict comes from
         // the suite's own test:fail, like the standalone twin.
         owner.childrenFailed++;
-        owner.error ??= wrapHookError(err);
+        owner.error ??= wrapHookError(err, "before");
         owner.hookSetupFailed = true;
         done();
         return;
@@ -4204,7 +4269,7 @@ function after(arg0: unknown, arg1: unknown) {
         // Attribute to the suite; its deferred settle emits the hookFailed
         // verdict after this hook returns.
         owner.childrenFailed++;
-        owner.error ??= wrapHookError(err);
+        owner.error ??= wrapHookError(err, "after");
         done();
         return;
       }

@@ -28,10 +28,12 @@ test("C++ sources compiled into Bun do not include <iostream>", async () => {
 
   const iostreamInclude = /^\s*#\s*include\s*<iostream>/m;
   const violations: string[] = [];
+  let scanned = 0;
 
   for (const root of roots) {
     const glob = new Glob("**/*.{h,hpp,hxx,cpp,cc,cxx}");
     for await (const rel of glob.scan({ cwd: path.join(repoRoot, root) })) {
+      scanned++;
       const relFromRepo = path.join(root, rel).replaceAll("\\", "/");
       if (allowlist.has(relFromRepo)) continue;
       const source = readFileSync(path.join(repoRoot, root, rel), "utf8");
@@ -41,6 +43,9 @@ test("C++ sources compiled into Bun do not include <iostream>", async () => {
     }
   }
 
+  // Guard against repoRoot resolving wrong (test file moved) or a scanned root
+  // going away, which would make the ban below pass vacuously.
+  expect(scanned).toBeGreaterThan(0);
   violations.sort();
   expect(violations).toEqual([]);
 });

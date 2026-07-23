@@ -59,30 +59,38 @@ it.skipIf(isDebug)(
       expect(first).toBeDefined();
       expect(first?.subject).toBeDefined();
 
-      function spin(n: number) {
-        for (let i = 0; i < n; i++) {
-          serverSocket.getPeerCertificate();
-          serverSocket.getPeerCertificate(false);
+      // Run in fixed-size rounds with a GC after each so the steady-state heap
+      // footprint stays bounded, and track the peak RSS seen across each phase.
+      // Since #34181 mimalloc returns freed pages to the OS on a background
+      // scavenger thread, so a single post-GC RSS sample can land in a
+      // transient scavenger dip; the peak over N rounds is immune to that (the
+      // scavenger can only lower RSS), while a real per-call leak still raises
+      // the peak every round.
+      const perRound = 5_000;
+      function spinRounds(rounds: number) {
+        let peak = 0;
+        for (let round = 0; round < rounds; round++) {
+          for (let i = 0; i < perRound; i++) {
+            serverSocket.getPeerCertificate();
+            serverSocket.getPeerCertificate(false);
+          }
+          Bun.gc(true);
+          Bun.gc(true);
+          peak = Math.max(peak, process.memoryUsage.rss());
         }
-        Bun.gc(true);
-        Bun.gc(true);
+        return peak;
       }
 
-      // Run in fixed-size rounds with a GC after each so the steady-state
-      // heap footprint stays bounded. The first few rounds grow the heap
-      // regardless of leaks, so take the baseline after warmup.
-      const perRound = 5_000;
-      for (let round = 0; round < 8; round++) spin(perRound);
-      const baseline = process.memoryUsage.rss();
-
-      for (let round = 0; round < 15; round++) spin(perRound);
-      const after = process.memoryUsage.rss();
+      // The first few rounds grow the heap regardless of leaks, so take the
+      // baseline peak over a warmup phase first.
+      const baseline = spinRounds(8);
+      const after = spinRounds(15);
       const growth = after - baseline;
 
-      // Unpatched, the BIO leak alone is ~800 bytes/call → ~60MB over the
-      // 75k abbreviated calls measured here. macOS CI VMs have shown ~21MB of
-      // benign RSS growth over the same window with no leak present, so the
-      // threshold is set well above that noise floor but well below the leak.
+      // Unpatched, the BIO leak alone is ~800 bytes/call; over the 75k
+      // abbreviated iterations measured here the peak climbs by ~100MB.
+      // With the fix in place the peak is flat within ~3MB across 20 runs,
+      // so the threshold sits well above that noise and well below the leak.
       const threshold = 1024 * 1024 * (isASAN ? 40 : 32);
       expect(growth).toBeLessThan(threshold);
     } finally {

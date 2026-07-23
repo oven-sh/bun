@@ -1090,6 +1090,79 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
+  // pushStream() that fails header validation destroys the pushed ServerHttp2Stream before it
+  // reaches the wire; the JS layer releases the native context root (setStreamContext(id,
+  // undefined)). Previously the same value was also rooted on the per-stream native state and
+  // never cleared, pinning the pushed stream (and everything it references) until the session
+  // died. Run in a subprocess: the never-delivered stream's destroy(err) emits 'error' with no
+  // listener, which must not leak into this test process.
+  test("releases a pushed ServerHttp2Stream whose PUSH_PROMISE was rejected before going on the wire", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const dc = require("node:diagnostics_channel");
+      const { once } = require("node:events");
+      process.on("uncaughtException", e => {
+        console.log(JSON.stringify({ uncaught: String(e?.message || e) }));
+        process.exit(0);
+      });
+      const refs = [];
+      dc.subscribe("http2.server.stream.created", msg => {
+        if (msg?.stream && typeof msg.stream.id === "number" && msg.stream.id % 2 === 0) {
+          msg.stream.on("error", () => {});
+          refs.push(new WeakRef(msg.stream));
+        }
+      });
+      const server = http2.createServer();
+      let cbErrs = 0;
+      const done = Promise.withResolvers();
+      server.on("stream", stream => {
+        let remaining = 8;
+        const next = () => {
+          if (remaining-- === 0) {
+            stream.respond({ ":status": 200 });
+            stream.end("ok");
+            done.resolve();
+            return;
+          }
+          stream.pushStream({ ":path": "/p", "bad header": "x" }, err => {
+            if (err?.code === "ERR_INVALID_HTTP_TOKEN") cbErrs++;
+            next();
+          });
+        };
+        next();
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const client = http2.connect("http://127.0.0.1:" + server.address().port, {
+        settings: { enablePush: true },
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      req.end();
+      await done.promise;
+      for (let i = 0; i < 50 && refs.some(r => r.deref() !== undefined); i++) {
+        await new Promise(r => setImmediate(r));
+        Bun.gc(true);
+        await Bun.sleep(1);
+      }
+      const live = refs.filter(r => r.deref() !== undefined).length;
+      console.log(JSON.stringify({ refs: refs.length, cbErrs, live }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    const result = JSON.parse(stdout.trim().split("\n")[0] || "null");
+    expect(result).toEqual({ refs: 8, cbErrs: 8, live: 0 });
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
   // feeding the stream's own RST_STREAM (then another read) back into the parser from that
   // callback must not free the Stream out from under the caller (use-after-free under ASAN).

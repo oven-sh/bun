@@ -88,6 +88,47 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode advanced", () => {
+  it("unwraps the Buffer envelope before cmd dispatch", async () => {
+    // A cmd-bearing message whose payload holds a Buffer travels as the
+    // [message, buffers] envelope. The receiver's cmd fast-path reads
+    // message.cmd straight off the decoded value, so the envelope must be
+    // restored first — otherwise the fast-get sees an array (no cmd), the
+    // NODE_HANDLE interception is skipped, and user listeners receive the
+    // raw envelope instead of the message.
+    const childSource = [
+      // A non-NODE cmd goes through the same fast-get, then to the user.
+      `process.send({ cmd: "USER_CMD", payload: Buffer.from("through-dispatch") });`,
+      // A NODE_HANDLE cmd (no fd attached) must be intercepted, NACKed and
+      // withheld from user listeners — proving cmd was readable post-restore.
+      `process.send({ cmd: "NODE_HANDLE", type: "net.Socket", msg: { buf: Buffer.from("hidden") } });`,
+      `process.send({ done: true });`,
+      `process.on("message", () => {});`,
+    ].join("\n");
+    const { promise, resolve, reject } = Promise.withResolvers<any[]>();
+    const messages: any[] = [];
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      ipc(message) {
+        messages.push(message);
+        if (message?.done) resolve(messages);
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) after ${messages.length} messages`));
+      },
+    });
+    const received = await promise;
+    const userCmd = received.filter(message => message?.cmd === "USER_CMD");
+    expect(userCmd).toHaveLength(1);
+    expect(Buffer.isBuffer(userCmd[0].payload)).toBe(true);
+    expect(userCmd[0].payload.toString()).toBe("through-dispatch");
+    // The NODE_HANDLE message is protocol traffic, not a user message.
+    expect(received.filter(message => message?.cmd === "NODE_HANDLE")).toHaveLength(0);
+    // And no raw [message, buffers] envelope may leak through.
+    expect(received.filter(message => Array.isArray(message))).toHaveLength(0);
+  });
+
   it("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
     // The advanced IPC framing is [u8 type][u32-le length][payload]. Decoding previously
     // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child

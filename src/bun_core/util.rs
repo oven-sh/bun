@@ -4490,7 +4490,22 @@ pub fn maybe_handle_panic_during_process_reload() {
 /// best-effort on macOS (CLOEXEC handled by `on_before_reload_process_linux`
 /// hook on Linux; Darwin gets the simpler path until tier-4 wires spawn).
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
-    RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
+    // Exactly one thread may perform the reload. The JS thread (draining the
+    // WatchReloadTask after emitting kill-signal listeners) and the watcher's
+    // bounded grace-window fallback (hot_reloader.rs enqueue) can both reach
+    // here at the tail of the window; concurrent terminal resets, signal
+    // disposition restores and execve preparation crash on musl. The swap
+    // elects a winner; a losing thread parks (the winner's execve replaces
+    // the whole process momentarily) or returns per `may_return`. A thread
+    // that already owns the reload (thread-local set) may re-enter, keeping
+    // the prior crash-during-reload semantics.
+    let owns_reload = RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get());
+    if !owns_reload && RELOAD_IN_PROGRESS.swap(true, AOrdering::SeqCst) {
+        if may_return {
+            return;
+        }
+        exit_thread();
+    }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
     if clear_terminal {

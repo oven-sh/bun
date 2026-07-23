@@ -1585,6 +1585,7 @@ Buffer<char> ExportChallenge(const char* input, size_t length);
 // KDF
 
 const EVP_MD* getDigestByName(const WTF::StringView name);
+const EVP_MD* EVP_blake2s256_bun();
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
 
 // Verify that the specified HKDF output length is valid for the given digest.

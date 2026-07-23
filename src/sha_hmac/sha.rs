@@ -244,6 +244,12 @@ pub mod evp {
         Shake256,
     }
 
+    unsafe extern "C" {
+        // BoringSSL has no BLAKE2s; this EVP_MD lives in Bun's
+        // src/jsc/bindings/ncrypto.cpp.
+        safe fn Bun__EVP_blake2s256() -> *const ffi::EVP_MD;
+    }
+
     impl Algorithm {
         pub fn md(self) -> Option<*const ffi::EVP_MD> {
             // BoringSSL EVP_* md getters are `safe fn` returning a static const
@@ -251,6 +257,7 @@ pub mod evp {
             match self {
                 Algorithm::Blake2b256 => Some(ffi::EVP_blake2b256()),
                 Algorithm::Blake2b512 => Some(ffi::EVP_blake2b512()),
+                Algorithm::Blake2s256 => Some(Bun__EVP_blake2s256()),
                 Algorithm::Md4 => Some(ffi::EVP_md4()),
                 Algorithm::Md5 => Some(ffi::EVP_md5()),
                 Algorithm::Ripemd160 => Some(ffi::EVP_ripemd160()),

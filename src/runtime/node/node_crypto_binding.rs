@@ -1289,6 +1289,20 @@ mod _impl {
             boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
         }
 
+        // Digests that createHash/createHmac accept but BoringSSL's
+        // EVP_MD_do_all_sorted does not enumerate. Node.js lists
+        // blake2b512, blake2s256, shake128, shake256; blake2b256 is a
+        // Bun extension that createHash already accepts.
+        for extra in [
+            b"blake2b256".as_slice(),
+            b"blake2b512",
+            b"blake2s256",
+            b"shake128",
+            b"shake256",
+        ] {
+            bun_core::handle_oom(hashes.put(extra, ()));
+        }
+
         let array = JSValue::create_empty_array(global, hashes.count())?;
 
         for (i, hash) in hashes.keys().iter().enumerate() {

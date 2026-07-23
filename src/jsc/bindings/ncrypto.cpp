@@ -1938,6 +1938,232 @@ DataPointer DHPointer::stateless(const EVPKeyPointer& ourKey,
 }
 
 // ============================================================================
+// BLAKE2s-256
+//
+// BoringSSL provides EVP_blake2b256/EVP_blake2b512 but not BLAKE2s, which
+// Node.js (via OpenSSL) exposes as "blake2s256" for both createHash and
+// createHmac. Implement it here following RFC 7693 so the same EVP_MD* is
+// available to every consumer of getDigestByName (Hmac, hkdf, Sign/Verify)
+// rather than only createHash.
+//
+// State is POD and fits in EVP_MD_CTX::md_data, so EVP_MD_CTX_copy (memcpy)
+// is correct.
+
+namespace {
+
+constexpr unsigned BLAKE2S_CBLOCK = 64;
+constexpr unsigned BLAKE2S256_DIGEST_LENGTH = 32;
+
+struct BLAKE2S_CTX {
+    uint32_t h[8];
+    uint32_t t_low;
+    uint32_t t_high;
+    uint32_t block_used;
+    uint8_t block[BLAKE2S_CBLOCK];
+};
+
+static_assert(sizeof(BLAKE2S_CTX) <= EVP_MAX_MD_DATA_SIZE);
+
+// RFC 7693 section 2.6 (IV = SHA-256 IV)
+constexpr uint32_t kBlake2sIV[8] = {
+    0x6a09e667,
+    0xbb67ae85,
+    0x3c6ef372,
+    0xa54ff53a,
+    0x510e527f,
+    0x9b05688c,
+    0x1f83d9ab,
+    0x5be0cd19,
+};
+
+// RFC 7693 section 2.7
+constexpr uint8_t kBlake2sSigma[10 * 16] = {
+    // clang-format off
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3,
+    11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4,
+    7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8,
+    9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13,
+    2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9,
+    12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11,
+    13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10,
+    6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5,
+    10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0,
+    // clang-format on
+};
+
+inline uint32_t rotr32(uint32_t v, int n)
+{
+    return (v >> n) | (v << (32 - n));
+}
+
+inline uint32_t load32_le(const uint8_t* p)
+{
+    uint32_t v;
+    memcpy(&v, p, sizeof(v));
+    return v;
+}
+
+inline void store32_le(uint8_t* p, uint32_t v)
+{
+    memcpy(p, &v, sizeof(v));
+}
+
+// RFC 7693 section 3.1
+inline void blake2s_mix(uint32_t v[16], int a, int b, int c, int d, uint32_t x, uint32_t y)
+{
+    v[a] = v[a] + v[b] + x;
+    v[d] = rotr32(v[d] ^ v[a], 16);
+    v[c] = v[c] + v[d];
+    v[b] = rotr32(v[b] ^ v[c], 12);
+    v[a] = v[a] + v[b] + y;
+    v[d] = rotr32(v[d] ^ v[a], 8);
+    v[c] = v[c] + v[d];
+    v[b] = rotr32(v[b] ^ v[c], 7);
+}
+
+void blake2s_transform(BLAKE2S_CTX* ctx, const uint8_t block[BLAKE2S_CBLOCK], uint32_t num_bytes, int is_final_block)
+{
+    // RFC 7693 section 3.2
+    uint32_t v[16];
+    memcpy(v, ctx->h, sizeof(ctx->h));
+    memcpy(&v[8], kBlake2sIV, sizeof(kBlake2sIV));
+
+    ctx->t_low += num_bytes;
+    if (ctx->t_low < num_bytes) {
+        ctx->t_high++;
+    }
+    v[12] ^= ctx->t_low;
+    v[13] ^= ctx->t_high;
+
+    if (is_final_block) {
+        v[14] = ~v[14];
+    }
+
+    uint32_t m[16];
+    for (int i = 0; i < 16; i++) {
+        m[i] = load32_le(block + 4 * i);
+    }
+
+    for (int round = 0; round < 10; round++) {
+        const uint8_t* s = &kBlake2sSigma[16 * round];
+        blake2s_mix(v, 0, 4, 8, 12, m[s[0]], m[s[1]]);
+        blake2s_mix(v, 1, 5, 9, 13, m[s[2]], m[s[3]]);
+        blake2s_mix(v, 2, 6, 10, 14, m[s[4]], m[s[5]]);
+        blake2s_mix(v, 3, 7, 11, 15, m[s[6]], m[s[7]]);
+        blake2s_mix(v, 0, 5, 10, 15, m[s[8]], m[s[9]]);
+        blake2s_mix(v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
+        blake2s_mix(v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
+        blake2s_mix(v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
+    }
+
+    for (int i = 0; i < 8; i++) {
+        ctx->h[i] ^= v[i] ^ v[i + 8];
+    }
+}
+
+void BLAKE2S256_Init(BLAKE2S_CTX* ctx)
+{
+    memset(ctx, 0, sizeof(*ctx));
+    memcpy(ctx->h, kBlake2sIV, sizeof(kBlake2sIV));
+    // RFC 7693 section 2.5
+    ctx->h[0] ^= 0x01010000 | BLAKE2S256_DIGEST_LENGTH;
+}
+
+void BLAKE2S256_Update(BLAKE2S_CTX* ctx, const void* in_data, size_t len)
+{
+    if (len == 0) {
+        return;
+    }
+
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(in_data);
+    size_t todo = sizeof(ctx->block) - ctx->block_used;
+    if (todo > len) {
+        todo = len;
+    }
+    memcpy(&ctx->block[ctx->block_used], data, todo);
+    ctx->block_used += todo;
+    data += todo;
+    len -= todo;
+
+    if (!len) {
+        return;
+    }
+
+    blake2s_transform(ctx, ctx->block, BLAKE2S_CBLOCK, /*is_final_block=*/0);
+    ctx->block_used = 0;
+
+    while (len > BLAKE2S_CBLOCK) {
+        blake2s_transform(ctx, data, BLAKE2S_CBLOCK, /*is_final_block=*/0);
+        data += BLAKE2S_CBLOCK;
+        len -= BLAKE2S_CBLOCK;
+    }
+
+    memcpy(ctx->block, data, len);
+    ctx->block_used = len;
+}
+
+void BLAKE2S256_Final(uint8_t out[BLAKE2S256_DIGEST_LENGTH], BLAKE2S_CTX* ctx)
+{
+    memset(&ctx->block[ctx->block_used], 0, sizeof(ctx->block) - ctx->block_used);
+    blake2s_transform(ctx, ctx->block, ctx->block_used, /*is_final_block=*/1);
+    for (int i = 0; i < 8; i++) {
+        store32_le(out + 4 * i, ctx->h[i]);
+    }
+}
+
+void evp_blake2s256_init(EVP_MD_CTX* ctx)
+{
+    BLAKE2S256_Init(reinterpret_cast<BLAKE2S_CTX*>(ctx->md_data));
+}
+
+void evp_blake2s256_update(EVP_MD_CTX* ctx, const void* data, size_t len)
+{
+    BLAKE2S256_Update(reinterpret_cast<BLAKE2S_CTX*>(ctx->md_data), data, len);
+}
+
+void evp_blake2s256_final(EVP_MD_CTX* ctx, uint8_t* md)
+{
+    BLAKE2S256_Final(md, reinterpret_cast<BLAKE2S_CTX*>(ctx->md_data));
+}
+
+// Mirrors BoringSSL's private `struct env_md_st` layout
+// (crypto/fipsmodule/digest/internal.h).
+struct env_md_st_layout {
+    int type;
+    unsigned md_size;
+    uint32_t flags;
+    void (*init)(EVP_MD_CTX*);
+    void (*update)(EVP_MD_CTX*, const void*, size_t);
+    void (*final)(EVP_MD_CTX*, uint8_t*);
+    unsigned block_size;
+    unsigned ctx_size;
+};
+
+const env_md_st_layout evp_md_blake2s256 = {
+    NID_undef,
+    BLAKE2S256_DIGEST_LENGTH,
+    0,
+    evp_blake2s256_init,
+    evp_blake2s256_update,
+    evp_blake2s256_final,
+    BLAKE2S_CBLOCK,
+    sizeof(BLAKE2S_CTX),
+};
+
+} // namespace
+
+extern "C" const EVP_MD* Bun__EVP_blake2s256()
+{
+    return reinterpret_cast<const EVP_MD*>(&evp_md_blake2s256);
+}
+
+const EVP_MD* EVP_blake2s256_bun()
+{
+    return Bun__EVP_blake2s256();
+}
+
+// ============================================================================
 // KDF
 
 const EVP_MD* getDigestByName(const WTF::StringView name)
@@ -2013,6 +2239,19 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         if (WTF::equalIgnoringASCIICase(remain, "128"_s)) {
             return EVP_sha1();
         }
+    }
+
+    // BoringSSL's EVP_get_digestbyname does not know about BLAKE2, but
+    // Node.js accepts "blake2b512" and "blake2s256" for both createHash
+    // and createHmac, so resolve them here for every consumer.
+    if (WTF::equalIgnoringASCIICase(name, "blake2b512"_s)) {
+        return EVP_blake2b512();
+    }
+    if (WTF::equalIgnoringASCIICase(name, "blake2s256"_s)) {
+        return EVP_blake2s256_bun();
+    }
+    if (WTF::equalIgnoringASCIICase(name, "blake2b256"_s)) {
+        return EVP_blake2b256();
     }
 
     // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {

@@ -87,15 +87,35 @@ const {
   globalThis,
 } = primordials;
 
-// The whole implementation is deferred so `require("node:repl")` is
-// near-free for consumers (ts-node) that import it at top level but only
-// touch repl.start / repl.Recoverable on the REPL path.
+// These five are cheap enough to live outside loadImpl, so a library that
+// destructures `{start, Recoverable, REPL_MODE_*}` at import time pays
+// nothing until start() is actually called.
+const { REPL_MODE_SLOPPY, REPL_MODE_STRICT } = require("internal/repl/mode");
+
+class Recoverable extends SyntaxError {
+  constructor(err) {
+    super();
+    this.err = err;
+  }
+}
+
+function start() {
+  return loadImpl().start.$apply(this, arguments);
+}
+
+function isValidSyntax() {
+  return loadImpl().isValidSyntax.$apply(this, arguments);
+}
+
+// REPLServer / writer / repl / builtinModules stay accessors: REPLServer extends
+// readline.Interface so reading it means loading anyway, and writer carries a
+// mutable `.options` that references util.inspect.defaultOptions.
 let _loaded;
 function loadImpl() {
   if (_loaded) return _loaded;
   // Populated at the bottom; internal references (inside REPLServer methods)
   // run only after loadImpl completes.
-  _loaded = {};
+  _loaded = { REPL_MODE_SLOPPY, REPL_MODE_STRICT, Recoverable };
 
 const { makeRequireFunction, addBuiltinLibsToObject } = require("internal/repl/node-shims");
 // Lazy: acorn's ~122 KB source parses on first property access, not on
@@ -145,8 +165,6 @@ const { validateFunction, validateObject } = require("internal/validators");
 const experimentalREPLAwait = getOptionValue("--experimental-repl-await");
 const pendingDeprecation = getOptionValue("--pending-deprecation");
 const {
-  REPL_MODE_SLOPPY,
-  REPL_MODE_STRICT,
   isRecoverableError,
   kStandaloneREPL,
   setupPreview,
@@ -264,13 +282,6 @@ const toDynamicImport = codeLine => {
   });
   return dynamicImportStatement;
 };
-
-class Recoverable extends SyntaxError {
-  constructor(err) {
-    super();
-    this.err = err;
-  }
-}
 
 class REPLServer extends Interface {
   constructor(prompt, stream, eval_, useGlobal, ignoreUndefined, replMode) {
@@ -1445,9 +1456,6 @@ ObjectAssign(_loaded, {
   start,
   writer,
   REPLServer,
-  REPL_MODE_SLOPPY,
-  REPL_MODE_STRICT,
-  Recoverable,
   isValidSyntax,
 });
 
@@ -1493,7 +1501,19 @@ ObjectDefineProperty(_loaded, "_builtinLibs", {
   return _loaded;
 }
 
-for (const name of ["start", "writer", "REPLServer", "REPL_MODE_SLOPPY", "REPL_MODE_STRICT", "Recoverable", "isValidSyntax", "repl"]) {
+// Data properties: reading these does not run loadImpl; `start()` and
+// `isValidSyntax()` forward into it on first call.
+ObjectAssign(__node_module__.exports, {
+  start,
+  Recoverable,
+  REPL_MODE_SLOPPY,
+  REPL_MODE_STRICT,
+  isValidSyntax,
+});
+// Accessors for what can't be hollow: REPLServer extends readline.Interface,
+// writer carries a mutable .options bound to util.inspect.defaultOptions, and
+// repl is assigned by createInternalRepl.
+for (const name of ["REPLServer", "writer", "repl"]) {
   ObjectDefineProperty(__node_module__.exports, name, {
     __proto__: null,
     get: () => loadImpl()[name],

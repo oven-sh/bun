@@ -53,7 +53,7 @@ const previewOptions = {
   showHidden: false,
 };
 
-const REPL_MODE_STRICT = Symbol("repl-strict");
+const { REPL_MODE_SLOPPY, REPL_MODE_STRICT } = require("internal/repl/mode");
 
 // If the error is that we've unexpectedly ended the input,
 // then let the user try to recover by adding more input.
@@ -819,7 +819,7 @@ function setReplBuiltinLibs(value) {
 }
 
 __node_module__.exports = {
-  REPL_MODE_SLOPPY: Symbol("repl-sloppy"),
+  REPL_MODE_SLOPPY,
   REPL_MODE_STRICT,
   isRecoverableError,
   kStandaloneREPL: Symbol("kStandaloneREPL"),

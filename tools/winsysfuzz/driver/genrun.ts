@@ -61,7 +61,7 @@ async function generate(seed: number, outFile: string): Promise<boolean> {
   });
   return (await p.exited) === 0;
 }
-async function runProgram(program: string, cwd: string): Promise<Run> {
+async function runProgram(program: string, cwd: string, limitMs: number = timeoutMs): Promise<Run> {
   const t0 = Date.now();
   const proc = Bun.spawn([bun!, program], {
     cwd,
@@ -75,7 +75,7 @@ async function runProgram(program: string, cwd: string): Promise<Run> {
     try {
       if (proc.pid) Bun.spawnSync(["taskkill", "/F", "/PID", String(proc.pid), "/T"], { stdout: "ignore", stderr: "ignore" });
     } catch {}
-  }, timeoutMs);
+  }, limitMs);
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   const exit = await proc.exited.catch(() => null);
   clearTimeout(timer);
@@ -107,11 +107,12 @@ function judge(r: Run): { kind: "crash" | "hang" | null; sig: string; detail: st
 async function crashesText(text: string, dir: string): Promise<boolean> {
   const f = join(dir, "min-cand.js");
   await Bun.write(f, text);
+  // A reduction candidate either crashes fast or not at all: a candidate
+  // that runs past a few seconds is a broken/hanging slice, never the crash.
   for (let k = 0; k < 2; k++) {
-    const r = await runProgram(f, dir);
-    const jk = judge(r);
-    console.log(`     cand: ${text.split("\n").length}L exit=${r.exit} to=${r.timedOut} kind=${jk.kind ?? "none"} ${r.ms}ms`);
-    if (jk.kind === "crash") return true;
+    const r = await runProgram(f, dir, 8000);
+    if (judge(r).kind === "crash") return true;
+    if (r.timedOut) return false; // hanging slice - not the crash we're isolating
   }
   return false;
 }

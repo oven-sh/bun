@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { once } from "node:events";
 import { openSync, readFileSync, Utf8Stream } from "node:fs";
 import { join } from "node:path";
-import { tempDir } from "harness";
 
 // Regression: after a multi-byte UTF-8 chunk is fully written, the stream must
 // keep flushing the remaining buffered chunks. releaseWritingBuf() tracks the

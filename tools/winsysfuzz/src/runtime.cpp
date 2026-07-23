@@ -573,6 +573,15 @@ CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)
     uintptr_t* end = (uintptr_t*)tib->StackBase;
     uintptr_t* limit = sp + (size_t)g_frames * 32;
     if (limit > end) limit = end;
+    // The bun-frame KEY (bunFrame_) must be the LIVE caller behind the
+    // wrapper, never a stale return address left in dead stack: leftovers
+    // also pass AfterCall (they were real returns once) but symbolize to
+    // unrelated internals (allocator/vector-growth paths) and change run
+    // to run - noise coordinates that neither replay nor attribute. The
+    // wrapper's own frame is thin, so its return address (the bun caller)
+    // sits within a small window above SP; a value beyond that window may
+    // still be a display CANDIDATE but is never trusted as the identity.
+    uintptr_t* keyWindow = sp + 64; // 512 bytes: the wrapper frame + our hook's
     for (uintptr_t* p = sp; p < limit && nframes_ < kMaxFrames; p++) {
       uintptr_t v = *p;
       if (v < g_txtBase || v >= g_txtEnd) continue;
@@ -584,7 +593,7 @@ CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)
       for (uint8_t k = 0; k < nframes_; k++) if (frames_[k] == v) { dup = true; break; }
       if (dup) continue;
       frames_[nframes_++] = v;
-      if (bunFrame_ == 0) bunFrame_ = v;
+      if (bunFrame_ == 0 && p < keyWindow) bunFrame_ = v;
     }
   }
 }

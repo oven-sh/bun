@@ -24,9 +24,7 @@ use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
 
-use crate::api::html_rewriter;
 use crate::api::server;
-use crate::webcore::body;
 
 // Request contexts are a single generic
 // `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
@@ -53,13 +51,12 @@ pub enum Tag {
     HTTPSServerRequestContext,
     DebugHTTPServerRequestContext,
     DebugHTTPSServerRequestContext,
-    BodyValueBufferer,
     HTTPSServerH3RequestContext,
     DebugHTTPSServerH3RequestContext,
 }
 
 impl Tag {
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 6;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -68,9 +65,8 @@ impl Tag {
             1 => Tag::HTTPSServerRequestContext,
             2 => Tag::DebugHTTPServerRequestContext,
             3 => Tag::DebugHTTPSServerRequestContext,
-            4 => Tag::BodyValueBufferer,
-            5 => Tag::HTTPSServerH3RequestContext,
-            6 => Tag::DebugHTTPSServerH3RequestContext,
+            4 => Tag::HTTPSServerH3RequestContext,
+            5 => Tag::DebugHTTPSServerH3RequestContext,
             _ => unreachable!(),
         }
     }
@@ -102,9 +98,6 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromise
     for server::NewRequestContext<ThisServer, SSL, DBG, H3>
 {
     const TAG: Tag = npc_tag_for(SSL, DBG, H3);
-}
-impl NativePromiseContextType for body::ValueBufferer<'_> {
-    const TAG: Tag = Tag::BodyValueBufferer;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -214,16 +207,6 @@ impl DeferredDerefTask {
                 Tag::DebugHTTPSServerRequestContext => {
                     (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
                 }
-                Tag::BodyValueBufferer => {
-                    // ValueBufferer is embedded by value inside HTMLRewriter's
-                    // BufferOutputSink, with the owner pointer stored in .ctx.
-                    // The pending-promise ref was taken on the owner, so we
-                    // release it there.
-                    let bufferer = &*ctx.cast::<body::ValueBufferer<'_>>();
-                    html_rewriter::BufferOutputSink::deref(
-                        bufferer.ctx.cast::<html_rewriter::BufferOutputSink>(),
-                    );
-                }
                 Tag::HTTPSServerH3RequestContext => {
                     (*ctx.cast::<HTTPSServerH3RequestContext>()).deref()
                 }
@@ -246,5 +229,3 @@ const _: () =
     assert!(core::mem::align_of::<DebugHTTPServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
-const _: () =
-    assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);

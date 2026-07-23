@@ -11,6 +11,7 @@ use bun_core::String as BunString;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 use bun_output::{declare_scope, scoped_log};
 
+use crate::api::html_rewriter::BufferOutputSink;
 use crate::node::{ErrorCode, StringOrBuffer};
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::s3::client::S3UploadStreamWrapper;
@@ -620,7 +621,11 @@ macro_rules! impl_resumable_sink_js {
         }
     )*};
 }
-impl_resumable_sink_js!(JSResumableFetchSink, JSResumableS3UploadSink);
+impl_resumable_sink_js!(
+    JSResumableFetchSink,
+    JSResumableS3UploadSink,
+    JSResumableHTMLRewriterSink,
+);
 
 // Forward to the inherent methods on each Context type; the trait bound is
 // satisfied by delegating to those inherent impls.
@@ -638,6 +643,7 @@ impl ResumableSinkContext for FetchTasklet {
 
 pub type ResumableFetchSink = ResumableSink<JSResumableFetchSink, FetchTasklet>;
 pub type ResumableS3UploadSink = ResumableSink<JSResumableS3UploadSink, S3UploadStreamWrapper>;
+pub type ResumableHTMLRewriterSink = ResumableSink<JSResumableHTMLRewriterSink, BufferOutputSink>;
 
 unsafe extern "C" {
     safe fn Bun__assignStreamIntoResumableSink(

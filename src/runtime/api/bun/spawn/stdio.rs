@@ -554,10 +554,12 @@ impl Stdio {
         if let Some(array_buffer) = value.as_array_buffer(global) {
             // Change in Bun v1.0.34: don't throw for empty ArrayBuffer.
             // At stdin let it fall through to `Stdio::ArrayBuffer` so the child
-            // gets a pipe (matching the non-empty case and Node's spawnSync
-            // `{input: Buffer.alloc(0)}`); `StaticPipeWriter::start` closes the
-            // write end immediately for the zero-byte source. Other slots have
-            // no reader wired for `Stdio::ArrayBuffer`, so keep them as Ignore.
+            // sees the same fd type as for a non-empty buffer (pipe on
+            // macOS/Windows via `StaticPipeWriter::start` which closes the
+            // zero-byte write end immediately; memfd on Linux via
+            // `use_memfd`), matching Node's spawnSync `{input: Buffer.alloc(0)}`.
+            // Other slots have no reader wired for `Stdio::ArrayBuffer`, so keep
+            // them as Ignore.
             if i != 0 && array_buffer.byte_slice().is_empty() {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());

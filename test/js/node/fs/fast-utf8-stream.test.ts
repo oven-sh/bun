@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { once } from "node:events";
 import { fsync, openSync, readFileSync, Utf8Stream } from "node:fs";
 import { join } from "node:path";
-import { tempDir } from "harness";
 
 describe("fs.Utf8Stream contentMode: buffer", () => {
   // https://github.com/nodejs/node/pull/63833: when starting a new buffer
@@ -131,9 +131,7 @@ describe("fs.Utf8Stream periodicFlush", () => {
     const stream = new Utf8Stream({ fd, minLength: 4096 });
     try {
       await once(stream, "ready");
-      expect(() => stream.flush(null)).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
+      expect(() => stream.flush(null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     } finally {
       stream.destroy();
     }

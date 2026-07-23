@@ -2961,10 +2961,18 @@ impl DevServer {
         w.extend_from_slice(b": [ [");
         let mut any = false;
         for import in import_records[index.get() as usize].as_slice() {
-            if import.source_index.is_valid() {
+            // The emitted key must match the target module's own key, which
+            // the printer derives from the source's `pretty` path. The
+            // record's `pretty` is not rewritten when the import target is
+            // also an entry point of this bundle, leaving the raw specifier
+            // or an absolute path behind (#31923).
+            let key: &[u8] = if import.source_index.is_valid() {
                 if !loaders[import.source_index.get() as usize].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
                 }
+                input_file_sources[import.source_index.get() as usize]
+                    .path
+                    .pretty
             } else {
                 // Find the in-graph import.
                 let Some(file) = self.client_graph.bundled_files.get(import.path.text) else {
@@ -2973,16 +2981,14 @@ impl DevServer {
                 if !matches!(file.content, incremental_graph::Content::Js(_)) {
                     continue;
                 }
-            }
+                import.path.pretty
+            };
             if !any {
                 any = true;
                 w.extend_from_slice(b"\n");
             }
             w.extend_from_slice(b"    ");
-            bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                import.path.pretty,
-                w,
-            )?;
+            bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(key, w)?;
             w.extend_from_slice(b", 0,\n");
         }
         if any {
@@ -4161,6 +4167,14 @@ pub(super) fn finalize_bundle(
         }
     }
 
+    // HTML routes whose generated JS module was re-emitted into this bundle's
+    // hot chunk. These are collected independently of the dependency traces:
+    // `html_routes_hard_affected` can miss a re-bundled route when another
+    // trace visits the HTML file first (the `gts` bitset makes
+    // `trace_dependencies` order-dependent), and List 1 below must flag every
+    // route whose root module ships in the chunk.
+    let mut html_routes_rebundled: Vec<route_bundle::Index> =
+        Vec::with_capacity(html_chunks_mut.len());
     for chunk in html_chunks_mut.iter_mut() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
         let bundler::CompileResult::Html {
@@ -4192,6 +4206,7 @@ pub(super) fn finalize_bundle(
             .unwrap::<{ bake::Side::Client }>()
             .expect("unresolved index");
         let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
+        html_routes_rebundled.push(route_bundle_index);
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
@@ -4434,25 +4449,43 @@ pub(super) fn finalize_bundle(
     let will_hear_hot_update = hot_update_subscribers > 0;
 
     // This list of routes affected excludes client code.
-    if will_hear_hot_update
-        && current_bundle!().had_reload_event
+    // The affected-route lists are only announced for watcher-triggered
+    // bundles that completed without failures; viewers of a broken route keep
+    // the current page and the error overlay instead of reloading into an
+    // error page.
+    let announce_affected_routes = current_bundle!().had_reload_event
         && (dev.incremental_result.framework_routes_affected.len()
             + dev.incremental_result.html_routes_hard_affected.len())
             > 0
-        && dev.bundling_failures.is_empty()
-    {
+        && dev.bundling_failures.is_empty();
+    // HTML routes whose root JS module ships in this bundle's hot chunk are
+    // announced unconditionally: the HMR client can never hot-apply an HTML
+    // root module (`replaceModules` expects the route reload to happen
+    // first), so sending the module without flagging the route would push
+    // viewers through the "hot update was not accepted" full-reload fallback.
+    if will_hear_hot_update && (announce_affected_routes || !html_routes_rebundled.is_empty()) {
         has_route_bits_set = true;
 
-        for request in &dev.incremental_result.framework_routes_affected {
-            let route = dev.router.route_ptr(request.route_index());
-            if let Some(id) = route.bundle {
-                route_bits.set(id.get() as usize);
+        if announce_affected_routes {
+            for request in &dev.incremental_result.framework_routes_affected {
+                let route = dev.router.route_ptr(request.route_index());
+                if let Some(id) = route.bundle {
+                    route_bits.set(id.get() as usize);
+                }
+                if request.should_recurse_when_visiting() {
+                    mark_all_route_children(
+                        &dev.router,
+                        &mut [&mut route_bits],
+                        request.route_index(),
+                    );
+                }
             }
-            if request.should_recurse_when_visiting() {
-                mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index());
+            for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
+                route_bits.set(route_bundle_index.get() as usize);
+                route_bits_client.set(route_bundle_index.get() as usize);
             }
         }
-        for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
+        for route_bundle_index in &html_routes_rebundled {
             route_bits.set(route_bundle_index.get() as usize);
             route_bits_client.set(route_bundle_index.get() as usize);
         }

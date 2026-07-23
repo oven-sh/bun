@@ -92,6 +92,64 @@ describe("Glob.match", () => {
     expect(new Glob("x.{ts,[,]foo}").match("x.ts")).toBeTrue();
   });
 
+  test("unterminated [ matches itself literally (POSIX)", () => {
+    // POSIX fnmatch 2.13.1: if `[` does not introduce a bracket expression
+    // (no closing `]`), the `[` shall match itself. bash, minimatch, and
+    // picomatch all agree.
+    expect(new Glob("[").match("[")).toBeTrue();
+    expect(new Glob("[").match("a")).toBeFalse();
+    expect(new Glob("[a").match("[a")).toBeTrue();
+    expect(new Glob("[a").match("a")).toBeFalse();
+    expect(new Glob("x[y").match("x[y")).toBeTrue();
+    expect(new Glob("x[y").match("xay")).toBeFalse();
+    expect(new Glob("a[").match("a[")).toBeTrue();
+    expect(new Glob("[abc").match("[abc")).toBeTrue();
+    expect(new Glob("[abc").match("a")).toBeFalse();
+    // Closed bracket still behaves as a character class.
+    expect(new Glob("[abc]").match("a")).toBeTrue();
+    expect(new Glob("[abc]").match("[abc]")).toBeFalse();
+
+    // A `]` immediately after `[` (or `[!`/`[^`) is a literal member, so
+    // `[]`, `[!]`, `[^]` are all unterminated and match themselves.
+    expect(new Glob("[]").match("[]")).toBeTrue();
+    expect(new Glob("[!]").match("[!]")).toBeTrue();
+    expect(new Glob("[^]").match("[^]")).toBeTrue();
+    expect(new Glob("[!").match("[!")).toBeTrue();
+    expect(new Glob("[!a").match("[!a")).toBeTrue();
+    // `[]a]` is a terminated class containing `]` and `a`.
+    expect(new Glob("[]a]").match("]")).toBeTrue();
+    expect(new Glob("[]a]").match("a")).toBeTrue();
+    expect(new Glob("[]a]").match("[]a]")).toBeFalse();
+
+    // Literal `[` participates in wildcard backtracking like any other char.
+    expect(new Glob("*[").match("abc[")).toBeTrue();
+    expect(new Glob("*[").match("abc")).toBeFalse();
+    expect(new Glob("x[y*").match("x[yz")).toBeTrue();
+
+    // Unterminated `[` inside brace branches: the `[` is literal and must
+    // not swallow the `,` or `}` that delimit the branch.
+    expect(new Glob("{[,a}").match("[")).toBeTrue();
+    expect(new Glob("{[,a}").match("a")).toBeTrue();
+    expect(new Glob("{a,[}b").match("[b")).toBeTrue();
+    expect(new Glob("{a,[}b").match("ab")).toBeTrue();
+    expect(new Glob("x{[a,b}y").match("x[ay")).toBeTrue();
+    expect(new Glob("x{[a,b}y").match("xby")).toBeTrue();
+  });
+
+  test("a run of unterminated [ stays linear", () => {
+    // Every `[` is unterminated (no `]` anywhere), so each is a literal.
+    // A naive per-`[` scan-to-end would be quadratic and time this test out.
+    const opens = Buffer.alloc(100_000, "[").toString();
+    expect(new Glob(opens).match(opens)).toBeTrue();
+    expect(new Glob(opens).match(opens.slice(1))).toBeFalse();
+    // The brace scanner classifies every `[` in the group the same way.
+    expect(new Glob(`{${opens},x}`).match(opens)).toBeTrue();
+    expect(new Glob(`{${opens},x}`).match("x")).toBeTrue();
+    // A single trailing `]` closes the run into one class containing `[`.
+    expect(new Glob("[[[[[]").match("[")).toBeTrue();
+    expect(new Glob("[[[[[]").match("a")).toBeFalse();
+  });
+
   test("no early globstar lock-in", () => {
     // see https://github.com/oven-sh/bun/issues/14934
     expect(new Glob(`**/*abc*`).match(`a/abc`)).toBeTrue();

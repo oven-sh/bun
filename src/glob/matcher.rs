@@ -147,6 +147,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
+    let last_rbracket = find_last_rbracket(glob);
     let matched = glob_match_impl(
         &mut state,
         glob,
@@ -154,6 +155,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
         path,
         &mut brace_stack,
         &mut brace_budget,
+        last_rbracket,
     );
 
     // TODO: consider just returning a bool
@@ -184,6 +186,7 @@ fn glob_match_impl(
     path: &[u8],
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
+    last_rbracket: Option<u32>,
 ) -> bool {
     'main_loop: while (state.glob_index as usize) < glob.len()
         || (state.path_index as usize) < path.len()
@@ -272,6 +275,14 @@ fn glob_match_impl(
                         }
                         b'[' => {
                             if (state.path_index as usize) < path.len() {
+                                // No `]` left in the pattern: provably unterminated, so the
+                                // `[` is a literal. Skipping the scan keeps a run of
+                                // unterminated `[`s linear instead of quadratic.
+                                if !may_close_bracket(last_rbracket, state.glob_index) {
+                                    break 'to_else;
+                                }
+
+                                let open_bracket_index = state.glob_index;
                                 state.glob_index += 1;
 
                                 let mut negated = false;
@@ -285,13 +296,16 @@ fn glob_match_impl(
 
                                 let mut first = true;
                                 let mut is_match = false;
+                                let mut closed = false;
 
                                 // source unicode char to match against the target + its byte length in `path`
                                 let (c, len) = decode_wtf8_rune_at(path, state.path_index as usize);
 
-                                while (state.glob_index as usize) < glob.len()
-                                    && (first || glob[state.glob_index as usize] != b']')
-                                {
+                                while (state.glob_index as usize) < glob.len() {
+                                    if !first && glob[state.glob_index as usize] == b']' {
+                                        closed = true;
+                                        break;
+                                    }
                                     // Get low ( ͡° ͜ʖ ͡°), and unescape it
                                     let mut low: u32 = glob[state.glob_index as usize] as u32;
                                     let mut low_len: u8 = 1;
@@ -301,7 +315,7 @@ fn glob_match_impl(
                                         glob,
                                         &mut state.glob_index,
                                     ) {
-                                        return false; // Invalid pattern!
+                                        break; // trailing `\`: unterminated
                                     }
 
                                     // skip past the target char
@@ -311,24 +325,21 @@ fn glob_match_impl(
                                         && glob[state.glob_index as usize] == b'-'
                                         && glob[state.glob_index as usize + 1] != b']'
                                     {
-                                        'blk: {
-                                            state.glob_index += 1;
+                                        state.glob_index += 1;
 
-                                            let mut high: u32 =
-                                                glob[state.glob_index as usize] as u32;
-                                            let mut high_len: u8 = 1;
-                                            if !get_unicode(
-                                                &mut high,
-                                                &mut high_len,
-                                                glob,
-                                                &mut state.glob_index,
-                                            ) {
-                                                return false; // Invalid pattern!
-                                            }
-
-                                            state.glob_index += u32::from(high_len);
-                                            break 'blk high;
+                                        let mut high: u32 = glob[state.glob_index as usize] as u32;
+                                        let mut high_len: u8 = 1;
+                                        if !get_unicode(
+                                            &mut high,
+                                            &mut high_len,
+                                            glob,
+                                            &mut state.glob_index,
+                                        ) {
+                                            break; // trailing `\`: unterminated
                                         }
+
+                                        state.glob_index += u32::from(high_len);
+                                        high
                                     } else {
                                         low
                                     };
@@ -340,8 +351,10 @@ fn glob_match_impl(
                                     first = false;
                                 }
 
-                                if state.glob_index as usize >= glob.len() {
-                                    return false; // Invalid pattern!
+                                if !closed {
+                                    // POSIX: an unterminated `[` matches itself literally.
+                                    state.glob_index = open_bracket_index;
+                                    break 'to_else;
                                 }
 
                                 state.glob_index += 1;
@@ -362,11 +375,18 @@ fn glob_match_impl(
                                     continue 'main_loop;
                                 }
                             }
-                            return match_brace(state, glob, path, brace_stack, brace_budget);
+                            return match_brace(
+                                state,
+                                glob,
+                                path,
+                                brace_stack,
+                                brace_budget,
+                                last_rbracket,
+                            );
                         }
                         b',' => {
                             if state.brace_depth > 0 {
-                                skip_branch(state, glob);
+                                skip_branch(state, glob, last_rbracket);
                                 continue 'main_loop;
                             } else {
                                 break 'to_else;
@@ -374,7 +394,7 @@ fn glob_match_impl(
                         }
                         b'}' => {
                             if state.brace_depth > 0 {
-                                skip_branch(state, glob);
+                                skip_branch(state, glob, last_rbracket);
                                 continue 'main_loop;
                             } else {
                                 break 'to_else;
@@ -434,6 +454,7 @@ fn match_brace(
     path: &[u8],
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
+    last_rbracket: Option<u32>,
 ) -> bool {
     let mut brace_depth: i32 = 0;
     let mut in_brackets = false;
@@ -464,6 +485,7 @@ fn match_brace(
                             branch_index,
                             brace_stack,
                             brace_budget,
+                            last_rbracket,
                         ) {
                             return true;
                         }
@@ -484,6 +506,7 @@ fn match_brace(
                         branch_index,
                         brace_stack,
                         brace_budget,
+                        last_rbracket,
                     ) {
                         return true;
                     }
@@ -491,7 +514,8 @@ fn match_brace(
                 }
             }
             b'[' => {
-                if !in_brackets {
+                if !in_brackets && bracket_is_closed(glob, state.glob_index as usize, last_rbracket)
+                {
                     in_brackets = true;
                 }
             }
@@ -513,6 +537,7 @@ fn match_brace_branch(
     branch_index: u32,
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
+    last_rbracket: Option<u32>,
 ) -> bool {
     if *brace_budget == 0 {
         return false;
@@ -539,6 +564,7 @@ fn match_brace_branch(
         path,
         brace_stack,
         brace_budget,
+        last_rbracket,
     );
 
     let _ = brace_stack.pop();
@@ -546,7 +572,7 @@ fn match_brace_branch(
     matched
 }
 
-fn skip_branch(state: &mut State, glob: &[u8]) {
+fn skip_branch(state: &mut State, glob: &[u8], last_rbracket: Option<u32>) {
     let mut in_brackets = false;
     // `state.brace_depth` only counts groups entered via `match_brace_branch`,
     // so nesting merely scanned over while skipping is tracked locally, not in state.
@@ -569,7 +595,8 @@ fn skip_branch(state: &mut State, glob: &[u8]) {
                 }
             }
             b'[' => {
-                if !in_brackets {
+                if !in_brackets && bracket_is_closed(glob, state.glob_index as usize, last_rbracket)
+                {
                     in_brackets = true;
                 }
             }
@@ -582,6 +609,61 @@ fn skip_branch(state: &mut State, glob: &[u8]) {
 }
 
 use bun_paths::is_sep_native as is_separator;
+
+/// Index of the last `]` in `glob` that a left-to-right, escape-aware scan can
+/// reach. A `[` at or past this index can never be terminated. This is an
+/// over-approximation (a first-position `]` is counted even though it is a
+/// literal class member), which only costs a scan, never a wrong answer.
+fn find_last_rbracket(glob: &[u8]) -> Option<u32> {
+    let mut last = None;
+    let mut i = 0;
+    while i < glob.len() {
+        match glob[i] {
+            b']' => {
+                last = Some(i as u32);
+                i += 1;
+            }
+            b'\\' => i += 2,
+            _ => i += 1,
+        }
+    }
+    last
+}
+
+/// Whether a `]` terminating the `[` at `open_idx` can exist at all. `false`
+/// means the bracket is provably unterminated without scanning its body.
+#[inline(always)]
+fn may_close_bracket(last_rbracket: Option<u32>, open_idx: u32) -> bool {
+    last_rbracket.is_some_and(|last| last > open_idx)
+}
+
+/// Returns whether the `[` at `glob[open_idx]` begins a bracket expression
+/// that is terminated by a matching `]`. Per POSIX fnmatch, a `]` immediately
+/// following `[` (or `[!`/`[^`) is a literal class member, not a terminator,
+/// and an unterminated `[` matches a literal `[` rather than being an error.
+#[inline]
+fn bracket_is_closed(glob: &[u8], open_idx: usize, last_rbracket: Option<u32>) -> bool {
+    debug_assert!(glob[open_idx] == b'[');
+    if !may_close_bracket(last_rbracket, open_idx as u32) {
+        return false;
+    }
+    let mut i = open_idx + 1;
+    if i < glob.len() && (glob[i] == b'^' || glob[i] == b'!') {
+        i += 1;
+    }
+    // `]` in the first position is a literal class member.
+    if i < glob.len() && glob[i] == b']' {
+        i += 1;
+    }
+    while i < glob.len() {
+        match glob[i] {
+            b']' => return true,
+            b'\\' => i += 2,
+            _ => i += 1,
+        }
+    }
+    false
+}
 
 #[inline(always)]
 fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {

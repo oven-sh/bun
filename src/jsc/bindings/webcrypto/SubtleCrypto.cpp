@@ -1776,6 +1776,8 @@ void SubtleCrypto::encapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifi
             }
             promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
                 auto* result = JSC::constructEmptyObject(&globalObject);
+                // Node v26.3.0 enumerates encapsulateBits results sharedKey-first
+                // but encapsulateKey results ciphertext-first; match each path.
                 result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJSArrayBuffer(globalObject, WTF::move(sharedKeyBuffer)));
                 result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
                 return result;
@@ -1843,6 +1845,8 @@ void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
                 }
                 promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
                     auto* result = JSC::constructEmptyObject(&globalObject);
+                    // Node v26.3.0 enumerates encapsulateKey results ciphertext-first,
+                    // unlike encapsulateBits; match each path.
                     result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
                     result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJS(&globalObject, &globalObject, sharedKey));
                     return result;

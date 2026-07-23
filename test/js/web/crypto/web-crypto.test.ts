@@ -336,6 +336,45 @@ describe("Ed25519", () => {
 });
 
 describe("ChaCha20-Poly1305 and AKP review fixes", () => {
+  it("structuredClone of ChaCha20-Poly1305 and AKP keys throws DataCloneError", async () => {
+    // Node clones these; until real clone support lands, DataCloneError
+    // replaces the RELEASE_ASSERT abort the serializer used to hit.
+    const chacha = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    const ml = (await crypto.subtle.generateKey("ML-DSA-65", true, ["sign", "verify"])) as CryptoKeyPair;
+    for (const key of [chacha, ml.privateKey, ml.publicKey]) {
+      let err: Error | undefined;
+      try {
+        structuredClone(key);
+      } catch (e) {
+        err = e as Error;
+      }
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err!.name).toBe("DataCloneError");
+    }
+  });
+
+  it("encapsulateBits and encapsulateKey enumerate results in Node's order", async () => {
+    // Node v26.3.0: encapsulateBits results are sharedKey-first while
+    // encapsulateKey results are ciphertext-first.
+    const bitsPair = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateBits",
+      "decapsulateBits",
+    ])) as CryptoKeyPair;
+    const bits = await crypto.subtle.encapsulateBits({ name: "ML-KEM-768" }, bitsPair.publicKey);
+    expect(Object.keys(bits)).toEqual(["sharedKey", "ciphertext"]);
+    const keyPair = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateKey",
+      "decapsulateKey",
+    ])) as CryptoKeyPair;
+    const res = await crypto.subtle.encapsulateKey({ name: "ML-KEM-768" }, keyPair.publicKey, "HKDF", false, [
+      "deriveBits",
+    ]);
+    expect(Object.keys(res)).toEqual(["ciphertext", "sharedKey"]);
+  });
+
   it("deriveKey can derive a ChaCha20-Poly1305 key", async () => {
     const base = await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]);
     const derived = await crypto.subtle.deriveKey(

@@ -365,14 +365,6 @@ static bool objectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentB
     return true;
 }
 
-// A string key that is a canonical array index (0 <= i < 2**32 - 1).
-static bool isIndexKey(JSC::JSGlobalObject* globalObject, const JSC::Identifier& identifier)
-{
-    if (identifier.isSymbol())
-        return false;
-    return JSC::parseIndex(const_cast<JSC::Identifier&>(identifier)).has_value();
-}
-
 // Expected's own enumerable non-index string and symbol properties only —
 // index keys are covered by the subsequence/contents comparison of the
 // caller (arrays and typed arrays), and enforcing them positionally here
@@ -382,14 +374,14 @@ static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedA
     auto& vm = globalObject->vm();
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
+    // getOwnNonIndexPropertyNames skips integer indexes at the source — a
+    // typed array would otherwise materialize one Identifier per element
+    // just for the filter to discard. Array `length` is non-enumerable and
+    // typed-array `length` is a prototype accessor, so neither appears.
     JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
-    expectedObject->methodTable()->getOwnPropertyNames(expectedObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    expectedObject->getOwnNonIndexPropertyNames(globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, false);
     for (size_t i = 0; i < names.size(); i++) {
-        if (isIndexKey(globalObject, names[i]))
-            continue;
-        if (!names[i].isSymbol() && names[i] == vm.propertyNames->length)
-            continue;
         bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
         RETURN_IF_EXCEPTION(scope, false);
         if (!equal)

@@ -774,8 +774,11 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
 /// generation can run with the lock dropped. `code` is moved (not cloned)
 /// out of the entry; a concurrent `fetch` of the same key sees `code: None`
 /// and skips scheduling, which also makes overlapping persist passes
-/// naturally exclusive per entry. The key is content-derived, so any
-/// re-populated code is byte-identical to what was taken.
+/// naturally exclusive per entry. Keys hash `(is_cjs, filename)`, NOT the
+/// content — a file edited and re-fetched mid-pass can repopulate the same
+/// entry with different code, so Phase 3 compares `code_hash` before
+/// touching the entry (a stale on-disk write also self-corrects via the
+/// header check on the next load).
 struct PersistJob {
     key: u32,
     format: Format,
@@ -949,9 +952,12 @@ fn persist_pass() {
     let Some(state) = guard.as_mut() else { return };
     for (job, blob) in generated {
         let Some(blob) = blob else {
-            // Do not retry on the next persist pass.
+            // Do not retry on the next persist pass. Skip if the entry now
+            // holds different content (file changed and was re-fetched).
             if let Some(entry) = state.entries.get_mut(&job.key) {
-                entry.persisted = true;
+                if entry.code_hash == job.code_hash && entry.code_size == job.code_size {
+                    entry.persisted = true;
+                }
             }
             continue;
         };
@@ -959,6 +965,12 @@ fn persist_pass() {
         let Some(entry) = state.entries.get_mut(&job.key) else {
             continue;
         };
+        if entry.code_hash != job.code_hash || entry.code_size != job.code_size {
+            // The entry was repopulated with different content mid-pass; the
+            // write we just did is stale (the header check corrects it on
+            // the next load) and the taken code must not overwrite the new.
+            continue;
+        }
         match wrote {
             Ok(()) => entry.persisted = true,
             // Keep the source so a later pass can retry, matching the old

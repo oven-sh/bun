@@ -460,7 +460,12 @@ for (let [gcTick, label] of [
           stdout: "ignore",
           stderr: "ignore",
         });
-        proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+        // write() may itself reject with EPIPE if the child has already exited by the
+        // time the first pipe-buffer flush runs; keep it unawaited so end() still has
+        // buffered data to drain, but swallow its rejection so it cannot surface as an
+        // unhandled rejection and fail the test.
+        const wrote = proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+        if (wrote && typeof (wrote as any).catch === "function") (wrote as Promise<number>).catch(() => {});
         let caught: any;
         try {
           await proc.stdin!.end();

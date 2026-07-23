@@ -6115,9 +6115,10 @@ impl VirtualMachine {
             }
 
             writer.write_all(b"\n")?;
+            let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
-            if formatter.depth > formatter.max_depth {
-                pretty_write!(writer, "<r><cyan>[Error ...]<r>")?;
+            let result: crate::CrateResult<()> = if formatter.depth > formatter.max_depth {
+                pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
             } else {
                 self.print_error_instance_js(
                     err,
@@ -6126,10 +6127,11 @@ impl VirtualMachine {
                     writer,
                     allow_ansi_color,
                     allow_side_effects,
-                )?;
-            }
-            formatter.depth = formatter.depth.saturating_sub(1);
+                )
+            };
+            formatter.depth = prev_depth;
             let _ = formatter.map.remove(&err);
+            result?;
         }
 
         Ok(())

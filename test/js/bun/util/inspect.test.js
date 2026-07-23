@@ -939,7 +939,8 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
         `let e = new Error("leaf");
          for (let i = 0; i < 20000; i++) e = new AggregateError([e], "L" + i);
          const out = Bun.inspect(e, { depth: Infinity });
-         console.log("len=" + out.length);`,
+         console.log("len=" + out.length);
+         console.log("truncated=" + out.includes("[Error ...]"));`,
       ],
       env: bunEnv,
       stderr: "pipe",
@@ -947,6 +948,7 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toStartWith("len=");
+    expect(stdout).toContain("truncated=true");
     expect(exitCode).toBe(0);
   });
 });

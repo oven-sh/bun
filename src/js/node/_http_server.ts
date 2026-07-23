@@ -1822,15 +1822,16 @@ function parserOnIncoming(server, socket, state, req, keepAlive) {
       return 0;
     }
 
-    const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
+    const { maxRequestsPerSocket } = server;
+    const isRequestsLimitSet = typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0;
 
     if (isRequestsLimitSet) {
       state.requestsCount++;
-      res.maxRequestsOnConnectionReached = server.maxRequestsPerSocket <= state.requestsCount;
+      res.maxRequestsOnConnectionReached = maxRequestsPerSocket <= state.requestsCount;
     }
 
     const { expect } = req.headers;
-    if (isRequestsLimitSet && server.maxRequestsPerSocket < state.requestsCount) {
+    if (isRequestsLimitSet && maxRequestsPerSocket < state.requestsCount) {
       handled = true;
       server.emit("dropRequest", req, socket);
       res.writeHead(503);
@@ -2380,9 +2381,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
 
   setEncoding(_encoding) {
-    const err = new Error("Changing the socket encoding is not allowed per RFC7230 Section 3.");
-    err.code = "ERR_HTTP_SOCKET_ENCODING";
-    throw err;
+    socketSetEncoding();
   }
 
   unref() {
@@ -3497,20 +3496,17 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    // Read the storage directly - the `socket` getter auto-creates a
-    // FakeSocket and would make this condition always true.
-    if (this[fakeSocketSymbol] || this.outputData?.length || !this._header) {
-      // Standalone response writing through an assigned socket (or buffering
-      // until one is assigned): use the OutgoingMessage machinery. The
-      // original chunk passes through (mirroring write()): write_() has its
-      // own !_hasBody handling, including the rejectNonStandardBodyWrites
-      // throw, which the clearing below would bypass.
-      return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
-    }
-    if ($isCallable(callback)) {
-      process.nextTick(callback);
-    }
-    return this;
+    // Standalone response (no native handle): always use the OutgoingMessage
+    // machinery, like Node. The original chunk passes through (mirroring
+    // write()): write_() has its own !_hasBody handling, including the
+    // rejectNonStandardBodyWrites throw. This must also run when the header
+    // was rendered by writeHead() but no socket is assigned yet (a response
+    // queued behind an in-flight pipelined response on an adopted socket):
+    // end() buffers the header block into outputData so a later
+    // assignSocket() -> _flush() writes it and 'finish' fires. An early
+    // return here dropped the 400/503/417 auto-responses and hung the
+    // connection.
+    return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {

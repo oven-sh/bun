@@ -8,9 +8,12 @@ import http from "node:http";
 import net from "node:net";
 
 // Accumulates client data and lets tests await the arrival of a substring.
+// Terminal socket events reject pending waiters so a regression fails with
+// the bytes received so far instead of an opaque test timeout.
 function collect(client: net.Socket) {
   let buf = "";
-  const waiters: { needle: string; resolve: (buf: string) => void }[] = [];
+  let failure: Error | undefined;
+  const waiters: { needle: string; resolve: (buf: string) => void; reject: (err: Error) => void }[] = [];
   client.on("data", d => {
     buf += d.toString("latin1");
     for (let i = waiters.length - 1; i >= 0; i--) {
@@ -19,13 +22,20 @@ function collect(client: net.Socket) {
       }
     }
   });
+  const fail = (why: string) => {
+    failure ??= new Error(`${why} before needle arrived; received so far: ${JSON.stringify(buf)}`);
+    while (waiters.length) waiters.shift()!.reject(failure);
+  };
+  client.on("error", err => fail(`socket error (${err.message})`));
+  client.on("close", () => fail("socket closed"));
   return {
     get buf() {
       return buf;
     },
     until(needle: string): Promise<string> {
       if (buf.includes(needle)) return Promise.resolve(buf);
-      return new Promise(resolve => waiters.push({ needle, resolve }));
+      if (failure) return Promise.reject(failure);
+      return new Promise((resolve, reject) => waiters.push({ needle, resolve, reject }));
     },
   };
 }
@@ -38,7 +48,10 @@ async function setup(handler?: http.RequestListener) {
   await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", resolve));
   const port = (raw.address() as net.AddressInfo).port;
   const client = net.connect(port, "127.0.0.1");
-  await new Promise<void>(resolve => client.on("connect", resolve));
+  await new Promise<void>((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
   return {
     httpServer,
     raw,
@@ -89,6 +102,19 @@ test.concurrent("chunked response when no content-length is known", async () => 
   const buf = await ctx.reader.until("part2");
   expect(buf).toContain("Transfer-Encoding: chunked");
   expect(buf).toContain("X-Test: 1");
+});
+
+test.concurrent("auto 400 on a pipelined request queued behind an in-flight response", async () => {
+  // The second request arrives while the first response is still in flight,
+  // so its response is queued without a socket; the requireHostHeader 400
+  // must still reach the wire once the socket is assigned.
+  using ctx = await setup(async (req, res) => {
+    await new Promise(r => setImmediate(r));
+    res.end("ok:" + req.url);
+  });
+  ctx.client.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\n" + "GET /b HTTP/1.1\r\n\r\n");
+  const buf = await ctx.reader.until("400 Bad Request");
+  expect(buf).toContain("ok:/a");
 });
 
 test.concurrent("malformed request emits 'clientError'", async () => {

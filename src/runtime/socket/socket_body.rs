@@ -142,12 +142,17 @@ extern "C" fn select_alpn_callback(
             // different TLS socket on the same loop re-points the per-loop BIO
             // routing state, and this handshake's next flight would land on
             // that other socket's fd. Snapshot and restore it around every
-            // JS-running region.
+            // JS-running region. Only a real usockets socket uses the shared
+            // loop BIO; an UpgradedDuplex or named pipe owns private mem BIOs
+            // whose BIO_get_data is a BUF_MEM*, so there is nothing to save
+            // and the C-side deref would read garbage.
             let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
-            tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                boringssl_sys::SSL::opaque_ref(ssl),
-                saved_loop_state.as_mut_ptr(),
-            );
+            if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
+                tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
+                    boringssl_sys::SSL::opaque_ref(ssl),
+                    saved_loop_state.as_mut_ptr(),
+                );
+            }
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
                     Ok(v) => v,

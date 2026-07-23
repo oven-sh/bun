@@ -627,7 +627,7 @@ function SocketEmitEndNT(self, _err?) {
   }
   if (!self[kended]) {
     finishSocketEnd(self);
-    if (!self.allowHalfOpen && !self[kReaderInterest]) {
+    if (!self.allowHalfOpen && self[kReaderInterest] === false) {
       setImmediate(destroyAbandonedNT, self);
     }
   } else if (_err && !self.destroyed) {
@@ -1133,6 +1133,10 @@ function onconnection(err, clientHandle) {
   }
   if (isTLS) armHandshakeTimeout(self, _socket);
 
+  // Mark server-accepted sockets as candidates for abandoned-socket teardown
+  // (SocketEmitEndNT schedules destroyAbandonedNT only when this is exactly
+  // false; client sockets never have it set so are excluded).
+  _socket[kReaderInterest] = false;
   self.emit("connection", _socket);
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
@@ -1145,7 +1149,7 @@ function onconnection(err, clientHandle) {
 function destroyAbandonedNT(self) {
   if (
     self.destroyed ||
-    self[kReaderInterest] ||
+    self[kReaderInterest] !== false ||
     self.readableLength === 0 ||
     self.readableFlowing !== null ||
     self.listenerCount("data") > 0 ||

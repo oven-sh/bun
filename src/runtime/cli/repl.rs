@@ -1193,6 +1193,22 @@ impl<'a> Repl<'a> {
     }
 
     fn refresh_line(&self) {
+        // Non-TTY (piped) stdio mirrors node's terminal:false repl: input is
+        // never echoed and the line is never redrawn — per-key CLEAR_LINE
+        // rewrites are invisible noise to a pipe reader, and each tiny write
+        // consumes a full skb of the socketpair's send-buffer accounting, so
+        // an unread pipe wedges the whole REPL inside write(2) after a few
+        // hundred keystrokes. Print the prompt once when a fresh line begins
+        // (the editor buffer is empty exactly then), like node.
+        if !self.is_tty {
+            if self.line_editor.buffer.is_empty() && !self.editor_mode {
+                Output::flush();
+                self.write(self.get_prompt());
+                Output::flush();
+            }
+            return;
+        }
+
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
 

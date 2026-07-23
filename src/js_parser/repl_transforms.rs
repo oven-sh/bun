@@ -37,12 +37,32 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             total_stmts_count += part.stmts.len();
         }
 
+        // A prologue "use strict" was consumed into module-scope strict mode
+        // and dropped from the statement list, but node's repl still
+        // evaluates the directive as a string expression ('use strict' is
+        // the printed result when it is the last statement). Reinject it at
+        // the front, exactly like the CJS wrapper's preserve_strict_mode.
+        let reinject_strict = self.module_scope().strict_mode
+            == js_ast::StrictModeKind::ExplicitStrictMode
+            && !(!parts.is_empty()
+                && !parts[0].stmts.is_empty()
+                && matches!(parts[0].stmts[0].data, StmtData::SDirective(_)));
+        total_stmts_count += usize::from(reinject_strict);
+
         if total_stmts_count == 0 {
             return Ok(());
         }
 
         // Collect all statements into a single array
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
+        if reinject_strict {
+            all_stmts.push(self.s(
+                S::Directive {
+                    value: b"use strict".into(),
+                },
+                self.module_scope_directive_loc,
+            ));
+        }
         for part in parts.iter() {
             for stmt in part.stmts.iter() {
                 all_stmts.push(*stmt);
@@ -507,8 +527,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
-        // Update parts
-        if !parts.is_empty() {
+        // Update parts. Input consisting solely of a consumed "use strict"
+        // prologue arrives with no parts at all — create one so the
+        // reinjected directive's IIFE isn't dropped.
+        if parts.is_empty() {
+            parts.push(js_ast::Part {
+                stmts: bun_ast::StoreSlice::new_mut(final_slice),
+                ..Default::default()
+            });
+        } else {
             parts[0].stmts = bun_ast::StoreSlice::new_mut(final_slice);
             parts.truncate(1);
         }

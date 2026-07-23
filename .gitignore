@@ -219,3 +219,7 @@ src/jsc/bindings/GeneratedBindings.zig
 # Kept locally for the ongoing work; not part of the source tree.
 /specs/
 /garbage-env
+# compiled-bundler test outputs that land in cwd when tests run from the root
+/entry
+/entry.js.map
+/nosourcemap_entry

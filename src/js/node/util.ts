@@ -61,21 +61,65 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
-  if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
-      emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+const noop = function () {};
+Object.defineProperty(noop, "name", { __proto__: null, value: "noop", configurable: true });
+
+function debuglogImpl(enabled, set) {
+  if (debugs[set] === undefined) {
+    if (enabled) {
+      const pid = process.pid;
+      const impl = function () {
+        const msg = format.$apply(undefined, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
+      Object.defineProperty(impl, "name", { __proto__: null, value: "debug", configurable: true });
+      debugs[set] = impl;
     } else {
-      debugs[set] = function () {};
+      debugs[set] = noop;
     }
   }
   return debugs[set];
+}
+
+var warnedSets;
+function debuglog(set, cb) {
+  set = set.toUpperCase();
+  const enabled = debugEnvRegex.test(set);
+  if (enabled && !(warnedSets ||= new Set()).has(set)) {
+    warnedSets.add(set);
+    emitWarningIfNeeded(set);
+  }
+  let debug = function () {
+    debug = debuglogImpl(enabled, set);
+    if (typeof cb === "function") {
+      Object.defineProperty(debug, "enabled", {
+        __proto__: null,
+        get() {
+          return enabled;
+        },
+        configurable: true,
+        enumerable: true,
+      });
+      cb(debug);
+    }
+    return debug.$apply(undefined, arguments);
+  };
+  let resolved = false;
+  const logger = function () {
+    if (resolved && !enabled) return;
+    resolved = true;
+    return debug.$apply(undefined, arguments);
+  };
+  Object.defineProperty(logger, "name", { __proto__: null, value: "logger", configurable: true });
+  Object.defineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return enabled;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {

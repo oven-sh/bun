@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -435,4 +435,88 @@ describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
   });
+});
+
+describe("util.debuglog", () => {
+  const script = `
+    const util = require("node:util");
+    const out = {};
+    const on = util.debuglog("dbgsect");
+    out.onName = on.name;
+    out.onEnabledBefore = on.enabled;
+    let cbFn = null;
+    let cbCount = 0;
+    const on2 = util.debuglog("dbgsect", fn => { cbFn = fn; cbCount++; });
+    on2("hello", 42);
+    on2("second");
+    out.cbCount = cbCount;
+    out.cbType = typeof cbFn;
+    out.cbName = cbFn && cbFn.name;
+    out.cbEnabled = cbFn && cbFn.enabled;
+    const off = util.debuglog("notenabled");
+    out.offName = off.name;
+    out.offEnabled = off.enabled;
+    let offCb = "never";
+    const off2 = util.debuglog("alsonot", fn => { offCb = { type: typeof fn, enabled: fn.enabled }; });
+    off2("x");
+    out.offCb = offCb;
+    const desc = Object.getOwnPropertyDescriptor(on, "enabled") || {};
+    out.desc = { hasGet: typeof desc.get === "function", configurable: desc.configurable, enumerable: desc.enumerable };
+    out.aliased = util.debug === util.debuglog;
+    console.log(JSON.stringify(out));
+  `;
+
+  async function run(nodeDebug) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_DEBUG: nodeDebug },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      out: JSON.parse(stdout),
+      lines: stderr.split("\n").filter(l => /^(DBGSECT|NOTENABLED|ALSONOT) /.test(l)),
+      exitCode,
+    };
+  }
+
+  it("exposes .enabled, .name and invokes the optional callback", async () => {
+    const [on, off] = await Promise.all([run("dbgsect"), run("")]);
+
+    expect(on.lines.length).toBe(2);
+    expect(on.lines[0]).toMatch(/^DBGSECT \d+: hello 42$/);
+    expect(on.lines[1]).toMatch(/^DBGSECT \d+: second$/);
+    expect(on.out).toEqual({
+      onName: "logger",
+      onEnabledBefore: true,
+      cbCount: 1,
+      cbType: "function",
+      cbName: "debug",
+      cbEnabled: true,
+      offName: "logger",
+      offEnabled: false,
+      offCb: { type: "function", enabled: false },
+      desc: { hasGet: true, configurable: true, enumerable: true },
+      aliased: true,
+    });
+    expect(on.exitCode).toBe(0);
+
+    expect(off.lines).toEqual([]);
+    expect(off.out).toEqual({
+      onName: "logger",
+      onEnabledBefore: false,
+      cbCount: 1,
+      cbType: "function",
+      cbName: "noop",
+      cbEnabled: false,
+      offName: "logger",
+      offEnabled: false,
+      offCb: { type: "function", enabled: false },
+      desc: { hasGet: true, configurable: true, enumerable: true },
+      aliased: true,
+    });
+    expect(off.exitCode).toBe(0);
+    // Two ASAN-debug child startups exceed the 5s default under CI load.
+  }, 20_000);
 });

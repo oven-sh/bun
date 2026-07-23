@@ -1079,13 +1079,20 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     auto* sandbox = thisObject->m_sandbox.get();
 
     VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = slot.thisValue();
     bool isContextualStore = thisValue != JSValue(globalObject);
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(thisValue); proxy && proxy->target() == globalObject) {
         isContextualStore = false;
     }
-    bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
-    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Ask the global object itself, skipping this class' sandbox interception, so
+    // that "declared" means a `var`/function binding or a builtin rather than a
+    // property the sandbox happens to carry.
+    PropertySlot globalSlot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnGlobalObject = thisObject->JSC::JSGlobalObject::getOwnPropertySlot(thisObject, globalObject, propertyName, globalSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
     PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
     bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
     RETURN_IF_EXCEPTION(scope, false);
@@ -1097,7 +1104,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
-    if (!isDeclared && value.isSymbol()) {
+    if (!isDeclared && propertyName.isSymbol()) {
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
@@ -1114,6 +1121,13 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (!result) return false;
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
+        return true;
+    }
+
+    // The sandbox is the only store for a property the global object never
+    // declared, so a host-side `delete sandbox[key]` removes it from the context
+    // too. Mirroring it onto the global object here would leave a copy behind.
+    if (!isDeclaredOnGlobalObject) {
         return true;
     }
 
@@ -1315,25 +1329,12 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    // Dispatch through the method table so exotic sandboxes (e.g. Proxy objects)
-    // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
-    // PropertyDefinerCallback.
-    if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
-    }
-
-    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
-    }
-
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!did) return false;
-
-    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
+    // The sandbox is the only store, like V8's contextify PropertyDefinerCallback.
+    // A copy on the global object would survive a host-side `delete sandbox[key]`,
+    // and would collide with the non-configurable symbol-table entry a `var` leaves
+    // there. Dispatch through the method table so an exotic sandbox (e.g. a Proxy)
+    // observes the [[DefineOwnProperty]] exactly once.
+    RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);

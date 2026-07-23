@@ -924,6 +924,203 @@ describe("DONT_CONTEXTIFY", () => {
   });
 });
 
+describe("contextified sandbox is the store for guest-created globals", () => {
+  test("deleting a guest-assigned global from the sandbox removes it from the context", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("globalThis.a = 1;", sandbox);
+
+    expect(delete sandbox.a).toBe(true);
+    expect("a" in sandbox).toBe(false);
+
+    expect(runInContext("typeof a", sandbox)).toBe("undefined");
+    expect(runInContext("'a' in globalThis", sandbox)).toBe(false);
+    expect(runInContext("Object.getOwnPropertyNames(globalThis).includes('a')", sandbox)).toBe(false);
+    expect(runInContext("Object.getOwnPropertyDescriptor(globalThis, 'a')", sandbox)).toBeUndefined();
+  });
+
+  test("deleting an implicitly-created global from the sandbox removes it from the context", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("c = 3;", sandbox);
+
+    expect(delete sandbox.c).toBe(true);
+    expect(runInContext("typeof c", sandbox)).toBe("undefined");
+  });
+
+  test("deleting a host-provided global the guest overwrote removes it from the context", () => {
+    const sandbox: any = { x: 1 };
+    createContext(sandbox);
+    runInContext("x = 2;", sandbox);
+
+    expect(sandbox.x).toBe(2);
+    expect(delete sandbox.x).toBe(true);
+    expect(runInContext("typeof x", sandbox)).toBe("undefined");
+  });
+
+  test("resetting the sandbox between runs does not leak globals into the next run", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+
+    runInContext("globalThis.leaked = 'first run';", sandbox);
+    for (const key of Object.keys(sandbox)) delete sandbox[key];
+
+    expect(runInContext("typeof leaked", sandbox)).toBe("undefined");
+    expect(runInContext("Object.getOwnPropertyNames(globalThis).includes('leaked')", sandbox)).toBe(false);
+  });
+
+  // A store site hot enough to reach the JIT tiers must not start writing a
+  // second copy onto the context's global object behind the sandbox's back.
+  test("the sandbox stays the store when the assignment site gets hot", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("for (let i = 0; i < 2000; i++) globalThis.hot = i;", sandbox);
+
+    expect(sandbox.hot).toBe(1999);
+    expect(delete sandbox.hot).toBe(true);
+    expect(runInContext("typeof hot", sandbox)).toBe("undefined");
+
+    sandbox.hot = "rehomed";
+    expect(runInContext("hot", sandbox)).toBe("rehomed");
+  });
+
+  // These reach the `slot.isStrictMode() && !isDeclared` branch, whose isDeclared
+  // input now accounts for bindings on the context's global object.
+  test("strict-mode contextual stores still reach the sandbox", () => {
+    const builtin: any = {};
+    createContext(builtin);
+    runInContext("'use strict'; Object = 5;", builtin);
+    expect(builtin.Object).toBe(5);
+
+    const declared: any = {};
+    createContext(declared);
+    runInContext("'use strict'; var v; v = 7;", declared);
+    expect(declared.v).toBe(7);
+
+    const preset: any = { p: 0 };
+    createContext(preset);
+    runInContext("'use strict'; p = 9;", preset);
+    expect(preset.p).toBe(9);
+  });
+
+  test("a symbol-keyed assignment stays on the context's global object", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("globalThis[Symbol.for('vm.symbol.key')] = 1;", sandbox);
+
+    expect(sandbox[Symbol.for("vm.symbol.key")]).toBeUndefined();
+    expect(Object.getOwnPropertySymbols(sandbox)).toEqual([]);
+    expect(runInContext("globalThis[Symbol.for('vm.symbol.key')]", sandbox)).toBe(1);
+  });
+
+  test("a symbol value assigned to a string key still reaches the sandbox", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("globalThis.sym = Symbol('q');", sandbox);
+
+    expect(typeof sandbox.sym).toBe("symbol");
+  });
+
+  // Bindings the context's global object declares itself keep their global copy:
+  // the sandbox entry is a mirror, and deleting it must not unbind them.
+  test("var and function declarations survive deletion of their sandbox copy", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("var b = 2; function f() {}", sandbox);
+
+    expect(sandbox.b).toBe(2);
+    expect(typeof sandbox.f).toBe("function");
+    expect(delete sandbox.b).toBe(true);
+    expect(delete sandbox.f).toBe(true);
+
+    expect(runInContext("typeof b", sandbox)).toBe("number");
+    expect(runInContext("typeof f", sandbox)).toBe("function");
+    expect(
+      runInContext("Object.getOwnPropertyNames(globalThis).filter(n => n === 'b' || n === 'f').sort()", sandbox),
+    ).toEqual(["b", "f"]);
+  });
+
+  test("overwriting a builtin global keeps the global object and the sandbox in sync", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("globalThis.Object = 5;", sandbox);
+
+    expect(sandbox.Object).toBe(5);
+    expect(delete sandbox.Object).toBe(true);
+    expect(runInContext("typeof Object", sandbox)).toBe("number");
+  });
+
+  test("Object.defineProperty on the context's global writes only to the sandbox", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext(
+      "Object.defineProperty(globalThis, 'a', { value: 1, writable: true, enumerable: true, configurable: true });",
+      sandbox,
+    );
+
+    expect(sandbox.a).toBe(1);
+    expect(delete sandbox.a).toBe(true);
+    expect(runInContext("typeof a", sandbox)).toBe("undefined");
+    expect(runInContext("Object.getOwnPropertyDescriptor(globalThis, 'a')", sandbox)).toBeUndefined();
+  });
+
+  // A `var` leaves a non-configurable binding on the context's global object, so
+  // redefining it has to land on the sandbox or the global rejects the descriptor.
+  test("Object.defineProperty does not collide with a var binding on the global", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext(
+      "var v = 1; Object.defineProperty(globalThis, 'v', { value: 2, writable: true, enumerable: true, configurable: true });",
+      sandbox,
+    );
+
+    expect(sandbox.v).toBe(2);
+    expect(runInContext("globalThis.v", sandbox)).toBe(2);
+    expect(delete sandbox.v).toBe(true);
+    expect(runInContext("globalThis.v", sandbox)).toBe(1);
+  });
+
+  test("Object.defineProperty over a builtin leaves the global's copy intact", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext(
+      "Object.defineProperty(globalThis, 'Object', { value: 5, writable: true, enumerable: true, configurable: true });",
+      sandbox,
+    );
+
+    expect(sandbox.Object).toBe(5);
+    expect(delete sandbox.Object).toBe(true);
+    expect(runInContext("typeof Object", sandbox)).toBe("function");
+  });
+
+  test("an accessor the guest defines is not flattened onto the global", () => {
+    const sandbox: any = {};
+    createContext(sandbox);
+    runInContext("Object.defineProperty(globalThis, 'g', { get() { return 7; }, configurable: true });", sandbox);
+
+    expect(typeof Object.getOwnPropertyDescriptor(sandbox, "g")?.get).toBe("function");
+    expect(runInContext("g", sandbox)).toBe(7);
+    expect(delete sandbox.g).toBe(true);
+    expect(runInContext("typeof g", sandbox)).toBe("undefined");
+  });
+
+  test("a sandbox accessor still receives the guest's assignment", () => {
+    let written;
+    const sandbox: any = {};
+    Object.defineProperty(sandbox, "g", {
+      get: () => 7,
+      set: value => (written = value),
+      configurable: true,
+      enumerable: true,
+    });
+    createContext(sandbox);
+    runInContext("g = 5;", sandbox);
+
+    expect(written).toBe(5);
+    expect(runInContext("g", sandbox)).toBe(7);
+  });
+});
+
 test("Loader is not defined in vm context", () => {
   // Test with empty context - internal Loader should not leak through
   const emptyContext = createContext({});

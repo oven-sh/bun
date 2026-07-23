@@ -1216,6 +1216,16 @@ impl SendQueue {
         false // error state.
     }
 
+    /// Bytes serialized into the send queue that have not yet reached the
+    /// kernel. Equivalent to libuv's `writeQueueSize` on the IPC stream.
+    fn pending_bytes(&self) -> usize {
+        let mut total: usize = 0;
+        for item in &self.queue {
+            total = total.saturating_add(item.data.size());
+        }
+        total
+    }
+
     pub fn update_ref(&mut self, global: &JSGlobalObject) {
         let _ = global;
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
@@ -1380,7 +1390,10 @@ impl SendQueue {
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
 
-        if indicate_backoff {
+        // Node: `return channel.writeQueueSize < (65536 * 2)`. Check after the
+        // synchronous write attempt so sends that fit in the kernel socket
+        // buffer still return `true`.
+        if indicate_backoff || self.pending_bytes() >= SEND_BACKPRESSURE_THRESHOLD {
             return SerializeAndSendResult::Backoff;
         }
         SerializeAndSendResult::Success
@@ -1742,6 +1755,11 @@ impl Drop for SendQueue {
 }
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
+
+/// Node returns `false` from `send()` once `channel.writeQueueSize` reaches
+/// this many bytes (see Node's lib/internal/child_process.js). This is the
+/// only backpressure signal IPC exposes, so the threshold must match.
+const SEND_BACKPRESSURE_THRESHOLD: usize = 65536 * 2;
 
 enum IPCCommand {
     Handle(JSValue),

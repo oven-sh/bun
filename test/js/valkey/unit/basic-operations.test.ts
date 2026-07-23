@@ -54,13 +54,14 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
       const key = ctx.generateKey("expiry-set-test");
 
       // Set with expiry (PX option, in milliseconds so the test doesn't wait a full second)
-      expect(await ctx.redis.send("SET", [key, "expires-soon", "PX", "100"])).toBe("OK");
+      expect(await ctx.redis.send("SET", [key, "expires-soon", "PX", "200"])).toBe("OK");
 
-      // Key should exist immediately, with a millisecond TTL attached
-      expect(await ctx.redis.exists(key)).toBe(true);
+      // PTTL > 0 proves the key exists and the expiry was attached; keeping
+      // this to a single round trip leaves the full 200ms window as margin
+      // for a slow ASAN runner.
       const pttl = await ctx.redis.send("PTTL", [key]);
       expect(pttl).toBeGreaterThan(0);
-      expect(pttl).toBeLessThanOrEqual(100);
+      expect(pttl).toBeLessThanOrEqual(200);
 
       // Poll until key expires (max 2 seconds)
       let expired = false;

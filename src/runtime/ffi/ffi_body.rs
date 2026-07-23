@@ -1280,7 +1280,10 @@ impl FFI {
                 Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
             })
         {
-            return Ok(val);
+            // The JSCallback constructor destructures `{ ctx, ptr }` from this
+            // return, so a returned error is silently dropped (`ptr === undefined`).
+            // Throw it instead, the way dlopen() does.
+            return Err(global_this.throw_value(val));
         }
 
         // TODO: WeakRefHandle that automatically frees it?
@@ -1814,7 +1817,7 @@ pub(super) fn generate_symbol_for_function(
         ));
     }
 
-    if function.threadsafe && return_type != ABIType::Void {
+    if threadsafe && return_type != ABIType::Void {
         return Ok(Some(
             ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
         ));

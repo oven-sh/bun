@@ -163,7 +163,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
       // the test is POSIX-only so /bin/sh is available.
       await using proc = Bun.spawn({
         cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "test", "--parallel=2", "."],
-        env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+        env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",

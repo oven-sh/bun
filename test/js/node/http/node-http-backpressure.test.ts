@@ -6,9 +6,13 @@
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
+import path from "node:path";
+import nodeTls from "node:tls";
 
 describe("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
@@ -211,6 +215,97 @@ describe("backpressure", () => {
       const { body, ended } = await halfCloseRequestBodyBytes(server);
       expect(ended).toBe(true);
       expect([BODY, BODY * 2]).toContain(body);
+    });
+
+    // TLS variants of the it.each above: the server's TLS write-batch spill
+    // (up to one 128 KiB ciphertext batch the kernel did not fully accept) is
+    // reported as written by us_socket_write() while it sits in userspace, so
+    // the post-FIN close gate (hasFullyDrained()) must wait for it. Looped a
+    // few times so the on_writable drain cycle is exercised past the first
+    // kernel-accepted write. This is also the client-side regression test for
+    // the Windows eof-drain (a half-closed client must read out the kernel
+    // receive buffer when AFD DISCONNECT is mapped to eof).
+    describe("https", () => {
+      const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+      const tlsOptions = {
+        cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+        key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+      };
+
+      async function halfCloseTlsRequestBodyBytes(port: number): Promise<{ body: number; ended: boolean }> {
+        const socket = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        let body = 0;
+        let head = "";
+        let gotHead = false;
+        let ended = false;
+        socket.on("data", chunk => {
+          if (!gotHead) {
+            head += chunk.toString("latin1");
+            const i = head.indexOf("\r\n\r\n");
+            if (i >= 0) {
+              gotHead = true;
+              body = Buffer.byteLength(head.slice(i + 4), "latin1");
+            }
+          } else {
+            body += chunk.length;
+          }
+        });
+        socket.on("end", () => (ended = true));
+        socket.on("error", () => {});
+        await once(socket, "secureConnect");
+        socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(socket, "close");
+        return { body, ended };
+      }
+
+      it.each([
+        ["client half-close, res.write() then res.end()", "write-end"],
+        ["client half-close, res.end(payload)", "end"],
+        ["client half-close, httpAllowHalfOpen, res.end() after drain", "drain"],
+      ] as const)("%s", async (_name, endMode) => {
+        await using server = https.createServer(tlsOptions, (req, res) => {
+          res.writeHead(200, { "Content-Length": String(BODY) });
+          if (endMode === "end") {
+            res.end(payload);
+          } else {
+            res.write(payload);
+            if (endMode === "write-end") res.end();
+            else res.once("drain", () => res.end());
+          }
+        });
+        if (endMode === "drain") server.httpAllowHalfOpen = true;
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        for (let i = 0; i < 5; i++) {
+          expect(await halfCloseTlsRequestBodyBytes(port)).toEqual({ body: BODY, ended: true });
+        }
+      });
+
+      // allow_half_open defers the close to the writable drain; a peer that
+      // FINs then resets must not wedge that drain on a spill send() that
+      // keeps failing (us_internal_ssl_on_writable releases a zero-progress
+      // spill after EOF so the dispatch reaches the close gate). A wedge
+      // would leave the server-side socket open past the test timeout.
+      it("closes promptly when the client half-closes then resets mid-drain", async () => {
+        const closed = Promise.withResolvers<void>();
+        await using server = https.createServer(tlsOptions, (req, res) => {
+          req.socket.on("close", () => closed.resolve());
+          res.writeHead(200, { "Content-Length": String(BODY) });
+          res.end(payload);
+          res.on("error", () => {});
+        });
+        server.requestTimeout = 0;
+        server.headersTimeout = 0;
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        sock.on("error", () => {});
+        await once(sock, "secureConnect");
+        sock.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(sock, "data");
+        sock.destroy();
+        await closed.promise;
+      });
     });
   });
 

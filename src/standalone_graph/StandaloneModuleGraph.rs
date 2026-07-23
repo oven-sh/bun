@@ -1248,8 +1248,12 @@ pub(crate) fn inject(
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
         &mut buf[..],
-        // i64 → u64 bitcast.
-        bun_core::time::milli_timestamp() as u64,
+        // tmpname OR's this seed with nano_timestamp(). milli_timestamp() is a
+        // bit-subset of nanos and so adds zero entropy; fast_random() is seeded
+        // from the OS CSPRNG per process, which keeps concurrent
+        // `bun build --compile` invocations from colliding on the same temp
+        // name in a shared cwd (the per-process counter is always 0 here).
+        bun_core::fast_random(),
     ) {
         Ok(n) => n,
         Err(e) => {

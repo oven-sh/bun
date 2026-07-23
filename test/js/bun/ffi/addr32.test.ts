@@ -1,4 +1,4 @@
-import { CString, dlopen, FFIType } from "bun:ffi";
+import { CString, dlopen, FFIType, ptr, toArrayBuffer, Pointer } from "bun:ffi";
 import { jscDescribe } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { join } from "node:path";
@@ -6,7 +6,7 @@ import { isLinux } from "../../../harness";
 
 // Only runs on Linux because that is where we can most reliably allocate a 32-bit pointer.
 test.skipIf(!isLinux)("can use addresses encoded as int32s", async () => {
-  const compiler = Bun.spawn(["cc", "-shared", "-o", "libaddr32.so", "addr32.c"], {
+  const compiler = Bun.spawn(["cc", "-shared", "-o", "libaddr32.so", "addr32.c", "-fPIC"], {
     cwd: __dirname,
   });
   await compiler.exited;
@@ -20,4 +20,8 @@ test.skipIf(!isLinux)("can use addresses encoded as int32s", async () => {
   expect(jscDescribe(addrIntEncoded)).toContain("Int32");
   // @ts-expect-error
   expect(new CString(addrIntEncoded).toString()).toBe("hello world");
+});
+
+test("can create ArrayBuffers with addresses encoded as int32s", () => {
+  expect(ptr(toArrayBuffer(0x12341234 as Pointer, 0, 1))).toBe(0x12341234 as Pointer);
 });

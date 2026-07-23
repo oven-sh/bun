@@ -369,17 +369,18 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
         // valid for the duration of the handler. Copy so RtlVirtualUnwind can
         // mutate freely without touching the kernel's record.
         let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
-        // Termination: RtlVirtualUnwind sets Pc = 0 at the end of the chain;
-        // the `n < out.len()` cap is the ultimate bound. No Sp-advance or
-        // consecutive-Pc checks: on ARM64 a valid unwind step (fault at prolog
-        // offset 0, or a .pdata-bearing zero-stack leaf) can set Pc = Lr while
+        // Termination: on x64 RtlVirtualUnwind sets Pc = 0 at the end of the
+        // chain; on ARM64 it can leave the CONTEXT entirely unchanged, so a
+        // step that changed neither Pc nor Sp is also terminal. An Sp-only or
+        // Pc-only check truncates legitimate stacks: an ARM64 fault at prolog
+        // offset 0 (or a .pdata-bearing zero-stack leaf) sets Pc = Lr while
         // leaving Sp unchanged, and directly-recursive frames share a return
-        // Pc, so either check truncates legitimate stacks.
+        // Pc. The `n < out.len()` cap is the ultimate bound.
         while n < out.len() {
             #[cfg(target_arch = "x86_64")]
-            let control_pc = ctx.Rip;
+            let (control_pc, control_sp) = (ctx.Rip, ctx.Rsp);
             #[cfg(target_arch = "aarch64")]
-            let control_pc = ctx.Pc;
+            let (control_pc, control_sp) = (ctx.Pc, ctx.Sp);
             let mut image_base: u64 = 0;
             // SAFETY: `control_pc` is a code address from the fault context;
             // `image_base` is valid for write; history table may be null.
@@ -431,10 +432,10 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 }
             }
             #[cfg(target_arch = "x86_64")]
-            let next_pc = ctx.Rip;
+            let (next_pc, next_sp) = (ctx.Rip, ctx.Rsp);
             #[cfg(target_arch = "aarch64")]
-            let next_pc = ctx.Pc;
-            if next_pc == 0 {
+            let (next_pc, next_sp) = (ctx.Pc, ctx.Sp);
+            if next_pc == 0 || (next_pc == control_pc && next_sp == control_sp) {
                 break;
             }
             out[n] = next_pc as usize;

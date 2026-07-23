@@ -1077,9 +1077,18 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             bun_options_types::offline_mode::OfflineMode::Online
         });
 
+        // `-i` that will reach the REPL (mirrors the exec_node_repl dispatch in
+        // mod.rs: interactive, no positionals, not --print) carries node's
+        // --interactive meaning, so both REPL spellings keep the resolver
+        // options bunfig/defaults produced instead of --install=fallback.
+        let repl_bound_i = cmd == CommandTag::AutoCommand
+            && args.flag(b"-i")
+            && ctx.positionals.is_empty()
+            && args.option(b"--print").is_none()
+            && (args.flag(b"--interactive") || args.option(b"--eval").is_none());
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
-        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
+        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand && !repl_bound_i {
             // Under node emulation `-i` is node's --interactive alias, not
             // --install=fallback (auto-install is meaningless there).
             ctx.debug.global_cache = options::GlobalCache::fallback;
@@ -1116,19 +1125,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 && args.flag(b"-i")
                 && ctx.positionals.is_empty()
                 && ctx.runtime_options.eval.script.is_empty());
-        if cmd == CommandTag::AutoCommand
-            && args.flag(b"-i")
-            && ctx.runtime_options.interactive
-            && ctx.positionals.is_empty()
-            && ctx.runtime_options.eval.script.is_empty()
-            && ctx.debug.global_cache == options::GlobalCache::fallback
-        {
-            // Bare `bun -i` reaches the REPL, so drop the --install=fallback
-            // meaning `-i` carries on the auto-install path: both REPL
-            // spellings (`bun -i` and `bun --interactive`) boot with the
-            // default resolver options.
-            ctx.debug.global_cache = options::GlobalCache::auto;
-        }
         ctx.runtime_options.input_type_specified = args.option(b"--input-type").is_some();
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");

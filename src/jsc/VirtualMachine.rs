@@ -4242,6 +4242,13 @@ impl VirtualMachine {
                     bun_core::String::borrow_utf8(after_namespace),
                     source,
                     crate::BunPluginTarget::Bun,
+                    if is_esm {
+                        bun_ast::ImportKind::Stmt
+                    } else if is_user_require_resolve {
+                        bun_ast::ImportKind::RequireResolve
+                    } else {
+                        bun_ast::ImportKind::Require
+                    },
                 )? {
                     *res = resolved_path;
                     return Ok(());
@@ -6562,6 +6569,7 @@ pub fn plugin_runner_on_resolve_jsc(
     specifier: bun_core::String,
     importer: bun_core::String,
     target: crate::BunPluginTarget,
+    kind: bun_ast::ImportKind,
 ) -> JsResult<Option<ErrorableString>> {
     use crate::StringJsc as _;
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
@@ -6573,6 +6581,7 @@ pub fn plugin_runner_on_resolve_jsc(
         specifier,
         importer,
         target,
+        kind,
     )?
     else {
         return Ok(None);

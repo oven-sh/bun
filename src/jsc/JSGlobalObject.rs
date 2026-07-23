@@ -716,11 +716,12 @@ impl JSGlobalObject {
         path: BunString,
         source: BunString,
         target: BunPluginTarget,
+        kind: bun_ast::ImportKind,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(&namespace_);
         let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, ns, &path, &source, target)
+            Bun__runOnResolvePlugins(self, ns, &path, &source, target, kind as u8)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -1583,6 +1584,7 @@ unsafe extern "C" {
         path: &BunString,
         source: &BunString,
         target: BunPluginTarget,
+        kind: u8,
     ) -> JSValue;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is

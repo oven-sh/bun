@@ -22,11 +22,16 @@ function parseRow(s: string): Row {
   return { numeric, name, nameOffset, s };
 }
 
+// The parenthesized name and ICU's GMT-literal prefix are locale-sensitive
+// (fr CLDR uses "UTC{0}", not "GMT{0}"); pin LANG so the assertions and the
+// GMT-literal regex are deterministic regardless of the host shell's locale.
+const env = (tz: string) => ({ ...bunEnv, TZ: tz, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" });
+
 async function run(tz: string, instants: string[]): Promise<Row[]> {
   const script = instants.map(iso => `console.log(new Date(${JSON.stringify(iso)}).toString());`).join("\n");
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: { ...bunEnv, TZ: tz },
+    env: env(tz),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -119,7 +124,7 @@ describe("Date.prototype.toString() parenthesized zone name", () => {
   test.concurrent("toTimeString() is consistent too", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `console.log(new Date("2010-01-15T12:00:00Z").toTimeString())`],
-      env: { ...bunEnv, TZ: "Europe/Istanbul" },
+      env: env("Europe/Istanbul"),
       stdout: "pipe",
       stderr: "pipe",
     });

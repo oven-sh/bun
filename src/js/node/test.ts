@@ -72,7 +72,7 @@ function getTestsStreamClass() {
     #canPush = true;
 
     constructor() {
-      super({ objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
+      super({ __proto__: null, objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
       // $createFIFO cannot appear in a class-field initializer: the builtin
       // bundler mis-emits the intrinsic there.
       this.#buffer = $createFIFO();

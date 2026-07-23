@@ -107,6 +107,35 @@ pub(crate) fn download(
     )
 }
 
+/// Build an RFC 7233 `Range` header value from a Blob's (offset, size) pair.
+/// `offset == blob::MAX_SIZE` encodes a suffix slice (`Blob.slice(-n)`), and
+/// `size == None` encodes an open-ended slice (`Blob.slice(a)`).
+fn range_header(offset: usize, size: Option<usize>) -> Option<Vec<u8>> {
+    let mut v = Vec::new();
+    if offset as u64 == crate::webcore::blob::MAX_SIZE {
+        match size {
+            None | Some(0) => return None,
+            Some(n) => {
+                write!(&mut v, "bytes=-{}", n).expect("infallible: in-memory write");
+                return Some(v);
+            }
+        }
+    }
+    if let Some(size_) = size {
+        let mut end = offset + size_;
+        if size_ > 0 {
+            end -= 1;
+        }
+        write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
+        return Some(v);
+    }
+    if offset == 0 {
+        return None;
+    }
+    write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
+    Some(v)
+}
+
 pub(crate) fn download_slice(
     this: &S3Credentials,
     path: &[u8],
@@ -117,23 +146,7 @@ pub(crate) fn download_slice(
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsTerminatedResult<()> {
-    let range: Option<Vec<u8>> = 'brk: {
-        if let Some(size_) = size {
-            let mut end = offset + size_;
-            if size_ > 0 {
-                end -= 1;
-            }
-            let mut v = Vec::new();
-            write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
-            break 'brk Some(v);
-        }
-        if offset == 0 {
-            break 'brk None;
-        }
-        let mut v = Vec::new();
-        write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
-        Some(v)
-    };
+    let range = range_header(offset, size);
 
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -928,23 +941,7 @@ pub(crate) fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
-    let range: Option<Vec<u8>> = 'brk: {
-        if let Some(size_) = size {
-            let mut end = offset + size_;
-            if size_ > 0 {
-                end -= 1;
-            }
-            let mut v = Vec::new();
-            write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
-            break 'brk Some(v);
-        }
-        if offset == 0 {
-            break 'brk None;
-        }
-        let mut v = Vec::new();
-        write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
-        Some(v)
-    };
+    let range = range_header(offset, size);
 
     let result = match this.sign_request::<false>(
         &bun_s3_signing::SignOptions {

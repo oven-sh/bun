@@ -236,8 +236,8 @@ pub trait BlobExt {
     fn get_slice_from(
         &self,
         global_this: &JSGlobalObject,
-        relative_start: i64,
-        relative_end: i64,
+        offset: SizeType,
+        size: SizeType,
         content_type: BlobContentType,
     ) -> JSValue;
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
@@ -1960,21 +1960,15 @@ impl BlobExt for Blob {
     fn get_slice_from(
         &self,
         global_this: &JSGlobalObject,
-        relative_start: i64,
-        relative_end: i64,
+        offset: SizeType,
+        size: SizeType,
         content_type: BlobContentType,
     ) -> JSValue {
-        let offset = self
-            .offset
-            .get()
-            .saturating_add(SizeType::try_from(relative_start).expect("int cast"));
-        let len = SizeType::try_from((relative_end.saturating_sub(relative_start)).max(0)).unwrap();
-
         // This copies over the charset field
         // which is okay because this will only be a <= slice
         let blob = self.dupe();
         blob.offset.set(offset);
-        blob.size.set(len);
+        blob.size.set(size);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -2009,10 +2003,7 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
-        // If the optional start parameter is not used as a parameter, let relativeStart be 0.
-        let mut relative_start: i64 = 0;
-        // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let this_size = i64::try_from(self.size.get()).expect("int cast");
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -2025,31 +2016,83 @@ impl BlobExt for Blob {
         }
 
         let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
+        let mut start_raw: Option<i64> = None;
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
-                let start = start_.to_int64();
-                if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
-                } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
-                }
+                start_raw = Some(start_.to_int64());
+            }
+        }
+        let mut end_raw: Option<i64> = None;
+        if let Some(end_) = args_iter.next_eat() {
+            if end_.is_number() {
+                end_raw = Some(end_.to_int64());
             }
         }
 
-        if let Some(end_) = args_iter.next_eat() {
-            if end_.is_number() {
-                let end = end_.to_int64();
-                if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
-                } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
+        // If the optional start parameter is not used as a parameter, let relativeStart be 0.
+        let relative_start = match start_raw {
+            Some(s) if s < 0 => s.wrapping_add(this_size).max(0),
+            Some(s) => s.min(this_size),
+            None => 0,
+        };
+        // If the optional end parameter is not used, let relativeEnd be size.
+        let relative_end = match end_raw {
+            Some(e) if e < 0 => e.wrapping_add(this_size).max(0),
+            Some(e) => e.min(this_size),
+            None => this_size,
+        };
+
+        let span = SizeType::try_from(relative_end.saturating_sub(relative_start).max(0)).unwrap();
+        // Cap below `MAX_SIZE` so ordinary arithmetic can never land exactly on
+        // the suffix sentinel (e.g. `slice(F).slice(-F)` would otherwise sum to
+        // `F + (MAX_SIZE - F)` and be misread as a whole-object suffix).
+        let default_offset = self
+            .offset
+            .get()
+            .saturating_add(SizeType::try_from(relative_start).expect("int cast"))
+            .min(MAX_SIZE - 1);
+
+        // For an S3 blob whose real size is still unknown, don't serialize the
+        // `MAX_SIZE` placeholder into a `Range` header. HTTP supports the two
+        // cases that need no size: `slice(-n)` → `bytes=-n` (encoded as
+        // `offset == MAX_SIZE, size == n`), and `slice(a)` → `bytes=a-`
+        // (encoded as `size == MAX_SIZE`).
+        let (offset, size) = if self.size.get() == MAX_SIZE && end_raw.is_none() && self.is_s3() {
+            match start_raw {
+                // A suffix range is only unambiguous on a top-level file; on a
+                // chained open-ended parent (`offset > 0`) or an oversized `n`
+                // (e.g. `-Infinity`) fall through to the generic arithmetic,
+                // which matches what happened before this encoding existed.
+                Some(s) if s < 0 && self.offset.get() == 0 && s.unsigned_abs() < MAX_SIZE => {
+                    (MAX_SIZE, s.unsigned_abs())
                 }
+                // Cap below `MAX_SIZE` so a huge positive start cannot collide
+                // with the suffix sentinel and turn into a whole-object fetch.
+                Some(s) if s >= 0 => (
+                    self.offset
+                        .get()
+                        .saturating_add(SizeType::try_from(s).expect("int cast"))
+                        .min(MAX_SIZE - 1),
+                    MAX_SIZE,
+                ),
+                None => (self.offset.get(), MAX_SIZE),
+                _ => (default_offset, span),
             }
-        }
+        } else if self.offset.get() == MAX_SIZE && self.is_s3() {
+            // Re-slicing a suffix slice of length `this_size`. A non-empty
+            // re-slice that still ends at the parent's end is itself a suffix;
+            // one that is empty or stops short cannot be expressed as an
+            // RFC 7233 range without the total length, so push the offset past
+            // the sentinel and let the server reject it with 416 rather than
+            // return the wrong bytes.
+            if relative_end == this_size && span > 0 {
+                (MAX_SIZE, span)
+            } else {
+                (MAX_SIZE + 1, span)
+            }
+        } else {
+            (default_offset, span)
+        };
 
         let mut content_type = BlobContentType::default();
         if let Some(content_type_) = args_iter.next_eat() {
@@ -2069,7 +2112,7 @@ impl BlobExt for Blob {
             }
         }
 
-        Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
+        Ok(self.get_slice_from(global_this, offset, size, content_type))
     }
 
     fn get_mime_type(&self) -> Option<MimeType> {
@@ -4823,7 +4866,12 @@ pub fn write_file_with_source_destination(
     } else if destination_type == store::DataTag::Bytes
         && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {
-        let blob_value = source_blob.get_slice_from(ctx, 0, 0, BlobContentType::default());
+        let blob_value = source_blob.get_slice_from(
+            ctx,
+            source_blob.offset.get(),
+            0,
+            BlobContentType::default(),
+        );
         return Ok(JSPromise::resolved_promise_value(ctx, blob_value));
     } else if destination_type == store::DataTag::S3 {
         let s3 = destination_store.data.as_s3();

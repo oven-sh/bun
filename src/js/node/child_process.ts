@@ -1684,21 +1684,13 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   if (typeof item === "number") {
     return item;
   }
-  if (isNodeStreamReadable(item)) {
+  if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
     if (typeof itemFd === "number") return itemFd;
     const handle = item._handle;
     const handleFd = handle ? handle.fd : undefined;
     if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Readable stdio @ ${index}`);
-  }
-  if (isNodeStreamWritable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Writable stdio @ ${index}`);
+    throw $ERR_INVALID_ARG_VALUE("stdio", item);
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {

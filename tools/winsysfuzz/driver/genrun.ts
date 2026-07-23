@@ -276,6 +276,13 @@ async function worker(w: number) {
     // program and key by its call set, so distinct causes queue separately
     // and one bug queues once however it faults.
     let minimalText = "";
+    // WSF_GEN_NOMINIMIZE=1: skip in-engine reduction entirely (used to
+    // bisect the driver fail-fast between the finder loop and the
+    // reducer's spawn burst).
+    if (process.env.WSF_GEN_NOMINIMIZE && j.kind === "crash") {
+      knownKeys.add(j.sig);
+      console.log(`   (minimization disabled) queuing raw seed ${seed}`);
+    }
     // Pre-check: if the RAW program already contains every call of a KNOWN
     // cause, this is almost surely that cause again - skip the (expensive,
     // solo-locked) minimization and let the engine keep finding.
@@ -299,7 +306,7 @@ async function worker(w: number) {
         continue;
       }
     }
-    if (j.kind === "crash") {
+    if (j.kind === "crash" && !process.env.WSF_GEN_NOMINIMIZE) {
       // Minimize SOLO (hold the verify lock: siblings pause) - a reduction
       // runs the target hundreds of times and must not compete with 24
       // workers, nor should crashes race under it.

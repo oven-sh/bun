@@ -76,6 +76,25 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
     return true;
 }
 
+// The HTTP_PROXY / TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH
+// accessors are installed with DontEnum when the var was absent from the launch
+// env. After the first write the property must become enumerable so
+// {...process.env} / Object.keys / JSON.stringify (and therefore child_process /
+// Worker env inheritance) see it. putDirectCustomAccessor asserts NewProperty,
+// so delete first and re-add without DontEnum.
+static void makeEnvAccessorEnumerable(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned attributes = 0;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
+        return;
+    object->deleteProperty(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, void());
+    object->putDirectCustomAccessor(vm, propertyName, existing,
+        attributes & ~JSC::PropertyAttribute::DontEnum);
+}
+
 // Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
 // variants) are read by fetch()'s native proxy resolution via
 // env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
@@ -118,23 +137,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
 
-    // The proxy-var accessors are added with `DontEnum` when the var was not
-    // present in the OS env at startup. The regular env-var setter
-    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
-    // replacing the accessor with a data property; this setter keeps the
-    // accessor (so the native env map stays the source of truth) but must
-    // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
-    // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
-    // (the spread skips non-enumerable properties).
-    unsigned attributes;
-    JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first.
-        object->deleteProperty(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        object->putDirectCustomAccessor(vm, propertyName, existing,
-            attributes & ~JSC::PropertyAttribute::DontEnum);
-    }
+    makeEnvAccessorEnumerable(vm, globalObject, object, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -173,25 +177,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
-
-// The side-effecting accessors above are installed with DontEnum when the var
-// was absent from the launch env. After the first write the property must become
-// enumerable so {...process.env} / Object.keys / JSON.stringify (and therefore
-// child_process / Worker env inheritance) see it. putDirectCustomAccessor asserts
-// NewProperty, so delete first and re-add without DontEnum, same as
-// jsSetterProxyEnvironmentVariable does inline.
-static void makeEnvAccessorEnumerable(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    unsigned attributes = 0;
-    JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
-        return;
-    object->deleteProperty(globalObject, propertyName);
-    RETURN_IF_EXCEPTION(scope, void());
-    object->putDirectCustomAccessor(vm, propertyName, existing,
-        attributes & ~JSC::PropertyAttribute::DontEnum);
-}
 
 // In Node.js, the "TZ" environment variable is special.
 // Setting it automatically updates the timezone.

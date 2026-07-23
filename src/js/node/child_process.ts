@@ -1779,7 +1779,7 @@ function normalizeStdio(stdio): string[] {
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:
-        throw ERR_INVALID_OPT_VALUE("stdio", stdio);
+        throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
     }
   } else if ($isJSArray(stdio)) {
     // Validate if each is a valid stdio type
@@ -1793,7 +1793,7 @@ function normalizeStdio(stdio): string[] {
 
     return processedStdio;
   } else {
-    throw ERR_INVALID_OPT_VALUE("stdio", stdio);
+    throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 }
 
@@ -2048,12 +2048,6 @@ function genericNodeError(message, errorProperties) {
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   err.code = "ERR_UNKNOWN_SIGNAL";
-  return err;
-}
-
-function ERR_INVALID_OPT_VALUE(name, value) {
-  const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
-  err.code = "ERR_INVALID_OPT_VALUE";
   return err;
 }
 

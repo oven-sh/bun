@@ -206,17 +206,21 @@ describe("spawn stdio validation", () => {
     expect(err.message).toContain(name);
   });
 
-  it("unrecognized stdio value throws ERR_INVALID_ARG_VALUE", () => {
+  it.each([
+    ["unrecognized array entry", ["pipe", { foo: 1 }, "pipe"], /^The argument 'stdio' is invalid\. Received \{/],
+    ["unknown top-level string", "bogus", /^The argument 'stdio' is invalid\. Received 'bogus'$/],
+    ["non-array non-string", 42, /^The argument 'stdio' is invalid\. Received 42$/],
+  ])("%s throws ERR_INVALID_ARG_VALUE", (_label, stdio, messagePattern) => {
     let err;
     try {
-      spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: ["pipe", { foo: 1 }, "pipe"] });
+      spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio });
     } catch (e) {
       err = e;
     }
     expect(err).toBeInstanceOf(TypeError);
     expect({ code: err.code, message: err.message }).toEqual({
       code: "ERR_INVALID_ARG_VALUE",
-      message: expect.stringMatching(/^The argument 'stdio' is invalid\. Received \{/),
+      message: expect.stringMatching(messagePattern),
     });
   });
 });

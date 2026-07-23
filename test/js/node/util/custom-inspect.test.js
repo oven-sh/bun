@@ -368,11 +368,13 @@ describe("util.inspect web-platform classes", () => {
     expect(out).toContain("status: 404");
     expect(out).toContain("statusText: 'Not Found'");
     expect(out).toContain("headers: Headers { 'x-a': '1'");
+    expect(out).toContain("body: ReadableStream {");
     expect(out).toContain("bodyUsed: false");
     expect(out).toContain("ok: false");
     expect(out).toContain("redirected: false");
     expect(out).toContain("type: 'default'");
     expect(out).toContain("url: ''");
+    expect(inspect(new Response())).toContain("body: null");
   });
 
   test("Request", () => {
@@ -382,7 +384,15 @@ describe("util.inspect web-platform classes", () => {
     expect(out).toContain("method: 'POST'");
     expect(out).toContain("url: 'https://example.com/path'");
     expect(out).toContain("headers: Headers { 'x-a': '1'");
+    expect(out).toContain("destination: ''");
+    expect(out).toContain("referrer: ''");
+    expect(out).toContain("referrerPolicy: ''");
+    expect(out).toContain("mode: 'cors'");
+    expect(out).toContain("credentials: ");
+    expect(out).toContain("cache: 'default'");
     expect(out).toContain("redirect: 'follow'");
+    expect(out).toContain("integrity: ''");
+    expect(out).toContain("bodyUsed: false");
     expect(out).toContain("signal: AbortSignal { aborted: false }");
   });
 
@@ -393,9 +403,11 @@ describe("util.inspect web-platform classes", () => {
 
   test("Blob and File", () => {
     expect(inspect(new Blob(["abc"], { type: "text/plain" }))).toMatch(/^Blob { size: 3, type: 'text\/plain.*' }$/);
+    expect(inspect(new Blob())).toBe("Blob { size: 0, type: '' }");
     const file = inspect(new File(["abc"], "name.txt", { type: "text/plain", lastModified: 123 }));
     expect(file).toStartWith("File {");
     expect(file).toContain("size: 3");
+    expect(file).toMatch(/type: 'text\/plain[^']*'/);
     expect(file).toContain("name: 'name.txt'");
     expect(file).toContain("lastModified: 123");
   });
@@ -433,7 +445,9 @@ describe("util.inspect web-platform classes", () => {
       const out = inspect(t);
       expect(out).toStartWith("Timeout {");
       expect(out).toContain("_idleTimeout: 50");
+      expect(out).toMatch(/_idleStart: \d+/);
       expect(out).toContain("_onTimeout: [Function: callback]");
+      expect(out).toContain("_repeat: null");
       expect(out).toContain("_destroyed: false");
     } finally {
       clearTimeout(t);

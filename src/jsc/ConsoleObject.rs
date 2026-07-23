@@ -4674,8 +4674,8 @@ pub mod formatter {
             // `[nodejs.util.inspect.custom]` the value carries is consulted now,
             // covering ReadableStream / AbortSignal / CryptoKey / etc.
             if !self.disable_inspect_custom {
-                if let Ok(Some(callback)) =
-                    value.fast_get(self.global_this, jsc::BuiltinName::InspectCustom)
+                if let Some(callback) =
+                    value.fast_get(self.global_this, jsc::BuiltinName::InspectCustom)?
                 {
                     if callback.is_callable() {
                         self.custom_formatted_object = CustomFormattedObject {

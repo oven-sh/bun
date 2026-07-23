@@ -392,6 +392,9 @@ function generatePrototype(typeName, obj) {
   if (Array.isArray(obj.inspectCustom)) {
     const fnName = `${prototypeName(typeName)}__inspectCustom`;
     const props = obj.inspectCustom as string[];
+    if (props.length === 0) {
+      throw new Error(`${typeName}: inspectCustom must name at least one getter`);
+    }
     inspectCustomImpl = `
 JSC_DEFINE_HOST_FUNCTION(${fnName}, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

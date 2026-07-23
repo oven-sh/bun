@@ -113,17 +113,9 @@ inline void importAkpKey(CryptoAlgorithmIdentifier identifier, const AkpAlgorith
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
-        if (jwk.key_ops) {
-            CryptoKeyUsageBitmap seenOps = 0;
-            for (auto op : *jwk.key_ops) {
-                // The binding enum order matches the bitmap bit order.
-                CryptoKeyUsageBitmap bit = 1 << static_cast<int>(op);
-                if (seenOps & bit) {
-                    exceptionCallback(DataError, "Duplicate key operation"_s);
-                    return;
-                }
-                seenOps |= bit;
-            }
+        if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
+            exceptionCallback(DataError, "Duplicate key operation"_s);
+            return;
         }
         if (jwk.key_ops && ((jwk.usages & usages) != usages)) {
             exceptionCallback(DataError, "Key operations and usage mismatch"_s);

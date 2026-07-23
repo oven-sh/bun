@@ -396,6 +396,36 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     }
   });
 
+  it("JWK import rejects duplicate key_ops entries for every oct algorithm", async () => {
+    // Node routes all algorithms through the same validateKeyOps: the
+    // duplicate scan wins over the usage-mismatch check but loses to "use".
+    const k = Buffer.alloc(32, 1).toString("base64url");
+    const cases: [Record<string, unknown>, AlgorithmIdentifier | HmacImportParams, KeyUsage[], string][] = [
+      [{ kty: "oct", k, key_ops: ["encrypt", "encrypt"] }, "ChaCha20-Poly1305", ["encrypt"], "Duplicate key operation"],
+      [{ kty: "oct", k, key_ops: ["sign", "sign"] }, { name: "HMAC", hash: "SHA-256" }, ["sign"], "Duplicate key operation"],
+      [
+        { kty: "oct", k, key_ops: ["verify", "verify"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        "Duplicate key operation",
+      ],
+      [
+        { kty: "oct", k, use: "enc", key_ops: ["sign", "sign"] },
+        { name: "HMAC", hash: "SHA-256" },
+        ["sign"],
+        'Invalid JWK "use" Parameter',
+      ],
+    ];
+    for (const [jwk, alg, usages, message] of cases) {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, usages).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect({ name: err.name, message: err.message }).toEqual({ name: "DataError", message });
+    }
+  });
+
   it("HMAC JWK import reports Node's member-check messages in Node's order", async () => {
     const k = Buffer.alloc(32, 1).toString("base64url");
     const alg = { name: "HMAC", hash: "SHA-256" };

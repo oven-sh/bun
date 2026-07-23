@@ -800,10 +800,7 @@ where
                 } else {
                     // WHATWG UTF-8 decode so ill-formed sequences become U+FFFD with
                     // maximal-subpart advancement, matching `Bun.file().text()` /
-                    // `TextDecoder` / `fs.readFileSync(..., "utf8")`. The previous
-                    // WTF-8 stepper here widened invalid lead bytes to their Latin-1
-                    // code point and emitted NUL for bad multibyte sequences while
-                    // over-advancing past following bytes.
+                    // `TextDecoder` / `fs.readFileSync(..., "utf8")`.
                     let replacement = strings::convert_utf8_bytes_into_utf16(&text[i..]);
                     let len = (replacement.len as usize).max(1);
                     if replacement.fail {

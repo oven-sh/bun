@@ -6416,6 +6416,28 @@ describe("semver", () => {
       expected: "2.0.1",
     },
     {
+      // https://github.com/oven-sh/bun/issues/19065
+      // npm-package-arg: `2x` is a dist-tag, not `2.x`.
+      title: "digit-prefixed dist-tag '2x'",
+      depVersion: "2x",
+      expected: "1.0.1",
+    },
+    {
+      title: "digit-prefixed dist-tag '1x'",
+      depVersion: "1x",
+      expected: "3.0.1",
+    },
+    {
+      title: "digit-prefixed dist-tag '1beta'",
+      depVersion: "1beta",
+      expected: "2.0.1",
+    },
+    {
+      title: "'1.x' is still a range",
+      depVersion: "1.x",
+      expected: "1.0.1",
+    },
+    {
       title: "tagged above latest",
       depVersion: "pre-3",
       expected: "3.0.1",

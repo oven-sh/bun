@@ -1013,6 +1013,65 @@ it("should add dependency with specified semver", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+// https://github.com/oven-sh/bun/issues/19065
+for (const { spec, resolves, saved } of [
+  // `2x` is a dist-tag. Before the fix bun parsed it as the range `2.x`
+  // (no 2.x versions exist here) and failed with "No version matching".
+  { spec: "2x", resolves: "0.0.3", saved: "^0.0.3" },
+  // `0x` is a dist-tag. Before the fix bun parsed it as `0.x` and picked
+  // the highest 0.x (0.0.5) instead of the tagged version.
+  { spec: "0x", resolves: "0.0.3", saved: "^0.0.3" },
+  // sanity: `0.x` is still a range and picks the highest match
+  { spec: "0.x", resolves: "0.0.5", saved: "0.x" },
+]) {
+  it(`should add dependency with digit-prefixed dist-tag ${JSON.stringify(spec)}`, async () => {
+    const urls: string[] = [];
+    setHandler(async request => {
+      urls.push(request.url);
+      const url = request.url.replaceAll("%2f", "/");
+      if (url.endsWith(".tgz")) {
+        return new Response(file(join(import.meta.dir, url.slice(url.lastIndexOf("/") + 1))));
+      }
+      return new Response(
+        JSON.stringify({
+          name: "baz",
+          versions: {
+            "0.0.3": { name: "baz", version: "0.0.3", dist: { tarball: `${root_url}/baz-0.0.3.tgz` } },
+            "0.0.5": { name: "baz", version: "0.0.5", dist: { tarball: `${root_url}/baz-0.0.5.tgz` } },
+          },
+          "dist-tags": {
+            latest: "0.0.5",
+            "2x": "0.0.3",
+            "0x": "0.0.3",
+          },
+        }),
+      );
+    });
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", `baz@${spec}`],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    expect(err).not.toContain("No version matching");
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`installed baz@${resolves}`);
+    expect(await exited).toBe(0);
+
+    expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+      name: "baz",
+      version: resolves,
+    });
+    expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ baz: saved });
+  });
+}
+
 it("should add dependency (GitHub)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

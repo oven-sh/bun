@@ -110,13 +110,20 @@ describe("zlib safe-binding behavior preservation", () => {
 
   test("node:zlib reset() reuses the stream", () => {
     const d = zlib.createDeflateRaw();
-    // @ts-expect-error _handle is internal
+    // @ts-expect-error _handle/_writeState are internal
     const h = d._handle;
+    // @ts-expect-error internal
+    const ws: Uint32Array = d._writeState; // [avail_out, avail_in]
     const out = Buffer.alloc(4096);
     h.writeSync(zlib.constants.Z_FINISH, data, 0, data.length, out, 0, out.length);
+    const first = Buffer.from(out.subarray(0, out.length - ws[0]));
     h.reset();
-    // after reset, a second full deflate must succeed
+    out.fill(0);
     h.writeSync(zlib.constants.Z_FINISH, data, 0, data.length, out, 0, out.length);
+    const second = out.subarray(0, out.length - ws[0]);
+    expect(second.length).toBeGreaterThan(0);
+    expect(second).toEqual(first);
+    expect(zlib.inflateRawSync(second)).toEqual(data);
     d.close();
   });
 

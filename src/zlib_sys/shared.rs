@@ -63,12 +63,6 @@ pub enum FlushValue {
 // typedef void   (*free_func) (voidpf opaque, voidpf address);
 pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
 pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
-// Legacy spellings the per-platform modules exported; keep both so downstream
-// `pub use` re-exports stay source-compatible.
-pub type z_alloc_fn = alloc_func;
-pub type z_free_fn = free_func;
-pub type z_alloc_func = alloc_func;
-pub type z_free_func = free_func;
 
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
@@ -100,7 +94,6 @@ pub struct struct_gzFile_s {
     pub next: *mut u8,
     pub pos: i64,
 }
-pub type gzFile_s = struct_gzFile_s;
 pub type gzFile = *mut struct_gzFile_s;
 
 /// zlib's opaque `struct internal_state { int dummy; }` stub — applications
@@ -109,7 +102,6 @@ pub type gzFile = *mut struct_gzFile_s;
 pub struct struct_internal_state {
     dummy: c_int,
 }
-pub type internal_state = struct_internal_state;
 
 // ---------------------------------------------------------------------------
 // z_stream — single source of truth for both POSIX and Windows.
@@ -180,9 +172,6 @@ pub struct zStream_struct {
 
 pub type z_stream = zStream_struct;
 pub type z_streamp = *mut z_stream;
-// Alternate spellings (win32.rs historically used these).
-pub type struct_z_stream_s = zStream_struct;
-pub type z_stream_s = zStream_struct;
 
 // SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
 // allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
@@ -389,7 +378,6 @@ pub mod raw {
     unsafe extern "C" {
         pub safe fn zlibVersion() -> *const c_char;
         pub safe fn compressBound(sourceLen: uLong) -> uLong;
-        pub safe fn zError(err: c_int) -> *const u8;
 
         // -- end / reset / bound: (S1)+(S2) only --------------------------
         pub safe fn inflateEnd(strm: &mut z_stream) -> ReturnCode;

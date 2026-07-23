@@ -1908,8 +1908,9 @@ it("tls.createServer keeps enforcing its rejectUnauthorized default under NODE_T
     env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // stderr carries Node's one-time NODE_TLS_REJECT_UNAUTHORIZED warning.
+  expect(stderr).toContain("NODE_TLS_REJECT_UNAUTHORIZED");
   expect(JSON.parse(stdout)).toEqual({ sawSecureConnection: false });
   expect(exitCode).toBe(0);
 });

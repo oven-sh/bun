@@ -218,6 +218,62 @@ it("process.env", () => {
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
 });
 
+it("process.env rejects invalid keys and NUL like node", async () => {
+  // node's process.env is a setenv()/getenv() proxy: setenv() fails EINVAL for
+  // an empty name or a name containing '=', and both key and value pass through
+  // a NUL-terminated C string. node ignores the failure, so the write is silent.
+  const script = `
+    const { spawnSync } = require("node:child_process");
+    const out = {};
+
+    process.env["A=B"] = "v";
+    out.eqStored = "A=B" in process.env;
+    out.eqParentA = process.env.A ?? null;
+
+    process.env[""] = "e";
+    out.emptyStored = "" in process.env;
+
+    process.env["NULKEY\\0TAIL"] = "x";
+    out.nulKeyStored = Object.keys(process.env).filter(k => k.startsWith("NULKEY"));
+    out.nulKeyValue = process.env.NULKEY ?? null;
+
+    process.env["\\0LEADNUL"] = "y";
+    out.leadNulStored = "" in process.env;
+
+    process.env.NULVAL = "a\\0b";
+    out.nulVal = process.env.NULVAL;
+
+    const r = spawnSync(process.execPath, ["-e",
+      "process.stdout.write(JSON.stringify({A: process.env.A ?? null, NULKEY: process.env.NULKEY ?? null}))"
+    ], { encoding: "utf8" });
+    out.child = r.stdout ? JSON.parse(r.stdout) : null;
+    out.childStatus = r.status;
+    out.childErr = r.error ? r.error.code : null;
+
+    process.stdout.write(JSON.stringify(out));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    eqStored: false,
+    eqParentA: null,
+    emptyStored: false,
+    nulKeyStored: ["NULKEY"],
+    nulKeyValue: "x",
+    leadNulStored: false,
+    nulVal: "a",
+    child: { A: null, NULKEY: "x" },
+    childStatus: 0,
+    childErr: null,
+  });
+  expect(exitCode).toBe(0);
+}, 20000);
+
 it("process.env is spreadable and editable", () => {
   process.env["LOL SMILE UTF16 😂"] = "😂";
   const { "LOL SMILE UTF16 😂": lol, ...rest } = process.env;

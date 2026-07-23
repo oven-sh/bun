@@ -37,6 +37,30 @@ namespace Bun {
 
 using namespace WebCore;
 
+// Node's process.env is a proxy over setenv()/getenv(). setenv() fails with
+// EINVAL for an empty name or a name containing '=', and both key and value
+// pass through a NUL-terminated C string, so embedded NULs truncate. Node
+// ignores the setenv failure, so the assignment silently does nothing.
+// normalizeEnvKey encodes that: truncate at NUL, then drop empty / '='.
+static std::optional<String> normalizeEnvKey(const String& rawKey)
+{
+    String key = rawKey;
+    size_t nul = key.find(static_cast<char16_t>(0));
+    if (nul != WTF::notFound)
+        key = key.substring(0, nul);
+    if (key.isEmpty() || key.find('=') != WTF::notFound)
+        return std::nullopt;
+    return key;
+}
+
+static String truncateEnvValueAtNul(const String& value)
+{
+    size_t nul = value.find(static_cast<char16_t>(0));
+    if (nul != WTF::notFound)
+        return value.substring(0, nul);
+    return value;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -563,7 +587,11 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     String stringValue = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    String keyStr = String(uid);
+    auto keyOpt = normalizeEnvKey(String(uid));
+    if (!keyOpt)
+        return true;
+    String keyStr = *keyOpt;
+    stringValue = truncateEnvValueAtNul(stringValue);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     syncWindowsEnv(store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
@@ -633,7 +661,11 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    String keyStr = String(uid);
+    auto keyOpt = normalizeEnvKey(String(uid));
+    if (!keyOpt)
+        return true;
+    String keyStr = *keyOpt;
+    stringValue = truncateEnvValueAtNul(stringValue);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     syncWindowsEnv(store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
@@ -744,6 +776,119 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
+// POSIX process.env: a plain property bag, but with a put/defineOwnProperty
+// hook so assignments are filtered like node's setenv-backed store (see
+// normalizeEnvKey). Reads stay on the fast JSObject path; only writes pay.
+class JSProcessEnvMap final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSProcessEnvMap, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSProcessEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSProcessEnvMap* ptr = new (NotNull, JSC::allocateCell<JSProcessEnvMap>(vm)) JSProcessEnvMap(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+
+private:
+    JSProcessEnvMap(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSProcessEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
+
+bool JSProcessEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid)
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+
+    String stringValue = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    auto key = normalizeEnvKey(String(uid));
+    if (!key)
+        return true;
+
+    JSValue jsStringValue = jsString(vm, truncateEnvValueAtNul(stringValue));
+    if (key->length() == uid->length())
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, jsStringValue, slot));
+
+    Identifier truncated = Identifier::fromString(vm, *key);
+    PutPropertySlot newSlot(asObject(cell), slot.isStrictMode());
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, truncated, jsStringValue, newSlot));
+}
+
+bool JSProcessEnvMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String stringValue = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, jsString(vm, truncateEnvValueAtNul(stringValue)), shouldThrow));
+}
+
+bool JSProcessEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value())
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+
+    auto key = normalizeEnvKey(String(uid));
+    if (!key)
+        return true;
+
+    String stringValue = descriptor.value().toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    PropertyDescriptor newDescriptor = descriptor;
+    newDescriptor.setValue(jsString(vm, truncateEnvValueAtNul(stringValue)));
+
+    if (key->length() == uid->length())
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, newDescriptor, shouldThrow));
+
+    Identifier truncated = Identifier::fromString(vm, *key);
+    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, truncated, newDescriptor, shouldThrow));
+}
+
+bool isEnvironmentVariablesMapObject(const JSC::ClassInfo* classInfo)
+{
+    return classInfo == JSProcessEnvMap::info() || classInfo == JSSharedEnvMap::info();
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -752,11 +897,18 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
     JSC::JSObject* object = nullptr;
+#if OS(WINDOWS)
+    // On Windows the object is wrapped in a Proxy (below) whose set trap does the
+    // same filtering, so the backing store stays a plain object.
     if (count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
     } else {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
     }
+#else
+    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    object = JSProcessEnvMap::create(vm, structure);
+#endif
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);

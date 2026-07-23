@@ -13,6 +13,10 @@ namespace Bun {
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
+// True for JSProcessEnvMap/JSSharedEnvMap classInfo; both structured-clone like
+// a plain object (Node.js structuredClone(process.env) succeeds).
+bool isEnvironmentVariablesMapObject(const JSC::ClassInfo*);
+
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);

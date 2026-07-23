@@ -55,7 +55,9 @@ pub use valkey_context::ValkeyContext;
 // the body's items so `command::PromisePair` / `command::Entry` resolve, and
 // alias it as `ValkeyCommand` for callers that use that spelling.
 pub mod valkey_command {
-    pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
+    pub use super::valkey_command_body::{
+        Entry, Meta, PendingSubscription, Promise, PromisePair, entry, promise_pair,
+    };
     // `index.rs` re-exports `super::valkey_command::ValkeyCommand`.
     pub use super::ValkeyCommand;
 }

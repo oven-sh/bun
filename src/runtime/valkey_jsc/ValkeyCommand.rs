@@ -104,11 +104,21 @@ impl<'a> Command<'a> {
     }
 }
 
+/// The channels and listener a `SUBSCRIBE` asked for, held until the server confirms the
+/// subscription. The listener is only wired into the receive-handler map on confirmation,
+/// so a SUBSCRIBE that fails leaves the map untouched.
+pub struct PendingSubscription {
+    /// A channel name, or an array of them.
+    pub channels: jsc::Strong,
+    pub listener: jsc::Strong,
+}
+
 /// Command stored in offline queue when disconnected
 pub struct Entry {
     pub serialized_data: Box<[u8]>, // Pre-serialized RESP protocol bytes
     pub meta: Meta,
     pub promise: Promise,
+    pub pending_subscription: Option<Box<PendingSubscription>>,
 }
 
 // Inherent associated
@@ -119,13 +129,18 @@ pub mod entry {
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
-    pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, crate::Error> {
+    pub fn create(
+        command: &Command<'_>,
+        promise: Promise,
+        pending_subscription: Option<Box<PendingSubscription>>,
+    ) -> Result<Entry, crate::Error> {
         Ok(Entry {
             serialized_data: command.serialize()?,
             // We should be calling .check against command here but due
             // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             meta: command.meta,
             promise,
+            pending_subscription,
         })
     }
 }
@@ -228,6 +243,7 @@ impl Promise {
 pub struct PromisePair {
     pub meta: Meta,
     pub promise: Promise,
+    pub pending_subscription: Option<Box<PendingSubscription>>,
 }
 
 // See `entry` note above.

@@ -195,6 +195,28 @@ impl SubscriptionCtx {
         Ok(Some(new_length as usize))
     }
 
+    /// Wire up the listener a `subscribe()` asked for, once the server has confirmed the
+    /// subscription. Registering up-front instead would leave the listener (and the event
+    /// loop ref it implies) behind when the SUBSCRIBE fails.
+    pub fn register_subscription(
+        &self,
+        global_object: &JSGlobalObject,
+        pending: &command::PendingSubscription,
+    ) -> JsResult<()> {
+        let channels = pending.channels.get();
+        let listener = pending.listener.get();
+
+        if !channels.is_array() {
+            return self.upsert_receive_handler(global_object, channels, listener);
+        }
+
+        let mut channels_iter = channels.array_iterator(global_object)?;
+        while let Some(channel) = channels_iter.next()? {
+            self.upsert_receive_handler(global_object, channel, listener)?;
+        }
+        Ok(())
+    }
+
     /// Add a handler for receiving messages on a specific channel
     pub fn upsert_receive_handler(
         &self,
@@ -1610,6 +1632,7 @@ impl JSValkeyClient {
         global_this: &JSGlobalObject,
         _this_value: JSValue,
         command: &Command,
+        pending_subscription: Option<Box<command::PendingSubscription>>,
     ) -> Result<*mut JSPromise, crate::Error> {
         // Keep `*self` alive across re-entrant connect/close paths below;
         // the host-fn shim passes a bare `&self` with no ref of its own.
@@ -1636,7 +1659,8 @@ impl JSValkeyClient {
 
         let self_br = BackRef::new(self);
         let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
-        self.client_mut().send(global_this, command)
+        self.client_mut()
+            .send(global_this, command, pending_subscription)
     }
 
     // Getter for memory cost - useful for diagnostics

@@ -726,6 +726,30 @@ static void rejectWithCause(Ref<DeferredPromise>&& promise, ExceptionCode ec, co
     });
 }
 
+// Rejects an import failure. The ML import paths leave the BoringSSL parse
+// failure in the error queue; attach it as the DOMException's cause like Node
+// does. Shared by importKey's and unwrapKey's inner-import exceptionCallbacks.
+static void rejectImportKeyException(Ref<DeferredPromise>&& promise, ExceptionCode ec, const String& msg, CryptoAlgorithmIdentifier identifier)
+{
+    if (ec == DataError && isAkpAlgorithm(identifier)) {
+        if (uint32_t opensslError = ERR_get_error()) {
+            ERR_clear_error();
+            rejectWithCause(WTF::move(promise), ec, msg, [opensslError](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+                auto& vm = globalObject.vm();
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                auto cause = Bun::createCryptoError(&globalObject, scope, opensslError, nullptr);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                    return JSC::jsUndefined();
+                }
+                return cause;
+            });
+            return;
+        }
+    }
+    rejectWithException(WTF::move(promise), ec, msg);
+}
+
 // Node rejects oversized ML-DSA context strings with an OperationError whose
 // cause is an ERR_OUT_OF_RANGE error; returns true when it rejected.
 static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params, Ref<DeferredPromise>&& promise)
@@ -1303,27 +1327,8 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
         }
     };
     auto exceptionCallback = [index, weakThis, identifier = params->identifier](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis)) {
-            // The ML import paths leave the BoringSSL parse failure in the error
-            // queue; attach it as the DOMException's cause like Node does.
-            if (ec == DataError && isAkpAlgorithm(identifier)) {
-                if (uint32_t opensslError = ERR_get_error()) {
-                    ERR_clear_error();
-                    rejectWithCause(promise.releaseNonNull(), ec, msg, [opensslError](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
-                        auto& vm = globalObject.vm();
-                        auto scope = DECLARE_THROW_SCOPE(vm);
-                        auto cause = Bun::createCryptoError(&globalObject, scope, opensslError, nullptr);
-                        if (scope.exception()) [[unlikely]] {
-                            (void)scope.tryClearException();
-                            return JSC::jsUndefined();
-                        }
-                        return cause;
-                    });
-                    return;
-                }
-            }
-            rejectWithException(promise.releaseNonNull(), ec, msg);
-        }
+        if (auto promise = getPromise(index, weakThis))
+            rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
     };
 
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
@@ -1635,28 +1640,8 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     }
                 };
                 auto exceptionCallback = [index, weakThis, identifier = importAlgorithm->identifier()](ExceptionCode ec, const String& msg) mutable {
-                    if (auto promise = getPromise(index, weakThis)) {
-                        // Mirror importKey's exceptionCallback: the ML import
-                        // paths leave the BoringSSL parse failure in the error
-                        // queue; attach it as the DOMException's cause.
-                        if (ec == DataError && isAkpAlgorithm(identifier)) {
-                            if (uint32_t opensslError = ERR_get_error()) {
-                                ERR_clear_error();
-                                rejectWithCause(promise.releaseNonNull(), ec, msg, [opensslError](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
-                                    auto& vm = globalObject.vm();
-                                    auto scope = DECLARE_THROW_SCOPE(vm);
-                                    auto cause = Bun::createCryptoError(&globalObject, scope, opensslError, nullptr);
-                                    if (scope.exception()) [[unlikely]] {
-                                        (void)scope.tryClearException();
-                                        return JSC::jsUndefined();
-                                    }
-                                    return cause;
-                                });
-                                return;
-                            }
-                        }
-                        rejectWithException(promise.releaseNonNull(), ec, msg);
-                    }
+                    if (auto promise = getPromise(index, weakThis))
+                        rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
                 };
 
                 // The following operation should be performed synchronously.

@@ -373,9 +373,12 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   });
 
   it("importKey('raw') still rejects for ChaCha20-Poly1305 like Node", async () => {
-    await expect(
-      crypto.subtle.importKey("raw", new Uint8Array(32), "ChaCha20-Poly1305", true, ["encrypt"]),
-    ).rejects.toThrow();
+    const err = await crypto.subtle.importKey("raw", new Uint8Array(32), "ChaCha20-Poly1305", true, ["encrypt"]).then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("NotSupportedError");
   });
 
   it("wrapKey and unwrapKey accept raw-public for Ed25519 public keys", async () => {
@@ -411,6 +414,33 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
         ["sign"],
       ),
     ).rejects.toThrow("Unsupported key usage for a RSA key");
+  });
+
+  // The KEM usage spellings must stay invalid for every RSA variant: these
+  // cases fail if CryptoKeyUsageKemMask is dropped from the RSA predicates.
+  const kemUsages = ["encapsulateKey", "encapsulateBits", "decapsulateKey", "decapsulateBits"] as const;
+  it.each(["RSASSA-PKCS1-v1_5", "RSA-OAEP", "RSA-PSS"].flatMap(name => kemUsages.map(usage => [name, usage] as const)))(
+    "generateKey rejects the KEM usage %s/%s for RSA keys",
+    async (name, usage) => {
+      await expect(
+        crypto.subtle.generateKey(
+          { name, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+          true,
+          [usage as KeyUsage],
+        ),
+      ).rejects.toThrow("Unsupported key usage for a RSA key");
+    },
+  );
+
+  it.each(kemUsages)("generateKey rejects RSAES-PKCS1-v1_5 with the KEM usage %s", async usage => {
+    // RSAES rejects before the usage check with its deprecation notice.
+    await expect(
+      crypto.subtle.generateKey(
+        { name: "RSAES-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        [usage as KeyUsage],
+      ),
+    ).rejects.toThrow("RSAES-PKCS1-v1_5 support is deprecated");
   });
 });
 

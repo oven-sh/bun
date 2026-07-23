@@ -2617,6 +2617,11 @@ private:
         write(key->extractable());
 
         CryptoKeyUsageBitmap usages = key->usagesBitmap();
+        // The KEM usage bits (AKP keys) have no CryptoKeyUsageTag arms below;
+        // countUsages would count them and desync the stream. AKP keys are
+        // currently blocked from cloning, so assert the invariant for whoever
+        // lifts that block.
+        ASSERT(!(usages & CryptoKeyUsageKemMask));
         write(countUsages(usages));
         if (usages & CryptoKeyUsageEncrypt)
             write(CryptoKeyUsageTag::Encrypt);

@@ -28,6 +28,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+#include "CryptoAlgorithmAKPShared.h"
 #include "CryptoAlgorithmRegistry.h"
 #include "CryptoKeyAKP.h"
 #include "OpenSSLCryptoUniquePtr.h"
@@ -86,189 +87,19 @@ void CryptoAlgorithmMLKEM::generateKey(const CryptoAlgorithmParameters& paramete
 
 void CryptoAlgorithmMLKEM::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
-    String name = mlKemName(m_identifier);
-    auto unsupportedUsage = [&](bool isPublic) {
-        if (usages & ~(isPublic ? publicMlKemUsages : privateMlKemUsages)) {
-            exceptionCallback(SyntaxError, makeString("Unsupported key usage for a "_s, name, " key"_s));
-            return true;
-        }
-        return false;
+    static constexpr AkpAlgorithmTraits traits {
+        publicMlKemUsages,
+        privateMlKemUsages,
+        mlKemPrivOnlyPkcs8Length,
+        "Importing an ML-KEM PKCS#8 key without a seed is not supported"_s,
+        "enc"_s,
     };
-
-    // Parse failures below surface as DataError with the BoringSSL error left
-    // in the queue; SubtleCrypto::importKey attaches it as the cause.
-    ERR_clear_error();
-
-    RefPtr<CryptoKeyAKP> result;
-    bool wrongKeyType = false;
-    switch (format) {
-    case CryptoKeyFormat::Spki:
-        if (unsupportedUsage(true))
-            return;
-        result = CryptoKeyAKP::importSpki(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &wrongKeyType);
-        break;
-    case CryptoKeyFormat::Pkcs8: {
-        if (unsupportedUsage(false))
-            return;
-        auto& keyData = std::get<Vector<uint8_t>>(data);
-        if (auto privOnlyLength = mlKemPrivOnlyPkcs8Length(parameters.identifier); privOnlyLength && keyData.size() == *privOnlyLength) {
-            exceptionCallback(NotSupportedError, "Importing an ML-KEM PKCS#8 key without a seed is not supported"_s);
-            return;
-        }
-        result = CryptoKeyAKP::importPkcs8(parameters.identifier, WTF::move(keyData), extractable, usages, &wrongKeyType);
-        break;
-    }
-    case CryptoKeyFormat::RawPublic:
-        if (unsupportedUsage(true))
-            return;
-        result = CryptoKeyAKP::importRawPublic(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
-        break;
-    case CryptoKeyFormat::RawSeed:
-        if (unsupportedUsage(false))
-            return;
-        result = CryptoKeyAKP::importRawSeed(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
-        break;
-    case CryptoKeyFormat::Jwk: {
-        auto& jwk = std::get<JsonWebKey>(data);
-        if (jwk.kty.isNull()) {
-            exceptionCallback(DataError, "Invalid keyData"_s);
-            return;
-        }
-        if (jwk.kty != "AKP"_s) {
-            exceptionCallback(DataError, "Invalid JWK \"kty\" Parameter"_s);
-            return;
-        }
-        if (jwk.alg.isNull() || jwk.pub.isNull()) {
-            exceptionCallback(DataError, "Invalid keyData"_s);
-            return;
-        }
-        if (usages && !jwk.use.isNull() && jwk.use != "enc"_s) {
-            exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
-            return;
-        }
-        if (jwk.key_ops) {
-            CryptoKeyUsageBitmap seenOps = 0;
-            for (auto op : *jwk.key_ops) {
-                // The binding enum order matches the bitmap bit order.
-                CryptoKeyUsageBitmap bit = 1 << static_cast<int>(op);
-                if (seenOps & bit) {
-                    exceptionCallback(DataError, "Duplicate key operation"_s);
-                    return;
-                }
-                seenOps |= bit;
-            }
-        }
-        if (jwk.key_ops && ((jwk.usages & usages) != usages)) {
-            exceptionCallback(DataError, "Key operations and usage mismatch"_s);
-            return;
-        }
-        if (jwk.ext && !jwk.ext.value() && extractable) {
-            exceptionCallback(DataError, "JWK \"ext\" Parameter and extractable mismatch"_s);
-            return;
-        }
-        if (jwk.alg != name) {
-            exceptionCallback(DataError, "JWK \"alg\" Parameter and algorithm name mismatch"_s);
-            return;
-        }
-        if (unsupportedUsage(jwk.priv.isNull()))
-            return;
-        result = CryptoKeyAKP::importJwk(parameters.identifier, WTF::move(jwk), extractable, usages);
-        break;
-    }
-    case CryptoKeyFormat::Raw:
-    case CryptoKeyFormat::RawSecret:
-        exceptionCallback(NotSupportedError, makeString("Unable to import "_s, name, " using "_s, format == CryptoKeyFormat::Raw ? "raw"_s : "raw-secret"_s, " format"_s));
-        return;
-    }
-
-    if (!result) {
-        exceptionCallback(DataError, wrongKeyType ? "Invalid key type"_s : "Invalid keyData"_s);
-        return;
-    }
-    callback(*result);
+    importAkpKey(m_identifier, traits, format, WTF::move(data), parameters, extractable, usages, WTF::move(callback), WTF::move(exceptionCallback));
 }
 
 void CryptoAlgorithmMLKEM::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key, KeyDataCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
-    const auto& akpKey = downcast<CryptoKeyAKP>(key.get());
-    String name = mlKemName(m_identifier);
-    auto type = akpKey.type() == CryptoKeyType::Private ? "private"_s : "public"_s;
-    auto unableToExport = [&](ASCIILiteral formatName) {
-        exceptionCallback(NotSupportedError, makeString("Unable to export "_s, name, ' ', type, " key using "_s, formatName, " format"_s));
-    };
-
-    KeyData result;
-    switch (format) {
-    case CryptoKeyFormat::Jwk: {
-        auto jwk = akpKey.exportJwk();
-        if (jwk.hasException()) {
-            exceptionCallback(jwk.releaseException().code(), ""_s);
-            return;
-        }
-        result = jwk.releaseReturnValue();
-        break;
-    }
-    case CryptoKeyFormat::Spki: {
-        if (akpKey.type() != CryptoKeyType::Public) {
-            unableToExport("spki"_s);
-            return;
-        }
-        auto spki = akpKey.exportSpki();
-        if (spki.hasException()) {
-            exceptionCallback(spki.releaseException().code(), ""_s);
-            return;
-        }
-        result = spki.releaseReturnValue();
-        break;
-    }
-    case CryptoKeyFormat::Pkcs8: {
-        if (akpKey.type() != CryptoKeyType::Private) {
-            unableToExport("pkcs8"_s);
-            return;
-        }
-        auto pkcs8 = akpKey.exportPkcs8();
-        if (pkcs8.hasException()) {
-            exceptionCallback(pkcs8.releaseException().code(), ""_s);
-            return;
-        }
-        result = pkcs8.releaseReturnValue();
-        break;
-    }
-    case CryptoKeyFormat::RawPublic: {
-        if (akpKey.type() != CryptoKeyType::Public) {
-            unableToExport("raw-public"_s);
-            return;
-        }
-        auto raw = akpKey.exportRawPublic();
-        if (raw.hasException()) {
-            exceptionCallback(raw.releaseException().code(), ""_s);
-            return;
-        }
-        result = raw.releaseReturnValue();
-        break;
-    }
-    case CryptoKeyFormat::RawSeed: {
-        if (akpKey.type() != CryptoKeyType::Private) {
-            unableToExport("raw-seed"_s);
-            return;
-        }
-        auto seed = akpKey.exportRawSeed();
-        if (seed.hasException()) {
-            exceptionCallback(seed.releaseException().code(), ""_s);
-            return;
-        }
-        result = seed.releaseReturnValue();
-        break;
-    }
-    case CryptoKeyFormat::Raw:
-        unableToExport("raw"_s);
-        return;
-    case CryptoKeyFormat::RawSecret:
-        unableToExport("raw-secret"_s);
-        return;
-    }
-
-    callback(format, WTF::move(result));
+    exportAkpKey(m_identifier, format, WTF::move(key), WTF::move(callback), WTF::move(exceptionCallback));
 }
 
 void CryptoAlgorithmMLKEM::encapsulate(Ref<CryptoKey>&& key, VectorPairCallback&& callback, ExceptionCallback&& exceptionCallback)

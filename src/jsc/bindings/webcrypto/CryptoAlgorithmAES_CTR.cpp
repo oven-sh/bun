@@ -103,7 +103,7 @@ void CryptoAlgorithmAES_CTR::generateKey(const CryptoAlgorithmParameters& parame
     const auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CTR(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
@@ -121,7 +121,7 @@ void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, c
     using namespace CryptoAlgorithmAES_CTRInternal;
 
     if (usagesAreInvalidForCryptoAlgorithmAES_CTR(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 

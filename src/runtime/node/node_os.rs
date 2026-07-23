@@ -1517,35 +1517,11 @@ mod _impl {
     }
 
     pub(crate) fn totalmem() -> u64 {
-        #[cfg(target_os = "macos")]
-        {
-            let mut memory_: [core::ffi::c_ulonglong; 32] = [0; 32];
-            if bun_sys::posix::sysctl_read_slice(c"hw.memsize", &mut memory_[..]).is_err() {
-                return 0;
-            }
-            return memory_[0];
+        // OsBinding.cpp
+        unsafe extern "C" {
+            safe fn Bun__Os__getTotalMemory() -> u64;
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            if let Ok(info) = bun_sys::posix::sysinfo() {
-                return (info.totalram as u64)
-                    .wrapping_mul(info.mem_unit as core::ffi::c_ulong as u64);
-            }
-            return 0;
-        }
-        #[cfg(target_os = "freebsd")]
-        {
-            let mut physmem: u64 = 0;
-            if bun_sys::posix::sysctl_read(c"hw.physmem", &mut physmem).is_err() {
-                return 0;
-            }
-            return physmem;
-        }
-        #[cfg(windows)]
-        {
-            // SAFETY: pure FFI getter
-            return unsafe { libuv::uv_get_total_memory() };
-        }
+        Bun__Os__getTotalMemory()
     }
 
     pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {

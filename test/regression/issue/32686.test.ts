@@ -3,10 +3,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/32686
-// Path-like values are not valid JSON and not valid identifier chains, so they
-// must be JSON-encoded by the caller (matching esbuild). This file guards that
-// the 1.4.0-canary regression (these values throwing a generic parse error) is
-// now a deliberate, actionable error instead.
 test.concurrent.each(["./src/worker.ts", "../src/worker.ts", "/abs/path", "/$bunfs/root/worker", ".", "/", "/=foo"])(
   "bare define value %j is rejected; JSON.stringify() round-trips",
   async value => {

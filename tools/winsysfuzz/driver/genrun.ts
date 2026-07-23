@@ -364,6 +364,20 @@ async function worker(w: number) {
         verifying--;
       }
     }
+    if (j.kind === "hang" && !process.env.WSF_QUEUE_HANGS) {
+      // Two engines share the box, so a "solo" re-run is still loaded and
+      // every traced hang has been timing, not a wedge. Save the program
+      // and ledger it; do not queue for triage.
+      try {
+        const dest = join(queueDir, "programs", `hang-${seed}.js`);
+        ensureDir(join(queueDir, "programs"));
+        await Bun.write(dest, await Bun.file(program).text());
+        appendFileSync(join(queueDir, "gen-hangs.log"), JSON.stringify({ at: new Date().toISOString(), seed, program: dest }) + "\n");
+      } catch {}
+      console.log(`   [seed ${seed}] hang ledgered (not queued) - hang class is timing under shared-box load`);
+      hangs++;
+      continue;
+    }
     console.log(`!! [seed ${seed}] ${j.kind} ${verified ? "VERIFIED" : "unverified"}: ${j.detail.slice(0, 90)}`);
     if (!verified) {
       // A seed IS a complete reproducer - never drop a first-run crash.

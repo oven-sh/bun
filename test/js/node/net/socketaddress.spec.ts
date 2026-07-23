@@ -1,8 +1,8 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
-import { SocketAddress, SocketAddressInitOptions } from "node:net";
 import { bunEnv, bunExe } from "harness";
+import { SocketAddress, SocketAddressInitOptions } from "node:net";
 
 let v4: SocketAddress;
 let v6: SocketAddress;

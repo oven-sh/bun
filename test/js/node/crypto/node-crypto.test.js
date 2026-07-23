@@ -270,8 +270,6 @@ describe("createHash", () => {
     "rsa-sha3-256",
     "rsa-sha3-384",
     "rsa-sha3-512",
-    "rsa-sha512/224",
-    "rsa-sha512/256",
     "rsa-sm3",
     "sha1withrsaencryption",
     "sha224withrsaencryption",

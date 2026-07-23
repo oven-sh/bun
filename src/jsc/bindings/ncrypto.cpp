@@ -1969,6 +1969,12 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         if (WTF::equalIgnoringASCIICase(bits, "512"_s)) {
             return EVP_sha512();
         }
+        if (WTF::equalIgnoringASCIICase(bits, "512/224"_s)) {
+            return EVP_sha512_224();
+        }
+        if (WTF::equalIgnoringASCIICase(bits, "512/256"_s)) {
+            return EVP_sha512_256();
+        }
     }
 
     if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {

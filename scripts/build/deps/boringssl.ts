@@ -39,7 +39,11 @@ export const boringssl: Dependency = {
   // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
   // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
   // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
+  //
+  // sha512t-sign: BoringSSL ships EVP_sha512_224/256 but omits NID_sha512_224/256 from
+  // kPKCS1SigPrefixes and pkey_ec_ctrl, so RSA PKCS#1 v1.5 and EC sign/verify reject
+  // them. Drop once the fork carries the change and BORINGSSL_COMMIT moves.
+  patches: ["patches/boringssl/require-memory-hooks.patch", "patches/boringssl/sha512t-sign.patch"],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)

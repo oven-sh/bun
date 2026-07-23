@@ -54,6 +54,8 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 
 | Package | License |
 |---------|---------|
+| [`acorn`](https://github.com/acornjs/acorn) | MIT |
+| [`acorn-walk`](https://github.com/acornjs/acorn) | MIT |
 | [`assert`](https://npmjs.com/package/assert) | MIT |
 | [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) | MIT |
 | [`buffer`](https://npmjs.com/package/buffer) | MIT |

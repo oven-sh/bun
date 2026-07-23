@@ -178,6 +178,16 @@ pub enum HardcodedModule {
     /// This is gated behind '--expose-internals'
     #[strum(serialize = "bun:internal-for-testing")]
     BunInternalForTesting,
+    // Node internal modules exposed for the vendored Node.js test suite.
+    // Gated like `bun:internal-for-testing` (debug builds / --expose-internals).
+    #[strum(serialize = "internal:repl")]
+    NodeInternalRepl,
+    #[strum(serialize = "internal:repl/await")]
+    NodeInternalReplAwait,
+    #[strum(serialize = "internal:repl/history")]
+    NodeInternalReplHistory,
+    #[strum(serialize = "internal:util/inspect")]
+    NodeInternalUtilInspect,
     /// Node.js-internal testing shim (`require('internal/test/binding')`),
     /// gated behind '--expose-internals' like `bun:internal-for-testing`.
     #[strum(serialize = "internal/test/binding")]
@@ -199,6 +209,10 @@ bun_core::comptime_string_map! {
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
+        b"internal/repl" => HardcodedModule::NodeInternalRepl,
+        b"internal/repl/await" => HardcodedModule::NodeInternalReplAwait,
+        b"internal/repl/history" => HardcodedModule::NodeInternalReplHistory,
+        b"internal/util/inspect" => HardcodedModule::NodeInternalUtilInspect,
         b"internal/test/binding" => HardcodedModule::InternalTestBinding,
         // Node.js
         b"node:assert" => HardcodedModule::NodeAssert,
@@ -704,6 +718,12 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
+    // Node internal modules for the vendored Node.js test suite (gated in
+    // jsc_hooks like bun:internal-for-testing: debug / --expose-internals).
+    entry!("internal/repl"),
+    entry!("internal/repl/await"),
+    entry!("internal/repl/history"),
+    entry!("internal/util/inspect"),
     entry!("internal/test/binding"),
     (
         b"ffi",

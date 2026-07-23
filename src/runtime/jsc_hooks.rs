@@ -3593,7 +3593,11 @@ fn get_hardcoded_module(
             }
             Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
-        HardcodedModule::BunInternalForTesting => {
+        HardcodedModule::BunInternalForTesting
+        | HardcodedModule::NodeInternalRepl
+        | HardcodedModule::NodeInternalReplAwait
+        | HardcodedModule::NodeInternalReplHistory
+        | HardcodedModule::NodeInternalUtilInspect => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
@@ -3602,7 +3606,8 @@ fn get_hardcoded_module(
                     return None;
                 }
             }
-            Some(js_synthetic_module(b"bun:internal-for-testing", specifier))
+            let name: &'static str = hardcoded.into();
+            Some(js_synthetic_module(name.as_bytes(), specifier))
         }
         HardcodedModule::InternalTestBinding => {
             // Gated behind `--expose-internals` (release) / always-on (debug),

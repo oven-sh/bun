@@ -176,6 +176,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
+    ),
+    parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),
     parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
@@ -1062,7 +1065,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
-        } else if args.flag(b"-i") {
+        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
+            // Under node emulation `-i` is node's --interactive alias, not
+            // --install=fallback (auto-install is meaningless there).
             ctx.debug.global_cache = options::GlobalCache::fallback;
         } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
@@ -1088,6 +1093,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
+        ctx.runtime_options.interactive = args.flag(b"--interactive")
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");

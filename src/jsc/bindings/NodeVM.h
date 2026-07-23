@@ -12,6 +12,10 @@
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/Nodes.h>
 
+namespace JSC {
+class ParserError;
+}
+
 namespace Bun {
 
 class NodeVMGlobalObject;
@@ -26,6 +30,9 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
+// `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
+// when no filename was provided; compileFunction has no such default.
+void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);
 std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);

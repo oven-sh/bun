@@ -28,6 +28,8 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
     pub eval_source: Option<Box<bun_ast::Source>>,
+    /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
+    pub interactive_eval_script: Option<Box<[u8]>>,
 }
 
 pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =

@@ -996,6 +996,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
             vm.module_loader.eval_source =
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            vm.module_loader.interactive_eval_script =
+                ctx.runtime_options.eval.interactive_script.take();
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
@@ -2950,6 +2952,24 @@ impl RunCommand {
         Ok(true)
     }
 
+    /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
+    /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
+    /// which is Bun's own native REPL.
+    pub fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
+        // Every caller has already established there's no user script target;
+        // any remaining positionals are dispatch artifacts (e.g. RunCommand's
+        // leading "run"), not user data — keep them out of `process.argv`.
+        ctx.positionals.clear();
+        let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
+        // Stash the user's `-e` (so `process._eval` is correct) and boot the
+        // bootstrap via `[eval]`; it runs `process._eval` like Node's
+        // internal/main/repl.js — no source splicing.
+        ctx.runtime_options.eval.interactive_script =
+            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
+        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+        Self::exec_eval(ctx)
+    }
+
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
@@ -2985,6 +3005,15 @@ impl RunCommand {
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
+        // `node --interactive [-e code]`: same gate as AutoCommand — a script
+        // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
+        if ctx.runtime_options.interactive
+            && !ctx.runtime_options.eval.eval_and_print
+            && ctx.positionals.is_empty()
+        {
+            return Self::exec_node_repl(ctx);
+        }
+
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
@@ -3001,6 +3030,13 @@ impl RunCommand {
         }
 
         if ctx.positionals.is_empty() {
+            // Node: bare `node` on a TTY starts the REPL. Only in emulation
+            // mode; bun's own `bun` with no args stays the help text. Use
+            // Output's cached stdio flag (set at startup via libuv's handle
+            // probe), which is the same check `bun update --interactive` uses.
+            if Output::is_stdin_tty() {
+                return Self::exec_node_repl(ctx);
+            }
             Self::exec_as_if_node_missing_script();
         }
 
@@ -3047,7 +3083,7 @@ impl RunCommand {
     )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
-            "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
+            "Missing script to execute. Pass --interactive to start the Node.js-compatible REPL.",
             (),
         );
         Global::exit(1);

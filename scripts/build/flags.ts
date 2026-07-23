@@ -633,7 +633,7 @@ export const bunOnlyFlags: Flag[] = [
     flag: ["-fconstexpr-steps=6000000", "-fconstexpr-depth=54"],
     when: c => c.unix,
     lang: "cxx",
-    desc: "Raise constexpr limits (JSC uses heavy constexpr; the embedded module registry literals are large)",
+    desc: "Raise constexpr limits (JSC uses heavy constexpr; under ASSERT_ENABLED, ASCIILiteral::fromLiteralUnsafe constexpr-validates the largest embedded builtin source in InternalModuleRegistryConstants.h char by char)",
   },
   {
     flag: ["-fno-pic", "-fno-pie"],

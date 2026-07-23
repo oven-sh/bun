@@ -507,7 +507,7 @@ function treeToXML(tree) {
   }
   const { tag, attrs, nesting, children, comment } = tree;
   const indentation = "\t".repeat(nesting + 1);
-  if (comment) {
+  if (comment !== undefined) {
     return `${indentation}<!-- ${escapeComment(comment)} -->\n`;
   }
   const attrsString = Object.entries(attrs)

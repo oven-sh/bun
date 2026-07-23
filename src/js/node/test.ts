@@ -986,7 +986,7 @@ function reportStartChain(node: TestNode) {
   for (let i = chain.length - 1; i >= 0; i--) {
     const entry = chain[i];
     entry.startReported = true;
-    entry.startedAtMs = performance.now();
+    entry.startedAtMs ||= performance.now();
     emitRunChildEvent("test:start", {
       __proto__: null,
       name: entry.name,
@@ -2799,6 +2799,15 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // test's own after hooks. Returns the failure (if any) instead of throwing.
   node.started = true;
   const started = runEventsEnabled() ? performance.now() : 0;
+  // Stamp enclosing suites' start the first time a descendant begins so
+  // maybeCompleteSuite's duration covers the first child (the run-child path
+  // has no suite-level execution hook; standalone stamps earlier).
+  if (started > 0) {
+    for (let cur = node.parent; cur !== undefined && cur.parent !== undefined; cur = cur.parent) {
+      if (cur.startedAtMs > 0) break;
+      cur.startedAtMs = started;
+    }
+  }
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
@@ -3492,6 +3501,9 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   }
   // Suites: the callback already ran at declaration (node runs describe
   // bodies during load); execute the collected children in order.
+  // Node's Suite.start() records startTime before hooks/children run, so the
+  // reported duration covers before-hooks + every child.
+  node.startedAtMs = performance.now();
   const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
   // A failing build/before() means setup never completed; node cancels the
   // declared children (cancelledByParent) instead of running them against

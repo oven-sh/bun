@@ -175,10 +175,9 @@ const V = {
       // streams, trailing dots/spaces (stripped by Win32), drive-relative,
       // extended-length and device namespaces, forward/back mixes, and a
       // lone surrogate in a filename (WTF-16, invalid UTF-16).
-      `"CON"`,
       `"NUL"`,
-      `"COM1"`,
-      `P("aux.txt")`,
+      // (CON/COM1/AUX removed: reading interactive/serial devices blocks by
+      //  design and leaves unkillable processes - a false hang class)
       `P("stream.txt:ads:$DATA")`,
       `P("trailingdot.")`,
       `P("trailingspace ")`,

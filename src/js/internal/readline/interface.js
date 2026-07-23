@@ -47,7 +47,10 @@ const { validateAbortSignal, validateString, validateUint32 } = require("interna
 // node-shims eagerly loads node:{util,module,path,vm}; readline only needs
 // kEmptyObject/addAbortListener, so import them from their tiny sources.
 const { kEmptyObject } = require("internal/shared");
-const { inspect, getStringWidth, stripVTControlCharacters } = require("internal/repl/node-inspect");
+// Don't destructure `inspect` — reading it loads internal/util/inspect (99 KB).
+// Readline only touches it on the tab-completion error path.
+const nodeInspect = require("internal/repl/node-inspect");
+const { getStringWidth, stripVTControlCharacters } = nodeInspect;
 const EventEmitter = require("node:events");
 const { addAbortListener } = require("internal/abort_listener");
 const { charLengthAt, charLengthLeft, commonPrefix, kSubstringSearch } = require("internal/readline/utils");
@@ -689,7 +692,7 @@ class Interface extends InterfaceConstructor {
     try {
       value = await this.completer(string);
     } catch (err) {
-      this[kWriteToOutput](`Tab completion error: ${inspect(err)}`);
+      this[kWriteToOutput](`Tab completion error: ${nodeInspect.inspect(err)}`);
       return;
     } finally {
       this.resume();

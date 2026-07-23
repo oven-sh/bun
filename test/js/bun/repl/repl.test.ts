@@ -1587,6 +1587,59 @@ describe.concurrent("--interactive", () => {
   );
 });
 
+// ts-node does `require("repl")` at import time but only touches
+// repl.start/repl.Recoverable inside createRepl(); the implementation is
+// deferred so that bare require stays near-free.
+test("require('node:repl') is lazy until an export is read", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const repl = require("node:repl");
+        const d = Object.getOwnPropertyDescriptor(repl, "start");
+        console.log(JSON.stringify({
+          keys: Object.keys(repl).sort(),
+          startIsGetter: typeof d.get === "function" && !("value" in d),
+        }));
+        // Reading an export runs the implementation exactly once.
+        const types = {
+          start: typeof repl.start,
+          Recoverable: typeof repl.Recoverable,
+          REPLServer: typeof repl.REPLServer,
+          REPL_MODE_SLOPPY: typeof repl.REPL_MODE_SLOPPY,
+          writer: typeof repl.writer,
+        };
+        console.log(JSON.stringify(types));
+        // Writable: Node lets repl.repl be reassigned.
+        repl.repl = "x";
+        console.log("repl.repl=" + repl.repl);
+        console.log("recoverable-is-error=" + (new repl.Recoverable(new SyntaxError("m")) instanceof SyntaxError));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const lines = stdout.trim().split("\n");
+  expect(JSON.parse(lines[0])).toEqual({
+    keys: ["REPLServer", "REPL_MODE_SLOPPY", "REPL_MODE_STRICT", "Recoverable", "isValidSyntax", "repl", "start", "writer"],
+    startIsGetter: true,
+  });
+  expect(JSON.parse(lines[1])).toEqual({
+    start: "function",
+    Recoverable: "function",
+    REPLServer: "function",
+    REPL_MODE_SLOPPY: "symbol",
+    writer: "function",
+  });
+  expect(lines[2]).toBe("repl.repl=x");
+  expect(lines[3]).toBe("recoverable-is-error=true");
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent("node:repl process-global side effects", () => {
   const env = { ...bunEnv, NO_COLOR: "1" };
 

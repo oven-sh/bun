@@ -41,7 +41,8 @@ const emitKeypressEvents = require("internal/readline/emitKeypressEvents");
 const promises = require("node:readline/promises");
 
 const { AbortError } = require("internal/repl/node-errors");
-const { inspect } = require("internal/repl/node-inspect");
+// Don't destructure `inspect` — reading it loads internal/util/inspect (99 KB).
+const nodeInspect = require("internal/repl/node-inspect");
 // node-shims eagerly loads node:{util,module,path,vm}; readline only needs
 // kEmptyObject/promisify, so import from their tiny sources.
 const { kEmptyObject } = require("internal/shared");
@@ -434,7 +435,7 @@ Interface.prototype._tabComplete = function (lastKeypressWasTab) {
     this.resume();
 
     if (err) {
-      this._writeToOutput(`Tab completion error: ${inspect(err)}`);
+      this._writeToOutput(`Tab completion error: ${nodeInspect.inspect(err)}`);
       return;
     }
 
@@ -517,12 +518,16 @@ __node_module__.exports = {
 // Non-enumerable so it stays off the public node:readline surface.
 Object.defineProperty(__node_module__.exports, Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__"), {
   __proto__: null,
-  value: {
-    CSI: require("internal/readline/utils").CSI,
-    utils: {
-      getStringWidth: require("internal/util/inspect").getStringWidth,
-      stripVTControlCharacters: require("node:util").stripVTControlCharacters,
-    },
+  // A test-only hook; keep it lazy so `require("node:readline")` doesn't pull
+  // in internal/util/inspect and node:util just to publish it.
+  get() {
+    return {
+      CSI: require("internal/readline/utils").CSI,
+      utils: {
+        getStringWidth: require("internal/util/inspect").getStringWidth,
+        stripVTControlCharacters: require("node:util").stripVTControlCharacters,
+      },
+    };
   },
 });
 

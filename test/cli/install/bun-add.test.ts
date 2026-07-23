@@ -1021,8 +1021,11 @@ for (const { spec, resolves, saved } of [
   // `0x` is a dist-tag. Before the fix bun parsed it as `0.x` and picked
   // the highest 0.x (0.0.5) instead of the tagged version.
   { spec: "0x", resolves: "0.0.3", saved: "^0.0.3" },
-  // sanity: `0.x` is still a range and picks the highest match
+  // `v`-prefixed: `v2x` is a dist-tag, `v0.x` is a range.
+  { spec: "v2x", resolves: "0.0.3", saved: "^0.0.3" },
+  // sanity: `0.x` / `v0.x` are still ranges and pick the highest match
   { spec: "0.x", resolves: "0.0.5", saved: "0.x" },
+  { spec: "v0.x", resolves: "0.0.5", saved: "v0.x" },
   // `||` is always range syntax even when the first arm looks like a dist-tag
   { spec: "2x || 0", resolves: "0.0.5", saved: "2x || 0" },
 ]) {
@@ -1045,6 +1048,7 @@ for (const { spec, resolves, saved } of [
             latest: "0.0.5",
             "2x": "0.0.3",
             "0x": "0.0.3",
+            "v2x": "0.0.3",
           },
         }),
       );
@@ -1059,12 +1063,11 @@ for (const { spec, resolves, saved } of [
       stderr: "pipe",
       env,
     });
-    const err = await stderr.text();
-    const out = await stdout.text();
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
     expect(err).not.toContain("No version matching");
     expect(err).not.toContain("error:");
     expect(out).toContain(`installed baz@${resolves}`);
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
 
     expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
       name: "baz",

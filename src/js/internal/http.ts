@@ -244,7 +244,10 @@ function emitEOFIncomingMessage(self) {
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
   if (aborted === NodeHTTPResponseAbortEvent.abort) {
-    this.destroy();
+    // The request is aborted from the socket's #onClose (like Node.js's
+    // socketOnClose → abortIncoming), which the native close path always
+    // reaches right after this callback; destroying here would drop the
+    // ECONNRESET and emit req 'close' before res 'close'.
     return;
   }
 

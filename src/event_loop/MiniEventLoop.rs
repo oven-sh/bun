@@ -133,9 +133,9 @@ pub fn init_global(
     }
 
     // The process-global loader is stored as `AtomicPtr<Loader>`.
-    global.env = env.map(NonNull::from).or_else(|| {
-        NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire))
-    });
+    global.env = env
+        .map(NonNull::from)
+        .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
     if global.env.is_none() {
         // Thread-lifetime singleton.
         global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));

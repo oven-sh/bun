@@ -924,6 +924,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSValue::encode(jsBoolean(true));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_addUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto arg0 = callFrame->argument(0);
+    V::validateFunction(throwScope, globalObject, arg0, "fn"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto* process = globalObject->processObject();
+    process->uncaughtExceptionAuxiliaryCallbacks().append(vm, process, arg0.getObject());
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -1207,6 +1222,20 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
+// An exception thrown from an exception-capture callback cannot be handled; log it and exit.
+// Returns true if an exception was present. In a Worker, Bun__Process__exit returns after
+// requesting termination, so callers must bail out instead of re-entering the terminating VM.
+static bool abortOnCaptureCallbackException(JSC::JSGlobalObject* globalObject, JSC::TopExceptionScope& scope)
+{
+    auto ex = scope.exception();
+    if (!ex)
+        return false;
+    (void)scope.tryClearException();
+    Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+    Bun__Process__exit(globalObject, 1);
+    return true;
+}
+
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
@@ -1251,19 +1280,39 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
-        if (auto ex = scope.exception()) {
-            (void)scope.tryClearException();
-            // if an exception is thrown in the uncaughtException handler, we abort
-            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
-        }
-    } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
-        wrapped.emit(uncaughtExceptionIdent, args);
-    } else {
-        return false;
+        abortOnCaptureCallbackException(lexicalGlobalObject, scope);
+        return true;
     }
 
-    return true;
+    // Auxiliary callbacks from process.addUncaughtExceptionCaptureCallback run
+    // most-recent-first; returning exactly `true` marks the exception as handled.
+    auto& auxiliary = process->uncaughtExceptionAuxiliaryCallbacks();
+    if (!auxiliary.isEmpty()) {
+        // Snapshot: a callback may register another one, reallocating the backing list.
+        MarkedArgumentBuffer callbacks;
+        for (auto& callback : auxiliary.list())
+            callbacks.append(callback.get());
+
+        if (!callbacks.hasOverflowed()) [[likely]] {
+            for (size_t i = callbacks.size(); i-- > 0;) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                JSValue handled = call(lexicalGlobalObject, callbacks.at(i), args, "uncaughtExceptionCaptureCallback"_s);
+                if (abortOnCaptureCallbackException(lexicalGlobalObject, scope)) {
+                    return true;
+                }
+                if (handled.isTrue()) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+        wrapped.emit(uncaughtExceptionIdent, args);
+        return true;
+    }
+
+    return false;
 }
 extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JSC::JSValue obj)
 {
@@ -3388,6 +3437,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
+    thisObject->m_uncaughtExceptionAuxiliaryCallbacks.visit(thisObject, visitor);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
@@ -4456,6 +4506,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
+  addUncaughtExceptionCaptureCallback Process_addUncaughtExceptionCaptureCallback      Function 1
   allowedNodeEnvironmentFlags      Process_stubEmptySet                                PropertyCallback
   arch                             constructArch                                       PropertyCallback
   argv                             processArgv                                         CustomAccessor

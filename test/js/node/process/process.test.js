@@ -1268,6 +1268,205 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(null);
 });
 
+// Callbacks registered with addUncaughtExceptionCaptureCallback cannot be removed, so
+// every case runs in its own subprocess.
+describe.concurrent("process.addUncaughtExceptionCaptureCallback", () => {
+  async function run(src) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it("validates its argument and does not affect set/has", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const out = [typeof process.addUncaughtExceptionCaptureCallback];
+      try {
+        process.addUncaughtExceptionCaptureCallback(42);
+        out.push("no-throw");
+      } catch (e) {
+        out.push(e.code + "|" + e.message);
+      }
+      process.addUncaughtExceptionCaptureCallback(() => {});
+      // auxiliary callbacks are invisible to hasUncaughtExceptionCaptureCallback...
+      out.push(process.hasUncaughtExceptionCaptureCallback());
+      // ...and do not conflict with setUncaughtExceptionCaptureCallback
+      process.setUncaughtExceptionCaptureCallback(() => {});
+      out.push(process.hasUncaughtExceptionCaptureCallback());
+      process.setUncaughtExceptionCaptureCallback(null);
+      out.push(process.hasUncaughtExceptionCaptureCallback());
+      console.log(JSON.stringify(out));
+    `);
+    expect({ out: JSON.parse(stdout), exitCode }, stderr).toEqual({
+      out: [
+        "function",
+        'ERR_INVALID_ARG_TYPE|The "fn" argument must be of type function. Received type number (42)',
+        false,
+        true,
+        false,
+      ],
+      exitCode: 0,
+    });
+  });
+
+  it("dispatches most-recent-first, short-circuits on `=== true`, and yields to the primary callback", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const order = [];
+      process.on("uncaughtExceptionMonitor", (err, origin) => order.push("monitor:" + err.message + ":" + origin));
+      process.on("uncaughtException", err => order.push("listener:" + err.message));
+
+      // registered first -> runs last
+      process.addUncaughtExceptionCaptureCallback(err => {
+        order.push("aux1:" + err.message);
+        if (err.message === "stop-at-1") return true;
+      });
+      // registered second -> runs first
+      process.addUncaughtExceptionCaptureCallback(err => {
+        order.push("aux2:" + err.message);
+        if (err.message === "stop-at-2") return true;
+        if (err.message === "truthy") return 1; // truthy but not \`=== true\`, must not stop
+      });
+
+      const steps = [
+        () => { throw new Error("stop-at-2"); },
+        () => { throw new Error("stop-at-1"); },
+        () => { throw new Error("truthy"); },
+        () => { throw new Error("fallthrough"); },
+        // once a primary callback is set, auxiliary callbacks are skipped entirely
+        () => process.setUncaughtExceptionCaptureCallback(err => order.push("primary:" + err.message)),
+        () => { throw new Error("primary-wins"); },
+        () => console.log(JSON.stringify(order)),
+      ];
+      (function next() {
+        const step = steps.shift();
+        if (!step) return;
+        setImmediate(() => { setImmediate(next); step(); });
+      })();
+    `);
+    expect({ order: JSON.parse(stdout), exitCode }, stderr).toEqual({
+      order: [
+        "monitor:stop-at-2:uncaughtException",
+        "aux2:stop-at-2",
+        "monitor:stop-at-1:uncaughtException",
+        "aux2:stop-at-1",
+        "aux1:stop-at-1",
+        "monitor:truthy:uncaughtException",
+        "aux2:truthy",
+        "aux1:truthy",
+        "listener:truthy",
+        "monitor:fallthrough:uncaughtException",
+        "aux2:fallthrough",
+        "aux1:fallthrough",
+        "listener:fallthrough",
+        "monitor:primary-wins:uncaughtException",
+        "primary:primary-wins",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  it("a handled exception keeps the process alive with no uncaughtException listener", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const seen = [];
+      process.addUncaughtExceptionCaptureCallback(err => {
+        seen.push(err.message);
+        return true;
+      });
+      // survives GC: the list is traced from the process object
+      for (let i = 0; i < 10; i++) Bun.gc(true);
+      setImmediate(() => {
+        setImmediate(() => {
+          console.log(JSON.stringify(seen));
+          process.exit(42);
+        });
+        throw new Error("boom");
+      });
+    `);
+    expect({ seen: JSON.parse(stdout), exitCode }, stderr).toEqual({ seen: ["boom"], exitCode: 42 });
+  });
+
+  it("an unhandled exception is still fatal after the callbacks run", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      process.addUncaughtExceptionCaptureCallback(err => console.log("aux:" + err.message));
+      throw new Error("boom");
+    `);
+    expect({ stdout, fatal: stderr.includes("boom") }).toEqual({ stdout: "aux:boom", fatal: true });
+    expect(exitCode).toBe(1);
+  });
+
+  it("a callback that throws aborts the process, like the primary callback", async () => {
+    // The inner message is built at runtime so it can't be satisfied by bun
+    // echoing the script source back in an unrelated error.
+    const { stdout, stderr, exitCode } = await run(`
+      process.addUncaughtExceptionCaptureCallback(err => {
+        console.log("caught:" + err.message);
+        throw new Error("inner-" + err.message);
+      });
+      throw new Error("outer");
+    `);
+    expect(stdout).toBe("caught:outer");
+    expect(stderr).toContain("inner-outer");
+    expect(exitCode).toBe(1);
+  });
+
+  // In a Worker, Bun__Process__exit returns after requesting termination instead of
+  // exiting the process, so this also pins that the dispatch loop bails out after a
+  // throwing callback instead of re-entering the terminating VM, which fired a
+  // spurious null 'error' event on the parent Worker handle.
+  it("a callback that throws in a Worker terminates the worker like the primary callback", async () => {
+    // Error messages are concatenated so the contiguous strings never appear in
+    // the script source that bun echoes back into error reports.
+    const thrower = `err => {
+        console.log("thrower-ran:" + err.message);
+        throw new Error("inner" + "-oops");
+      }`;
+    using dir = tempDir("add-capture-worker", {
+      "parent.js": `
+        const { Worker } = require("node:worker_threads");
+        const { join } = require("node:path");
+        const w = new Worker(join(__dirname, process.argv[2]));
+        w.on("error", e => console.log("parent-error:" + (e && e.message)));
+        w.on("exit", code => console.log("parent-exit:" + code));
+      `,
+      "set-child.js": `
+        process.setUncaughtExceptionCaptureCallback(${thrower});
+        throw new Error("original" + "-oops");
+      `,
+      "add-child.js": `
+        // registered first -> would run last, but the throw above it stops the chain
+        process.addUncaughtExceptionCaptureCallback(() => console.log("older-ran"));
+        process.addUncaughtExceptionCaptureCallback(${thrower});
+        throw new Error("original" + "-oops");
+      `,
+    });
+
+    async function runVariant(child) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js", child],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The worker and the parent interleave on the shared stdout, so compare as a set.
+      return { lines: stdout.trim().split("\n").sort(), innerReported: stderr.includes("inner-oops"), exitCode };
+    }
+
+    const [set, add] = await Promise.all([runVariant("set-child.js"), runVariant("add-child.js")]);
+    expect(set).toEqual({
+      lines: ["parent-exit:1", "thrower-ran:original-oops"],
+      innerReported: true,
+      exitCode: 0,
+    });
+    expect(add).toEqual(set);
+  });
+});
+
 it("process.execArgv", async () => {
   const fixtures = [
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],

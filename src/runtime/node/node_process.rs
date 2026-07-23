@@ -192,6 +192,70 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
+    /// `bun_clap` accepts glued short-flag values (`-r./s.js`, `-r=./s.js`)
+    /// and chained boolean shorts (`-br./s.js`); node's CLI rejects those
+    /// shapes, so the worker execArgv validator (which mirrors node) never
+    /// sees them from node. Normalize to the canonical separate-token form
+    /// when building `process.execArgv` so
+    /// `new Worker(url, { execArgv: process.execArgv })` round-trips.
+    /// Returns false when the token does not fully parse as `bun_clap` short
+    /// chaining against `AUTO_PARAMS` (caller pushes it verbatim).
+    fn push_normalized_short_token(arg: &[u8], args: &mut Vec<BunString>) -> bool {
+        fn short_takes_value(c: u8) -> Option<bun_clap::Values> {
+            crate::cli::arguments::AUTO_PARAMS
+                .iter()
+                .find(|p| p.names.short == Some(c))
+                .map(|p| p.takes_value)
+        }
+        // First pass: the whole token must parse (mirrors
+        // `bun_clap::streaming::chainging`); collect the normalized pieces.
+        let mut flags: Vec<u8> = Vec::new();
+        let mut value: Option<&[u8]> = None;
+        let mut j = 1usize;
+        while j < arg.len() {
+            let Some(takes) = short_takes_value(arg[j]) else {
+                return false;
+            };
+            let next = j + 1;
+            match takes {
+                bun_clap::Values::None => {
+                    if next < arg.len() && arg[next] == b'=' {
+                        // bun_clap errors on `-b=x` at launch; unreachable in a
+                        // running process, keep the token verbatim.
+                        return false;
+                    }
+                    flags.push(arg[j]);
+                    j = next;
+                }
+                // A glued remainder after an optional-value short is dropped
+                // by bun_clap; the canonical form is the bare flag.
+                bun_clap::Values::OneOptional => {
+                    flags.push(arg[j]);
+                    break;
+                }
+                bun_clap::Values::One | bun_clap::Values::Many => {
+                    if next >= arg.len() {
+                        // The value is the next argv token; keep the token
+                        // verbatim so the caller's prev/takes-value machinery
+                        // pairs them (nothing glued to normalize).
+                        return false;
+                    }
+                    flags.push(arg[j]);
+                    let v = if arg[next] == b'=' { &arg[next + 1..] } else { &arg[next..] };
+                    value = Some(v);
+                    break;
+                }
+            }
+        }
+        for &f in &flags {
+            args.push(BunString::clone_utf8(&[b'-', f]));
+        }
+        if let Some(v) = value {
+            args.push(BunString::clone_utf8(v));
+        }
+        true
+    }
+
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
@@ -268,7 +332,9 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                args.push(BunString::clone_utf8(arg));
+                if !(arg.len() > 2 && arg[1] != b'-' && push_normalized_short_token(arg, &mut args)) {
+                    args.push(BunString::clone_utf8(arg));
+                }
                 prev = Some(arg);
                 continue;
             }

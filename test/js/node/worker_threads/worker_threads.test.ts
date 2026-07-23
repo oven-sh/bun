@@ -474,6 +474,35 @@ describe("execArgv option", async () => {
     expect(out).toEqual({ partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError" });
   });
 
+  it("bun's own glued short flags round-trip through process.execArgv", async () => {
+    // bun_clap accepts -r<path> at the CLI (node's CLI rejects it), so
+    // process.execArgv normalizes it to the separate-token form node's
+    // validator shape accepts; the verbatim glued token would throw.
+    using dir = tempDir("worker-execargv-roundtrip", {
+      "preload-rt.js": "globalThis.__rt = 'R';",
+      "main.js": `console.log(JSON.stringify(process.execArgv));
+        new (require("worker_threads").Worker)(
+          "require('worker_threads').parentPort.postMessage(globalThis.__rt)",
+          { eval: true, execArgv: process.execArgv },
+        ).on("message", t => { console.log(t); process.exit(0); });`,
+    });
+    const p = join(String(dir), "preload-rt.js");
+    for (const form of [`-r${p}`, `-r=${p}`]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), form, "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+        lines: [JSON.stringify(["-r", p]), "R"],
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
+
   it("rejects a glued short-flag value like node", async () => {
     // node v26.3.0 rejects -r<path> and -r=<path> in execArgv with the whole
     // token in the message (its CLI rejects glued shorts too); only the
@@ -499,11 +528,12 @@ describe("execArgv option", async () => {
   });
 
   it("rejects glued short flags in NODE_OPTIONS like node", async () => {
-    using dir = tempDir("worker-nodeopts-glued", { "preload-n.js": "globalThis.__nopts = 'N';" });
-    const p = join(String(dir), "preload-n.js");
     // node v26.3.0 rejects the glued forms with the whole token in the
-    // message; the space-separated form is accepted.
-    for (const form of [`-r${p}`, `-r=${p}`, "-e1+1"]) {
+    // message; the space-separated form is accepted. Relative paths only:
+    // NODE_OPTIONS goes through the quote-aware tokenizer, which treats
+    // backslash as an escape, so a Windows absolute path would be echoed
+    // back without its separators.
+    for (const form of ["-r./nope.js", "-r=./nope.js", "-e1+1"]) {
       let err: any;
       try {
         new Worker("1", { eval: true, env: { NODE_OPTIONS: form } });
@@ -515,6 +545,8 @@ describe("execArgv option", async () => {
         `Initiated Worker with invalid NODE_OPTIONS env variable: ${form} is not allowed in NODE_OPTIONS`,
       );
     }
+    using dir = tempDir("worker-nodeopts-glued", { "preload-n.js": "globalThis.__nopts = 'N';" });
+    const p = join(String(dir), "preload-n.js").replaceAll("\\", "/");
     const w = new Worker("1", { eval: true, env: { ...process.env, NODE_OPTIONS: `-r ${p}` } });
     await once(w, "exit");
   });

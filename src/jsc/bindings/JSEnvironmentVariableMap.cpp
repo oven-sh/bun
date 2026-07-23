@@ -397,9 +397,8 @@ static SharedEnvStore* sharedEnvStoreFor(JSC::JSObject* object)
 // process.env (src/node_env_var.cc, EnvDefiner). Bun deliberately still accepts
 // accessors — see the "does not let the store shadow an accessor defined on
 // process.env" test — so only the data-descriptor half of node's rule is
-// enforced here
-// enumerable and configurable, all true. Accessor and empty descriptors keep
-// their existing behaviour. Returns false with an exception pending on reject.
+// enforced here: value present, and writable/enumerable/configurable all
+// present and true. Returns false with an exception pending on reject.
 static bool validateEnvPropertyDescriptor(JSC::JSGlobalObject* globalObject, const JSC::PropertyDescriptor& descriptor, JSC::ThrowScope& scope)
 {
     static constexpr auto dataDescriptorMessage = "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s;

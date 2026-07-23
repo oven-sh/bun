@@ -126,4 +126,16 @@ describe("console.trace", () => {
     expect(stderr).toStartWith("Trace: x=5\n");
     expect(exitCode).toBe(0);
   });
+
+  test("label goes after the console.group indent", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `console.group("G"); console.trace("x"); console.trace(); console.groupEnd(); console.trace("top");`,
+    );
+    // The group indent precedes the label, and the bare header is indented too.
+    expect(stderr).toStartWith("  Trace: x\n");
+    expect(stderr).toContain("\n  Trace\n");
+    expect(stderr).toContain("\nTrace: top\n");
+    expect(stdout).toBe("G\n");
+    expect(exitCode).toBe(0);
+  });
 });

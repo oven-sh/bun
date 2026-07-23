@@ -1634,9 +1634,29 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                         promise->resolve<IDLInterface<CryptoKey>>(key);
                     }
                 };
-                auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-                    if (auto promise = getPromise(index, weakThis))
+                auto exceptionCallback = [index, weakThis, identifier = importAlgorithm->identifier()](ExceptionCode ec, const String& msg) mutable {
+                    if (auto promise = getPromise(index, weakThis)) {
+                        // Mirror importKey's exceptionCallback: the ML import
+                        // paths leave the BoringSSL parse failure in the error
+                        // queue; attach it as the DOMException's cause.
+                        if (ec == DataError && isAkpAlgorithm(identifier)) {
+                            if (uint32_t opensslError = ERR_get_error()) {
+                                ERR_clear_error();
+                                rejectWithCause(promise.releaseNonNull(), ec, msg, [opensslError](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+                                    auto& vm = globalObject.vm();
+                                    auto scope = DECLARE_THROW_SCOPE(vm);
+                                    auto cause = Bun::createCryptoError(&globalObject, scope, opensslError, nullptr);
+                                    if (scope.exception()) [[unlikely]] {
+                                        (void)scope.tryClearException();
+                                        return JSC::jsUndefined();
+                                    }
+                                    return cause;
+                                });
+                                return;
+                            }
+                        }
                         rejectWithException(promise.releaseNonNull(), ec, msg);
+                    }
                 };
 
                 // The following operation should be performed synchronously.

@@ -335,7 +335,6 @@ describe("Ed25519", () => {
   });
 });
 
-// https://github.com/oven-sh/bun/issues/32613
 describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   it("deriveKey can derive a ChaCha20-Poly1305 key", async () => {
     const base = await crypto.subtle.importKey("raw", new Uint8Array(32), "HKDF", false, ["deriveKey"]);
@@ -359,7 +358,7 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
       "decrypt",
     ]);
     for (const size of [0, 11, 16]) {
-      expect(
+      await expect(
         crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(size) }, key, new Uint8Array(4)),
       ).rejects.toThrow("algorithm.iv must contain exactly 12 bytes");
     }
@@ -368,13 +367,13 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
       key,
       new Uint8Array(4),
     );
-    expect(crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }, key, ct)).rejects.toThrow(
+    await expect(crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(16) }, key, ct)).rejects.toThrow(
       "algorithm.iv must contain exactly 12 bytes",
     );
   });
 
   it("importKey('raw') still rejects for ChaCha20-Poly1305 like Node", async () => {
-    expect(
+    await expect(
       crypto.subtle.importKey("raw", new Uint8Array(32), "ChaCha20-Poly1305", true, ["encrypt"]),
     ).rejects.toThrow();
   });
@@ -402,10 +401,10 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   });
 
   it("generateKey reports Node's unsupported-usage messages", async () => {
-    expect(crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["sign"])).rejects.toThrow(
+    await expect(crypto.subtle.generateKey({ name: "AES-CBC", length: 256 }, true, ["sign"])).rejects.toThrow(
       "Unsupported key usage for an AES key",
     );
-    expect(
+    await expect(
       crypto.subtle.generateKey(
         { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
         true,
@@ -415,6 +414,7 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/32613
 describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
   // The serialized JWK is rarely a multiple of 8 bytes, which AES-KW (RFC 3394)
   // requires. Bun used to reject these with OperationError; it now pads the JWK

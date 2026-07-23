@@ -802,7 +802,7 @@ class LambdaWebSocket implements ServerWebSocket {
   }
 
   isSubscribed(topic: string): boolean {
-    return this.#topics !== null && this.#topics.has(topic);
+    return this.readyState !== 3 && this.#topics !== null && this.#topics.has(topic);
   }
 
   cork(callback: (ws: ServerWebSocket<undefined>) => any): void | Promise<void> {

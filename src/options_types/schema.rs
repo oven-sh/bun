@@ -311,6 +311,8 @@ pub mod api {
         pub exact: Option<bool>,
         /// concurrent_scripts
         pub concurrent_scripts: Option<u32>,
+        /// strict-ssl
+        pub strict_ssl: Option<bool>,
 
         pub cafile: Option<Box<[u8]>>,
         pub save_text_lockfile: Option<bool>,

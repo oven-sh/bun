@@ -1369,6 +1369,14 @@ mod draft {
             }
         }
 
+        if let Some(query) = out.as_property(b"strict-ssl") {
+            if let Some(str_) = query.expr.as_utf8_string_literal() {
+                install.strict_ssl = Some(matches!(str_, b"true" | b"1"));
+            } else if let Some(b) = query.expr.as_bool() {
+                install.strict_ssl = Some(b);
+            }
+        }
+
         if let Some(query) = out.as_property(b"ca") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
                 install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));

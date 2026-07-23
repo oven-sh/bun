@@ -52,6 +52,7 @@ pub struct Options {
 
     pub ca: Box<[Box<[u8]>]>,
     pub ca_file_name: &'static [u8],
+    pub strict_ssl: bool,
 
     // if set to `false` in bunfig, save a binary lockfile
     pub save_text_lockfile: Option<bool>,
@@ -135,6 +136,7 @@ impl Default for Options {
             publish_config: PublishConfig::default(),
             ca: Box::default(),
             ca_file_name: b"",
+            strict_ssl: true,
             save_text_lockfile: None,
             lockfile_only: false,
             git_tag_version: true,
@@ -463,6 +465,10 @@ impl Options {
 
             if let Some(cafile) = config.cafile.as_deref() {
                 self.ca_file_name = leak_static(cafile);
+            }
+
+            if let Some(strict_ssl) = config.strict_ssl {
+                self.strict_ssl = strict_ssl;
             }
 
             if config.disable_cache.unwrap_or(false) {

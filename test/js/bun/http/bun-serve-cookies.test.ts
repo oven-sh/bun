@@ -733,18 +733,21 @@ describe("req.cookies after headers sent", () => {
     expect(map.get("a")).toBe("2");
   });
 
-  test("cloned request's cookies are a detached, freely mutable map", async () => {
-    let cloneSetOk = false;
+  test.each([
+    ["after touching req.cookies on the original", true],
+    ["without touching req.cookies on the original", false],
+  ])("cloned request's cookies are a detached, freely mutable map (%s)", async (_, touchFirst) => {
     let cloneValue: string | null = null;
+    let cloneRead: string | null = null;
     await using server = Bun.serve({
       port: 0,
       routes: {
         "/": req => {
-          void req.cookies.get("foo");
+          if (touchFirst) void req.cookies.get("foo");
           const cloned = req.clone();
           cloned.cookies.set("x", "1");
-          cloneSetOk = true;
           cloneValue = cloned.cookies.get("x");
+          cloneRead = cloned.cookies.get("foo");
           return new Response("ok");
         },
       },
@@ -753,7 +756,40 @@ describe("req.cookies after headers sent", () => {
     expect(body).toBe("ok");
     // The clone is detached; its mutations never reach the wire.
     expect(setCookie).toEqual([]);
-    expect(cloneSetOk).toBe(true);
     expect(cloneValue).toBe("1");
+    expect(cloneRead).toBe("bar");
+  });
+
+  test("set() throws after the client aborts mid-handler", async () => {
+    let outcome: { code?: string; value?: unknown } | undefined;
+    const arrived = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": async req => {
+          const cookies = req.cookies;
+          cookies.set("before", "1");
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          arrived.resolve();
+          await aborted.promise;
+          try {
+            cookies.set("after", "1");
+            outcome = { value: cookies.get("after") };
+          } catch (e) {
+            outcome = { code: (e as any)?.code };
+          }
+          done.resolve();
+          return new Response("ok");
+        },
+      },
+    });
+    const controller = new AbortController();
+    fetch(new URL("/", server.url), { signal: controller.signal }).catch(() => {});
+    await arrived.promise;
+    controller.abort();
+    await done.promise;
+    expect(outcome).toEqual({ code: "ERR_HTTP_HEADERS_SENT" });
   });
 });

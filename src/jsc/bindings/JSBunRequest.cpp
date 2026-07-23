@@ -135,12 +135,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
             auto cookieMap = wrapper->protectedWrapped();
             auto cookieMapClone = cookieMap->clone();
             auto cookies = WebCore::toJSNewlyCreated(globalObject, uncheckedDowncast<JSDOMGlobalObject>(globalObject), WTF::move(cookieMapClone));
-            // The clone's request_context is NULL, so routing through
-            // setCookies() would immediately mark the fresh map as
-            // headers-written. A cloned request's cookies behave like a
-            // standalone CookieMap: detached from any response, freely
-            // mutable, never emitted.
-            clone->m_cookies.set(vm, clone, cookies.getObject());
+            clone->setCookies(cookies.getObject());
         }
     }
 

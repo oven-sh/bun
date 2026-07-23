@@ -1409,6 +1409,12 @@ where
         }
 
         this.detach_response();
+        // Connection is gone: later set()/delete() on this map can never reach
+        // the wire. Mark it so JS throws ERR_HTTP_HEADERS_SENT, then release
+        // the ref taken in `set_cookies`.
+        if let Some(cookies) = this.cookies.take() {
+            cookies.set_headers_written();
+        }
         let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
         let server = this.server();
@@ -1427,7 +1433,7 @@ where
         }
 
         if let Some(request) = this.request_weakref.get() {
-            request.request_context = AnyRequestContext::NULL;
+            request.request_context = AnyRequestContext::DETACHED;
             if shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Abort,
@@ -1527,7 +1533,7 @@ where
         }
 
         if let Some(request) = self.request_weakref.get() {
-            request.request_context = AnyRequestContext::NULL;
+            request.request_context = AnyRequestContext::DETACHED;
             // we can already clean this strong refs
             shim::iec_deinit(&request.internal_event_callback);
             self.request_weakref.deref();

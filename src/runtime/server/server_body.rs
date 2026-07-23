@@ -2084,7 +2084,7 @@ where
         upgrader.upgrade_context = Some(usize::MAX as *mut WebSocketUpgradeContext);
         let signal = upgrader.signal.take();
         upgrader.resp = None;
-        request.request_context = AnyRequestContext::NULL;
+        request.request_context = AnyRequestContext::DETACHED;
         upgrader.request_weakref.deref();
 
         data_value.ensure_still_alive();

@@ -378,10 +378,12 @@ impl Request {
 
     #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
     pub fn ffi_set_cookies_on_request_context(&self, cookie_map: Option<&CookieMap>) {
-        if self.request_context.is_null() {
-            // Request already detached (response finished or aborted). This
-            // map's changes can never be sent; mark it so JS set()/delete()
-            // throw ERR_HTTP_HEADERS_SENT.
+        if self.request_context.is_detached() {
+            // This request was attached to a live Bun.serve response that has
+            // since finished, aborted, or upgraded. The map's changes can never
+            // be sent; mark it so JS set()/delete() throw ERR_HTTP_HEADERS_SENT.
+            // `CtxTag::None` (clones, `new Request(...)`) falls through to the
+            // dispatch no-op below so those maps stay freely mutable.
             if let Some(m) = cookie_map {
                 m.set_headers_written();
             }

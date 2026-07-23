@@ -6438,6 +6438,12 @@ describe("semver", () => {
       expected: "1.0.1",
     },
     {
+      // a `||` union is always range syntax, never a dist-tag
+      title: "'2x || 1' is still a range",
+      depVersion: "2x || 1",
+      expected: "2.0.1",
+    },
+    {
       title: "tagged above latest",
       depVersion: "pre-3",
       expected: "3.0.1",

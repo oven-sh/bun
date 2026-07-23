@@ -1023,6 +1023,8 @@ for (const { spec, resolves, saved } of [
   { spec: "0x", resolves: "0.0.3", saved: "^0.0.3" },
   // sanity: `0.x` is still a range and picks the highest match
   { spec: "0.x", resolves: "0.0.5", saved: "0.x" },
+  // `||` is always range syntax even when the first arm looks like a dist-tag
+  { spec: "2x || 0", resolves: "0.0.5", saved: "2x || 0" },
 ]) {
   it(`should add dependency with digit-prefixed dist-tag ${JSON.stringify(spec)}`, async () => {
     const urls: string[] = [];

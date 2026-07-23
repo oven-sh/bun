@@ -92,7 +92,10 @@ const KNOWN_BROKEN_FN = /^(write)$/;
 // node module callables ("node:fs" containers): fs.readFileSync(...),
 // child_process.spawn(...). Names that block the process (readline
 // prompts, tty raw mode) or reach the network are excluded by name.
-const EXCLUDE_NODE_FN = /^(fs\.(watch|watchFile|unwatchFile|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|rename|renameSync|truncate|truncateSync|chmod|chmodSync|chown|chownSync|utimes|utimesSync|lchown|lchmod|link|linkSync|symlink|symlinkSync|copyFile|copyFileSync|cp|cpSync|mkdtemp|mkdtempSync|writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)|child_process\.(exec|execFile|execSync|execFileSync)|.*\.(createInterface|clearScreenDown)|tty\..*|dns\.(lookup|resolve.*|reverse)|net\.(connect|createConnection)|http.*\.(get|request)|worker_threads\..*|os\.setPriority)$/;
+// crypto.createDiffieHellman/generatePrime: legitimately CPU-bound for large
+// primes (a lead under investigation, not fuzzer noise) - excluded so one
+// finding doesn't saturate the hang queue.
+const EXCLUDE_NODE_FN = /^(crypto\.(createDiffieHellman|createDiffieHellmanGroup|generatePrime|generatePrimeSync|generateKeyPair|generateKeyPairSync|pbkdf2|pbkdf2Sync|scrypt|scryptSync)|fs\.(watch|watchFile|unwatchFile|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|rename|renameSync|truncate|truncateSync|chmod|chmodSync|chown|chownSync|utimes|utimesSync|lchown|lchmod|link|linkSync|symlink|symlinkSync|copyFile|copyFileSync|cp|cpSync|mkdtemp|mkdtempSync|writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)|child_process\.(exec|execFile|execSync|execFileSync)|.*\.(createInterface|clearScreenDown)|tty\..*|dns\.(lookup|resolve.*|reverse)|net\.(connect|createConnection)|http.*\.(get|request)|worker_threads\..*|os\.setPriority)$/;
 const nodeFns = spec.callables.filter(c => /^node:/.test(c.container) && !EXCLUDE_NODE_FN.test(c.path));
 const NODE_MODS = [...new Set(nodeFns.map(c => c.container.replace(/^node:/, "")))];
 const fnCalls = [

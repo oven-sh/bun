@@ -264,7 +264,7 @@ import { $ } from "bun";
 
 await $`
   REV=$(git rev-parse HEAD)
-  docker built -t myapp:$REV
+  docker build -t myapp:$REV
   echo Done building docker image "myapp:$REV"
 `;
 ```

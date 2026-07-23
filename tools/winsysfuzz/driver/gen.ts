@@ -267,6 +267,15 @@ function objectFromShape(t: string, depth: number): string | null {
 // stream/array/cmd argument undefined - that only exercises validation).
 function argList(c: Callable): string {
   const args = c.params.filter(p => !p.optional || chance(0.5)).map(p => valueFor(p.type, p.name));
+  // Known-reported: any Bun.write whose SOURCE file does not exist (or is
+  // unopenable: trailing-space/dot names, path-through-a-file, invalid
+  // UTF-16) segfaults on Windows via the on_copy_file ENOENT retry loop.
+  // Draw the source only from files the preamble actually CREATED so the
+  // engine explores past the reported family; hostile paths still reach
+  // every other API.
+  if (c.path === "Bun.write" && args.length >= 2 && /Bun\.file\(/.test(args[1])) {
+    args[1] = pick([`Bun.file(P("data.txt"))`, `Bun.file(P("big.bin"))`, `Bun.file(P("empty.txt"))`]);
+  }
   // Known-reported: Bun.write(x, x) with one pooled object as both
   // destination and source (aliased self-copy). Break the alias so the
   // engine explores past it instead of re-finding it in every program.

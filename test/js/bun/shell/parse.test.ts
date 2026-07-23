@@ -1,3 +1,4 @@
+import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { createTestBuilder, redirect } from "./util";
 const { parse } = shellInternals;
@@ -1057,9 +1058,41 @@ describe("parse shell", () => {
 });
 
 describe("parse shell invalid input", () => {
+  const jsObjRefErr =
+    "Response, Blob, ReadableStream, ArrayBuffer, and TypedArray values can only be used as a redirect in a shell command (e.g. `< ${value}` or `> ${value}`), not as a command or argument";
+
   test("invalid js obj", async () => {
     const file = new Uint8Array(420);
-    await TestBuilder.command`${file} | cat`.error(`expected a command or assignment but got: "JSObjRef"`).run();
+    await TestBuilder.command`${file} | cat`.error(jsObjRefErr).run();
+  });
+
+  describe.each([
+    ["Response", () => new Response("x")],
+    ["Blob", () => new Blob(["x"])],
+    ["ReadableStream", () => new ReadableStream()],
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["Uint8Array", () => new Uint8Array(4)],
+  ])("%s in non-redirect position", (_, make) => {
+    test("as command", async () => {
+      await TestBuilder.command`${make()}`.error(jsObjRefErr).run();
+    });
+    test("as argument", async () => {
+      await TestBuilder.command`echo ${make()}`.error(jsObjRefErr).run();
+    });
+    test("after assignment", async () => {
+      await TestBuilder.command`FOO=bar ${make()}`.error(jsObjRefErr).run();
+    });
+    test("after pipe", async () => {
+      await TestBuilder.command`echo hi | ${make()}`.error(jsObjRefErr).run();
+    });
+  });
+
+  test("error for interpolated Response/Blob/etc does not leak internal token name", () => {
+    for (const value of [new Response("x"), new Blob(["x"]), new ArrayBuffer(4)]) {
+      expect(() => $`echo ${value}`).toThrow(/can only be used as a redirect/);
+      expect(() => $`echo ${value}`).not.toThrow(/JSObjRef/);
+      expect(() => $`if [[ ${value} == foo ]]; then echo hi; fi`).not.toThrow(/JSObjRef/);
+    }
   });
 
   test("subshell", async () => {

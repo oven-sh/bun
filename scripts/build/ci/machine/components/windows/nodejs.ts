@@ -1,7 +1,7 @@
 // Node.js on windows: Scoop installs `nodejs@<version>` (see scoop.ts);
 // this verifies the version and seeds node-gyp's header cache so napi
 // tests never download headers at test time. The linux half is
-// nodejs.linux.ts.
+// components/linux/nodejs.ts.
 
 import { join } from "node:path";
 import { nodejsHeadersDownload, nodejsWinLibDownload } from "../../artifacts.ts";

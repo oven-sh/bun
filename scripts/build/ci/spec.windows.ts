@@ -116,6 +116,11 @@ const windowsShared: WindowsSharedFields = {
   },
 };
 
+/** The install sequence every windows image shares. visual-studio
+ * precedes rust and pdb-addr2line: cargo (and rustc's msvc target) link
+ * through the MSVC linker and Windows SDK libraries that Visual Studio
+ * Build Tools installs — pdb-addr2line's `cargo install` cannot link
+ * without them. */
 const windowsCommonComponents = [
   "optimize-windows",
   "scoop",
@@ -194,5 +199,3 @@ export const windowsImages: readonly WindowsImage[] = [
     },
   },
 ];
-
-/** Every image CI bakes. */

@@ -1128,19 +1128,6 @@ export function getBuildId() {
 }
 
 /**
- * @returns {number | undefined}
- */
-export function getBuildNumber() {
-  if (isBuildkite) {
-    return parseInt(getEnv("BUILDKITE_BUILD_NUMBER"));
-  }
-
-  if (isGithubAction) {
-    return parseInt(getEnv("GITHUB_RUN_ID"));
-  }
-}
-
-/**
  * @returns {URL | undefined}
  */
 export function getBuildUrl() {
@@ -1879,29 +1866,6 @@ export function getHostname() {
 export function getUsername() {
   const { username } = userInfo();
   return username;
-}
-
-/**
- * @param {string} distro
- * @returns {string}
- */
-export function getUsernameForDistro(distro) {
-  if (/windows/i.test(distro)) {
-    return "administrator";
-  }
-  if (/alpine|centos/i.test(distro)) {
-    return "root";
-  }
-  if (/debian/i.test(distro)) {
-    return "admin";
-  }
-  if (/ubuntu/i.test(distro)) {
-    return "ubuntu";
-  }
-  if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
-    return "ec2-user";
-  }
-  throw new Error(`Unsupported distro: ${distro}`);
 }
 
 /**

@@ -347,12 +347,6 @@ const linuxBuildHostComponents = [
   "cleanup",
 ] as const;
 
-/** The install sequence every windows image shares. visual-studio
- * precedes rust and pdb-addr2line: cargo (and rustc's msvc target) link
- * through the MSVC linker and Windows SDK libraries that Visual Studio
- * Build Tools installs — pdb-addr2line's `cargo install` cannot link
- * without them. */
-
 // ---------------------------------------------------------------------------
 // The images
 // ---------------------------------------------------------------------------
@@ -416,7 +410,7 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
   },
   {
     ...linuxShared,
-    key: "linux-aarch64-323-alpine-musl",
+    key: `linux-aarch64-${alpineRelease.replace(/\./g, "")}-alpine-musl`,
     arch: "aarch64",
     distro: "alpine",
     release: alpineRelease,
@@ -429,7 +423,7 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
   },
   {
     ...linuxShared,
-    key: "linux-x64-323-alpine-musl",
+    key: `linux-x64-${alpineRelease.replace(/\./g, "")}-alpine-musl`,
     arch: "x64",
     distro: "alpine",
     release: alpineRelease,

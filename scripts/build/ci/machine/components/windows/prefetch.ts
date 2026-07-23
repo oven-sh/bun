@@ -2,7 +2,7 @@
 // cache (BUN_BUILD_PREFETCH_DIR) and the shared `bun install` cache
 // (BUN_INSTALL_CACHE_DIR), from a shallow clone of the bootstrapping ref.
 // Best-effort: a failed clone or install skips the cache instead of failing
-// the bake. The linux half is prefetch.linux.ts.
+// the bake. The linux half is components/linux/prefetch.ts.
 
 import { join } from "node:path";
 import * as win from "../../ops-windows.ts";

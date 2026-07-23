@@ -4,20 +4,21 @@
 // A component owns HOW its thing is installed on each platform it supports,
 // and it enumerates the artifacts (downloads) it needs. It owns no FACTS:
 // versions, URLs' inputs, install dirs and cache paths are all read from
-// the image's spec entry. That split is what keeps the invariant "spec.ts
-// is the single hashed source of truth" true while every thing lives in
-// its own file:
+// the image's spec entry. That split is what keeps the invariant "the
+// spec is the single hashed source of truth" true while every thing
+// lives in its own file:
 //
-//   - change a component's CODE  → the recipe hash moves and the images
-//     for that platform re-bake (their generated bootstraps change);
 //   - change a component's FACTS → the spec entry changed → its images
-//     re-bake automatically.
+//     re-bake automatically;
+//   - change a component's CODE  → no image name moves (only spec values
+//     are hashed); to ship a code-only fix, change a value in the affected
+//     entry so the name is different.
 //
 // An image's spec entry lists its components IN INSTALL ORDER, so ordering
-// is data. The generated per-image entry imports exactly that list, and
-// components/registry.ts derives both the steps and the download bundle from
-// it — one input, so what is baked and what is generated agree by
-// construction.
+// is data. bootstrap.ts resolves that list by name through
+// components/registry.ts, which derives both the steps and the download
+// bundle from it — one input, so what is planned and what is fetched agree
+// by construction.
 
 import type { LinuxImage, WindowsImage } from "../../types.ts";
 import type { Download } from "../artifacts.ts";
@@ -37,8 +38,8 @@ export type LinuxContext = {
   /** Every download this image performs, keyed by artifact name — the same
    * bundle the image hash covers. Components read their downloads here. */
   artifacts: ArtifactBundle;
-  /** This image's package manager. Resolved from the entry in the generated
-   * per-image bundle, so only its own manager's code is present. */
+  /** This image's package manager, selected from the entry's
+   * `packages.manager` fact by managerFor(). */
   manager: PackageManager;
 };
 
@@ -56,8 +57,8 @@ export type ArtifactBundle = { readonly [artifactName: string]: Download };
 
 /** A component for one platform. A thing that installs on both (nodejs,
  * rust, ...) is two components sharing a name in separate modules
- * (<name>.linux.ts / <name>.windows.ts), so a generated bootstrap imports
- * only its own platform's module and never carries the other's code. */
+ * (linux/<name>.ts and windows/<name>.ts), each registered under its own
+ * platform in components/registry.ts. */
 export type LinuxComponent = {
   /** Stable identifier; images list components by name. */
   name: string;

@@ -1,12 +1,11 @@
 // The distro package manager, abstracted once. Everything on a Linux image
 // that differs by manager (install syntax, index refresh, cache cleanup,
 // which system-user tools exist, whether cmake/docker/python-fuse come from
-// packages) is a member here, and each image's generated bootstrap imports
-// exactly ONE implementation — its own — so a Debian bootstrap carries no
-// apk code and an Alpine bootstrap carries no apt code.
+// packages) is a member here; an image uses exactly one implementation,
+// chosen from its entry's `packages.manager` fact.
 //
-// Selected per entry by managerFor(image) in the generated per-image entry
-// (generate.ts); components receive it on their LinuxContext.
+// Selected by managerFor() in bootstrap.ts; components receive it on
+// their LinuxContext.
 
 import { existsSync } from "node:fs";
 import { enableService, ensureDirectory, shellScript } from "../../ops-posix.ts";
@@ -161,8 +160,7 @@ export const apk: PackageManager = {
   },
 };
 
-/** The manager for an image, from its spec fact. Resolved in the generated
- * per-image entry, so a bundle contains only one implementation. */
+/** The manager for an image, from its `packages.manager` spec fact. */
 export function managerFor(manager: "apt" | "apk"): PackageManager {
   return manager === "apk" ? apk : apt;
 }

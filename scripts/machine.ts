@@ -1441,7 +1441,7 @@ async function main() {
   // Packer (create-image --cloud=azure). This tool has no live-Windows
   // machine path — refuse up front with the reason, instead of accepting the
   // request and failing deep inside base-image lookup.
-  if (options.imageEntry && options.imageEntry.os === "windows" && command === "ssh") {
+  if (options.imageEntry.os === "windows" && command === "ssh") {
     throw new Error(
       `Windows CI images live in Azure and are baked by Packer; there is no interactive ` +
         `Windows machine path in machine.ts. To bake ${options.imageEntry.key}: ` +
@@ -1496,6 +1496,13 @@ async function main() {
   // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
   // Its idempotency check (gallery version probe) is inside the function.
   if (args["cloud"] === "azure" && os === "windows" && command === "create-image") {
+    // The Packer path publishes to the production gallery and syspreps;
+    // it is a CI-image bake only (it needs the agent bundle and the
+    // content-addressed name). There is no local/dev Windows bake, so
+    // refuse up front rather than emitting a template with no agent source.
+    if (!ci) {
+      throw new Error("Windows create-image is a CI bake and requires --ci (there is no non-CI Windows image).");
+    }
     await buildWindowsImageWithPacker({ image: options.imageEntry, ci, repoRef, agentPath, bootstrapDir });
     return;
   }

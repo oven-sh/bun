@@ -1,8 +1,8 @@
-// Download URLs derived from spec.ts values. This is code, not data: it
-// turns the pinned versions/bases in an image's spec into concrete URLs. As
-// recipe code it feeds the generated bootstrap (see generate.ts), and the URLs
-// it resolves feed the hash too. Every URL an image bake fetches should be
-// constructible from here, from the sub-spec passed in.
+// Download URLs derived from spec values. This is code, not data: it
+// turns the pinned versions/bases in an image's spec into concrete URLs.
+// bootstrap.ts fetches through these builders, so every URL an image bake
+// fetches should be constructible from here, from the sub-spec passed in.
+// (URLs are not hashed — only spec values move the image name.)
 
 import type { AgeSpec, Arch, BunSpec, CrossToolchains, NodejsSpec, PinnedRelease, WindowsX64Image } from "../types.ts";
 

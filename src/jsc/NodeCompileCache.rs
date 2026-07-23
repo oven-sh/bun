@@ -924,6 +924,18 @@ pub fn persist_at_exit() {
     if !is_enabled() || DONE.swap(true, Ordering::Relaxed) {
         return;
     }
+    persist_now();
+}
+
+/// Non-latching sibling of [`persist_at_exit`] for paths where the process
+/// may survive — a self-directed signal whose disposition turns out
+/// non-fatal (handled on another thread, or default-ignored like SIGWINCH).
+/// Persists what's cached now but leaves the exit latch unset, so a later
+/// real exit still persists modules loaded after this point.
+pub fn persist_now() {
+    if !is_enabled() {
+        return;
+    }
     let mut guard = STATE.lock();
     if let Some(state) = guard.as_mut() {
         persist_locked(state);

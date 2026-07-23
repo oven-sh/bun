@@ -108,6 +108,33 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(process.platform === "win32")(
+    "compile cache persists modules loaded after a non-fatal self-kill",
+    async () => {
+      // A self-directed signal that proves non-fatal (SIGWINCH is ignored by
+      // default) must not latch the exit-time persist: modules loaded after
+      // the kill still reach the cache when the process really exits.
+      using dir = tempDir("compile-cache-selfkill", {
+        "late.js": "module.exports = 42;",
+        "main.js": `process.kill(process.pid, "SIGWINCH");
+console.log("survived", require("./late.js"));`,
+      });
+      const cacheDir = path.join(String(dir), "cc");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("survived 42");
+      expect(exitCode).toBe(0);
+      // Both main.js and late.js are cached; pre-fix only main.js was.
+      const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+      expect(files.length).toBe(2);
+    },
+  );
+
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.
     const compile = new Module("not-a-constructor-test")._compile;

@@ -479,8 +479,10 @@ impl VMHolder {
         }
         // Node runs every RunAtExit callback on self-directed fatal signals;
         // the compile cache is one of them (env.cc AtExit(FlushCompileCache)).
-        // Idempotent: latched internally and a no-op when the cache is off.
-        crate::node_compile_cache::persist_at_exit();
+        // Non-latching: the signal may prove non-fatal (worker self-kill with
+        // a main-thread handler, or a default-ignored signal), and latching
+        // here would turn the real exit's persist into a no-op.
+        crate::node_compile_cache::persist_now();
     }
 }
 

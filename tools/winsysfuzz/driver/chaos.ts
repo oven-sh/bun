@@ -165,8 +165,14 @@ function drawSchedule(): string[] {
   while (rules.size < n && guard++ < n * 8) {
     const c = pickCoord();
     const f = pick(faultsFor(c.sysName)!);
-    // hit biased deep: sqrt of a uniform skews toward the late end
-    let hit = Math.min(c.hits, 1 + Math.floor(Math.sqrt(rnd()) * c.hits));
+    // Hit index: the KEY is 98% run-stable, but the Nth occurrence at a
+    // HOT callsite is not - the count of prior calls through one open/read
+    // path drifts with parallel test setup order, so a deep hit index
+    // verifies under one load and no-fires on solo replay. Draw shallow:
+    // hit 1 half the time, otherwise within the first few occurrences,
+    // never deeper than the callsite's own count. Depth into the PROGRAM
+    // comes from picking late-appearing callsites, not late hits.
+    let hit = rnd() < 0.5 ? 1 : Math.min(c.hits, 1 + Math.floor(rnd() * Math.min(c.hits, 4)));
     // The first event/semaphore creations are WTF/JSC threading primitives
     // made at init - failing them parks the process by design, not a bun
     // logic bug. Never fault their hit 1 (draw deeper, or skip if no depth).

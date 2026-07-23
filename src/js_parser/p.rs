@@ -5230,9 +5230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// A user-written `static name` member owns `.name`; `__name()` must not clobber it.
     pub fn class_has_custom_static_name(class: &G::Class) -> bool {
         for prop in class.properties.iter() {
-            if !prop.flags.contains(Flags::Property::IsStatic)
-                || prop.flags.contains(Flags::Property::IsComputed)
-            {
+            if !prop.flags.contains(Flags::Property::IsStatic) {
                 continue;
             }
             if let Some(key) = prop.key {

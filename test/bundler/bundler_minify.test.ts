@@ -249,11 +249,12 @@ describe("bundler", () => {
         const C = class { static name = "customC"; };
         const D = class Named { static name = "customD"; };
         const E = class { static get name() { return "getE"; } };
-        console.log(JSON.stringify([A.name, B.name, C.name, D.name, E.name]));
+        class F { static ["name"] = "computedF"; }
+        console.log(JSON.stringify([A.name, B.name, C.name, D.name, E.name, F.name]));
       `,
     },
     run: {
-      stdout: JSON.stringify(["customA", "B", "customC", "customD", "getE"]),
+      stdout: JSON.stringify(["customA", "B", "customC", "customD", "getE", "computedF"]),
     },
     minifySyntax: true,
     minifyWhitespace: true,

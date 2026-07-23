@@ -1134,7 +1134,9 @@ function Server(options, secureConnectionListener): void {
   this.sigalgs = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
-  this._rejectUnauthorized = rejectUnauthorizedDefault();
+  // Node's server default is a hardcoded true; NODE_TLS_REJECT_UNAUTHORIZED
+  // only changes the tls.connect() (client) default.
+  this._rejectUnauthorized = true;
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
@@ -1295,7 +1297,11 @@ function Server(options, secureConnectionListener): void {
 
       if (typeof rejectUnauthorized !== "undefined") {
         next._rejectUnauthorized = rejectUnauthorized !== false;
-      } else next._rejectUnauthorized = rejectUnauthorizedDefault();
+      } else {
+        // Node's server default is a hardcoded true; the env var is
+        // client-only.
+        next._rejectUnauthorized = true;
+      }
 
       const ciphers = options.ciphers;
       if (typeof ciphers !== "undefined") {

@@ -56,6 +56,7 @@ pub use bun_sourcemap_jsc::internal_jsc::testing_find as sourcemap_internal_sour
 pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_source_map_testing_ap_is_from_vlq;
 pub use bun_sourcemap_jsc::internal_jsc::testing_to_vlq as sourcemap_internal_source_map_testing_ap_is_to_vlq;
 
+pub use bun_sys_jsc::error_jsc::TestingAPIs::isatty_stdio_handles as sys_sys_testing_ap_is_isatty_stdio_handles;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_sys_testing_ap_is_sigaction_layout;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_error_testing_ap_is_sys_error_name_from_libuv;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_nt_status_to_e as sys_sys_testing_ap_is_translate_nt_status_to_e;

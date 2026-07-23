@@ -1420,8 +1420,6 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux && c.release && !!c.pgoUse && !c.asan && !c.valgrind,
     desc: "Keep .text.hot/.text.unlikely prefixes from the PGO profile (cluster hot startup .text)",
   },
-<<<<<<< HEAD
-=======
   {
     // Same goal as keep-text-section-prefix, without needing a PGO profile:
     // <buildDir>/linker.order lists the functions bun actually executes while
@@ -1443,7 +1441,6 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux && usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
->>>>>>> ghproxy/main
 
   // ─── Symbols / exports ───
   // These reference files on disk — linkDepends() lists the same paths
@@ -1531,11 +1528,6 @@ export const linkerFlags: Flag[] = [
   },
 ];
 
-<<<<<<< HEAD
-/** Whether the GNU linker order file feature is active (Linux glibc release, no ASAN). */
-export function usesOrderFile(cfg: Pick<Config, "linux" | "abi" | "release" | "asan" | "valgrind">): boolean {
-  return cfg.linux && cfg.abi === "gnu" && cfg.release && !cfg.asan && !cfg.valgrind;
-=======
 /**
  * Whether this target links with a symbol ordering file (lld
  * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
@@ -1543,16 +1535,8 @@ export function usesOrderFile(cfg: Pick<Config, "linux" | "abi" | "release" | "a
  * builds, not under a sanitizer — the tracer swaps `.text` out for a private
  * copy, and nobody measures startup RSS on an ASAN build anyway.
  *
- * This says where the order file is CONSUMED, not where it is produced. A
- * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
- * inherits an earlier build's file instead and still links ordered.
- *
- * linux gnu only: musl links statically, so LD_PRELOAD cannot load the tracer,
- * and no musl test host exists to trace on either. android has no order-file
- * linker support. Neither can produce or consume one.
- *
- * darwin arm64 only: the BRK-based tracer is arm64-only, so x64 has nothing to
- * inherit and linking with an always-empty order file just adds noise.
+ * linux gnu only: musl links statically, so LD_PRELOAD cannot load the tracer.
+ * darwin arm64 only: the BRK-based tracer is arm64-only.
  */
 export function usesOrderFile(
   cfg: Pick<Config, "linux" | "darwin" | "abi" | "arm64" | "release" | "asan" | "valgrind">,
@@ -1561,7 +1545,6 @@ export function usesOrderFile(
   if (cfg.linux) return cfg.abi === "gnu";
   if (cfg.darwin) return cfg.arm64;
   return false;
->>>>>>> ghproxy/main
 }
 
 /** The order file lives in the build directory — it is generated, never committed. */
@@ -1577,11 +1560,6 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
 export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
-<<<<<<< HEAD
-  if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script
-  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-=======
   // The release symbol ordering file: listing it here is what makes
   // regenerating it relink, and only relink.
   if (cfg.darwin) {
@@ -1593,7 +1571,6 @@ export function linkDepends(cfg: Config): string[] {
   const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
   if (usesOrderFile(cfg)) linux.push(orderFilePath(cfg));
   return linux;
->>>>>>> ghproxy/main
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

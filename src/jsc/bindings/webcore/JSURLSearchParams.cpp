@@ -287,6 +287,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
     }
 
     auto name = Bun::WebStreams::constructorNameOf(lexicalGlobalObject, thisValue, "URLSearchParams"_s);
+    scope.assertNoException();
     if (output.isEmpty())
         return JSValue::encode(jsString(vm, makeString(name, " {}"_s)));
 

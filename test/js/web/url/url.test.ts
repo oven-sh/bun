@@ -78,21 +78,21 @@ describe("url", () => {
     expect(url.origin).toBe("file://");
   });
   it("prints", () => {
+    // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
+    // Bun.inspect matches node's util.inspect output.
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {
-  href: "https://example.com/",
-  origin: "https://example.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "example.com",
-  hostname: "example.com",
-  port: "",
-  pathname: "/",
-  hash: "",
-  search: "",
-  searchParams: ${Bun.inspect(new URLSearchParams())},
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://example.com/',
+  origin: 'https://example.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'example.com',
+  hostname: 'example.com',
+  port: '',
+  pathname: '/',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
 }`);
 
     expect(
@@ -100,20 +100,18 @@ describe("url", () => {
         new URL("https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"),
       ),
     ).toBe(`URL {
-  href: "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  origin: "https://github.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "github.com",
-  hostname: "github.com",
-  port: "",
-  pathname: "/oven-sh/bun/issues/135",
-  hash: "",
-  search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\",\n  },
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  origin: 'https://github.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'github.com',
+  hostname: 'github.com',
+  port: '',
+  pathname: '/oven-sh/bun/issues/135',
+  search: '?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  searchParams: URLSearchParams { 'hello i have spaces thank you good night' => '' },
+  hash: ''
 }`);
   });
   it("works", () => {

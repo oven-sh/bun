@@ -783,6 +783,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom, (JSGlobalObjec
     }
 
     auto name = Bun::WebStreams::constructorNameOf(lexicalGlobalObject, thisValue, "URL"_s);
+    scope.assertNoException();
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, name, data));
 }
 

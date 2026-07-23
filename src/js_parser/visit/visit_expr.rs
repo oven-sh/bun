@@ -920,6 +920,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.visit_expr_in_out(&mut e_.target, ExprIn::default());
 
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && matches!(e_.target.data, Data::ESpecial(E::Special::HotEnabled))
+        {
+            e_.optional_chain = None;
+        }
+
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
                 let name = p.load_name_from_ref(private.ref_);
@@ -1408,6 +1414,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+
+        // `import.meta.hot` is always defined when HMR is enabled, so drop
+        // the `?.` in `import.meta.hot?.X` and let `maybe_rewrite_property_access`
+        // lower it instead of leaving the throwing `indirectHot` proxy in place.
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && matches!(e_.target.data, Data::ESpecial(E::Special::HotEnabled))
+        {
+            e_.optional_chain = None;
+        }
 
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {

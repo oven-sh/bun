@@ -2365,6 +2365,14 @@ impl<'a> LinkerContext<'a> {
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
         let flags = self.graph.meta.items_flags()[source_index as usize];
+        let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
+        // The printer's require()/import() path gates on wrapper_ref.is_valid()
+        // and emits nothing when it is empty, so an empty wrapper_ref for a
+        // CJS-wrapped module silently produces invalid JavaScript with exit 0.
+        debug_assert!(
+            flags.wrap != WrapKind::Cjs || !wrapper_ref.is_empty(),
+            "js_parser must allocate wrapper_ref for every CJS-wrapped module"
+        );
         js_printer::RequireOrImportMeta {
             exports_ref: if flags.wrap == WrapKind::Esm
                 || (was_unwrapped_require
@@ -2376,7 +2384,7 @@ impl<'a> LinkerContext<'a> {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency,
-            wrapper_ref: self.graph.ast.items_wrapper_ref()[source_index as usize],
+            wrapper_ref,
 
             was_unwrapped_require: was_unwrapped_require
                 && self.graph.ast.items_flags()[source_index as usize]

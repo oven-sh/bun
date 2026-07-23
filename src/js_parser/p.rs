@@ -8294,15 +8294,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
+        let force_cjs_to_esm = self.unwrap_all_requires
+            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
+
         let wrapper_ref: Ref = 'brk: {
             if self.options.features.hot_module_reloading {
                 break 'brk self.hmr_api_ref;
             }
 
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
-            // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
+            // CommonJS files (including FORCE_CJS_TO_ESM files the linker may later CJS-wrap) are
+            // wrapped unconditionally in the linker and nothing is hoisted out of the __commonJS
+            // closure, so they always need the symbol. Otherwise, use needsWrapperRef() to
+            // optimize away unnecessary ESM wrappers.
             if self.options.bundle
-                && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
+                && (self.options.code_splitting
+                    || exports_kind == js_ast::ExportsKind::Cjs
+                    || force_cjs_to_esm
+                    || self.needs_wrapper_ref(parts.as_slice()))
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
@@ -8404,8 +8413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             require_ref,
 
-            force_cjs_to_esm: self.unwrap_all_requires
-                || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs,
+            force_cjs_to_esm,
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,

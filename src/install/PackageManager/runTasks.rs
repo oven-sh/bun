@@ -1451,6 +1451,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
+                manager.extracted_count += 1;
+                bun_core::analytics::Features::extracted_packages_inc();
+
                 if C::HAS_ON_EXTRACT {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies

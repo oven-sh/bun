@@ -17,6 +17,7 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
+use crate::cli::pm_fetch_command::PmFetchCommand;
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
 use crate::cli::pm_version_command::PmVersionCommand;
@@ -173,6 +174,7 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile\n\
   <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder\n\
   <b><green>bun pm<r> <blue>cache rm<r>             clear the cache\n\
+  <b><green>bun pm<r> <blue>fetch<r>                fetch all dependencies into the cache without installing\n\
   <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
@@ -705,6 +707,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
             PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
+            Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"fetch") {
+            PmFetchCommand::exec(ctx, pm, &cwd)?;
             Global::exit(0);
         }
 

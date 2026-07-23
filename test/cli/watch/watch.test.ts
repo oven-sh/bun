@@ -72,25 +72,34 @@ setInterval(() => {}, 1000);
     stdin: "ignore",
   });
   let starts = 0;
-  const reader = (async () => {
+  let touched = false;
+  const decoder = new TextDecoder();
+  await (async () => {
+    // Output written before this reader attaches waits in the kernel pipe
+    // buffer, so no start can be missed. Lines are reassembled across chunk
+    // boundaries before matching.
+    let buffered = "";
     for await (const chunk of watchee.stdout) {
-      const str = new TextDecoder().decode(chunk);
-      for (const line of str.split("\n")) {
+      buffered += decoder.decode(chunk);
+      let newline;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
         if (line.includes("started") && ++starts === 2) return;
-      }
-      if (starts === 1) {
-        // First boot seen: touch the file to trigger the kill-signal reload.
-        await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
+        if (starts === 1 && !touched) {
+          touched = true;
+          // First boot seen: touch the file to trigger the kill-signal reload.
+          await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
+        }
       }
     }
+    // The child exiting before the reload start is a failure of the watch
+    // path itself; without this the absent-file expects below pass vacuously.
+    throw new Error(`watchee stdout ended after ${starts} start(s); expected 2`);
   })();
-  // Trigger in case the first "started" arrived before the reader attached.
-  await Bun.sleep(500);
-  if (starts === 0) await Bun.write(path, (await Bun.file(path).text()) + "\n// warm");
-  await reader;
   expect(await Bun.file(join(cwd, "should-not-write.txt")).exists()).toBe(false);
   expect(await Bun.file(join(cwd, "second-listener-ran.txt")).exists()).toBe(false);
-});
+}, 10000);
 
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An

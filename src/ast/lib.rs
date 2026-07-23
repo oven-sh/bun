@@ -131,9 +131,6 @@ impl ImportKind {
             || self == Self::Url
             || self == Self::Composes
     }
-
-    // `to_api()` lives in `bun_ast::ImportKindExt` — depends on
-    // `schema::api::ImportKind` which sits in a higher-tier crate.
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2987,7 +2984,7 @@ pub use ast_result::{
     TopLevelSymbolToParts, TsEnumsMap,
 };
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
-pub use loader::{Loader, LoaderHashTable, LoaderOptional, SideEffects};
+pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
 pub mod transpiler_cache;
 // Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that

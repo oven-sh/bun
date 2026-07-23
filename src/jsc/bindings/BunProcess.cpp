@@ -1646,8 +1646,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
     _exit(134);
-#endif
+#else
+    // process.abort() is user-requested; bypass the crash handler so it does
+    // not print "Bun has crashed" or upload a report.
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGABRT, &sa, nullptr);
     abort();
+#endif
 }
 
 #if !OS(WINDOWS)

@@ -5,7 +5,7 @@
 //
 // POSIX only: Windows already routes JS->OS through SetEnvironmentVariableW
 // and has no libc `environ` contract to test against via bun:ffi.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, libcPathForDlopen } from "harness";
 
 describe.skipIf(!isPosix)("process.env <-> libc environ on the main thread", () => {

@@ -2230,7 +2230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    size_t columnCount = castedThis->columnNames->size();
+    int columnCount = sqlite3_column_count(stmt);
     JSValue result = jsUndefined();
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
@@ -2384,7 +2384,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         }
     }
 
-    size_t columnCount = castedThis->columnNames->size();
+    size_t columnCount = sqlite3_column_count(stmt);
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
@@ -2393,15 +2393,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
                 status = sqlite3_step(stmt);
             }
 
-            result = jsNumber(sqlite3_column_count(stmt));
+            result = jsNumber(0);
 
         } else {
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0);
             RETURN_IF_EXCEPTION(scope, {});
             {
-                size_t columnCount = sqlite3_column_count(stmt);
-
                 do {
                     JSC::JSArray* row = constructResultRow(vm, lexicalGlobalObject, castedThis, columnCount);
                     if (!row || scope.exception()) [[unlikely]] {
@@ -2473,7 +2471,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
         }
     }
 
-    size_t columnCount = castedThis->columnNames->size();
+    size_t columnCount = sqlite3_column_count(stmt);
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
@@ -2482,15 +2480,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
                 status = sqlite3_step(stmt);
             }
 
-            result = jsNumber(sqlite3_column_count(stmt));
+            result = jsNumber(0);
 
         } else {
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, {});
             {
-                size_t columnCount = sqlite3_column_count(stmt);
-
                 do {
                     JSC::JSArray* row = constructResultRowRaw(vm, lexicalGlobalObject, castedThis, columnCount);
                     if (!row || scope.exception()) [[unlikely]] {

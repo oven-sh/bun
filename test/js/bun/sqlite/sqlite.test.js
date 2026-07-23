@@ -1407,6 +1407,44 @@ describe("empty and duplicate column names", () => {
     expect(stmt.columnNames).toEqual(["first_col", "second_col", ""]);
   });
 
+  it('a trailing AS "" SELECT is still row-returning (all/values/raw return arrays, not a number)', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    db.run("insert into t values ('r1'),('r2')");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+
+    // Previously: .all() returned the stale sqlite3_changes() count (a number),
+    // .values()/.raw() returned the column count, and .get() returned {}.
+    expect(stmt.all()).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.values()).toEqual([
+      ["r1", 1],
+      ["r2", 1],
+    ]);
+    expect(Array.isArray(stmt.raw())).toBe(true);
+    expect(stmt.get()).toEqual({ name: "r1", "": 1 });
+    expect([...stmt.iterate()]).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.columnNames).toEqual(["name", ""]);
+
+    using lone = db.prepare('select 9 as ""');
+    expect(lone.all()).toEqual([{ "": 9 }]);
+    expect(lone.values()).toEqual([[9]]);
+  });
+
+  it('a trailing AS "" SELECT with zero rows returns [], not null', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+    expect(stmt.all()).toEqual([]);
+    expect(stmt.values()).toEqual([]);
+    expect(stmt.raw()).toEqual([]);
+  });
+
   it("multiple empty aliases: last value wins on the row object, columnNames keeps all", () => {
     using db = new Database(":memory:");
     using stmt = db.prepare('select 1 as "", 2 as x, 3 as ""');

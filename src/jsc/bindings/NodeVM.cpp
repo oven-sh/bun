@@ -939,6 +939,8 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
 
+    Bun::installFinalizationRegistryPrototypeHooks(this);
+
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
     // for this global no longer land on the VM's default queue (which the

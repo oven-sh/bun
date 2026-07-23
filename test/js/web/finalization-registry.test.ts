@@ -42,6 +42,10 @@ describe("FinalizationRegistry keeps itself alive while it has registrations", (
           wrs.push(new WeakRef(o));
           fr.register(o, i);
         }
+        // Exact repro shape from the report: the unpatched build's opportunistic
+        // GC fires during this idle window and sweeps fr. The suspend point is
+        // what matters (test 2 shows await 0 is enough); keep the shape so this
+        // remains the fail-before case for the originally-reported sequence.
         await sleep(300);
         for (let r = 0; r < 30; r++) {
           Bun.gc(true);
@@ -167,6 +171,65 @@ describe("FinalizationRegistry keeps itself alive while it has registrations", (
     const { alive, total } = json as { alive: number; total: number };
     expect(total).toBe(200);
     expect(alive).toBeLessThanOrEqual(2);
+    expect(exitCode).toBe(0);
+  });
+
+  // Documents the over-correction relative to V8: a registry whose only
+  // remaining registration watches a target that never dies (here globalThis)
+  // is retained until that target does. V8 collects such a registry. The
+  // precise fix would require either walking unmarked JSFinalizationRegistry
+  // cells during marking or saving every async local at generatorification;
+  // see the comment on rootFinalizationRegistry in JSCTaskScheduler.h.
+  test.concurrent("a registry with an immortal target is retained (documented over-correction)", async () => {
+    const { stderr, exitCode, json } = await run(/* js */ `
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const wrs = [];
+      (function () {
+        for (let n = 0; n < 50; n++) {
+          const fr = new FinalizationRegistry(() => {});
+          wrs.push(new WeakRef(fr));
+          fr.register(globalThis, n);
+        }
+      })();
+      for (let r = 0; r < 10; r++) {
+        Bun.gc(true);
+        await sleep(5);
+      }
+      const alive = wrs.filter(w => w.deref() !== undefined).length;
+      console.log(JSON.stringify({ alive, total: wrs.length }));
+    `);
+    expect(stderr).toBe("");
+    const { alive, total } = json as { alive: number; total: number };
+    expect(total).toBe(50);
+    // With the Strong root, every registry is retained. If this ever drops to
+    // ~0 a future change has narrowed the retention and this test should be
+    // updated to assert that instead.
+    expect(alive).toBe(50);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("node:vm contexts get the rooting hooks", async () => {
+    const { stderr, exitCode, json } = await run(/* js */ `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({ Bun, setTimeout, console });
+      vm.runInContext(\`
+        (async () => {
+          const sleep = ms => new Promise(r => setTimeout(r, ms));
+          let cleaned = 0;
+          const fr = new FinalizationRegistry(() => { cleaned++; });
+          for (let i = 0; i < 200; i++) fr.register({ i }, i);
+          await 0;
+          for (let r = 0; r < 30; r++) {
+            Bun.gc(true);
+            await sleep(10);
+            if (cleaned >= 200) break;
+          }
+          console.log(JSON.stringify({ cleaned }));
+        })();
+      \`, ctx);
+    `);
+    expect(stderr).toBe("");
+    expect((json as { cleaned: number }).cleaned).toBeGreaterThanOrEqual(199);
     expect(exitCode).toBe(0);
   });
 

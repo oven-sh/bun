@@ -25,13 +25,23 @@ public:
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket& ticket);
 
-    // JavaScriptCore's async bytecode generator only preserves locals that are
-    // read after an `await`, so a `const fr = new FinalizationRegistry(...)`
+    // JavaScriptCore's generatorification only preserves locals that are read
+    // after an `await`/`yield`, so a `const fr = new FinalizationRegistry(...)`
     // whose last use is `fr.register(...)` is collected at the next suspend
     // point along with its pending registrations. V8 preserves every async
     // local, so Node.js users never observe this. Root a registry on its first
     // successful register() and release it once both its live and dead lists
     // are empty so cleanup callbacks for already-registered targets still run.
+    //
+    // Retention is bound to the shortest-lived target, which over-corrects past
+    // V8 for the case of a registry that is dropped while still holding a
+    // registration for a target that never dies (e.g. globalThis): such a
+    // registry, its callback closure and every held value are kept until VM
+    // shutdown. V8 would collect it. Matching V8 exactly requires walking
+    // unmarked JSFinalizationRegistry cells during marking (private access to
+    // the live list to tell "a target is dying") or changing JSC's
+    // BytecodeGenerator to save every async local; the silent-guard failure
+    // this fixes is judged worse than the retained registry.
     void rootFinalizationRegistry(JSC::VM&, JSC::JSFinalizationRegistry*);
     void unrootFinalizationRegistryIfDrained(JSC::JSFinalizationRegistry*);
 

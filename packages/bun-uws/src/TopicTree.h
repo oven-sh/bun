@@ -160,7 +160,6 @@ public:
 
     /* Subscribe fails if we already are subscribed */
     Topic *subscribe(Subscriber *s, std::string_view topic) {
-        /* Notify user that they are doing something wrong here */
         checkIteratingSubscriber(s);
 
         /* Lookup or create new topic */
@@ -184,7 +183,6 @@ public:
 
     /* Returns ok, last, newCount */
     std::tuple<bool, bool, int> unsubscribe(Subscriber *s, std::string_view topic) {
-        /* Notify user that they are doing something wrong here */
         checkIteratingSubscriber(s);
 
         /* Lookup topic */

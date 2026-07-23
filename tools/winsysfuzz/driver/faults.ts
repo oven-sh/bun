@@ -125,8 +125,6 @@ export const FAULTS: Record<string, Fault[]> = {
   NtQuerySystemInformation: [F("C0000004"), F("C0000001")],
   NtQuerySystemInformationEx: [F("C0000004")],
   NtQueryObject: [F("C0000004"), F("80000005")],
-  NtQueryInformationProcess: [F("C0000004"), F("C0000022")],
-  NtQueryInformationThread: [F("C0000004")],
   // Tokens: a restricted/filtered token is a real deployment (services,
   // AppContainer, low-integrity) - ACCESS_DENIED on token opens/queries.
   NtOpenProcessToken: [F("C0000022")],
@@ -202,6 +200,10 @@ export const NEVER_FAULT = new Set([
   // thread resume/suspend: failing ResumeThread on a valid handle is the
   // same fabrication - the child's main thread never wakes, a fake stall
   "NtResumeThread", "NtSuspendThread", "NtAlertResumeThread", "NtSuspendProcess", "NtResumeProcess",
+  // process/thread info queries on handles the caller OWNS fail only on a
+  // bad handle - faulting GetExitCodeProcess (the k:88853 reap site) means
+  // a child exit is never registered: a fabricated shell/spawn stall
+  "NtQueryInformationProcess", "NtQueryInformationThread",
   "NtWaitForWorkViaWorkerFactory", "NtReleaseWorkerFactoryWorker", "NtSignalAndWaitForSingleObject",
   // control-flow / loader / callbacks
   "NtContinue", "NtCallbackReturn", "NtRaiseException", "NtRaiseHardError",

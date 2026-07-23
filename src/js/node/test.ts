@@ -924,6 +924,23 @@ function reportCancelledNode(node: TestNode) {
   noteRunChildDone(node.parent, true);
 }
 
+// node tags failures thrown by before/after hooks with failureType
+// 'hookFailed' instead of testCodeFailure.
+function wrapHookError(error: unknown): Error {
+  const wrapped = wrapTestError(error) as { failureType?: string };
+  wrapped.failureType = "hookFailed";
+  return wrapped as Error;
+}
+
+// True when any enclosing suite's before() failed in run-child mode: node
+// cancels the declared children instead of running them.
+function hasHookFailedAncestorSuite(node: TestNode): boolean {
+  for (let cur = node.parent; cur !== undefined; cur = cur.parent) {
+    if (cur.hookSetupFailed) return true;
+  }
+  return false;
+}
+
 // node's todo directive is inherited: a test inside a todo suite reports (and
 // counts) as todo, and its failure cannot fail the run.
 function hasTodoAncestor(node: TestNode): boolean {
@@ -1964,6 +1981,7 @@ class TestNode {
   queueReported = false;
   startReported = false;
   startedAtMs = 0;
+  hookSetupFailed = false;
   // node numbers each reported child 1..n within its parent.
   reportedCount = 0;
   // Stable per-instance id carried on every per-test event.
@@ -2797,6 +2815,12 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
+  if (runEventsEnabled() && hasHookFailedAncestorSuite(node)) {
+    // A failed before() cancels the suite's declared children (node's
+    // cancelledByParent), mirroring runStandaloneEntry's setupFailed path.
+    reportCancelledNode(node);
+    return undefined;
+  }
   node.started = true;
   const started = runEventsEnabled() ? performance.now() : 0;
   // Stamp enclosing suites' start the first time a descendant begins so
@@ -3531,7 +3555,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
         // A todo suite's hook failure is advisory, like in the run() child.
         if (!isTodoSuite) {
           node.childrenFailed++;
-          node.error = err;
+          node.error = wrapHookError(err);
           setupFailed = true;
           break;
         }
@@ -3553,7 +3577,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error = err;
+        node.error = wrapHookError(err);
       }
     }
   }
@@ -3966,8 +3990,22 @@ function addSuite(
           function buildWrappedSuiteFn() {
             return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
           }
+          function settleSuiteAfterHooks() {
+            // Settle from a bun:test afterAll registered after the body ran
+            // (FIFO puts it behind the suite's own after() hooks) so the
+            // suite's verdict accounts for hook failures, like the
+            // standalone twin's before -> children -> after -> settle order.
+            if (!runEventsEnabled()) {
+              noteSuiteCollectionSettled(suiteNode);
+              return;
+            }
+            const { afterAll } = bunTest();
+            afterAll(function settleSuite() {
+              noteSuiteCollectionSettled(suiteNode);
+            });
+          }
           function onWrappedSuiteBuilt() {
-            noteSuiteCollectionSettled(suiteNode);
+            settleSuiteAfterHooks();
           }
           function onWrappedSuiteFailed(err: unknown) {
             suiteNode.childrenFailed++;
@@ -3992,7 +4030,7 @@ function addSuite(
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
             return (built as Promise<unknown>).then(onWrappedSuiteBuilt, onWrappedSuiteFailed);
           }
-          noteSuiteCollectionSettled(suiteNode);
+          settleSuiteAfterHooks();
           return built;
         };
 
@@ -4128,6 +4166,16 @@ function before(arg0: unknown, arg1: unknown) {
         done();
         return;
       }
+      if (runChildReporterEnabled && owner.parent !== undefined) {
+        // node attributes the failure to the suite (hookFailed) and cancels
+        // its children; swallow it from bun:test so the verdict comes from
+        // the suite's own test:fail, like the standalone twin.
+        owner.childrenFailed++;
+        owner.error ??= wrapHookError(err);
+        owner.hookSetupFailed = true;
+        done();
+        return;
+      }
       done(err ?? new Error("before hook failed"));
     }
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(onHookDone, onHookFailed);
@@ -4156,6 +4204,14 @@ function after(arg0: unknown, arg1: unknown) {
       // A todo suite's results are advisory in node: its failing after hook
       // must not fail the run (mirrors before()'s guard above).
       if (runChildReporterEnabled && (owner.todoFlag || hasTodoAncestor(owner))) {
+        done();
+        return;
+      }
+      if (runChildReporterEnabled && owner.parent !== undefined) {
+        // Attribute to the suite; its deferred settle emits the hookFailed
+        // verdict after this hook returns.
+        owner.childrenFailed++;
+        owner.error ??= wrapHookError(err);
         done();
         return;
       }

@@ -592,6 +592,60 @@ test("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned g
   expect(counts.passed).toBeGreaterThanOrEqual(1);
 }, 30_000);
 
+test.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)("run() with %s isolation reports suite hook failures like node", async (_label, isolationArg) => {
+  // node: a failing after() fails the suite with hookFailed; a failing
+  // before() additionally cancels the declared children (cancelledByParent).
+  using dir = tempDir("node-test-hook-failures", {
+    "afterfail.test.mjs": `
+      import { describe, it, after } from 'node:test';
+      describe('s', () => {
+        it('a', () => {});
+        after(() => { throw new Error('after boom'); });
+      });
+    `,
+    "beforefail.test.mjs": `
+      import { describe, it, before } from 'node:test';
+      describe('s', () => {
+        it('a', () => { throw new Error('a must not run'); });
+        before(() => { throw new Error('before boom'); });
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL(process.argv[2], import.meta.url))]${isolationArg} });
+      const ev = [];
+      stream.on('test:pass', t => ev.push(['pass', t.name]));
+      stream.on('test:fail', t => ev.push(['fail', t.name, t.details?.error?.failureType ?? '']));
+      for await (const _ of stream);
+      console.log(JSON.stringify(ev));
+    `,
+  });
+  async function runDriver(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs"), fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return JSON.parse(stdout.trim() || "null");
+  }
+  // Same event streams real node v26.3.0 emits for these fixtures.
+  expect(await runDriver("./afterfail.test.mjs")).toEqual([
+    ["pass", "a"],
+    ["fail", "s", "hookFailed"],
+  ]);
+  expect(await runDriver("./beforefail.test.mjs")).toEqual([
+    ["fail", "a", "cancelledByParent"],
+    ["fail", "s", "hookFailed"],
+  ]);
+}, 30_000);
+
 test("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
   using dir = tempDir("node-test-suite-duration", {
     "f.test.mjs": `

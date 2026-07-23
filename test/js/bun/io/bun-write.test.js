@@ -526,7 +526,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     // when uv_fs_copyfile (or opening the destination on the read/write-loop
     // fallback) fails with ENOENT. The task used to be freed before the work
     // pool ran it, crashing the process instead of rejecting.
-    const run = async (dir, body) => {
+    const run = async body => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -550,7 +550,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       using dir = tempDir("bun-write-missing-src", {});
       const p = join(String(dir), "missing");
       const { stdout, stderr, exitCode } = await run(
-        dir,
         `const f = Bun.file(${JSON.stringify(p)}); await Bun.write(f, f);`,
       );
       // The read/write-loop fallback opens the destination with O_CREAT first,
@@ -564,7 +563,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     it("rejects with ENOENT for a missing source and a destination whose parent is missing", async () => {
       using dir = tempDir("bun-write-missing-src", {});
       const { stdout, stderr, exitCode } = await run(
-        dir,
         `await Bun.write(
            Bun.file(${JSON.stringify(join(String(dir), "sub", "dst"))}),
            Bun.file(${JSON.stringify(join(String(dir), "src"))}),

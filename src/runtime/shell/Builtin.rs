@@ -8,8 +8,8 @@ use std::sync::Arc;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_dup,
-    shell_openat,
+    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable, is_pollable_from_mode,
+    shell_dup, shell_openat,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -844,7 +844,11 @@ impl Builtin {
                             let w = IOWriter::init(
                                 duped,
                                 io_writer::Flags {
-                                    pollable: cfg!(windows),
+                                    pollable: if cfg!(windows) {
+                                        true
+                                    } else {
+                                        is_pollable(duped)
+                                    },
                                     ..Default::default()
                                 },
                                 evtloop,

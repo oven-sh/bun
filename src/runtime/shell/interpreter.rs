@@ -2066,7 +2066,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 /// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
 /// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
 /// (non-pollable → synchronous write path), matching Windows behavior.
-fn is_pollable(fd: Fd) -> bool {
+pub fn is_pollable(fd: Fd) -> bool {
     #[cfg(windows)]
     {
         let _ = fd;

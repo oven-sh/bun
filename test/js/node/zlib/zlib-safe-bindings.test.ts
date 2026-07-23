@@ -18,7 +18,12 @@ describe("zlib safe-binding behavior preservation", () => {
     expect(Buffer.from(Bun.gunzipSync(gz))).toEqual(data);
     // ISIZE trailer = uncompressed length mod 2^32 (RFC 1952 §2.3.1)
     expect(gz.slice(-4)).toEqual(
-      new Uint8Array([data.length & 0xff, (data.length >> 8) & 0xff, (data.length >> 16) & 0xff, (data.length >> 24) & 0xff]),
+      new Uint8Array([
+        data.length & 0xff,
+        (data.length >> 8) & 0xff,
+        (data.length >> 16) & 0xff,
+        (data.length >> 24) & 0xff,
+      ]),
     );
   });
 

@@ -145,8 +145,12 @@ impl<'a> ZlibReaderArrayList<'a> {
         // output window is re-pointed on every `list_ptr` reallocation in
         // `read_all`, so `next_out` never dangles.
         unsafe {
-            zlib_reader.zlib.set_input(input.as_ptr(), input.len() as uInt);
-            zlib_reader.zlib.set_output(zlib_reader.list_ptr.as_mut_ptr(), list_len as uInt);
+            zlib_reader
+                .zlib
+                .set_input(input.as_ptr(), input.len() as uInt);
+            zlib_reader
+                .zlib
+                .set_output(zlib_reader.list_ptr.as_mut_ptr(), list_len as uInt);
         }
 
         match zlib_reader.zlib.inflate_init2(options.window_bits) {
@@ -364,8 +368,12 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 // output window is re-pointed on every reallocation in
                 // `read_all`.
                 unsafe {
-                    zlib_reader.zlib.set_input(input.as_ptr(), input.len() as uInt);
-                    zlib_reader.zlib.set_output(zlib_reader.list_ptr.as_mut_ptr(), cap);
+                    zlib_reader
+                        .zlib
+                        .set_input(input.as_ptr(), input.len() as uInt);
+                    zlib_reader
+                        .zlib
+                        .set_output(zlib_reader.list_ptr.as_mut_ptr(), cap);
                 }
                 Ok(zlib_reader)
             }
@@ -466,8 +474,13 @@ impl DeflateEncoder {
         mem_level: c_int,
         strategy: c_int,
     ) -> Result<Self, ZlibError> {
-        let mut this = Self { strm: Box::new(new_zstream()) };
-        match this.strm.deflate_init2(level, window_bits, mem_level, strategy) {
+        let mut this = Self {
+            strm: Box::new(new_zstream()),
+        };
+        match this
+            .strm
+            .deflate_init2(level, window_bits, mem_level, strategy)
+        {
             ReturnCode::Ok => Ok(this),
             ReturnCode::MemError => Err(ZlibError::OutOfMemory),
             _ => Err(ZlibError::InvalidArgument),
@@ -692,7 +705,11 @@ fn step_into_vec(
         strm.set_input(input.as_ptr(), in_len);
         strm.set_output(spare.as_mut_ptr().cast::<u8>(), out_len);
     }
-    let rc = if deflate { strm.deflate(flush) } else { strm.inflate(flush) };
+    let rc = if deflate {
+        strm.deflate(flush)
+    } else {
+        strm.inflate(flush)
+    };
 
     let produced = out_len as usize - strm.avail_out() as usize;
     // SAFETY: zlib has initialized `produced` bytes at the start of spare.

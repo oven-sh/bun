@@ -327,8 +327,9 @@ impl Context {
         match self.mode {
             NONE => unreachable!(),
             DEFLATE | GZIP | DEFLATERAW => {
-                self.err =
-                    self.state.deflate_init2(level, window_bits_actual, mem_level, strategy);
+                self.err = self
+                    .state
+                    .deflate_init2(level, window_bits_actual, mem_level, strategy);
             }
             INFLATE | GUNZIP | UNZIP | INFLATERAW => {
                 self.err = self.state.inflate_init2(window_bits_actual);

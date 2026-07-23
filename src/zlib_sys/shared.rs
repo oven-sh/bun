@@ -202,7 +202,11 @@ impl zStream_struct {
     /// them null so zlib installs its own defaults at `*Init*` time.
     #[inline]
     pub fn with_allocator(alloc: alloc_func, free: free_func) -> Self {
-        Self { alloc_func: alloc, free_func: free, ..Default::default() }
+        Self {
+            alloc_func: alloc,
+            free_func: free,
+            ..Default::default()
+        }
     }
 
     #[inline(always)]

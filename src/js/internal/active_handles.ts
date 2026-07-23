@@ -1,4 +1,5 @@
-// Live node:net handle registry plus assembly for process._getActiveHandles(),
+// Node v26.3.0 parity (lib/internal/process/per_thread.js, env.cc handle wrap
+// queue): live node:net handle registry plus assembly for process._getActiveHandles(),
 // process._getActiveRequests() and process.getActiveResourcesInfo(). Intrusive
 // doubly-linked list keyed by symbols: register/unregister add no GC cells.
 

@@ -151,6 +151,11 @@ if (!coords.length) {
   process.exit(1);
 }
 const slowMs = Math.max(8000, base.ms * 2);
+// A run is judged against a timeout scaled to THIS box's measured
+// baseline: on a saturated machine the same test simply runs slower,
+// and a blind constant turns "slow" into "hang". 5x the clean baseline
+// (floored at --timeout) is the effective ceiling for every replay.
+const runTimeoutMs = Math.max(timeoutMs, base.ms * 5);
 const timedOutTests = (s: string) => (s.match(/timed out after \d+ms|\btimed out\b.*\bafter\b/gi) ?? []).length;
 const baseTimeouts = timedOutTests(base.stdout + base.stderr);
 
@@ -206,7 +211,7 @@ const isFinding = (o: string) => o === "CRASH" || o === "HANG" || o === "stalled
 // stack. Without this a chaos HANG reaches the queue unreadable.
 let capturedStacks: string[] = [];
 async function reproduces(schedule: string[], dir: string, capture = false): Promise<boolean> {
-  const rr = await replayCoordinate({ bun, args: progArgs, schedule: schedule.join("\n"), dir, timeoutMs, capture });
+  const rr = await replayCoordinate({ bun, args: progArgs, schedule: schedule.join("\n"), dir, timeoutMs: runTimeoutMs, capture });
   if (capture) {
     const raw = rr.hangStacks ?? rr.crashDump ?? "";
     capturedStacks = raw ? digestStacks(raw) : [];
@@ -268,7 +273,7 @@ async function worker(w: number) {
     const n = ++iter;
     const schedule = drawSchedule();
     const dir = join(runsDir, `it${String(n).padStart(6, "0")}`);
-    const rr = await replayCoordinate({ bun, args: progArgs, schedule: schedule.join("\n"), dir, timeoutMs, capture: false });
+    const rr = await replayCoordinate({ bun, args: progArgs, schedule: schedule.join("\n"), dir, timeoutMs: runTimeoutMs, capture: false });
     const outcome = classify(rr);
     const mark = isFinding(outcome) ? "!!" : "  ";
     // The drawn coordinates ride along on every line: draws must be
@@ -293,6 +298,26 @@ async function worker(w: number) {
         rmSync(dir, { recursive: true, force: true });
       } catch {}
       continue;
+    }
+    // Load control for a HANG/stall: the same program UNFAULTED must exit
+    // cleanly within the same ceiling. If the unfaulted control also fails
+    // to finish, this machine is saturated (or the program is broken) and
+    // the "hang" is not fault-induced - discard, never verify against load.
+    if (outcome === "HANG" || outcome === "stalled") {
+      const ctrl = await runOnce({ bun, args: progArgs, workDir: join(dir, "load-control"), timeoutMs: runTimeoutMs }).catch(
+        () => null,
+      );
+      const ctrlOk = ctrl && ctrl.outcome === "exit";
+      try {
+        rmSync(join(dir, "load-control"), { recursive: true, force: true });
+      } catch {}
+      if (!ctrlOk) {
+        console.log(`   [${n}] unfaulted control also failed to exit - load, not a hang; discarding`);
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {}
+        continue;
+      }
     }
     // Verify: replay the same schedule; two of three (including the
     // original) reproducing = confirmed. Then minimize.
@@ -320,7 +345,7 @@ async function worker(w: number) {
         args: progArgs,
         schedule: schedule.join("\n"),
         dir: join(dir, "stall-capture"),
-        timeoutMs: timeoutMs * 3,
+        timeoutMs: runTimeoutMs * 3,
         capture: true,
       });
       const wedged = long.outcome === "HANG";

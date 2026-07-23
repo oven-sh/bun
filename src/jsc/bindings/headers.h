@@ -242,6 +242,7 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__hasOwnProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString arg2);
 CPP_DECL bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0);
+CPP_DECL bool JSC__JSValue__isJestError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0);

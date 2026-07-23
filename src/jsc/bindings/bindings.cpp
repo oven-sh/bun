@@ -39,6 +39,7 @@
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/ErrorPrototype.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/FunctionConstructor.h"
@@ -3592,6 +3593,66 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
     }
 
     return type == JSC::ErrorInstanceType;
+}
+
+// Jest's `isError` from @jest/expect-utils: Object.prototype.toString.call(v) is
+// "[object Error|Exception|DOMException]", or `v instanceof Error`. Used to decide
+// whether a `.rejects` / `.resolves` settled value counts as "thrown".
+bool JSC__JSValue__isJestError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isCell())
+        return false;
+
+    JSC::JSCell* cell = value.asCell();
+    JSC::JSType type = cell->type();
+
+    // [[ErrorData]] internal slot -> builtin tag "Error"
+    if (type == JSC::ErrorInstanceType)
+        return true;
+
+    if (type == JSC::CellType && cell->inherits<JSC::Exception>())
+        return true;
+
+    // ResolveMessage / BuildMessage are error-like but do not extend Error
+    // (https://github.com/oven-sh/bun/issues/11780); util.types.isNativeError
+    // grants them the same exception so `import()` rejections count as thrown.
+    if (cell->inherits<WebCore::JSResolveMessage>() || cell->inherits<WebCore::JSBuildMessage>())
+        return true;
+
+    if (!value.isObject())
+        return false;
+
+    // Called from Rust through from_js_host_call_generic, which turns a pending
+    // exception into an Err; a ThrowScope's destructor would simulate a throw
+    // that no C++ caller is around to check. Same idiom as isInstanceOf below.
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSObject* object = value.getObject();
+
+    // A string Symbol.toStringTag overrides the builtin tag.
+    JSC::JSValue tagValue = object->get(globalObject, vm.propertyNames->toStringTagSymbol);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (tagValue.isString()) {
+        String tag = asString(tagValue)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (tag == "Error"_s || tag == "Exception"_s || tag == "DOMException"_s)
+            return true;
+    }
+
+    // `value instanceof Error`: does the prototype chain reach Error.prototype?
+    // A Proxy getPrototypeOf trap returning a cycle would otherwise spin forever.
+    JSC::JSValue proto = object->getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned depth = 0; proto.isObject() && depth < 64; depth++) {
+        JSC::JSCell* protoCell = proto.asCell();
+        if (protoCell->inherits<JSC::ErrorPrototype>() || protoCell->type() == JSC::ErrorInstanceType)
+            return true;
+        proto = proto.getObject()->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return false;
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::reject

@@ -129,6 +129,10 @@ describe("percent-encoded route keys", () => {
         "/caf%C3%A9/:id": req => new Response("cafe-id:" + req.params.id),
         "/%c3%a9tat": new Response("static"),
         "/plain": () => new Response("plain"),
+        "/bad%": () => new Response("bad-trailing"),
+        "/bad%A": () => new Response("bad-short"),
+        "/bad%G0": () => new Response("bad-nonhex"),
+        "/bad%G0%c3%a9": () => new Response("bad-nonhex-then-valid"),
       },
       fetch: req => new Response("fallback:" + new URL(req.url).pathname),
     });
@@ -150,16 +154,13 @@ describe("percent-encoded route keys", () => {
   });
 
   it.each([
-    // /café as raw UTF-8 bytes, the way curl and node:http send it
-    ["raw UTF-8 bytes", [0x2f, 0x63, 0x61, 0x66, 0xc3, 0xa9]],
-    ["lowercase-hex percent-encoding", Buffer.from("/caf%c3%a9")],
-    ["mixed-case percent-encoding", Buffer.from("/caf%c3%A9")],
-  ])("matches an uppercase-hex route key from %s on the wire", async (_label, pathBytes) => {
-    expect(await rawGet(pathBytes)).toStartWith("cafe-upper:");
-  });
-
-  it("req.url reports the encoded form for raw UTF-8 bytes even though routing matched", async () => {
-    expect(await rawGet([0x2f, 0x63, 0x61, 0x66, 0xc3, 0xa9])).toBe("cafe-upper:/caf%C3%A9");
+    // /café as raw UTF-8 bytes, the way curl and node:http send it. req.url percent-encodes
+    // raw bytes via WTF::URL but preserves the hex case of an existing %-encoding.
+    ["raw UTF-8 bytes", [0x2f, 0x63, 0x61, 0x66, 0xc3, 0xa9], "cafe-upper:/caf%C3%A9"],
+    ["lowercase-hex percent-encoding", Buffer.from("/caf%c3%a9"), "cafe-upper:/caf%c3%a9"],
+    ["mixed-case percent-encoding", Buffer.from("/caf%c3%A9"), "cafe-upper:/caf%c3%A9"],
+  ])("matches an uppercase-hex route key from %s on the wire", async (_label, pathBytes, expected) => {
+    expect(await rawGet(pathBytes)).toBe(expected);
   });
 
   it.each([
@@ -199,7 +200,19 @@ describe("percent-encoded route keys", () => {
   });
 
   it("does not treat a percent-encoded slash as a path separator", async () => {
-    expect(await rawGet(Buffer.from("/caf%C3%A9%2Fextra"))).toStartWith("fallback:");
+    expect(await rawGet(Buffer.from("/caf%C3%A9%2Fextra"))).toBe("fallback:/caf%C3%A9%2Fextra");
+  });
+
+  it.each([
+    ["a trailing %", "/bad%", "bad-trailing"],
+    ["a single hex digit", "/bad%A", "bad-short"],
+    ["a non-hex pair", "/bad%G0", "bad-nonhex"],
+  ])("matches a malformed %%-escape literally (%s)", async (_label, path, expected) => {
+    expect(await rawGet(Buffer.from(path))).toBe(expected);
+  });
+
+  it("still normalizes valid %-escapes that follow a malformed one", async () => {
+    expect(await rawGet(Buffer.from("/bad%G0%C3%A9"))).toBe("bad-nonhex-then-valid");
   });
 });
 

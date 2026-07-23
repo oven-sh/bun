@@ -1317,29 +1317,13 @@ class ChildProcess extends EventEmitter {
     return result;
   }
 
-  get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
-  }
-
-  get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
-  }
-
-  get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
-  }
-
-  get stdio() {
-    return (this.#stdioObject ??= this.#createStdioObject());
-  }
-
   get connected() {
-    const handle = this.#handle;
-    if (handle === null) return false;
-    return handle.connected ?? false;
+    if (!(#handle in this)) return undefined;
+    return this.#handle?.connected ?? false;
   }
 
   get [kHandle]() {
+    if (!(#handle in this)) return undefined;
     return this.#handle;
   }
 
@@ -1594,70 +1578,36 @@ class ChildProcess extends EventEmitter {
     if (this.#handle) this.#handle.unref();
   }
 
-  // Static initializer to make stdio properties enumerable on the prototype
-  // This fixes libraries like tinyspawn that use Object.assign(promise, childProcess)
+  // stdin/stdout/stderr/stdio are installed as enumerable prototype getters
+  // (so for..in / Object.assign see them) that replace themselves with an own
+  // data property on first read from a spawned instance. Reads from the
+  // prototype itself or from an instance that has not called spawn() must
+  // return undefined like Node, where these are per-instance own properties.
   static {
+    const lazyStdio = (fd, name) =>
+      function () {
+        if (!(#stdioOptions in this) || this.#stdioOptions === undefined) return undefined;
+        const value =
+          fd === 0
+            ? (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false))
+            : fd === 1
+              ? (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false))
+              : fd === 2
+                ? (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false))
+                : (this.#stdioObject ??= this.#createStdioObject());
+        Object.defineProperty(this, name, {
+          value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        return value;
+      };
     Object.defineProperties(this.prototype, {
-      stdin: {
-        get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stdin", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
-      stdout: {
-        get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stdout", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
-      stderr: {
-        get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stderr", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
-      stdio: {
-        get: function () {
-          const value = (this.#stdioObject ??= this.#createStdioObject());
-          // Define as own enumerable property on first access
-          Object.defineProperty(this, "stdio", {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true,
-          });
-          return value;
-        },
-        enumerable: true,
-        configurable: true,
-      },
+      stdin: { get: lazyStdio(0, "stdin"), enumerable: true, configurable: true },
+      stdout: { get: lazyStdio(1, "stdout"), enumerable: true, configurable: true },
+      stderr: { get: lazyStdio(2, "stderr"), enumerable: true, configurable: true },
+      stdio: { get: lazyStdio(-1, "stdio"), enumerable: true, configurable: true },
     });
   }
 }

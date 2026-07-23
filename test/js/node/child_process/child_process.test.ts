@@ -34,6 +34,31 @@ function isValidSemver(string: string): boolean {
   return valid;
 }
 
+describe("ChildProcess class shape", () => {
+  it("prototype reads do not throw (reflection over ChildProcess.prototype)", () => {
+    const P = ChildProcess.prototype;
+    expect(P.stdin).toBeUndefined();
+    expect(P.stdout).toBeUndefined();
+    expect(P.stderr).toBeUndefined();
+    expect(P.stdio).toBeUndefined();
+    expect(P.connected).toBeUndefined();
+    expect(() => Object.getOwnPropertyNames(P).filter(k => typeof P[k] === "function")).not.toThrow();
+  });
+
+  it("unspawned instance reads match Node (no throw)", () => {
+    const bare = new ChildProcess();
+    expect(bare.connected).toBe(false);
+    expect(bare.stdin).toBeUndefined();
+    expect(bare.stdout).toBeUndefined();
+    expect(bare.stderr).toBeUndefined();
+    expect(bare.stdio).toBeUndefined();
+    expect(bare.pid).toBeUndefined();
+    expect(bare.exitCode).toBeNull();
+    expect(bare.killed).toBe(false);
+    expect(bare.kill()).toBe(false);
+  });
+});
+
 describe("ChildProcess.spawn()", () => {
   it("should emit `spawn` on spawn", async () => {
     const proc = new ChildProcess();

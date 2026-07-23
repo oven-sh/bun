@@ -96,7 +96,6 @@ template<> struct JSDOMWrapperConverterTraits<SubtleCrypto> {
 String convertEnumerationToString(SubtleCrypto::KeyFormat);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, SubtleCrypto::KeyFormat);
 
-
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

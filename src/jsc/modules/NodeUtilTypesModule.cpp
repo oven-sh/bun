@@ -767,7 +767,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualType == JSC::JSSetType && expectedType == JSC::JSSetType) {
         if (uncheckedDowncast<JSC::JSSet>(expected.asCell())->size() > uncheckedDowncast<JSC::JSSet>(actual.asCell())->size())
             return false;
-        return setSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, setSubset);
     }
 
     // Dates and RegExps: internal value compared strictly, own enumerable

@@ -6,7 +6,11 @@
 // Bun, `fromWeb` is able to check if the stream is backed by a native handle,
 // to which it will take this path.
 const Readable = require("internal/streams/readable");
-const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
+const transferToNativeReadable = $newCppFunction(
+  "streams/BunStreamConsumers.cpp",
+  "jsFunctionTransferToNativeReadableStream",
+  1,
+);
 const { errorOrDestroy } = require("internal/streams/destroy");
 
 const kRefCount = Symbol("refCount");
@@ -68,11 +72,8 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
 
-  if (typeof options.highWaterMark === "number") {
-    stream[kHighWaterMark] = options.highWaterMark;
-  } else {
-    stream[kHighWaterMark] = 256 * 1024;
-  }
+  const highWaterMark = options.highWaterMark;
+  stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
 
   stream.ref = ref;
   stream.unref = unref;
@@ -151,13 +152,15 @@ function read(this: NativeReadable, maxToRead: number) {
   var result = ptr.pull(chunk, this[kCloseState]);
   $assert(result !== undefined);
   $debug(
-    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${result instanceof Promise ? "<pending>" : result}, closeState: ${this[kCloseState][0]}`,
+    `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
   );
   if ($isPromise(result)) {
     this[kPendingRead] = true;
     return result.then(
       result => {
-        $debug(`[${this.debugId}] pull, resolved: ${result}, closeState: ${this[kCloseState][0]}`);
+        $debug(
+          `[${this.debugId}] pull, resolved: ${$isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
+        );
         this[kPendingRead] = false;
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },

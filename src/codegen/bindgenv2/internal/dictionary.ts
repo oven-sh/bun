@@ -19,7 +19,7 @@ export interface DictionaryMember {
   type: Type;
   /** Optional default value to use when this member is missing or undefined. */
   default?: any;
-  /** The name used in generated Zig/C++ code. Defaults to the public JS name. */
+  /** The name used in generated code. Defaults to the public JS name. */
   internalName?: string;
   /** Alternative JavaScript names for this member. */
   altNames?: string[];
@@ -39,7 +39,7 @@ interface DictionaryOptions {
   name: string;
   /** Used in error messages. Defaults to `name`. */
   userFacingName?: string;
-  /** Whether to generate a Zig `fromJS` function. */
+  /** Whether to generate a `fromJS` conversion function. */
   generateConversionFunction?: boolean;
 }
 
@@ -254,92 +254,6 @@ export function dictionary(
           `;
           return joinIndented(8, [result]);
         })()}
-      `);
-    }
-
-    get hasZigSource() {
-      return true;
-    }
-    get zigSource() {
-      return reindent(`
-        pub const ${name} = struct {
-          const Self = @This();
-
-          ${joinIndented(
-            10,
-            fullMembers.map(memberInfo => {
-              return `${memberInfo.internalName}: ${memberInfo.type.zigType("pretty")},`;
-            }),
-          )}
-
-          pub fn deinit(self: *Self) void {
-            ${joinIndented(
-              12,
-              fullMembers.map(memberInfo => {
-                return `bun.memory.deinit(&self.${memberInfo.internalName});`;
-              }),
-            )}
-            self.* = undefined;
-          }${(() => {
-            if (!generateConversionFunction) {
-              return "";
-            }
-            const result = dedent(`
-              pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!Self {
-                var scope: jsc.ExceptionValidationScope = undefined;
-                scope.init(globalThis, @src());
-                defer scope.deinit();
-                var extern_result: Extern${name} = undefined;
-                const success = bindgenConvertJSTo${name}(globalThis, value, &extern_result);
-                scope.assertExceptionPresenceMatches(!success);
-                return if (success)
-                  Bindgen${name}.convertFromExtern(extern_result)
-                else
-                  error.JSError;
-              }
-            `);
-            return addIndent(10, "\n" + result);
-          })()}
-        };
-
-        pub const Bindgen${name} = struct {
-          const Self = @This();
-          pub const ZigType = ${name};
-          pub const ExternType = Extern${name};
-          pub fn convertFromExtern(extern_value: Self.ExternType) Self.ZigType {
-            return .{
-              ${joinIndented(
-                14,
-                fullMembers.map(memberInfo => {
-                  const internalName = memberInfo.internalName;
-                  const bindgenType = memberInfo.type.bindgenType;
-                  const rhs = `${bindgenType}.convertFromExtern(extern_value.${internalName})`;
-                  return `.${internalName} = ${rhs},`;
-                }),
-              )}
-            };
-          }
-        };
-
-        const Extern${name} = extern struct {
-          ${joinIndented(
-            10,
-            fullMembers.map(memberInfo => {
-              return `${memberInfo.internalName}: ${memberInfo.type.bindgenType}.ExternType,`;
-            }),
-          )}
-        };
-
-        extern fn bindgenConvertJSTo${name}(
-          globalObject: *jsc.JSGlobalObject,
-          value: jsc.JSValue,
-          result: *Extern${name},
-        ) bool;
-
-        const bindgen_generated = @import("bindgen_generated");
-        const bun = @import("bun");
-        const bindgen = bun.bun_js.bindgen;
-        const jsc = bun.bun_js.jsc;
       `);
     }
   })();

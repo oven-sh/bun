@@ -1,8 +1,8 @@
 /*
 
-cppbind - C++ to Zig binding generator for Bun
+cppbind - C++ binding generator for Bun
 
-This tool automatically generates Zig bindings for C++ functions marked with [[ZIG_EXPORT(...)]] attributes.
+This tool automatically generates Rust bindings for C++ functions marked with [[ZIG_EXPORT(...)]] attributes.
 It runs automatically when C++ files change during the build process.
 
 To run manually:
@@ -18,7 +18,7 @@ To run manually:
        printf("hello world\n");
    }
    ```
-   Zig usage: `bun.cpp.hello_world();`
+   Rust usage: `bun_jsc::cpp::hello_world();`
 
 2. **zero_is_throw** - Function returns JSValue, where .zero indicates an exception:
    ```cpp
@@ -29,7 +29,7 @@ To run manually:
        return result;
    }
    ```
-   Zig usage: `try bun.cpp.create_object(globalThis);`
+   Rust usage: `bun_jsc::cpp::create_object(global_this)?;`
 
 3. **check_slow** - Function that may throw, performs runtime exception checking:
    ```cpp
@@ -39,7 +39,7 @@ To run manually:
        RETURN_IF_EXCEPTION(scope, );
    }
    ```
-   Zig usage: `try bun.cpp.process_data(globalThis);`
+   Rust usage: `bun_jsc::cpp::process_data(global_this)?;`
 
 ### Parameters
 
@@ -81,7 +81,7 @@ type SyntaxNode = import("@lezer/common").SyntaxNode;
 const { parser: cppParser } = await import("@lezer/cpp");
 const { mkdir } = await import("fs/promises");
 const { join, relative } = await import("path");
-const { bannedTypes, sharedTypes, typeDeclarations } = await import("./shared-types");
+const { bannedTypes } = await import("./shared-types");
 
 type Point = {
   line: number;
@@ -399,79 +399,344 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
 
 type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_throw" | "nothrow";
 
-const sharedTypesText = await Bun.file("src/codegen/shared-types.ts").text();
-const sharedTypesLines = sharedTypesText.split("\n");
-let sharedTypesLine = 0;
-let sharedTypesColumn = 0;
-let sharedTypesColumnEnd = 0;
-for (const line of sharedTypesLines) {
-  sharedTypesLine++;
-  if (line.includes("export const sharedTypes")) {
-    sharedTypesColumn = line.indexOf("sharedTypes") + 1;
-    sharedTypesColumnEnd = sharedTypesColumn + "sharedTypes".length;
-    break;
-  }
+// ─────────────────────────── Rust output (cpp.rs) ───────────────────────────
+//
+// Each `[[ZIG_EXPORT(mode)]]` C++
+// function gets a typed `pub fn` in `bun_jsc::cpp` that wraps the raw extern in
+// the appropriate exception scope and converts to `JsResult`. The wrapper opens
+// the scope *before* calling into C++ so the callee's `DECLARE_THROW_SCOPE` dtor
+// (which sets `vm.m_needExceptionCheck` under `validateExceptionChecks=1`) is
+// satisfied by the Rust scope's `exception()` query — without this, the next
+// `JSGlobalObject__hasException` ctor asserts.
+//
+// Parameter and return types are emitted as raw C-ABI Rust types (pointers stay
+// `*mut`/`*const`, no `&T` upgrade) so the wrappers compose with whatever
+// newtypes the per-type ergonomic shims (`JSValue::get`, `JSPromise::resolve`,
+// …) hold; those shims forward into `crate::cpp::*`.
+
+// C++ named-type → Rust path. Unlisted types fall back to `core::ffi::c_void`
+// (only ever appears behind a pointer in `extern "C"` signatures, so layout is
+// irrelevant; the per-type shim casts back).
+const rustSharedTypes: Record<string, string> = {
+  // Primitives
+  "bool": "bool",
+  // `char` signedness is platform-dependent (signed on x86_64-linux/windows,
+  // unsigned on aarch64); use `core::ffi::c_char` so a future by-value return
+  // doesn't silently sign-flip.
+  "char": "core::ffi::c_char",
+  "unsigned char": "u8",
+  "signed char": "i8",
+  "char16_t": "u16",
+  "short": "core::ffi::c_short",
+  "unsigned short": "core::ffi::c_ushort",
+  "int": "core::ffi::c_int",
+  "unsigned": "core::ffi::c_uint",
+  "unsigned int": "core::ffi::c_uint",
+  "long": "core::ffi::c_long",
+  "unsigned long": "core::ffi::c_ulong",
+  "long long": "core::ffi::c_longlong",
+  "unsigned long long": "core::ffi::c_ulonglong",
+  "float": "f32",
+  "double": "f64",
+  "size_t": "usize",
+  "ssize_t": "isize",
+  "int8_t": "i8",
+  "uint8_t": "u8",
+  "int16_t": "i16",
+  "uint16_t": "u16",
+  "int32_t": "i32",
+  "uint32_t": "u32",
+  "int64_t": "i64",
+  "uint64_t": "u64",
+
+  // JSC / Bun
+  "BunString": "bun_core::String",
+  "JSC::EncodedJSValue": "crate::JSValue",
+  "EncodedJSValue": "crate::JSValue",
+  "JSC::JSGlobalObject": "crate::JSGlobalObject",
+  "Zig::GlobalObject": "crate::JSGlobalObject",
+  "ZigException": "crate::zig_exception::ZigException",
+  "ZigString": "bun_core::ZigString",
+  "JSC::VM": "crate::VM",
+  "JSC::JSPromise": "crate::JSPromise",
+  "JSC::JSMap": "crate::JSMap",
+  "JSC::CustomGetterSetter": "crate::CustomGetterSetter",
+  "JSC::SourceProvider": "crate::SourceProvider",
+  "JSC::CallFrame": "crate::CallFrame",
+  "JSC::JSObject": "crate::JSObject",
+  "JSC::JSString": "crate::JSString",
+  "JSC::Exception": "crate::Exception",
+  "JSC::JSInternalPromise": "crate::JSInternalPromise",
+  "WTF::StringImpl": "core::ffi::c_void",
+  "WebCore::DOMURL": "crate::DOMURL",
+  "WebCore::EventLoopTask": "crate::cpp_task::CppTask",
+  // HTTPServerAgent / inspector types only show up in `nothrow` exports;
+  // emit as opaque so the raw extern still type-checks.
+  "Inspector::InspectorHTTPServerAgent": "core::ffi::c_void",
+  // C++: `typedef int ServerId; typedef int HotReloadId;` (InspectorHTTPServerAgent.cpp)
+  "HotReloadId": "core::ffi::c_int",
+  "ServerId": "core::ffi::c_int",
+  "Route": "core::ffi::c_void",
+};
+
+// Reserved words that can't be used as Rust identifiers verbatim.
+const rustReserved = new Set([
+  "as",
+  "break",
+  "const",
+  "continue",
+  "crate",
+  "else",
+  "enum",
+  "extern",
+  "false",
+  "fn",
+  "for",
+  "if",
+  "impl",
+  "in",
+  "let",
+  "loop",
+  "match",
+  "mod",
+  "move",
+  "mut",
+  "pub",
+  "ref",
+  "return",
+  "self",
+  "Self",
+  "static",
+  "struct",
+  "super",
+  "trait",
+  "true",
+  "type",
+  "unsafe",
+  "use",
+  "where",
+  "while",
+  "async",
+  "await",
+  "dyn",
+  "abstract",
+  "become",
+  "box",
+  "do",
+  "final",
+  "macro",
+  "override",
+  "priv",
+  "typeof",
+  "unsized",
+  "virtual",
+  "yield",
+  "try",
+]);
+function rustIdent(name: string): string {
+  if (!name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) return "_" + name.replace(/[^a-zA-Z0-9_]/g, "_");
+  if (rustReserved.has(name)) return name + "_";
+  return name;
 }
 
-const errorsForTypes: Map<string, PositionedError> = new Map();
-function generateZigType(type: CppType, parent: CppType | null) {
+function generateRustType(type: CppType, parent: CppType | null): string {
   if (type.type === "pointer") {
-    const optionalChar = type.isNonNull ? "" : "?";
-    const ptrChar = type.isMany ? "[*]" : "*";
-    const constChar = type.isConst ? "const " : "";
-    return `${optionalChar}${ptrChar}${constChar}${generateZigType(type.child, type)}`;
+    const constKw = type.isConst ? "*const " : "*mut ";
+    return constKw + generateRustType(type.child, type);
   }
   if (type.type === "fn") {
-    return `fn(${type.parameters.map(p => formatZigName(p.name) + ": " + generateZigType(p.type, null)).join(", ")}) callconv(.c) ${generateZigType(type.returnType, null)}`;
+    // Function pointers are nullable in C; model as Option<extern "C" fn(...)>.
+    const params = type.parameters.map(p => generateRustType(p.type, null)).join(", ");
+    return `Option<unsafe extern "C" fn(${params}) -> ${generateRustType(type.returnType, null)}>`;
   }
   if (type.type === "named" && type.name === "void") {
-    if (parent?.type === "pointer") return "anyopaque";
-    if (!parent) return "void";
+    if (parent?.type === "pointer") return "core::ffi::c_void";
+    if (!parent) return "()";
     throwError(type.position, "void must have a pointer parent or no parent");
   }
   if (type.type === "named") {
-    const bannedType = bannedTypes[type.name];
-    if (bannedType) {
-      appendError(type.position, bannedType);
-      return "anyopaque";
+    if (bannedTypes[type.name]) {
+      appendError(type.position, bannedTypes[type.name]);
     }
-    const sharedType = sharedTypes[type.name];
-    if (sharedType) return sharedType;
-    const error = errorsForTypes.has(type.name)
-      ? errorsForTypes.get(type.name)!
-      : appendError(
-          {
-            file: "src/codegen/shared-types.ts",
-            start: { line: sharedTypesLine, column: sharedTypesColumn },
-            end: { line: sharedTypesLine, column: sharedTypesColumnEnd },
-          },
-          "sharedTypes is missing type: " + JSON.stringify(type.name),
-        );
-    errorsForTypes.set(type.name, error);
-    error.notes.push({ position: type.position, message: "used in exported function here" });
-    return "anyopaque";
+    const t = rustSharedTypes[type.name];
+    if (t) return t;
+    // Unknown opaque — only valid behind a pointer (the per-type shim casts the
+    // pointee). Behind a pointer we degrade to c_void; in by-value position that
+    // would emit `-> core::ffi::c_void` (a ZST in Rust → silent ABI corruption),
+    // so fail loudly at the C++ source location.
+    if (parent?.type === "pointer") return "core::ffi::c_void";
+    throwError(
+      type.position,
+      `unmapped C++ type '${type.name}' in by-value position; add to rustSharedTypes or pass by pointer`,
+    );
   }
   assertNever(type);
 }
-function formatZigName(name: string): string {
-  if (name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) return name;
-  return "@" + JSON.stringify(name);
+
+function isGlobalObjectPtr(t: CppType): boolean {
+  return (
+    t.type === "pointer" &&
+    t.child.type === "named" &&
+    (t.child.name === "JSC::JSGlobalObject" || t.child.name === "Zig::GlobalObject")
+  );
 }
-function generateZigParameterList(parameters: CppParameter[], globalThisArg?: CppParameter): string {
-  return parameters
-    .map(p => {
-      if (p === globalThisArg) {
-        return `${formatZigName(p.name)}: *jsc.JSGlobalObject`;
-      } else {
-        return `${formatZigName(p.name)}: ${generateZigType(p.type, null)}`;
-      }
-    })
-    .join(", ");
+
+// C++ named types that map to opaque ZST handles in `bun_jsc`
+// (`#[repr(C)] struct X { _p: UnsafeCell<[u8; 0]> }`). A `&X` covers zero
+// Rust-visible bytes, so passing it to C++ that mutates the underlying GC
+// cell never violates Stacked Borrows — these can always be lifted from
+// `*mut X` to `&X` in wrapper signatures, mirroring the existing
+// `JSGlobalObject*` → `&JSGlobalObject` rule.
+const rustOpaqueHandles = new Set([
+  "JSC::JSGlobalObject",
+  "Zig::GlobalObject",
+  "JSC::VM",
+  "JSC::JSPromise",
+  "JSC::JSInternalPromise",
+  "JSC::JSMap",
+  "JSC::JSObject",
+  "JSC::JSString",
+  "JSC::Exception",
+  "JSC::CallFrame",
+  "JSC::CustomGetterSetter",
+  "JSC::SourceProvider",
+  "WebCore::DOMURL",
+]);
+
+function opaqueHandleRustType(t: CppType): string | null {
+  if (t.type !== "pointer" || t.child.type !== "named") return null;
+  if (!rustOpaqueHandles.has(t.child.name)) return null;
+  return rustSharedTypes[t.child.name] ?? null;
 }
-function generateZigSourceComment(cfg: Cfg, resultSourceLinks: string[], fn: CppFn): string {
-  const fileName = relative(cfg.dstDir, fn.position.file);
-  resultSourceLinks.push(`${fn.name}:${fileName}:${fn.position.start.line}:${fn.position.start.column}`);
-  return `/// Source: ${fn.name}`;
+
+function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void {
+  const ret = generateRustType(fn.returnType, null);
+  const rawParams = fn.parameters.map(p => `${rustIdent(p.name)}: ${generateRustType(p.type, null)}`).join(", ");
+  rustRaw.push(`    pub fn ${fn.name}(${rawParams})${ret === "()" ? "" : ` -> ${ret}`};`);
+
+  // Compute wrapper parameter list: opaque-ZST handle pointers become `&T`;
+  // everything else passes through verbatim. The wrapper is `pub fn` (safe)
+  // iff no raw pointer survives — otherwise the caller is still responsible
+  // for the pointer's validity invariants and the wrapper stays `unsafe fn`.
+  let needsUnsafe = false;
+  const wrapParams: string[] = [];
+  const callArgs: string[] = [];
+  for (const p of fn.parameters) {
+    const ident = rustIdent(p.name);
+    const handle = opaqueHandleRustType(p.type);
+    if (handle) {
+      wrapParams.push(`${ident}: &${handle}`);
+      callArgs.push(
+        p.type.type === "pointer" && p.type.isConst
+          ? `core::ptr::from_ref(${ident})`
+          : `core::ptr::from_ref(${ident}).cast_mut()`,
+      );
+    } else if (p.type.type === "pointer" || p.type.type === "fn") {
+      needsUnsafe = true;
+      wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
+      callArgs.push(ident);
+    } else {
+      wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
+      callArgs.push(ident);
+    }
+  }
+  const safeKw = needsUnsafe ? "unsafe " : "";
+  const wrapParamsStr = wrapParams.join(", ");
+  const callArgsStr = callArgs.join(", ");
+
+  if (fn.tag === "nothrow") {
+    // No scope needed. If every param is by-value or `&OpaqueHandle`, emit a
+    // safe `pub fn`; otherwise the raw extern is already an `unsafe fn` with
+    // the right signature, so re-export it directly.
+    if (needsUnsafe) {
+      rustWrap.push(`pub use self::raw::${fn.name};`);
+    } else {
+      rustWrap.push(
+        `#[inline]`,
+        `pub fn ${fn.name}(${wrapParamsStr})${ret === "()" ? "" : ` -> ${ret}`} {`,
+        `    // SAFETY: \`[[ZIG_EXPORT(nothrow)]]\` extern; ref args are opaque-ZST handles valid for the call.`,
+        `    unsafe { raw::${fn.name}(${callArgsStr}) }`,
+        `}`,
+      );
+    }
+    return;
+  }
+
+  const globalArg = fn.parameters.find(p => isGlobalObjectPtr(p.type));
+  if (!globalArg) {
+    appendError(fn.position, `no JSGlobalObject* parameter found (required for ZIG_EXPORT(${fn.tag}))`);
+    rustWrap.push(`// skipped ${fn.name}: ${fn.tag} requires a JSGlobalObject* parameter`);
+    return;
+  }
+  const gname = rustIdent(globalArg.name);
+
+  if (fn.tag === "zero_is_throw" && ret !== "crate::JSValue") {
+    appendError(fn.position, "ZIG_EXPORT(zero_is_throw) is only allowed for functions that return JSValue");
+  } else if (fn.tag === "false_is_throw" && ret !== "bool") {
+    appendError(fn.position, "ZIG_EXPORT(false_is_throw) is only allowed for functions that return bool");
+  } else if (fn.tag === "null_is_throw" && fn.returnType.type !== "pointer") {
+    appendError(fn.position, "ZIG_EXPORT(null_is_throw) is only allowed for functions that return a pointer");
+  } else if (fn.tag === "check_slow" && ret === "crate::JSValue") {
+    appendError(
+      fn.position,
+      "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
+    );
+  }
+
+  if (fn.tag === "check_slow") {
+    // Inline the `top_scope!` body (rather than the `call_check_slow` *function* form,
+    // which routes `SourceLocation::from_caller()` → thread-local intern probe per call
+    // in debug builds). This is the highest-volume mode — keep it as cheap as the
+    // zero/false/null arms below. `src!()` resolves to the wrapper file/line;
+    // `#[track_caller]` would be a no-op
+    // against a syntactic `file!()`, so don't emit it.
+    rustWrap.push(
+      `#[inline]`,
+      `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${ret}> {`,
+      `    crate::top_scope!(__scope, ${gname});`,
+      `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+      `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
+      `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
+      `    __scope.return_if_exception()?;`,
+      `    Ok(__r)`,
+      `}`,
+    );
+    return;
+  }
+
+  let okExpr: string;
+  let errCond: string;
+  let okType: string;
+  if (fn.tag === "zero_is_throw") {
+    errCond = `__v == crate::JSValue::ZERO`;
+    okExpr = `__v`;
+    okType = `crate::JSValue`;
+  } else if (fn.tag === "false_is_throw") {
+    errCond = `!__v`;
+    okExpr = `()`;
+    okType = `()`;
+  } else if (fn.tag === "null_is_throw") {
+    errCond = `__v.is_null()`;
+    okExpr =
+      `\n        // SAFETY: \`__v.is_null()\` checked in the branch above.\n` +
+      `        unsafe { core::ptr::NonNull::new_unchecked(__v) }`;
+    okType = `core::ptr::NonNull<${generateRustType((fn.returnType as CppType & { type: "pointer" }).child, fn.returnType)}>`;
+  } else assertNever(fn.tag);
+
+  // `validation_scope!` expands `src!()` syntactically (resolves to this generated
+  // file/line). `#[track_caller]`
+  // can't influence a compile-time `file!()`, so don't emit it.
+  rustWrap.push(
+    `#[inline]`,
+    `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${okType}> {`,
+    `    crate::validation_scope!(__scope, ${gname});`,
+    `    // SAFETY: \`[[ZIG_EXPORT(${fn.tag})]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+    `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
+    `    let __v = unsafe { raw::${fn.name}(${callArgsStr}) };`,
+    `    __scope.assert_exception_presence_matches(${errCond});`,
+    `    if ${errCond} { Err(crate::JsError::Thrown) } else { Ok(${okExpr}) }`,
+    `}`,
+  );
 }
 
 function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
@@ -633,99 +898,6 @@ async function renderError(position: Srcloc, message: string, label: string, col
 type Cfg = {
   dstDir: string;
 };
-function generateZigFn(
-  fn: CppFn,
-  resultRaw: string[],
-  resultBindings: string[],
-  resultSourceLinks: string[],
-  cfg: Cfg,
-): void {
-  let returnType = generateZigType(fn.returnType, null);
-  if (resultBindings.length) resultBindings.push("");
-  resultBindings.push(generateZigSourceComment(cfg, resultSourceLinks, fn));
-  if (fn.tag === "nothrow") {
-    resultBindings.push(
-      `pub extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`,
-    );
-    return;
-  }
-
-  resultRaw.push(`    extern fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters)}) ${returnType};`);
-  let globalThisArg: CppParameter | undefined;
-  for (const param of fn.parameters) {
-    const type = generateZigType(param.type, null);
-    if (type === "?*jsc.JSGlobalObject") {
-      globalThisArg = param;
-      break;
-    }
-  }
-  if (!globalThisArg) throwError(fn.position, "no globalThis argument found (required for " + fn.tag + ")");
-  if (fn.tag === "check_slow") {
-    if (returnType === "jsc.JSValue") {
-      appendError(
-        fn.position,
-        "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
-      );
-    }
-    resultBindings.push(
-      `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) error{JSError}!${returnType} {`,
-      `    if (comptime Environment.ci_assert) {`,
-      `        var scope: jsc.TopExceptionScope = undefined;`,
-      `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-      `        defer scope.deinit();`,
-      ``,
-      `        const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-      `        try scope.returnIfException();`,
-      `        return result;`,
-      `    } else {`,
-      `        const result = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-      `        if (Bun__RETURN_IF_EXCEPTION(${formatZigName(globalThisArg.name)})) return error.JSError;`,
-      `        return result;`,
-      `    }`,
-      `}`,
-    );
-    return;
-  }
-
-  let equalsValue: string;
-  if (fn.tag === "zero_is_throw") {
-    equalsValue = ".zero";
-    if (returnType !== "jsc.JSValue") {
-      appendError(fn.position, "ZIG_EXPORT(zero_is_throw) is only allowed for functions that return JSValue");
-    }
-  } else if (fn.tag === "false_is_throw") {
-    equalsValue = "false";
-    if (returnType !== "bool") {
-      appendError(fn.position, "ZIG_EXPORT(false_is_throw) is only allowed for functions that return bool");
-    }
-    returnType = "void";
-  } else if (fn.tag === "null_is_throw") {
-    equalsValue = "null";
-    if (!returnType.startsWith("?*")) {
-      appendError(fn.position, "ZIG_EXPORT(null_is_throw) is only allowed for functions that return optional pointer");
-    }
-    returnType = returnType.slice(1);
-  } else assertNever(fn.tag);
-  resultBindings.push(
-    `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) error{JSError}!${returnType} {`,
-    `    if (comptime Environment.ci_assert) {`,
-    `        var scope: jsc.ExceptionValidationScope = undefined;`,
-    `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
-    `        defer scope.deinit();`,
-    ``,
-    `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-    `        scope.assertExceptionPresenceMatches(value == ${equalsValue});`,
-    `        return if (value == ${equalsValue}) error.JSError ${fn.tag === "false_is_throw" ? "" : "else value"}${fn.tag === "null_is_throw" ? ".?" : ""};`,
-    `    } else {`,
-    `        const value = raw.${formatZigName(fn.name)}(${fn.parameters.map(p => formatZigName(p.name)).join(", ")});`,
-    `        if (value == ${equalsValue}) return error.JSError;`,
-    ...(fn.tag === "false_is_throw" ? [] : [`        return value${fn.tag === "null_is_throw" ? ".?" : ""};`]),
-    `    }`,
-    `}`,
-  );
-  return;
-}
-
 async function readFileOrEmpty(file: string): Promise<string> {
   try {
     const fileContents = await Bun.file(file).text();
@@ -778,12 +950,11 @@ async function main() {
   await Promise.all(allCppFiles.map(file => processFile(parser, file, allFunctions)));
   allFunctions.sort((a, b) => (a.position.file < b.position.file ? -1 : a.position.file > b.position.file ? 1 : 0));
 
-  const resultRaw: string[] = [];
-  const resultBindings: string[] = [];
-  const resultSourceLinks: string[] = [];
+  const rustRaw: string[] = [];
+  const rustWrap: string[] = [];
   for (const fn of allFunctions) {
     try {
-      generateZigFn(fn, resultRaw, resultBindings, resultSourceLinks, { dstDir });
+      generateRustFn(fn, rustRaw, rustWrap);
     } catch (e) {
       appendErrorFromCatch(e, fn.position);
     }
@@ -797,36 +968,33 @@ async function main() {
     console.error();
   }
 
-  const resultFilePath = join(dstDir, "cpp.zig");
-  const resultContents =
-    typeDeclarations +
-    "\n" +
-    resultBindings.join("\n") +
-    "\n\nconst raw = struct {\n" +
-    resultRaw.join("\n") +
-    "\n};\n";
-  if ((await readFileOrEmpty(resultFilePath)) !== resultContents) {
-    await Bun.write(resultFilePath, resultContents);
+  const rustFilePath = join(dstDir, "cpp.rs");
+  const rustContents =
+    "// generated by cppbind.ts from functions marked with [[ZIG_EXPORT(mode)]]\n" +
+    "// `include!`d by `bun_jsc::cpp` — see src/jsc/cpp.rs for the wrapper module docs.\n\n" +
+    'unsafe extern "C" {}\n' + // ensure the file parses even with zero exports
+    "pub mod raw {\n" +
+    "    #[allow(unused_imports)] use super::*;\n" +
+    '    unsafe extern "C" {\n' +
+    rustRaw.join("\n") +
+    "\n    }\n}\n\n" +
+    rustWrap.join("\n") +
+    "\n";
+  if ((await readFileOrEmpty(rustFilePath)) !== rustContents) {
+    await Bun.write(rustFilePath, rustContents);
   }
 
-  const resultSourceLinksFilePath = join(dstDir, "cpp.source-links");
-  const resultSourceLinksContents = resultSourceLinks.join("\n");
-  if ((await readFileOrEmpty(resultSourceLinksFilePath)) !== resultSourceLinksContents) {
-    await Bun.write(resultSourceLinksFilePath, resultSourceLinksContents);
+  if (process.env.CI) {
     const now = Date.now();
-    const sin = Math.round(((Math.sin((now / 1000) * 1) + 1) / 2) * 0);
-    if (process.env.CI) {
-      console.log(
-        " ".repeat(sin) +
-          (errors.length > 0 ? "✗" : "✓") +
-          " cppbind.ts generated bindings to " +
-          resultFilePath +
-          (errors.length > 0 ? " with errors" : "") +
-          " in " +
-          (now - start) +
-          "ms",
-      );
-    }
+    console.log(
+      (errors.length > 0 ? "✗" : "✓") +
+        " cppbind.ts generated bindings to " +
+        rustFilePath +
+        (errors.length > 0 ? " with errors" : "") +
+        " in " +
+        (now - start) +
+        "ms",
+    );
   }
 
   if (errors.length > 0) {

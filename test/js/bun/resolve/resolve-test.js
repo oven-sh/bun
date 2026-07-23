@@ -159,37 +159,37 @@ it("require of file: URL with 4 slashes doesn't trigger ASAN", async () => {
 it("self-referencing imports works", async () => {
   const baz = import.meta.resolveSync("package-json-exports/baz");
   const namespace = import.meta.resolveSync("package-json-exports/references-baz");
-  Loader.registry.delete(baz);
-  Loader.registry.delete(namespace);
+  delete require.cache[baz];
+  delete require.cache[namespace];
   var a = await import(baz);
   var b = await import(namespace);
   expect(a.bar).toBe(1);
   expect(b.bar).toBe(1);
 
-  Loader.registry.delete(baz);
-  Loader.registry.delete(namespace);
+  delete require.cache[baz];
+  delete require.cache[namespace];
   var a = await import("package-json-exports/baz");
   var b = await import("package-json-exports/references-baz");
   expect(a.bar).toBe(1);
   expect(b.bar).toBe(1);
 
-  Loader.registry.delete(baz);
-  Loader.registry.delete(namespace);
+  delete require.cache[baz];
+  delete require.cache[namespace];
   var a = import.meta.require("package-json-exports/baz");
   var b = import.meta.require("package-json-exports/references-baz");
   expect(a.bar).toBe(1);
   expect(b.bar).toBe(1);
 
-  Loader.registry.delete(baz);
-  Loader.registry.delete(namespace);
+  delete require.cache[baz];
+  delete require.cache[namespace];
   var a = import.meta.require(baz);
   var b = import.meta.require(namespace);
   expect(a.bar).toBe(1);
   expect(b.bar).toBe(1);
 
   // test that file:// works
-  Loader.registry.delete(baz);
-  Loader.registry.delete(namespace);
+  delete require.cache[baz];
+  delete require.cache[namespace];
   var a = import.meta.require("file://" + baz);
   var b = import.meta.require("file://" + namespace);
   expect(a.bar).toBe(1);

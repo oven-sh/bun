@@ -27,9 +27,9 @@ function split(file: any, into: any) {
 split(clientTls.cert, clientTls);
 split(serverTls.cert, serverTls);
 
-// The certificates aren't for "localhost", so override the identity check.
+// The certificates aren't for "127.0.0.1", so override the identity check.
 function checkServerIdentity(hostname: string, cert: any) {
-  expect(hostname).toBe("localhost");
+  expect(hostname).toBe("127.0.0.1");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
 
@@ -138,8 +138,7 @@ it("complete cert chains sent to peer, but without requesting client's cert.", a
   });
 });
 
-// TODO: this requires maxVersion/minVersion
-it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
+it("Request cert from TLS1.2 client that doesn't have one.", async () => {
   try {
     await connect({
       client: {
@@ -156,7 +155,7 @@ it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    expect(err.code).toBe("ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE");
+    expect(err.code).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
   }
 });
 
@@ -248,6 +247,116 @@ it("Fail to complete client's chain.", async () => {
     expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  }
+});
+
+it("rejects an unverifiable client certificate by default when requestCert is true", async () => {
+  // No explicit rejectUnauthorized: the documented default is true, so a client
+  // certificate that fails CA verification must never reach the connection handler.
+  const handled: string[] = [];
+  const secureConnections: TLSSocket[] = [];
+  let clientError: any = null;
+
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+    },
+    socket => {
+      handled.push(socket.authorizationError as any);
+      socket.pipe(socket);
+    },
+  );
+  server.on("secureConnection", socket => secureConnections.push(socket));
+  server.on("tlsClientError", err => {
+    clientError = err;
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  try {
+    // Client 1: incomplete chain the server cannot verify. The server must drop it.
+    const badClient = tls.connect({
+      host: "127.0.0.1",
+      port,
+      key: clientTls.key,
+      cert: clientTls.single,
+      ca: serverTls.ca,
+      checkServerIdentity,
+      rejectUnauthorized: false,
+    });
+    badClient.on("error", () => {});
+    // The server must tear the socket down; it must never hand it to the application.
+    const outcome = await Promise.race([
+      once(badClient, "close").then(() => "closed"),
+      once(server, "secureConnection").then(() => "secureConnection"),
+    ]);
+    expect(outcome).toBe("closed");
+
+    expect(clientError?.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(secureConnections).toHaveLength(0);
+    expect(handled).toHaveLength(0);
+
+    // Client 2: full verifiable chain. The server must still be alive and serve it,
+    // proving the rejection above was a clean per-socket teardown.
+    const goodClient = tls.connect({
+      host: "127.0.0.1",
+      port,
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: serverTls.ca,
+      checkServerIdentity,
+    });
+    await once(goodClient, "secureConnect");
+    const echoed = once(goodClient, "data");
+    goodClient.write("ping");
+    expect((await echoed)[0].toString()).toBe("ping");
+    goodClient.end();
+    await once(goodClient, "close");
+
+    expect(handled).toHaveLength(1);
+    expect(secureConnections).toHaveLength(1);
+  } finally {
+    server.close();
+  }
+});
+
+it("explicit rejectUnauthorized: false still admits an unverified client certificate", async () => {
+  const { promise: handledSocket, resolve: onHandledSocket } = Promise.withResolvers<TLSSocket>();
+
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+      rejectUnauthorized: false,
+    },
+    socket => onHandledSocket(socket),
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const client = tls.connect({
+    host: "127.0.0.1",
+    port,
+    key: clientTls.key,
+    cert: clientTls.single,
+    ca: serverTls.ca,
+    checkServerIdentity,
+    rejectUnauthorized: false,
+  });
+  client.on("error", () => {});
+
+  try {
+    const [serverSocket] = await Promise.all([handledSocket, once(client, "secureConnect")]);
+    expect(serverSocket.authorized).toBe(false);
+    expect(serverSocket.authorizationError).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  } finally {
+    client.end();
+    server.close();
   }
 });
 
@@ -518,22 +627,27 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
     passphrase: "123123123",
   });
 
-  for (const invalid of ["not-exist.pem", "", " "]) {
-    const proc = Bun.spawn({
-      env: {
-        ...bunEnv,
-        SERVER_PORT: server.address.port.toString(),
-        NODE_EXTRA_CA_CERTS: invalid,
-      },
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "inherit",
-      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
-    });
+  const results = await Promise.all(
+    ["not-exist.pem", "", " "].map(async invalid => {
+      const proc = Bun.spawn({
+        env: {
+          ...bunEnv,
+          SERVER_PORT: server.address.port.toString(),
+          NODE_EXTRA_CA_CERTS: invalid,
+        },
+        stderr: "pipe",
+        stdout: "inherit",
+        stdin: "inherit",
+        cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { invalid, stderr, exitCode };
+    }),
+  );
 
-    expect(await proc.exited).toBe(1);
-    const stderr = await proc.stderr.text();
+  for (const { stderr, exitCode } of results) {
     expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+    expect(exitCode).toBe(1);
   }
 });
 
@@ -550,22 +664,27 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
     passphrase: "123123123",
   });
 
-  for (const invalid of [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath]) {
-    const proc = Bun.spawn({
-      env: {
-        ...bunEnv,
-        SERVER_PORT: server.address.port.toString(),
-        NODE_EXTRA_CA_CERTS: invalid,
-      },
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "inherit",
-      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
-    });
+  const results = await Promise.all(
+    [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath].map(async invalid => {
+      const proc = Bun.spawn({
+        env: {
+          ...bunEnv,
+          SERVER_PORT: server.address.port.toString(),
+          NODE_EXTRA_CA_CERTS: invalid,
+        },
+        stderr: "pipe",
+        stdout: "inherit",
+        stdin: "inherit",
+        cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { invalid, stderr, exitCode };
+    }),
+  );
 
-    expect(await proc.exited).toBe(1);
-    const stderr = await proc.stderr.text();
+  for (const { stderr, exitCode } of results) {
     expect(stderr).toContain("ignoring extra certs");
+    expect(exitCode).toBe(1);
   }
 });
 describe("tls ciphers should work", () => {
@@ -593,6 +712,7 @@ describe("tls ciphers should work", () => {
           host: "127.0.0.1",
           ca: serverTls.ca,
           ciphers: cipher_name,
+          checkServerIdentity,
         });
         await once(socket, "secureConnect");
       } finally {

@@ -1,10 +1,17 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-import EventEmitter, { captureRejectionSymbol, getEventListeners, getMaxListeners, setMaxListeners } from "node:events";
+import EventEmitter, {
+  captureRejectionSymbol,
+  getEventListeners,
+  getMaxListeners,
+  listenerCount,
+  setMaxListeners,
+} from "node:events";
 
 describe("node:events", () => {
   test("captureRejectionSymbol", () => {
@@ -64,6 +71,36 @@ describe("node:events", () => {
     expect(emitter.listenerCount("hey")).toBe(1);
     await promise;
     expect(emitter.listenerCount("hey")).toBe(0);
+  });
+
+  // `events.once()` is an `async function` in Node: a bad `options`, a bad
+  // `options.signal`, or an already-aborted signal must produce a *rejected
+  // promise*, never a synchronous throw.
+  test("once is an async function", () => {
+    expect(EventEmitter.once.constructor.name).toBe("AsyncFunction");
+  });
+
+  test("once with already-aborted signal rejects (not a synchronous throw)", async () => {
+    const ee = new EventEmitter();
+    const p = EventEmitter.once(ee, "foo", { signal: AbortSignal.abort() });
+    expect(p).toBeInstanceOf(Promise);
+    await expect(p).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+  });
+
+  test("once with invalid options.signal rejects (not a synchronous throw)", async () => {
+    for (const signal of [1, {}, "hi", null, false]) {
+      const ee = new EventEmitter();
+      const p = EventEmitter.once(ee, "foo", { signal } as any);
+      expect(p).toBeInstanceOf(Promise);
+      await expect(p).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    }
+  });
+
+  test("once with non-object options rejects (not a synchronous throw)", async () => {
+    const ee = new EventEmitter();
+    const p = EventEmitter.once(ee, "foo", "hi" as any);
+    expect(p).toBeInstanceOf(Promise);
+    await expect(p).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
   });
 });
 
@@ -472,7 +509,7 @@ describe("EventEmitter.on", () => {
     emitter.emit("hey", 2);
     emitter.emit("hey", 3);
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1));
 
     expect((await asyncIterator.next()).value).toEqual([1]);
     expect((await asyncIterator.next()).value).toEqual([2]);
@@ -517,7 +554,7 @@ describe("EventEmitter.on", () => {
 
     setTimeout(() => {
       ee.emit("error", "DONE");
-    }, 1_000);
+    }, 1);
 
     try {
       for await (const event of on(ee, "foo")) {
@@ -846,6 +883,85 @@ test("using addAbortListener", async () => {
   expect(mocked).not.toHaveBeenCalled();
 });
 
+describe("addAbortListener resists stopImmediatePropagation", () => {
+  test("runs after an earlier listener stopped propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    EventEmitter.addAbortListener(signal, e => {
+      order.push(`cleanup:${(e as Event).target === signal}`);
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["stopper", "cleanup:true"]);
+  });
+
+  test("runs when it was registered before the listener that stops propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    EventEmitter.addAbortListener(signal, () => order.push("cleanup"));
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["cleanup", "stopper"]);
+  });
+
+  test("is not run once disposed", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const mocked = mock();
+
+    signal.addEventListener("abort", e => e.stopImmediatePropagation());
+    {
+      using _ = EventEmitter.addAbortListener(signal, mocked);
+    }
+
+    controller.abort();
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  test("once(emitter, event, { signal }) still rejects on a suppressed signal", async () => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", e => e.stopImmediatePropagation());
+
+    const promise = EventEmitter.once(emitter, "never", { signal: controller.signal });
+    expect(emitter.listenerCount("never")).toBe(1);
+    controller.abort();
+
+    // once()'s abort listener detaches the emitter listener and rejects, both synchronously.
+    expect(emitter.listenerCount("never")).toBe(0);
+    expect(await promise.catch(err => err.code)).toBe("ABORT_ERR");
+  });
+
+  test("stopImmediatePropagation still suppresses ordinary listeners", () => {
+    const target = new EventTarget();
+    const order: string[] = [];
+
+    target.addEventListener("x", () => order.push("a"));
+    target.addEventListener("x", e => {
+      order.push("b");
+      e.stopImmediatePropagation();
+    });
+    target.addEventListener("x", () => order.push("c"));
+
+    target.dispatchEvent(new Event("x"));
+    expect(order).toEqual(["a", "b"]);
+  });
+});
+
 test("getMaxListeners", () => {
   const emitter = new EventEmitter();
   expect(emitter.getMaxListeners()).toBe(10);
@@ -879,6 +995,101 @@ test("getEventListeners", () => {
   expect(getEventListeners(target, "hey").length).toBe(0);
 });
 
+test("EventEmitter.prototype.listenerCount", () => {
+  const ee = new EventEmitter();
+  const a = () => {};
+  const b = () => {};
+
+  expect(ee.listenerCount("x")).toBe(0);
+  expect(ee.listenerCount("x", a)).toBe(0);
+
+  ee.on("x", a);
+  expect(ee.listenerCount("x")).toBe(1);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(0);
+
+  ee.on("x", b);
+  expect(ee.listenerCount("x")).toBe(2);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(1);
+
+  ee.once("y", a);
+  expect(ee.listenerCount("y")).toBe(1);
+  expect(ee.listenerCount("y", a)).toBe(1);
+
+  // null/undefined listener arg means "count all", same as omitting it
+  expect(ee.listenerCount("x", null as any)).toBe(2);
+  expect(ee.listenerCount("x", undefined)).toBe(2);
+});
+
+test("events.listenerCount validates emitter argument", () => {
+  const ee = new EventEmitter();
+  ee.on("y", () => {});
+  expect(listenerCount(ee, "y")).toBe(1);
+
+  const et = new EventTarget();
+  et.addEventListener("k", () => {});
+  et.addEventListener("k", () => {});
+  expect(listenerCount(et, "k")).toBe(2);
+
+  const np = Object.create(null);
+  EventEmitter.call(np);
+  EventEmitter.prototype.on.call(np, "y", () => {});
+
+  for (const bad of [{}, 42, np]) {
+    expect(() => listenerCount(bad as any, "y")).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  }
+});
+
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
+});
+
+// A fired once() wrapper must drop its closure refs so holding it (a cached
+// rawListeners() result, the COW array emit() iterates) does not retain the
+// emitter. wrapped.listener stays: node asserts it survives emit.
+test("once() wrapper releases its target after firing", async () => {
+  const src = `
+    const { EventEmitter } = require("events");
+    const held = [];
+    const total = 8;
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    (function () {
+      for (let i = 0; i < total; i++) {
+        const ee = new EventEmitter();
+        ee.once("x", function () {});
+        held.push(ee.rawListeners("x")[0]);
+        ee.emit("x");
+        registry.register(ee);
+      }
+    })();
+    let iters = 0;
+    setImmediate(function check() {
+      Bun.gc(true);
+      if (collected === total) {
+        console.log("collected " + collected + "/" + total + " holding " + held.length + " wrappers");
+        return;
+      }
+      if (++iters > 50) {
+        console.log("stuck " + collected + "/" + total + " holding " + held.length + " wrappers");
+        process.exit(1);
+      }
+      setImmediate(check);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "collected 8/8 holding 8 wrappers",
+    stderr: "",
+    exitCode: 0,
+  });
 });

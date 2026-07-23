@@ -10,8 +10,3 @@ test("you can't crash the resolver with import.meta.resolve/Sync", () => {
     console.log(import.meta.resolve("#foo", "file:/Users/chloe"));
   }).toThrow();
 });
-
-// TODO(@paperclover): ensure this crash isn't possible.
-test.todo("you can't crash the resolver with Bun.plugin", () => {
-  //
-});

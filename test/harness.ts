@@ -5,21 +5,22 @@
  * without always needing to run `bun install` in development.
  */
 
+import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
-import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
+import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import * as numeric from "_util/numeric.ts";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
-export const isPosix = isMacOS || isLinux;
+export const isFreeBSD = process.platform === "freebsd";
+export const isPosix = isMacOS || isLinux || isFreeBSD;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
@@ -44,10 +45,27 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
-export const isASAN = basename(process.execPath).includes("bun-asan");
+// Detect ASAN from the runtime, not the binary name. CI's release ASAN lane
+// produces `bun-asan`, but a plain `bun bd` debug build is *also* ASAN-
+// instrumented while named `bun-debug` — so the name check alone is wrong for
+// local runs. `isASANEnabled` is a side-effect-free `#if ASAN_ENABLED` probe,
+// so it's correct for both. Fall back to the name check if the internal
+// binding is ever unavailable (e.g. an older comparison binary).
+export const isASAN = detectASAN();
+
+function detectASAN(): boolean {
+  try {
+    const { isASANEnabled } = require("bun:internal-for-testing");
+    if (typeof isASANEnabled === "function") return isASANEnabled();
+  } catch {}
+  return basename(process.execPath).includes("bun-asan");
+}
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
+  // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
+  JSC_useJIT: undefined,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
@@ -56,6 +74,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
+  // the real command refuses on non-TTY stdin. Bypass that gate under test.
+  BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
@@ -108,6 +129,150 @@ export function nodeExe(): string | null {
   return which("node") || null;
 }
 
+let abiMatchingNode: Promise<string> | undefined;
+
+/**
+ * Path to a Node.js executable whose native-addon ABI (NODE_MODULE_VERSION,
+ * `process.versions.modules`) matches the Node version Bun reports. Addons
+ * that node-gyp compiles against Bun's reported headers can only load in such
+ * a Node. When the system Node's ABI differs (e.g. a machine whose installed
+ * Node lags the version Bun reports), the matching official build is
+ * downloaded once into a per-version directory under the OS temp dir and
+ * reused.
+ */
+export function nodeExeMatchingAbi(): Promise<string> {
+  return (abiMatchingNode ??= findOrDownloadAbiMatchingNode());
+}
+
+async function findOrDownloadAbiMatchingNode(): Promise<string> {
+  const system = nodeExe();
+  if (system) {
+    const probe = Bun.spawnSync({
+      cmd: [system, "-p", "process.versions.modules"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (probe.exitCode === 0 && probe.stdout.toString().trim() === process.versions.modules) {
+      return system;
+    }
+  }
+
+  const version = process.versions.node;
+  const name = `node-v${version}-${isWindows ? "win" : process.platform}-${process.arch}`;
+  // Cache under the home directory: the machines that need the download (the
+  // persistent macOS fleet) then pay for it once ever, not once per boot.
+  const baseDir = join(os.homedir() || os.tmpdir(), ".cache", "bun-test-node");
+  const dir = join(baseDir, name);
+  const exe = isWindows ? join(dir, "node.exe") : join(dir, "bin", "node");
+  if (fs.existsSync(exe)) {
+    return exe;
+  }
+
+  const archiveExt = isWindows ? "zip" : "tar.gz";
+  const url = `https://nodejs.org/dist/v${version}/${name}.${archiveExt}`;
+  console.warn(`System node does not match ABI ${process.versions.modules}, downloading ${url}`);
+  // Download and extract under unique names, then atomically rename into
+  // place so concurrent test files (or a previous interrupted run) can't
+  // observe a half-extracted directory.
+  const stagingDir = join(baseDir, `staging-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(stagingDir, { recursive: true });
+  try {
+    const archive = join(stagingDir, `${name}.${archiveExt}`);
+    // Download with curl (ships on every CI platform, including Windows
+    // System32) rather than streaming through the runtime under test, and
+    // bound it so a stalled transfer fails instead of eating the hook
+    // timeout of whichever test file got here first.
+    const curl = (...args: string[]) =>
+      Bun.spawnSync({
+        cmd: ["curl", "-fsSL", "--retry", "3", "--max-time", "180", ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const download = curl("-o", archive, url);
+    if (download.exitCode !== 0) {
+      throw new Error(`Failed to download ${url}: ${download.stderr.toString()}`);
+    }
+    // Verify against the official checksum manifest before executing anything
+    // from the archive.
+    const shasumsUrl = `https://nodejs.org/dist/v${version}/SHASUMS256.txt`;
+    const shasumsResult = curl(shasumsUrl);
+    if (shasumsResult.exitCode !== 0) {
+      throw new Error(`Failed to download ${shasumsUrl}: ${shasumsResult.stderr.toString()}`);
+    }
+    const expectedHash = shasumsResult.stdout
+      .toString()
+      .split("\n")
+      .find(line => line.endsWith(`  ${name}.${archiveExt}`))
+      ?.split(" ")[0];
+    if (!expectedHash) {
+      throw new Error(`No checksum for ${name}.${archiveExt} in ${shasumsUrl}`);
+    }
+    const actualHash = new Bun.CryptoHasher("sha256").update(await Bun.file(archive).arrayBuffer()).digest("hex");
+    if (actualHash !== expectedHash) {
+      throw new Error(`SHA-256 mismatch for ${url}: expected ${expectedHash}, got ${actualHash}`);
+    }
+    // bsdtar (shipped with Windows 10+) extracts zip archives too.
+    const tar = Bun.spawnSync({
+      cmd: ["tar", "-xf", archive, "-C", stagingDir],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    if (tar.exitCode !== 0) {
+      throw new Error(`Failed to extract ${archive}: ${tar.stderr.toString()}`);
+    }
+    try {
+      fs.renameSync(join(stagingDir, name), dir);
+    } catch (error) {
+      // A concurrent download may have won the rename; that copy is as good.
+      if (!fs.existsSync(exe)) throw error;
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+  return exe;
+}
+
+let canBuildNodeAddonsCached: boolean | undefined;
+
+/**
+ * Whether the system C++ toolchain can compile native addons against the
+ * Node headers Bun reports. Node >= 26 headers unconditionally include
+ * C++20's `<source_location>`, which older Apple Xcode/CLT libc++ versions
+ * do not ship — real Node 26 has the same minimum-toolchain requirement, so
+ * addon-building tests should skip (not fail) on such machines.
+ */
+export function canBuildNodeAddons(): boolean {
+  if (canBuildNodeAddonsCached === undefined) {
+    if (!isMacOS) {
+      // Linux and Windows CI toolchains are provisioned by the bootstrap
+      // scripts in lockstep with the reported Node version; only macOS test
+      // boxes have independently-managed Xcode installs.
+      canBuildNodeAddonsCached = true;
+    } else {
+      const dir = fs.mkdtempSync(join(os.tmpdir(), "bun-addon-toolchain-probe-"));
+      try {
+        const probeFile = join(dir, "probe.cpp");
+        fs.writeFileSync(probeFile, "#include <source_location>\nint main() { return 0; }\n");
+        const probe = Bun.spawnSync({
+          cmd: ["c++", "-std=gnu++20", "-fsyntax-only", probeFile],
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        canBuildNodeAddonsCached = probe.exitCode === 0;
+      } catch {
+        canBuildNodeAddonsCached = false;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  return canBuildNodeAddonsCached;
+}
+
 export function shellExe(): string {
   return isWindows ? "pwsh" : "bash";
 }
@@ -138,14 +303,14 @@ export async function expectMaxObjectTypeCount(
   var { heapStats } = require("bun:jsc");
 
   gc();
-  if (heapStats().objectTypeCounts[type] <= count) return;
+  if ((heapStats().objectTypeCounts[type] ?? 0) <= count) return;
   gc(true);
   for (const wait = 20; maxWait > 0; maxWait -= wait) {
-    if (heapStats().objectTypeCounts[type] <= count) break;
+    if ((heapStats().objectTypeCounts[type] ?? 0) <= count) break;
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run
@@ -762,7 +927,7 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export async function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: string[], expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
@@ -777,19 +942,19 @@ export async function toHaveBins(actual: string[], expectedBins: string[]) {
   return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export async function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    const contents = await readFile(actual + ".bunx", "utf16le");
+    const contents = fs.readFileSync(actual + ".bunx", "utf16le");
     const expected = expectedLinkPath.slice(3);
     return { pass: contents.includes(expected), message };
   }
 
-  return { pass: (await readlink(actual)) === expectedLinkPath, message };
+  return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -941,88 +1106,100 @@ export async function describeWithContainer(
   },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
-  // Skip if Docker is not available
-  if (!isDockerEnabled()) {
+  // Check if this is one of our docker-compose services
+  const services: Record<string, number> = {
+    "postgres_plain": 5432,
+    "postgres_tls": 5432,
+    "postgres_auth": 5432,
+    "mysql_plain": 3306,
+    "mysql_native_password": 3306,
+    "mysql_tls": 3306,
+    "mysql:8": 3306, // Map mysql:8 to mysql_plain
+    "mysql:9": 3306, // Map mysql:9 to mysql_native_password
+    "redis_plain": 6379,
+    "redis_unified": 6379,
+    "minio": 9000,
+    "autobahn": 9002,
+  };
+
+  const servicePort = services[image];
+  if (!servicePort) {
+    // No fallback - if the image isn't in docker-compose, it should fail
+    describe(label, () => {
+      throw new Error(
+        `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
+      );
+    });
+    return;
+  }
+
+  // Map mysql:8 and mysql:9 based on environment variables
+  let actualService = image;
+  if (image === "mysql:8" || image === "mysql:9") {
+    if (env.MYSQL_ROOT_PASSWORD === "bun") {
+      actualService = "mysql_native_password"; // Has password "bun"
+    } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
+      actualService = "mysql_plain"; // No password
+    } else {
+      actualService = "mysql_plain"; // Default to no password
+    }
+  }
+
+  // Skip only when no env override, no coordinator, and docker is unavailable.
+  // isDockerEnabled() may throw when docker is required but absent, so the
+  // env-override and coordinator checks must short-circuit before it.
+  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
     describe.todo(label);
     return;
   }
 
-  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
-    // Check if this is one of our docker-compose services
-    const services: Record<string, number> = {
-      "postgres_plain": 5432,
-      "postgres_tls": 5432,
-      "postgres_auth": 5432,
-      "mysql_plain": 3306,
-      "mysql_native_password": 3306,
-      "mysql_tls": 3306,
-      "mysql:8": 3306, // Map mysql:8 to mysql_plain
-      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
-      "redis_plain": 6379,
-      "redis_unified": 6379,
-      "minio": 9000,
-      "autobahn": 9002,
+  (concurrent ? describe.concurrent : describe)(label, () => {
+    // Create a container descriptor with stable references and a ready promise
+    let readyResolver: () => void;
+    let readyRejecter: (error: any) => void;
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      readyResolver = resolve;
+      readyRejecter = reject;
+    });
+
+    // Internal state that will be updated when container is ready
+    let _host = "127.0.0.1";
+    let _port = 0;
+
+    // Container descriptor with live getters and ready promise
+    const containerDescriptor = {
+      get host() {
+        return _host;
+      },
+      get port() {
+        return _port;
+      },
+      ready: readyPromise,
     };
 
-    const servicePort = services[image];
-    if (servicePort) {
-      // Map mysql:8 and mysql:9 based on environment variables
-      let actualService = image;
-      if (image === "mysql:8" || image === "mysql:9") {
-        if (env.MYSQL_ROOT_PASSWORD === "bun") {
-          actualService = "mysql_native_password"; // Has password "bun"
-        } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
-          actualService = "mysql_plain"; // No password
-        } else {
-          actualService = "mysql_plain"; // Default to no password
-        }
-      }
+    // Kick off `ensure()` at describe-define time so a file with multiple
+    // describeWithContainer blocks starts all of its containers in parallel.
+    // up() de-duplicates in-flight calls per service, so two describes for
+    // the same service share one `compose up`. beforeAll just awaits the
+    // result so test failures still surface there.
+    const startPromise = import("./docker/index.ts").then(h => h.ensure(actualService as any));
+    // Surface any rejection through `ready`; without a handler the runner
+    // would see an unhandled rejection before beforeAll re-throws it.
+    startPromise.catch(readyRejecter!);
 
-      // Create a container descriptor with stable references and a ready promise
-      let readyResolver: () => void;
-      let readyRejecter: (error: any) => void;
-      const readyPromise = new Promise<void>((resolve, reject) => {
-        readyResolver = resolve;
-        readyRejecter = reject;
-      });
+    beforeAll(async () => {
+      const info = await startPromise;
+      _host = info.host;
+      _port = info.ports[servicePort];
+      console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
+      readyResolver!();
+      // Cold container start is bounded by `compose up --wait-timeout 180` plus
+      // a `compose build` step; the default 5s hook timeout fires first and the
+      // runner's auto-killer then SIGTERMs the in-flight compose subprocesses,
+      // surfacing as bogus `Failed to start service X: ... Creating` errors.
+    }, 240_000);
 
-      // Internal state that will be updated when container is ready
-      let _host = "127.0.0.1";
-      let _port = 0;
-
-      // Container descriptor with live getters and ready promise
-      const containerDescriptor = {
-        get host() {
-          return _host;
-        },
-        get port() {
-          return _port;
-        },
-        ready: readyPromise,
-      };
-
-      // Start the service before any tests
-      beforeAll(async () => {
-        try {
-          const dockerHelper = await import("./docker/index.ts");
-          const info = await dockerHelper.ensure(actualService as any);
-          _host = info.host;
-          _port = info.ports[servicePort];
-          console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
-          readyResolver!();
-        } catch (error) {
-          readyRejecter!(error);
-          throw error;
-        }
-      });
-
-      fn(containerDescriptor);
-      return;
-    }
-    // No fallback - if the image isn't in docker-compose, it should fail
-    throw new Error(
-      `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
-    );
+    fn(containerDescriptor);
   });
 }
 
@@ -1771,6 +1948,9 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     if (opts.linker) {
       bunfig += `linker = "${opts.linker}"\n`;
     }
+    if (opts.globalStore !== undefined) {
+      bunfig += `globalStore = ${opts.globalStore}\n`;
+    }
     if (opts.publicHoistPattern) {
       if (typeof opts.publicHoistPattern === "string") {
         bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
@@ -1786,6 +1966,7 @@ type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
   linker?: "isolated" | "hoisted";
+  globalStore?: boolean;
   publicHoistPattern?: string | string[];
 };
 
@@ -1971,4 +2152,36 @@ export function nodeModulesPackages(nodeModulesPath: string): string {
   packages.sort();
 
   return packages.join("\n");
+}
+
+/**
+ * Env additions for `bun install` in tests whose dependencies trigger
+ * puppeteer's browser download. The dev-server-puppeteer launcher prefers a
+ * system Chromium when one is installed (CI bootstraps one on every Linux
+ * flavor), and several platforms have no Chrome for Testing build at all
+ * (linux-arm64, windows-arm64 CI). Skip the download there: it wastes ~150MB
+ * per run, and a half-extracted download left in the shared agent cache by an
+ * earlier failed run makes @puppeteer/browsers refuse every later install
+ * ("browser folder exists but the executable is missing").
+ */
+export function getPuppeteerInstallEnv(): Record<string, string> {
+  const hasSystemChromium = !!(
+    Bun.which("chromium-browser") ||
+    Bun.which("chromium") ||
+    Bun.which("chrome") ||
+    Bun.which("google-chrome-stable") ||
+    Bun.which("google-chrome")
+  );
+  const skipBrowserDownload =
+    hasSystemChromium ||
+    (process.platform === "linux" && process.arch === "arm64") ||
+    (process.platform === "win32" && (!!process.env.CI || !!process.env.BUILDKITE));
+  if (skipBrowserDownload) {
+    return { PUPPETEER_SKIP_DOWNLOAD: "1" };
+  }
+  // No system browser: download into a fresh per-run cache instead of the
+  // shared agent-global one — a half-extracted download left there by an
+  // earlier failed run otherwise blocks every later install. Pass the same
+  // env to whatever later launches puppeteer so it finds the browser.
+  return { PUPPETEER_CACHE_DIR: tmpdirSync("puppeteer-cache") };
 }

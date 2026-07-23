@@ -1,0 +1,85 @@
+name: Miri
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      # The FFI-free crate set covered by MIRI_CRATES in scripts/rust-miri.ts
+      - "src/ast/**"
+      - "src/base64/**"
+      - "src/clap/**"
+      - "src/collections/**"
+      - "src/dispatch/**"
+      - "src/errno/**"
+      - "src/hash/**"
+      - "src/http_types/**"
+      - "src/md/**"
+      - "src/paths/**"
+      - "src/ptr/**"
+      - "src/resolve_builtins/**"
+      - "src/shell_parser/**"
+      - "src/wyhash/**"
+      - "scripts/rust-miri.ts"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/miri.yml"
+      - ".github/actions/setup-bun/**"
+      - ".github/rust-matcher.json"
+  merge_group:
+
+env:
+  BUN_VERSION: "1.3.2"
+  LLVM_VERSION_MAJOR: "21"
+  # Pin so rustup ignores rust-toolchain.toml's `targets` list (11 cross
+  # triples ≈ 450 MB we don't need). Keep in sync with `channel` there.
+  RUSTUP_TOOLCHAIN: nightly-2026-07-20
+
+jobs:
+  miri:
+    name: cargo miri test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup system deps
+        # cmake/ninja/clang for `--configure-only` (cargo can't resolve the
+        # workspace until vendor/lolhtml exists and bun_core/build.rs has
+        # build_options.rs).
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build clang-${{ env.LLVM_VERSION_MAJOR }} lld-${{ env.LLVM_VERSION_MAJOR }} llvm-${{ env.LLVM_VERSION_MAJOR }}
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component miri --component rust-src
+          rustup override set "$RUSTUP_TOOLCHAIN"
+          echo "::add-matcher::.github/rust-matcher.json"
+
+      - name: Configure
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/build.ts --configure-only
+          ninja -C build/debug clone-lolhtml
+
+      - name: cargo miri test
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:miri

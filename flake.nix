@@ -31,8 +31,8 @@
         clang = pkgs.clang_21;
         lld = pkgs.lld_21;
 
-        # Node.js 24 - matching the bootstrap script (targets 24.3.0, actual version from nixpkgs-unstable)
-        nodejs = pkgs.nodejs_24;
+        # Node.js 26 - matching the bootstrap script (targets 26.3.0, actual version from nixpkgs-unstable)
+        nodejs = pkgs.nodejs_26;
 
         # Build tools and dependencies
         packages = [
@@ -54,7 +54,7 @@
           # Bun itself (for running build scripts via `bun bd`)
           pkgs.bun
 
-          # Node.js - version pinned to 24
+          # Node.js - version pinned to 26
           nodejs
 
           # Python for build scripts

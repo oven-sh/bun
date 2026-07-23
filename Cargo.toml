@@ -1,0 +1,459 @@
+[workspace]
+resolver = "2"
+members = [
+  "src/opaque",
+  "src/analytics",
+  "src/api",
+  "src/base64",
+  "src/bundler",
+  "src/collections",
+  "src/css",
+  "src/errno",
+  "src/glob",
+  "src/http",
+  "src/install",
+  "src/install/windows-shim",
+  "src/parsers",
+  "src/io",
+  "src/libarchive",
+  "src/md",
+  "src/paths",
+  "src/resolver",
+  "src/safety",
+  "src/semver",
+  "src/sourcemap",
+  "src/sql",
+  "src/sys",
+  "src/threading",
+  "src/valkey",
+  "src/watcher",
+  "src/cares_sys",
+  "src/clap",
+  "src/clap_macros",
+  "src/crash_handler",
+  "src/csrf",
+  "src/css_jsc",
+  "src/dns",
+  "src/dotenv",
+  "src/event_loop",
+  "src/exe_format",
+  "src/highway",
+  "src/http_jsc",
+  "src/http_types",
+  "src/ini",
+  "src/install_jsc",
+  "src/install_types",
+  "src/js_parser",
+  "src/js_parser_jsc",
+  "src/js_printer",
+  "src/libdeflate_sys",
+  "src/libuv_sys",
+  "src/ast",
+  "src/ast_jsc",
+  "src/picohttp",
+  "src/s3_signing",
+  "src/sql_jsc",
+  "src/zlib",
+  "src/patch",
+  "src/platform",
+  "src/sha_hmac",
+  "src/sys_jsc",
+  "src/zlib_sys",
+  "src/dispatch",
+  "src/brotli",
+  "src/bundler_jsc",
+  "src/perf",
+  "src/resolve_builtins",
+  "src/sourcemap_jsc",
+  "src/url",
+  "src/windows_sys",
+  "src/jsc",
+  "src/jsc_macros",
+  "src/ptr",
+  "src/boringssl",
+  "src/brotli_sys",
+  "src/bun_alloc",
+  "src/mimalloc_sys",
+  "src/semver_jsc",
+  "src/standalone_graph",
+  "src/uws",
+  "src/wyhash",
+  "src/hash",
+  "src/boringssl_sys",
+  "src/bun_core",
+  "src/bun_core_macros",
+  "src/bun_output_tags",
+  "src/patch_jsc",
+  "src/router",
+  "src/shell_parser",
+  "src/tcc_sys",
+  "src/uws_sys",
+  "src/zstd",
+  "src/options_types",
+  "src/output",
+  "src/runtime",
+  "src/simdutf_sys",
+  "src/which",
+  "src/transpiler",
+  "src/react_compiler",
+  "src/spawn",
+  "src/spawn_sys",
+  "src/bunfig",
+  "src/bun_bin",
+]
+# `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
+# fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
+# Keeping it out of `members` means its `[profile]` section is ignored and its
+# heavy dev-dependencies (criterion, html5ever) never enter `Cargo.lock`.
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+
+# ─── Release optimization ───────────────────────────────────────────────────
+# Zig's release build is one compilation unit with whole-program optimization.
+# Cargo's defaults (lto=false, codegen-units=16) leave us at ~105 crates × 16
+# CGUs ≈ 1680 separately-optimized units with NO cross-crate inlining beyond
+# `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
+# the whole Rust crate graph into one LLVM module, matching Zig's shape.
+#
+# `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
+# so `catch_unwind` is unreachable for Rust panics regardless, and no landing
+# pads means smaller `.pdata`/`.xdata`.
+#
+# Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
+# `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
+# requires the *linker's* LLVM to be ≥ rustc's bundled LLVM, so the build
+# points `-fuse-ld` at rustc's `rust-lld` rather than clang's when enabled.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"
+strip = "none"
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
+# Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
+# being packed into the rlibs and then re-packed into `libbun_rust.a`. The debug
+# `.a` was ~1.5 GB (≥80% debuginfo) and the `bun_bin` staticlib step alone spent
+# ~6s archiving it. With split DWARF the `.a` is ~1/4 the size, per-crate
+# codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
+# the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
+# No effect on the compiled code. Windows uses PDB so this is a no-op there
+# (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
+# `dsymutil` already expects.
+split-debuginfo = "unpacked"
+
+# Fast-iteration release build for local benching when fat LTO's link time
+# (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.
+[profile.release-dev]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
+# Release with debuginfo retained for `perf record` / flamegraphs. Same opt
+# level as release; binary is large but profilable.
+[profile.release-profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
+
+# `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
+# `include_bytes!`'d into bun.exe and copied next to every package binary by
+# `bun install`. Zig built it freestanding ReleaseFast (no libc,
+# single-threaded, ~13 KiB). The Rust port matches that with
+# `#![no_std]`/`#![no_main]` + a custom `/ENTRY:` (no CRT), and the build
+# script supplies `-Zbuild-std=core,compiler_builtins` with
+# `panic_immediate_abort` so panic-with-args compiles to a bare trap (no
+# `core::fmt::Arguments` materialised). `panic = "abort"` + `lto` +
+# `codegen-units = 1` let LLVM see the whole program; `opt-level = "z"`
+# favours size; `strip = "symbols"` discards the .pdb-equivalent. Always
+# release regardless of bun's own profile: a debug bun should still write
+# release shims.
+[profile.shim]
+inherits = "release"
+panic = "abort"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"
+# Pin these so the shim PE is byte-identical across bun's own profiles.
+# rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
+# bun_bin build and the shim build shares that env; without explicit values
+# here the env overrides on `release` would be inherited.
+debug-assertions = false
+overflow-checks = false
+
+[workspace.lints.rust]
+# Every rustc warning is an error. Individual lints below can override this
+# back to "warn" (their priority 0 beats the group's -1) where a warning level
+# is intentional.
+warnings = { level = "deny", priority = -1 }
+# `bun_asan` / `bun_debug` / `socket_fault_injection` are set via RUSTFLAGS
+# (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
+# them here so a plain `cargo build` / `cargo check` (without those flags)
+# doesn't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
+# link.exe unconditionally prints "Creating library X.dll.lib and object
+# X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
+# there is no linker flag to suppress it. The lint already exempts itself
+# from `-D warnings`, so this only silences the noise.
+linker_messages = "allow"
+dead_code = "deny"
+# Every crate in this workspace is an internal implementation detail of one
+# binary, so `pub` is a claim that *another crate* imports the item. If it
+# doesn't, write `pub(crate)` — that keeps the item under `dead_code` analysis
+# instead of being exempted as an external API root. Macro-generated items that
+# must stay `pub` carry `#[allow(unreachable_pub)]` at the expansion site.
+unreachable_pub = "deny"
+unused_imports = "deny"
+unused_variables = "deny"
+unused_mut = "deny"
+unused_assignments = "deny"
+unused_macros = "deny"
+unreachable_code = "deny"
+unreachable_patterns = "deny"
+
+[workspace.lints.clippy]
+# == provenance-safe pointer casts ==
+# Prefer `.cast::<T>()` / `.cast_const()` / `.cast_mut()` / `ptr::from_ref` /
+# `ptr::from_mut` over `as *const T` / `as *mut T`. The method forms cannot
+# accidentally change mutability or perform a ref→raw coercion in one step,
+# and they preserve provenance under Strict Provenance.
+ptr_as_ptr = "deny"
+ptr_cast_constness = "deny"
+ref_as_ptr = "deny"
+borrow_as_ptr = "deny"
+
+# == soundness / leak prevention ==
+undocumented_unsafe_blocks = "deny"
+not_unsafe_ptr_arg_deref = "deny"
+mem_forget = "deny"
+cast_ptr_alignment = "deny"
+transmute_ptr_to_ptr = "deny"
+as_ptr_cast_mut = "deny"
+drop_non_drop = "deny"
+uninit_vec = "deny"
+
+# == performance ==
+redundant_clone = "deny"
+unnecessary_to_owned = "deny"
+needless_collect = "deny"
+or_fun_call = "deny"
+assigning_clones = "deny"
+implicit_clone = "deny"
+iter_overeager_cloned = "deny"
+map_clone = "deny"
+trivially_copy_pass_by_ref = "deny"
+large_types_passed_by_value = "deny"
+large_enum_variant = "deny"
+large_stack_frames = "deny"
+vec_init_then_push = "deny"
+format_collect = "deny"
+manual_memcpy = "deny"
+needless_pass_by_value = "deny"
+
+# == clarity / api hygiene ==
+unnecessary_unwrap = "deny"
+derive_partial_eq_without_eq = "deny"
+derivable_impls = "deny"
+clone_on_ref_ptr = "deny"
+if_same_then_else = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+clone_on_copy = "deny"
+useless_conversion = "deny"
+# vec_box / boxed_local: legit patterns are `#[expect]`-suppressed at the site
+# with a one-line "why the box is load-bearing" comment (intrusive-list address
+# stability, JsClass finalizer thunk contract). Anything new must justify itself.
+vec_box = "deny"
+boxed_local = "deny"
+arc_with_non_send_sync = "deny"
+manual_swap = "deny"
+mem_replace_option_with_none = "deny"
+redundant_locals = "deny"
+manual_c_str_literals = "deny"
+precedence = "deny"
+implicit_saturating_sub = "deny"
+ptr_eq = "deny"
+
+# == disallowed-* (configured in clippy.toml) ==
+disallowed_methods = "deny"
+disallowed_types = "deny"
+disallowed_macros = "deny"
+
+# == explicitly allowed (Zig-port style; intentional) ==
+collapsible_if = "allow"
+collapsible_else_if = "allow"
+collapsible_match = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+len_zero = "allow"
+len_without_is_empty = "allow"
+needless_return = "allow"
+module_inception = "allow"
+missing_safety_doc = "allow"
+let_unit_value = "allow"
+needless_update = "allow"
+explicit_auto_deref = "allow"
+doc_lazy_continuation = "allow"
+doc_overindented_list_items = "allow"
+enum_variant_names = "allow"
+upper_case_acronyms = "allow"
+wrong_self_convention = "allow"
+should_implement_trait = "allow"
+new_without_default = "allow"
+self_named_constructors = "allow"  # Zig-port `Type::init()` constructor convention
+single_match = "allow"
+manual_range_contains = "allow"
+needless_lifetimes = "allow"
+needless_range_loop = "allow"
+while_let_loop = "allow"
+while_let_on_iterator = "allow"
+blocks_in_conditions = "allow"
+diverging_sub_expression = "allow"
+declare_interior_mutable_const = "allow"
+empty_line_after_doc_comments = "allow"
+empty_docs = "allow"
+excessive_precision = "allow"
+unreadable_literal = "allow"
+approx_constant = "allow"
+result_unit_err = "allow"
+only_used_in_recursion = "allow"
+# `as u32` etc. is identity on some libc targets, required widen on others
+unnecessary_cast = "allow"
+new_ret_no_self = "allow"
+map_identity = "allow"
+
+[workspace.dependencies]
+rust-argon2 = "3.0"
+bcrypt = "0.19"
+getrandom = "0.4"
+strum = { version = "0.26", features = ["derive"] }
+# `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-
+# implementable `A` bound. We can't use hashbrown's own `nightly` feature (which
+# would bind `A` to `core::alloc::Allocator` directly) because it also enables
+# `min_specialization` on `T: Copy`, which our pinned nightly rejects with
+# "cannot specialize on trait `Copy`". And we can't enable `allocator-api2`'s
+# `nightly` re-export either — that makes hashbrown name `core::alloc::Allocator`
+# without `#![feature(allocator_api)]`. So: use the polyfill trait, and bridge
+# `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
+hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+bstr = { version = "1", default-features = false, features = ["alloc"] }
+scopeguard = "1"
+const_format = "0.2"
+enum-map = "2"
+enumset = "1"
+libc = "0.2"
+memchr = "2"
+rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
+bitflags = "2"
+thiserror = "2"
+smallvec = "1"
+typed-arena = "2"
+itoa = "1"
+# Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
+lol_html = { path = "vendor/lolhtml" }
+bun_opaque = { path = "src/opaque" }
+bun_analytics = { path = "src/analytics" }
+bun_api = { path = "src/api" }
+bun_base64 = { path = "src/base64" }
+bun_bundler = { path = "src/bundler" }
+bun_collections = { path = "src/collections" }
+bun_css = { path = "src/css" }
+bun_errno = { path = "src/errno" }
+bun_glob = { path = "src/glob" }
+bun_http = { path = "src/http" }
+bun_install = { path = "src/install" }
+bun_parsers = { path = "src/parsers" }
+bun_io = { path = "src/io" }
+bun_libarchive = { path = "src/libarchive" }
+bun_md = { path = "src/md" }
+bun_paths = { path = "src/paths" }
+bun_resolver = { path = "src/resolver" }
+bun_safety = { path = "src/safety" }
+bun_semver = { path = "src/semver" }
+bun_sourcemap = { path = "src/sourcemap" }
+bun_sql = { path = "src/sql" }
+bun_sys = { path = "src/sys" }
+bun_threading = { path = "src/threading" }
+bun_valkey = { path = "src/valkey" }
+bun_watcher = { path = "src/watcher" }
+bun_cares_sys = { path = "src/cares_sys" }
+bun_clap = { path = "src/clap" }
+bun_clap_macros = { path = "src/clap_macros" }
+bun_crash_handler = { path = "src/crash_handler" }
+bun_csrf = { path = "src/csrf" }
+bun_css_jsc = { path = "src/css_jsc" }
+bun_dns = { path = "src/dns" }
+bun_dotenv = { path = "src/dotenv" }
+bun_event_loop = { path = "src/event_loop" }
+bun_exe_format = { path = "src/exe_format" }
+bun_highway = { path = "src/highway" }
+bun_http_jsc = { path = "src/http_jsc" }
+bun_http_types = { path = "src/http_types" }
+bun_ini = { path = "src/ini" }
+bun_install_jsc = { path = "src/install_jsc" }
+bun_install_types = { path = "src/install_types" }
+bun_js_parser = { path = "src/js_parser" }
+bun_js_parser_jsc = { path = "src/js_parser_jsc" }
+bun_js_printer = { path = "src/js_printer" }
+bun_libdeflate_sys = { path = "src/libdeflate_sys" }
+bun_libuv_sys = { path = "src/libuv_sys" }
+bun_ast = { path = "src/ast" }
+bun_ast_jsc = { path = "src/ast_jsc" }
+bun_picohttp = { path = "src/picohttp" }
+bun_s3_signing = { path = "src/s3_signing" }
+bun_sql_jsc = { path = "src/sql_jsc" }
+bun_zlib = { path = "src/zlib" }
+bun_patch = { path = "src/patch" }
+bun_platform = { path = "src/platform" }
+bun_sha_hmac = { path = "src/sha_hmac" }
+bun_sys_jsc = { path = "src/sys_jsc" }
+bun_zlib_sys = { path = "src/zlib_sys" }
+bun_dispatch = { path = "src/dispatch" }
+bun_brotli = { path = "src/brotli" }
+bun_bundler_jsc = { path = "src/bundler_jsc" }
+bun_perf = { path = "src/perf" }
+bun_resolve_builtins = { path = "src/resolve_builtins" }
+bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
+bun_url = { path = "src/url" }
+bun_windows_sys = { path = "src/windows_sys" }
+bun_jsc = { path = "src/jsc" }
+bun_jsc_macros = { path = "src/jsc_macros" }
+bun_ptr = { path = "src/ptr" }
+bun_boringssl = { path = "src/boringssl" }
+bun_brotli_sys = { path = "src/brotli_sys" }
+bun_alloc = { path = "src/bun_alloc" }
+bun_mimalloc_sys = { path = "src/mimalloc_sys" }
+bun_semver_jsc = { path = "src/semver_jsc" }
+bun_standalone_graph = { path = "src/standalone_graph" }
+bun_uws = { path = "src/uws" }
+bun_wyhash = { path = "src/wyhash" }
+bun_hash = { path = "src/hash" }
+bun_boringssl_sys = { path = "src/boringssl_sys" }
+bun_core = { path = "src/bun_core" }
+bun_core_macros = { path = "src/bun_core_macros" }
+bun_output_tags = { path = "src/bun_output_tags" }
+bun_patch_jsc = { path = "src/patch_jsc" }
+bun_router = { path = "src/router" }
+bun_shell_parser = { path = "src/shell_parser" }
+bun_spawn = { path = "src/spawn" }
+bun_spawn_sys = { path = "src/spawn_sys" }
+bun_tcc_sys = { path = "src/tcc_sys" }
+bun_uws_sys = { path = "src/uws_sys" }
+bun_zstd = { path = "src/zstd" }
+bun_options_types = { path = "src/options_types" }
+bun_bunfig = { path = "src/bunfig" }
+bun_output = { path = "src/output" }
+bun_runtime = { path = "src/runtime", default-features = false }
+bun_simdutf_sys = { path = "src/simdutf_sys" }
+bun_which = { path = "src/which" }
+bun_transpiler = { path = "src/transpiler" }
+
+[profile.release.package.bun_react_compiler]
+opt-level = "s"

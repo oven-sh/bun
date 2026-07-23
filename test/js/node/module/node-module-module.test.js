@@ -6,7 +6,7 @@ import path from "path";
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
-    expect(builtinModules).toHaveLength(76);
+    expect(builtinModules).toHaveLength(77);
   });
 
   test("isBuiltin() works", () => {
@@ -24,6 +24,84 @@ describe.concurrent("node-module-module", () => {
 
   test("module.globalPaths exists", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
+  });
+
+  test("module.enableCompileCache validates its argument", () => {
+    expect(Module.enableCompileCache.length).toBe(1);
+    for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {
+      expect(() => Module.enableCompileCache(invalid)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    }
+    expect(() => Module.enableCompileCache({ directory: 1 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // A function is not treated as an options bag (typeof === "object" in node).
+    expect(() => Module.enableCompileCache(function () {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // A throwing getter propagates unchanged.
+    expect(() =>
+      Module.enableCompileCache({
+        get directory() {
+          throw new RangeError("boom");
+        },
+      }),
+    ).toThrow(RangeError);
+    // Node destructures `directory` then `portable` before validating, so a throwing
+    // `portable` getter propagates even when `directory` is already invalid.
+    const order = [];
+    expect(() =>
+      Module.enableCompileCache({
+        get directory() {
+          order.push("directory");
+          return 42;
+        },
+        get portable() {
+          order.push("portable");
+          throw new RangeError("portable boom");
+        },
+      }),
+    ).toThrow(new RangeError("portable boom"));
+    expect(order).toEqual(["directory", "portable"]);
+    // Valid shapes: string | {directory?, portable?} | undefined.
+    for (const ok of [
+      undefined,
+      "/tmp/cache",
+      {},
+      [],
+      Object.create(null),
+      { directory: "/tmp/cache" },
+      { directory: undefined },
+    ]) {
+      expect(Module.enableCompileCache(ok)).toEqual({
+        status: Module.constants.compileCacheStatus.FAILED,
+        message: expect.any(String),
+      });
+    }
+  });
+
+  test("native module functions are not constructors", () => {
+    // Constructing these used to crash instead of throwing.
+    const compile = new Module("not-a-constructor-test")._compile;
+    expect(typeof compile).toBe("function");
+    expect(() => new compile()).toThrow(TypeError);
+    expect(() => Reflect.construct(compile, [])).toThrow(TypeError);
+    expect(() => new Module.runMain()).toThrow(TypeError);
+    expect(() => Reflect.construct(Module.runMain, [])).toThrow(TypeError);
+    expect(() => new Module._resolveFilename("fs")).toThrow(TypeError);
+    expect(() => Reflect.construct(Module._resolveFilename, ["fs"])).toThrow(TypeError);
+    // Calling still works.
+    expect(Module._resolveFilename("fs")).toBe("fs");
+  });
+
+  test("Module._resolveFilename accepts an options object without paths", () => {
+    // An options object without .paths used to segfault on the isArray() check.
+    expect(Module._resolveFilename("fs", null, false, {})).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, Object.create(null))).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, [])).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, { paths: undefined })).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, { paths: null })).toBe("fs");
   });
 
   test("createRequire trailing slash", () => {
@@ -73,6 +151,41 @@ describe.concurrent("node-module-module", () => {
       ospath(root + "node_modules"),
     ]);
   });
+
+  test("_nodeModulePaths() does not leak the input string", async () => {
+    // 20 components keeps the joined path well under macOS PATH_MAX (1024)
+    // while generating 21 result strings per call, so the leak signal
+    // dominates RSS noise within a few thousand iterations.
+    const code = /* js */ `
+        const m = require("module");
+        const comp = Buffer.alloc(30, "a").toString();
+        const base = "/" + Array(20).fill(comp).join("/");
+        for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
+        Bun.gc(true); Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 5000; i++) m._nodeModulePaths(base + i);
+        Bun.gc(true); Bun.gc(true); Bun.gc(true);
+        process.stdout.write(String((process.memoryUsage.rss() - before) / 1024 / 1024));
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: {
+        ...bunEnv,
+        // Disable ASAN's free-quarantine so the RSS delta reflects live
+        // allocations only; harmless on non-ASAN builds.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const growthMB = Number(stdout.trim());
+    if (!Number.isFinite(growthMB)) {
+      throw new Error(`subprocess did not report growth\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
+    }
+    expect(growthMB).toBeLessThan(25);
+    expect(exitCode).toBe(0);
+  }, 20_000);
 
   test("Module.wrap", () => {
     var mod = { exports: {} };

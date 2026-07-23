@@ -1,0 +1,33 @@
+[package]
+name = "bun_ini"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+bun_api.workspace = true
+bun_base64.workspace = true
+bun_dotenv.workspace = true
+bun_install_types.workspace = true
+bun_parsers.workspace = true
+bun_js_parser.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_ast.workspace = true
+bun_sys.workspace = true
+bun_url.workspace = true

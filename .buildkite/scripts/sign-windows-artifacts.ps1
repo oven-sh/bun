@@ -232,7 +232,14 @@ function Sign-Artifact {
 
     Log-Info "Re-packing $ZipName"
     Remove-Item $ZipName -Force
-    Compress-Archive -Path $extractDir -DestinationPath $ZipName -CompressionLevel Optimal
+    # Use the same zip command as the build-bun step (scripts/build/ci.ts makeZip)
+    # so the signed archive's entry layout matches the original: forward-slash
+    # paths and a directory entry. Compress-Archive writes backslash separators,
+    # which violates the ZIP spec and triggers warnings in non-Windows unzip.
+    & cmake -E tar cfv $ZipName --format=zip $extractDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "cmake -E tar failed for $ZipName"
+    }
     Remove-Item $extractDir -Recurse -Force
 
     Log-Info "Uploading signed $ZipName"

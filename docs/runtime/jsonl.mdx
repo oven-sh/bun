@@ -3,7 +3,7 @@ title: JSONL
 description: Parse newline-delimited JSON (JSONL) with Bun's built-in streaming parser
 ---
 
-Bun has built-in support for parsing [JSONL](https://jsonlines.org/) (newline-delimited JSON), where each line is a separate JSON value. The parser is implemented in C++ using JavaScriptCore's optimized JSON parser and supports streaming use cases.
+Bun has built-in support for parsing [JSONL](https://jsonlines.org/) (newline-delimited JSON), where each line is a separate JSON value. The parser is implemented in C++ using JavaScriptCore's optimized JSON parser and supports streaming.
 
 ```ts
 const results = Bun.JSONL.parse('{"name":"Alice"}\n{"name":"Bob"}\n');
@@ -37,15 +37,15 @@ const results = Bun.JSONL.parse(buffer);
 // [{ a: 1 }, { b: 2 }]
 ```
 
-When passed a `Uint8Array`, a UTF-8 BOM at the start of the buffer is automatically skipped.
+With `Uint8Array` input, Bun skips a UTF-8 BOM at the start of the buffer.
 
 ### Error handling
 
-If the input contains invalid JSON, `Bun.JSONL.parse()` throws a `SyntaxError`:
+If the input contains invalid JSON and no values were successfully parsed, `Bun.JSONL.parse()` throws a `SyntaxError`. If at least one value was parsed before the error, the parsed values are returned without throwing.
 
 ```ts
 try {
-  Bun.JSONL.parse('{"valid":true}\n{invalid}\n');
+  Bun.JSONL.parse("{invalid}\n");
 } catch (error) {
   console.error(error); // SyntaxError: Failed to parse JSONL
 }
@@ -55,7 +55,7 @@ try {
 
 ## `Bun.JSONL.parseChunk()`
 
-For streaming scenarios, `parseChunk` parses as many complete values as possible from the input and reports how far it got. This is useful when receiving data incrementally (e.g., from a network stream) and you need to know where to resume parsing.
+For streaming, `parseChunk` parses as many complete values as it can from the input and reports how far it got, so you know where to resume when data arrives incrementally (for example, from a network stream).
 
 ```ts
 const chunk = '{"id":1}\n{"id":2}\n{"id":3';
@@ -121,7 +121,7 @@ const buf = new TextEncoder().encode('{"a":1}\n{"b":2}\n{"c":3}\n');
 // Parse starting from byte 8
 const result = Bun.JSONL.parseChunk(buf, 8);
 console.log(result.values); // [{ b: 2 }, { c: 3 }]
-console.log(result.read); // 24
+console.log(result.read); // 23
 
 // Parse a specific range
 const partial = Bun.JSONL.parseChunk(buf, 0, 8);

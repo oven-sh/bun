@@ -1,5 +1,18 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isWindows, tempDirWithFiles } from "harness";
+import fs from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  bunTest,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDirWithFiles,
+} from "harness";
+import { parseEnv } from "node:util";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -326,13 +339,15 @@ test(".env doesnt crash with 159 bytes", () => {
   );
 });
 
-test(".env with 50000 entries", () => {
-  const dir = tempDirWithFiles("dotenv-many-entries", {
-    ".env": new Array(50000)
-      .fill(null)
-      .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
-      .join("\n"),
-    "index.ts": /* ts */ `
+test(
+  ".env with 50000 entries",
+  () => {
+    const dir = tempDirWithFiles("dotenv-many-entries", {
+      ".env": new Array(50000)
+        .fill(null)
+        .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
+        .join("\n"),
+      "index.ts": /* ts */ `
       for (let i = 0; i < 50000; i++) {
         if(process.env['TEST_VAR' + i] !== 'TEST_VAL' + i) {
           throw new Error('TEST_VAR' + i + ' !== TEST_VAL' + i);
@@ -340,10 +355,14 @@ test(".env with 50000 entries", () => {
       }
       console.log('OK');
     `,
-  });
-  const { stdout } = bunRun(`${dir}/index.ts`);
-  expect(stdout).toBe("OK");
-});
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("OK");
+  },
+  // The spawned debug+ASAN child alone needs ~8s for this; the default 5s
+  // budget only fits release-ish builds.
+  isDebug ? 90_000 : 5_000,
+);
 
 test(".env space edgecase (issue #411)", () => {
   const dir = tempDirWithFiles("dotenv-issue-411", {
@@ -352,6 +371,24 @@ test(".env space edgecase (issue #411)", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("[A B]");
+});
+
+test(".env does not byte-trim 0xA0 out of UTF-8 values", () => {
+  // U+0920 DEVANAGARI LETTER TTHA encodes as E0 A4 A0 (trailing 0xA0)
+  // U+00A0 NO-BREAK SPACE encodes as C2 A0; Node.js preserves it verbatim.
+  expect(parseEnv("A=x\u0920\nB=\u00A0x\u00A0\nC=\u00A0\nD=  x  \n")).toEqual({
+    A: "x\u0920",
+    B: "\u00A0x\u00A0",
+    C: "\u00A0",
+    D: "x",
+  });
+
+  const dir = tempDirWithFiles("dotenv-utf8-nbsp", {
+    ".env": "A=x\u0920\nB=\u00A0x\u00A0\n",
+    "index.ts": "console.log(JSON.stringify({ A: process.env.A, B: process.env.B }));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({ A: "x\u0920", B: "\u00A0x\u00A0" });
 });
 
 test(".env special characters 1 (issue #2823)", () => {
@@ -419,6 +456,43 @@ test("#3911", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("a\nb");
+});
+
+describe(".env quoted value with trailing junk does not swallow following lines", () => {
+  describe.each([
+    ["double", `"`],
+    ["single", `'`],
+    ["backtick", "`"],
+  ])("%s quotes", (_, q) => {
+    test("util.parseEnv", () => {
+      expect(parseEnv(`A=${q}hello${q} junk\nB=${q}x${q}\nC=3\n`)).toEqual({
+        A: "hello",
+        B: "x",
+        C: "3",
+      });
+      expect(parseEnv(`A=${q}hello${q} junk\r\nB=${q}x${q}\r\nC=3\r\n`)).toEqual({
+        A: "hello",
+        B: "x",
+        C: "3",
+      });
+      expect(parseEnv(`A=${q}${q} junk\nB=2\n`)).toEqual({ A: "", B: "2" });
+      expect(parseEnv(`A=${q}hello\nworld${q} junk\nB=2\n`)).toEqual({
+        A: "hello\nworld",
+        B: "2",
+      });
+      expect(parseEnv(`A=${q}hello${q} # comment\nB=2\n`)).toEqual({ A: "hello", B: "2" });
+      expect(parseEnv(`A=${q}hello${q}junk\nB=2\n`)).toEqual({ A: "hello", B: "2" });
+    });
+
+    test(".env file", () => {
+      const dir = tempDirWithFiles("dotenv-trailing-junk", {
+        ".env": `A=${q}hello${q} junk\nB=${q}x${q}\nC=3\n`,
+        "index.ts": "console.log(JSON.stringify({A: process.env.A, B: process.env.B, C: process.env.C}));",
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(JSON.parse(stdout)).toEqual({ A: "hello", B: "x", C: "3" });
+    });
+  });
 });
 
 describe("boundary tests", () => {
@@ -574,6 +648,40 @@ describe("--env-file", () => {
   test("should ignore a file that doesn't exist", () => {
     const res = bunRun(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+});
+
+describe(".env with a UTF-8 BOM", () => {
+  // Notepad and some PowerShell redirects write EF BB BF before the first byte.
+  // Previously the BOM failed the key grammar and skip_line() silently dropped line 1.
+  const bom = "\uFEFF";
+
+  test("automatic .env load keeps the first variable", () => {
+    const dir = tempDirWithFiles("dotenv-bom", {
+      ".env": `${bom}BUNTEST_BOM_A=1\r\nBUNTEST_BOM_B=2\r\n`,
+      "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe(JSON.stringify({ A: "1", B: "2" }));
+  });
+
+  test("--env-file keeps the first variable", () => {
+    const dir = tempDirWithFiles("dotenv-bom-envfile", {
+      "with-bom.env": `${bom}BUNTEST_BOM_A=1\nBUNTEST_BOM_B=2\n`,
+      "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
+    });
+    const result = Bun.spawnSync([bunExe(), "--env-file", "with-bom.env", "index.ts"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    if (!result.success) throw new Error(result.stderr.toString("utf8"));
+    expect(result.stdout.toString("utf8").trim()).toBe(JSON.stringify({ A: "1", B: "2" }));
+  });
+
+  test("util.parseEnv strips the BOM", () => {
+    expect(parseEnv(`${bom}A=1\nB=2\n`)).toEqual({ A: "1", B: "2" });
+    expect(parseEnv(`${bom}export FOO=bar\n`)).toEqual({ FOO: "bar" });
+    expect(parseEnv(bom)).toEqual({});
   });
 });
 
@@ -856,4 +964,107 @@ LARGE3="${"c".repeat(3000)}"
     const { stdout } = bunRun(`${dir}/index.ts`);
     expect(stdout).toBe("4096");
   });
+});
+
+function hasNobodyUser(): boolean {
+  try {
+    // /etc/passwd format: "name:x:uid:gid:gecos:home:shell"
+    return /^nobody:/m.test(fs.readFileSync("/etc/passwd", "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+const canUseRunuser =
+  isLinux &&
+  typeof process.getuid === "function" &&
+  process.getuid() === 0 &&
+  !!Bun.which("runuser") &&
+  hasNobodyUser();
+
+test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permission", () => {
+  const dir = tempDirWithFiles("env-eacces", {
+    // Script lives in the readable root; the cwd will be a separate
+    // execute-only directory.
+    "script.ts": "console.log(JSON.stringify(!!process.env.MY_VAR));",
+    "noread/.keep": "",
+  });
+
+  const noreadDir = path.join(dir, "noread");
+  const scriptPath = path.join(dir, "script.ts");
+
+  // Allow "nobody" to traverse the temp dir and read the script. Under
+  // restrictive umasks the temp files can default to 0o640 which nobody
+  // can't read, so set them explicitly.
+  fs.chmodSync(dir, 0o755);
+  fs.chmodSync(scriptPath, 0o644);
+
+  // Make noread execute-only (0111). A process can cd into it, but
+  // Bun's resolver cannot list it (opendir → EACCES). This causes
+  // readDirInfo to return null, which previously skipped loadProcess()
+  // and left process.env completely empty.
+  fs.chmodSync(noreadDir, 0o111);
+
+  // Use runuser -m to drop to "nobody" while preserving the environment
+  // (root bypasses DAC checks, so we need a non-root user). -m preserves
+  // env vars across the PAM user switch, so MY_VAR set in env: below
+  // reaches the spawned bun.
+  try {
+    // Run via sh so that `cd` happens as the target user.
+    const result = Bun.spawnSync({
+      cmd: [
+        "runuser",
+        "-m",
+        "-u",
+        "nobody",
+        "--",
+        "/bin/sh",
+        "-c",
+        `cd '${noreadDir}' && exec '${bunExe()}' '${scriptPath}'`,
+      ],
+      env: {
+        ...bunEnv,
+        MY_VAR: "visible",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.stdout.toString().trim()).toBe("true");
+    expect(result.exitCode).toBe(0);
+  } finally {
+    // Restore permissions so tempDir cleanup can remove the directory.
+    fs.chmodSync(noreadDir, 0o755);
+  }
+});
+
+// `st_size` is only a hint (sparse file, writer racing the loader): the env
+// loader's whole-file read used to `reserve_exact` it and abort the process in
+// `handle_alloc_error` before any user code ran. It must surface as a
+// recoverable error. ASAN-only: ASAN rejects the 1 TiB request deterministically.
+test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort the process", async () => {
+  const dir = tempDirWithFiles("dotenv-huge-sparse", {
+    ".env": "",
+    "app.js": `console.log("reached user code");`,
+  });
+  // 1 TiB sparse `.env`: fstat reports 2**40 bytes, nothing is actually stored.
+  fs.truncateSync(path.join(dir, ".env"), 2 ** 40);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "app.js"],
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      // Let ASAN return null for the oversized request (instead of hard-erroring
+      // itself) so Bun's own allocation-failure path is what gets exercised.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Unfixed, startup died in `handle_alloc_error` ("memory allocation of
+  // 1099511627792 bytes failed", SIGABRT) without ever reaching app.js.
+  expect({ stdout, exitCode }).toEqual({ stdout: "reached user code\n", exitCode: 0 });
 });

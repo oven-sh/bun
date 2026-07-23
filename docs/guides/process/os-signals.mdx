@@ -14,7 +14,7 @@ process.on("SIGINT", () => {
 
 ---
 
-If you don't know which signal to listen for, you listen to the [`"beforeExit"`](https://nodejs.org/api/process.html#event-beforeexit) and [`"exit"`](https://nodejs.org/api/process.html#event-exit) events.
+If you don't know which signal to listen for, listen for the [`"beforeExit"`](https://nodejs.org/api/process.html#event-beforeexit) and [`"exit"`](https://nodejs.org/api/process.html#event-exit) events.
 
 ```ts
 process.on("beforeExit", code => {
@@ -28,4 +28,4 @@ process.on("exit", code => {
 
 ---
 
-See [Docs > API > Utils](/runtime/utils) for more useful utilities.
+See [Utils](/runtime/utils) for more utilities.

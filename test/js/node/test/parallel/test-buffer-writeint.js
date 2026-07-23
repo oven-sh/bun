@@ -222,7 +222,9 @@ const errorOutOfBounds = {
         range = `>= -(2 ** ${i * 8 - 1}) and < 2 ** ${i * 8 - 1}`;
       }
       [min - 1, max + 1].forEach((val) => {
-        const received = val;
+        const received = i > 4 ?
+          String(val).replace(/(\d)(?=(\d\d\d)+(?!\d))/g, '$1_') :
+          val;
         assert.throws(() => {
           data[fn](val, 0, i);
         }, {

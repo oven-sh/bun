@@ -545,3 +545,119 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
     expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
   });
 });
+
+describe("hostnames containing NUL bytes", () => {
+  const hostnameWithNul = "localhost\0.example.invalid";
+
+  it("dns.promises.lookup rejects instead of truncating at the NUL", async () => {
+    await expect(dns_promises.lookup(hostnameWithNul)).rejects.toThrow();
+  });
+
+  it("dns.lookup (callback) passes an error instead of truncating at the NUL", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup(hostnameWithNul, (err, address, family) => {
+      try {
+        expect(err).toBeTruthy();
+        expect(address).toBeUndefined();
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  });
+
+  it("plain localhost still resolves", async () => {
+    const { address } = await dns_promises.lookup("localhost");
+    expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+describe("dns.Resolver options validation", () => {
+  describe.each([
+    ["dns.Resolver", dns.Resolver],
+    ["dns.promises.Resolver", dns_promises.Resolver],
+  ])("%s", (_name, Resolver) => {
+    it.each([0, -1, 2.5, -0.5, 2 ** 31])("{tries: %p} throws ERR_OUT_OF_RANGE", tries => {
+      expect(() => new Resolver({ tries })).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    });
+
+    it("{tries: 'x'} throws ERR_INVALID_ARG_TYPE", () => {
+      expect(() => new Resolver({ tries: "x" })).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
+
+    it.each([-2, 1.5, 2 ** 31])("{timeout: %p} throws ERR_OUT_OF_RANGE", timeout => {
+      expect(() => new Resolver({ timeout })).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    });
+
+    it.each([1, 4, 2 ** 31 - 1])("{tries: %p} is accepted", tries => {
+      expect(() => new Resolver({ tries })).not.toThrow();
+    });
+
+    it.each([-1, 0, 100, 2 ** 31 - 1])("{timeout: %p} is accepted", timeout => {
+      expect(() => new Resolver({ timeout })).not.toThrow();
+    });
+
+    it.each([undefined, null, 42, "hello", true])("non-object options %p uses defaults", options => {
+      expect(() => new Resolver(options)).not.toThrow();
+    });
+  });
+});
+
+describe("dns.Resolver#setServers with IPv6 zone identifiers", () => {
+  describe.each([
+    ["dns.Resolver", dns.Resolver],
+    ["dns.promises.Resolver", dns_promises.Resolver],
+  ])("%s", (_name, Resolver) => {
+    it("accepts and strips the zone id", () => {
+      const r = new Resolver();
+      r.setServers(["fe80::1%lo"]);
+      expect(r.getServers()).toEqual(["fe80::1"]);
+    });
+
+    it("accepts a bracketed zone id with a port", () => {
+      const r = new Resolver();
+      r.setServers(["[fe80::1%lo]:5353"]);
+      expect(r.getServers()).toEqual(["[fe80::1]:5353"]);
+    });
+  });
+});
+
+describe("dns.lookupService with a numeric-string port", () => {
+  // getnameinfo for 127.0.0.1 resolves on Linux/macOS but may ENOTFOUND on
+  // Windows, so assert that "22" yields the same outcome as 22 rather than a
+  // specific result.
+  const settle = p =>
+    p.then(
+      v => ({ ok: v }),
+      e => ({ err: e.code }),
+    );
+
+  it("callback API coerces a numeric-string port", async () => {
+    const run = port => {
+      const { promise, resolve } = Promise.withResolvers();
+      dns.lookupService("127.0.0.1", port, (err, hostname, service) => {
+        resolve(err ? { err: err.code } : { ok: { hostname, service } });
+      });
+      return promise;
+    };
+    const [asString, asNumber] = await Promise.all([run("22"), run(22)]);
+    expect(asString).toEqual(asNumber);
+    expect(asString.err).not.toBe("ERR_SOCKET_BAD_PORT");
+  });
+
+  it("promises API coerces a numeric-string port", async () => {
+    const [asString, asNumber] = await Promise.all([
+      settle(dns_promises.lookupService("127.0.0.1", "22")),
+      settle(dns_promises.lookupService("127.0.0.1", 22)),
+    ]);
+    expect(asString).toEqual(asNumber);
+    expect(asString.err).not.toBe("ERR_SOCKET_BAD_PORT");
+  });
+
+  it("promises API still throws ERR_SOCKET_BAD_PORT synchronously for a truly bad port", () => {
+    expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
+      expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
+    );
+  });
+});

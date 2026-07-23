@@ -16,6 +16,15 @@ const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
 
+// npm ws's sendAfterClose: a ping/pong/send on a CLOSING/CLOSED socket delivers
+// a "not open" Error to the callback on the next tick and never throws.
+function sendAfterClose(state, cb) {
+  if (typeof cb === "function") {
+    const err = new Error(`WebSocket is not open: readyState ${state} (${readyStates[state]})`);
+    process.nextTick(cb, err);
+  }
+}
+
 /**
  * Extracts TLS and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
@@ -31,24 +40,25 @@ function extractAgentOptions(agent) {
     const newTlsOptions = {};
     let hasTlsOptions = false;
 
-    if (connectOpts.rejectUnauthorized !== undefined) {
-      newTlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
+    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
+    if (rejectUnauthorized !== undefined) {
+      newTlsOptions.rejectUnauthorized = rejectUnauthorized;
       hasTlsOptions = true;
     }
-    if (connectOpts.ca) {
-      newTlsOptions.ca = connectOpts.ca;
+    if (ca) {
+      newTlsOptions.ca = ca;
       hasTlsOptions = true;
     }
-    if (connectOpts.cert) {
-      newTlsOptions.cert = connectOpts.cert;
+    if (cert) {
+      newTlsOptions.cert = cert;
       hasTlsOptions = true;
     }
-    if (connectOpts.key) {
-      newTlsOptions.key = connectOpts.key;
+    if (key) {
+      newTlsOptions.key = key;
       hasTlsOptions = true;
     }
-    if (connectOpts.passphrase) {
-      newTlsOptions.passphrase = connectOpts.passphrase;
+    if (passphrase) {
+      newTlsOptions.passphrase = passphrase;
       hasTlsOptions = true;
     }
 
@@ -150,21 +160,29 @@ class BunWebSocket extends EventEmitter {
     let proxy;
     let tlsOptions;
     let agent;
+    // Mirrors ws's `const opts = { perMessageDeflate: true, ...options }` + truthy check:
+    // any `perMessageDeflate` that's present and falsy suppresses the extension
+    // offer; omitted or truthy keeps the default.
+    let disableDeflate = false;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
       tlsOptions = options?.tls;
+      if ("perMessageDeflate" in options && !options.perMessageDeflate) {
+        disableDeflate = true;
+      }
 
       // Extract from agent if provided (like HttpsProxyAgent)
       agent = options?.agent;
       if ($isObject(agent)) {
         const agentOpts = extractAgentOptions(agent);
-        if (!proxy && agentOpts.proxy) {
-          proxy = agentOpts.proxy;
+        const { proxy: agentProxy, tls: agentTls } = agentOpts;
+        if (!proxy && agentProxy) {
+          proxy = agentProxy;
         }
-        if (!tlsOptions && agentOpts.tls) {
-          tlsOptions = agentOpts.tls;
+        if (!tlsOptions && agentTls) {
+          tlsOptions = agentTls;
         }
       }
     }
@@ -206,7 +224,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
           }
         },
         write() {},
@@ -235,22 +253,25 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+    // The native WebSocket keeps permessage-deflate enabled by default;
+    // forward `perMessageDeflate: false` only when the caller asked to disable.
     let wsOptions;
-    if (headers || proxy || tls) {
+    if (headers || proxy || tls || disableDeflate) {
       wsOptions = { protocols };
       if (headers) wsOptions.headers = headers;
       if (method) wsOptions.method = method;
       if (proxy) wsOptions.proxy = proxy;
       if (tls) wsOptions.tls = tls;
+      if (disableDeflate) wsOptions.perMessageDeflate = false;
     } else {
       wsOptions = protocols;
     }
@@ -461,7 +482,8 @@ class BunWebSocket extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const state = this.#ws.readyState;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -473,25 +495,21 @@ class BunWebSocket extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.ping();
-      else this.#ws.ping(data);
-    } catch (error) {
-      if (typeof cb === "function") {
-        cb(error);
-        return;
-      }
-      this.emit("error", error);
-      return;
-    }
+    // npm ws has no try/catch here: Sender.prototype.ping throws RangeError
+    // synchronously for a >125-byte payload and never reaches cb.
+    if (data === undefined) this.#ws.ping();
+    else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
   }
 
   pong(data, mask, cb) {
-    if (this.#ws.readyState === 0) {
+    const state = this.#ws.readyState;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -503,19 +521,12 @@ class BunWebSocket extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.pong();
-      else this.#ws.pong(data);
-    } catch (error) {
-      if (typeof cb === "function") {
-        cb(error);
-        return;
-      }
-      this.emit("error", error);
-      return;
-    }
+    if (data === undefined) this.#ws.pong();
+    else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
   }
@@ -892,7 +903,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   ping(data, mask, cb) {
-    if (this.#state === ReadyState_CONNECTING) {
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -904,21 +916,19 @@ class BunWebSocketMocked extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.ping();
-      else this.#ws.ping(data);
-    } catch (error) {
-      if (typeof cb === "function") cb(error);
-      return;
-    }
+    if (data === undefined) this.#ws.ping();
+    else this.#ws.ping(data);
 
     if (typeof cb === "function") cb();
   }
 
   pong(data, mask, cb) {
-    if (this.#state === ReadyState_CONNECTING) {
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING) {
       throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
 
@@ -930,15 +940,12 @@ class BunWebSocketMocked extends EventEmitter {
       mask = undefined;
     }
 
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
     if (typeof data === "number") data = data.toString();
 
-    try {
-      if (data === undefined) this.#ws.pong();
-      else this.#ws.pong(data);
-    } catch (error) {
-      if (typeof cb === "function") cb(error);
-      return;
-    }
+    if (data === undefined) this.#ws.pong();
+    else this.#ws.pong(data);
 
     if (typeof cb === "function") cb();
   }
@@ -1164,15 +1171,12 @@ class WebSocketServer extends EventEmitter {
       ...options,
     };
 
-    if (
-      (options.port == null && !options.server && !options.noServer) ||
-      (options.port != null && (options.server || options.noServer)) ||
-      (options.server && options.noServer)
-    ) {
+    const { port, server, noServer, host, backlog } = options;
+    if ((port == null && !server && !noServer) || (port != null && (server || noServer)) || (server && noServer)) {
       throw new TypeError('One and only one of the "port", "server", or "noServer" options must be specified');
     }
 
-    if (options.port != null) {
+    if (port != null) {
       this._server = http.createServer((req, res) => {
         const body = http.STATUS_CODES[426];
 
@@ -1183,12 +1187,13 @@ class WebSocketServer extends EventEmitter {
         res.end(body);
       });
 
-      this._server.listen(options.port, options.host, options.backlog, callback);
-    } else if (options.server) {
-      this._server = options.server;
+      this._server.listen(port, host, backlog, callback);
+    } else if (server) {
+      this._server = server;
     }
 
-    if (this._server) {
+    const ownServer = this._server;
+    if (ownServer) {
       const emitConnection = this.emit.bind(this, "connection");
       const emitListening = this.emit.bind(this, "listening");
       const emitError = this.emit.bind(this, "error");
@@ -1196,14 +1201,14 @@ class WebSocketServer extends EventEmitter {
         this.handleUpgrade(req, socket, head, emitConnection);
       };
 
-      this._server.on("listening", emitListening);
-      this._server.on("error", emitError);
-      this._server.on("upgrade", doUpgrade);
+      ownServer.on("listening", emitListening);
+      ownServer.on("error", emitError);
+      ownServer.on("upgrade", doUpgrade);
 
       this._removeListeners = () => {
-        this._server.removeListener("upgrade", doUpgrade);
-        this._server.removeListener("listening", emitListening);
-        this._server.removeListener("error", emitError);
+        ownServer.removeListener("upgrade", doUpgrade);
+        ownServer.removeListener("listening", emitListening);
+        ownServer.removeListener("error", emitError);
       };
     }
 
@@ -1268,8 +1273,9 @@ class WebSocketServer extends EventEmitter {
         this._removeListeners = this._server = null;
       }
 
-      if (this.clients) {
-        if (!this.clients.size) {
+      const clients = this.clients;
+      if (clients) {
+        if (!clients.size) {
           process.nextTick(server => {
             server._state = CLOSED;
             server.emit("close");
@@ -1308,11 +1314,12 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   shouldHandle(req) {
-    if (this.options.path) {
+    const optionsPath = this.options.path;
+    if (optionsPath) {
       const index = req.url.indexOf("?");
       const pathname = index !== -1 ? req.url.slice(0, index) : req.url;
 
-      if (pathname !== this.options.path) return false;
+      if (pathname !== optionsPath) return false;
     }
 
     return true;
@@ -1359,12 +1366,13 @@ class WebSocketServer extends EventEmitter {
         headers: protocol ? { "sec-websocket-protocol": protocol } : undefined,
       })
     ) {
-      if (this.clients) {
-        this.clients.add(ws);
+      const clients = this.clients;
+      if (clients) {
+        clients.add(ws);
         ws.on("close", () => {
-          this.clients.delete(ws);
+          clients.delete(ws);
 
-          if (this._shouldEmitClose && !this.clients.size) {
+          if (this._shouldEmitClose && !clients.size) {
             process.nextTick(wsEmitClose, this);
           }
         });

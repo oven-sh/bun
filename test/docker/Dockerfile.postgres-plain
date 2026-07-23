@@ -1,0 +1,22 @@
+FROM postgres:15
+COPY init-scripts/postgres/ /docker-entrypoint-initdb.d/
+
+# Bake a fully initialized data directory into the image so cold container
+# start skips initdb + the temp-server init-script pass and is just
+# `exec postgres` (~1-2s instead of ~5-8s). The base image declares
+# `VOLUME /var/lib/postgresql/data`, which discards build-time writes there,
+# so point PGDATA at a sibling path; the entrypoint reads PGDATA and sees it
+# is already populated at runtime, so it goes straight to exec.
+ENV POSTGRES_HOST_AUTH_METHOD=trust \
+    POSTGRES_USER=postgres \
+    PGDATA=/var/lib/postgresql/pgdata-init
+
+RUN set -e; \
+    docker-entrypoint.sh postgres & pid=$!; \
+    for i in $(seq 180); do \
+        pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && break; \
+        sleep 1; \
+    done; \
+    pg_isready -h 127.0.0.1 -U postgres; \
+    gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop; \
+    wait "$pid"

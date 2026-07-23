@@ -3,12 +3,13 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const { resistStopPropagation } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
-const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
-const parseEnv = $newZigFunction("node_util_binding.zig", "parseEnv", 1);
+const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
+const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
@@ -25,7 +26,7 @@ function isFunction(value) {
 const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 
-const parseArgs = $newZigFunction("parse_args.zig", "parseArgs", 1);
+const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 
 const inspect = utl.inspect;
 const formatWithOptions = utl.formatWithOptions;
@@ -34,8 +35,9 @@ const stripVTControlCharacters = utl.stripVTControlCharacters;
 
 var debugs = {};
 var debugEnvRegex = /^$/;
-if (process.env.NODE_DEBUG) {
-  debugEnv = process.env.NODE_DEBUG;
+const NODE_DEBUG = process.env.NODE_DEBUG;
+if (NODE_DEBUG) {
+  debugEnv = NODE_DEBUG;
   debugEnv = debugEnv
     .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
     .replace(/\*/g, ".*")
@@ -44,11 +46,27 @@ if (process.env.NODE_DEBUG) {
   debugEnvRegex = new RegExp("^" + debugEnv + "$", "i");
 }
 var debugEnv;
+// Emits a warning when the user enables NODE_DEBUG=http or NODE_DEBUG=http2,
+// like Node.js's internal/util/debuglog.
+function emitWarningIfNeeded(set) {
+  if ("HTTP" === set || "HTTP2" === set) {
+    process.emitWarning(
+      "Setting the NODE_DEBUG environment variable " +
+        "to '" +
+        set.toLowerCase() +
+        "' can expose sensitive " +
+        "data (such as passwords, tokens and authentication headers) " +
+        "in the resulting log.",
+    );
+  }
+}
+
 function debuglog(set) {
   set = set.toUpperCase();
   if (!debugs[set]) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
+      emitWarningIfNeeded(set);
       debugs[set] = function () {
         var msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
@@ -123,8 +141,9 @@ var inherits = function inherits(ctor, superCtor) {
     throw $ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
   }
 
-  if (superCtor.prototype === undefined) {
-    throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
+  const superCtorPrototype = superCtor.prototype;
+  if (superCtorPrototype === undefined) {
+    throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtorPrototype);
   }
   Object.defineProperty(ctor, "super_", {
     // @ts-ignore
@@ -257,7 +276,7 @@ function aborted(signal: AbortSignal, resource: object) {
     // Do not leak the current scope into the listener.
     // Instead, create a new function.
     unregisterToken,
-    { once: true },
+    resistStopPropagation({ __proto__: null, once: true }),
   );
 
   if (!lazyAbortedRegistry) {
@@ -282,6 +301,19 @@ function aborted(signal: AbortSignal, resource: object) {
   return promise;
 }
 
+function setTraceSigInt(enable) {
+  // Node validates the argument before the worker check (lib/util.js), so a
+  // bad type throws ERR_INVALID_ARG_TYPE even inside a worker.
+  validateBoolean(enable, "enable");
+  if (!Bun.isMainThread) {
+    // Matches node's ERR_WORKER_UNSUPPORTED_OPERATION('Calling util.setTraceSigInt').
+    throw $ERR_WORKER_UNSUPPORTED_OPERATION("Calling util.setTraceSigInt is not supported in workers");
+  }
+  // Node starts/stops a SIGINT watchdog that prints a stack trace when the
+  // process is interrupted; bun does not implement the watchdog yet, so this
+  // is accepted as a no-op on the main thread.
+}
+
 cjs_exports = {
   // This is in order of `node --print 'Object.keys(util)'`
   // _errnoException,
@@ -303,6 +335,7 @@ cjs_exports = {
   inspect,
   isDeepStrictEqual,
   promisify,
+  setTraceSigInt,
   stripVTControlCharacters,
   toUSVString,
   // transferableAbortSignal,

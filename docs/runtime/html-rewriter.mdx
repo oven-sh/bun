@@ -3,13 +3,13 @@ title: HTMLRewriter
 description: Use Bun's HTMLRewriter to transform HTML documents with CSS selectors
 ---
 
-HTMLRewriter lets you use CSS selectors to transform HTML documents. It works with `Request`, `Response`, as well as `string`. Bun's implementation is based on Cloudflare's [lol-html](https://github.com/cloudflare/lol-html).
+HTMLRewriter transforms HTML documents with CSS selectors. It works with `Response`, `string`, and `ArrayBuffer` inputs. Bun's implementation is based on Cloudflare's [lol-html](https://github.com/cloudflare/lol-html).
 
 ---
 
 ## Usage
 
-A common usecase is rewriting URLs in HTML content. Here's an example that rewrites image sources and link URLs to use a CDN domain:
+A common use case is rewriting URLs in HTML content:
 
 ```ts
 // Replace all images with a rickroll
@@ -44,7 +44,7 @@ const result = rewriter.transform(html);
 console.log(result);
 ```
 
-This replaces all images with a thumbnail of Rick Astley and wraps each `<img>` in a link, producing a diff like this:
+The rewriter replaces every image with a thumbnail of Rick Astley and wraps each `<img>` in a link, producing a diff like this:
 
 {/* prettier-ignore */}
 ```html
@@ -66,11 +66,11 @@ This replaces all images with a thumbnail of Rick Astley and wraps each `<img>` 
 </html>
 ```
 
-Now every image on the page will be replaced with a thumbnail of Rick Astley, and clicking any image will lead to [a very famous video](https://www.youtube.com/watch?v=dQw4w9WgXcQ).
+Clicking any image now leads to [a very famous video](https://www.youtube.com/watch?v=dQw4w9WgXcQ).
 
 ### Input types
 
-HTMLRewriter can transform HTML from various sources. The input is automatically handled based on its type:
+HTMLRewriter can transform HTML from several input types:
 
 ```ts
 // From Response
@@ -82,18 +82,18 @@ rewriter.transform("<div>content</div>");
 // From ArrayBuffer
 rewriter.transform(new TextEncoder().encode("<div>content</div>").buffer);
 
-// From Blob
-rewriter.transform(new Blob(["<div>content</div>"]));
+// From Blob (wrap in a Response)
+rewriter.transform(new Response(new Blob(["<div>content</div>"])));
 
-// From File
-rewriter.transform(Bun.file("index.html"));
+// From File (wrap in a Response)
+rewriter.transform(new Response(Bun.file("index.html")));
 ```
 
-Note that Cloudflare Workers implementation of HTMLRewriter only supports `Response` objects.
+The Cloudflare Workers implementation of HTMLRewriter only supports `Response` objects.
 
 ### Element Handlers
 
-The `on(selector, handlers)` method allows you to register handlers for HTML elements that match a CSS selector. The handlers are called for each matching element during parsing:
+The `on(selector, handlers)` method registers handlers for HTML elements that match a CSS selector. The handlers run for each matching element during parsing:
 
 ```ts
 rewriter.on("div.content", {
@@ -113,7 +113,7 @@ rewriter.on("div.content", {
 });
 ```
 
-The handlers can be asynchronous and return a Promise. Note that async operations will block the transformation until they complete:
+Handlers can be asynchronous and return a Promise. Async operations block the transformation until they complete:
 
 ```ts
 rewriter.on("div", {
@@ -166,7 +166,7 @@ rewriter.on("*", handler);
 
 ### Element Operations
 
-Elements provide various methods for manipulation. All modification methods return the element instance for chaining:
+All element modification methods return the element instance, so calls can be chained:
 
 ```ts
 rewriter.on("div", {
@@ -221,7 +221,7 @@ rewriter.on("div", {
 
 ### Text Operations
 
-Text handlers provide methods for text manipulation. Text chunks represent portions of text content and provide information about their position in the text node:
+Text chunks represent portions of text content and report their position in the text node:
 
 ```ts
 rewriter.on("p", {
@@ -245,7 +245,7 @@ rewriter.on("p", {
 
 ### Comment Operations
 
-Comment handlers allow comment manipulation with similar methods to text nodes:
+Comments support similar methods to text nodes:
 
 ```ts
 rewriter.on("*", {
@@ -269,7 +269,7 @@ rewriter.on("*", {
 
 ### Document Handlers
 
-The `onDocument(handlers)` method allows you to handle document-level events. These handlers are called for events that occur at the document level rather than within specific elements:
+The `onDocument(handlers)` method registers handlers for events at the document level rather than within specific elements:
 
 ```ts
 rewriter.onDocument({
@@ -312,10 +312,10 @@ HTMLRewriter operations can throw errors in several cases:
 - Invalid HTML content in transformation methods
 - Stream errors when processing Response bodies
 - Memory allocation failures
-- Invalid input types (e.g., passing Symbol)
+- Invalid input types (for example, passing a Symbol)
 - Body already used errors
 
-Errors should be caught and handled appropriately:
+Catch and handle these errors:
 
 ```ts
 try {

@@ -5,48 +5,48 @@ description: Bindgen for Bun
 
 <Note>This document is for maintainers and contributors to Bun, and describes internal implementation details.</Note>
 
-The new bindings generator, introduced to the codebase in Dec 2024, scans for
-`*.bind.ts` to find function and class definition, and generates glue code to
-interop between JavaScript and native code.
+The bindings generator scans for `*.bind.ts` files to find function and class
+definitions, and generates glue code to interop between JavaScript and native
+code.
 
-There are currently other code generators and systems that achieve similar
-purposes. The following will all eventually be completely phased out in favor of
-this one:
+There are other code generators and systems that achieve similar purposes;
+the following will all eventually be phased out in favor of this one:
 
 - "Classes generator", converting `*.classes.ts` for custom classes.
 - "JS2Native", allowing ad-hoc calls from `src/js` to native code.
 
-## Creating JS Functions in Zig
+## Creating JS Functions in Rust
 
-Given a file implementing a simple function, such as `add`
+Given a file implementing a function, such as `add`:
 
-```zig src/bun.js/math.zig
-pub fn add(global: *jsc.JSGlobalObject, a: i32, b: i32) !i32 {
-    return std.math.add(i32, a, b) catch {
-        // Binding functions can return `error.OutOfMemory` and `error.JSError`.
-        // Others like `error.Overflow` from `std.math.add` must be converted.
-        // Remember to be descriptive.
-        return global.throwPretty("Integer overflow while adding", .{});
-    };
+```rust src/jsc/bindgen_test.rs
+use crate::{JSGlobalObject, JsResult};
+use crate::r#gen::bindgen_test as generated;
+
+pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
+    match a.checked_add(b) {
+        Some(v) => Ok(v),
+        None => {
+            // Binding functions can propagate out-of-memory and JS exceptions
+            // directly; other failures (like this integer overflow) must be
+            // converted into a thrown error. Remember to be descriptive.
+            Err(global.throw_pretty(format_args!("Integer overflow while adding")))
+        }
+    }
 }
-
-const gen = bun.gen.math; // "math" being this file's basename
-
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
 ```
 
-Then describe the API schema using a `.bind.ts` function. The binding file goes next to the Zig file.
+Then describe the API schema using a `.bind.ts` file. The binding file goes
+next to the Rust file.
 
-```ts src/bun.js/math.bind.ts icon="/icons/typescript.svg"
-import { t, fn } from "bindgen";
+```ts src/jsc/bindgen_test.bind.ts icon="/icons/typescript.svg"
+import { fn, t } from "bindgen";
 
 export const add = fn({
   args: {
     global: t.globalObject,
     a: t.i32,
-    b: t.i32.default(1),
+    b: t.i32.default(-1),
   },
   ret: t.i32,
 });
@@ -59,34 +59,51 @@ This function declaration is equivalent to:
  * Throws if zero arguments are provided.
  * Wraps out of range numbers using modulo.
  */
-declare function add(a: number, b: number = 1): number;
+declare function add(a: number, b: number = -1): number;
 ```
 
-The code generator will provide `bun.gen.math.jsAdd`, which is the native
-function implementation. To pass to JavaScript, use
-`bun.gen.math.createAddCallback(global)`. JS files in `src/js/` may use
-`$bindgenFn("math.bind.ts", "add")` to get a handle to the implementation.
+The code generator emits a C++ thunk that validates and coerces the JS
+arguments, then calls the Rust implementation. On the Rust side the generated
+module is reachable as `crate::r#gen::<basename>` (for `bindgen_test.bind.ts`,
+that's `crate::r#gen::bindgen_test`). To construct a `JSFunction` wrapping the
+native implementation, use `generated::create_add_callback(global)`:
+
+```rust
+use crate::r#gen::bindgen_test as generated;
+
+let js_fn: JSValue = generated::create_add_callback(global);
+```
+
+In JS files in `src/js/`, `$bindgenFn("bindgen_test.bind.ts", "add")` returns
+a handle to the implementation.
+
+Exported bindgen functions are snake_cased on the Rust side
+(`requiredAndOptionalArg` → `required_and_optional_arg`), and the generated
+callback constructor follows the same convention
+(`create_required_and_optional_arg_callback`).
 
 ## Strings
 
-The type for receiving strings is one of [`t.DOMString`](https://webidl.spec.whatwg.org/#idl-DOMString), [`t.ByteString`](https://webidl.spec.whatwg.org/#idl-ByteString), and [`t.USVString`](https://webidl.spec.whatwg.org/#idl-USVString). These map directly to their WebIDL counterparts, and have slightly different conversion logic. Bindgen will pass BunString to native code in all cases.
+To receive a string, use [`t.DOMString`](https://webidl.spec.whatwg.org/#idl-DOMString), [`t.ByteString`](https://webidl.spec.whatwg.org/#idl-ByteString), or [`t.USVString`](https://webidl.spec.whatwg.org/#idl-USVString). These map directly to their WebIDL counterparts and have slightly different conversion logic. Bindgen passes `bun_core::String` to native code in all cases.
 
 When in doubt, use DOMString.
 
-`t.UTF8String` can be used in place of `t.DOMString`, but will call `bun.String.toUTF8`. The native callback gets `[]const u8` (WTF-8 data) passed to native code, freeing it after the function returns.
+`t.UTF8String` works in place of `t.DOMString`, but eagerly converts to UTF-8.
+The native callback receives a `&[u8]` slice (WTF-8 data) that is
+freed after the function returns.
 
-TLDRs from WebIDL spec:
+TLDRs from the WebIDL spec:
 
-- ByteString can only contain valid latin1 characters. It is not safe to assume bun.String is already in 8-bit format, but it is extremely likely.
-- USVString will not contain invalid surrogate pairs, aka text that can be represented correctly in UTF-8.
-- DOMString is the loosest but also most recommended strategy.
+- ByteString can only contain valid latin1 characters. It is not safe to assume `bun_core::String` is already in 8-bit format, but it is extremely likely.
+- USVString does not contain invalid surrogate pairs, so its text can be represented correctly in UTF-8.
+- DOMString is the loosest but also the most recommended strategy.
 
 ## Function Variants
 
-A `variants` can specify multiple variants (also known as overloads).
+The `variants` key declares multiple variants (also known as overloads) of a function.
 
-```ts src/bun.js/math.bind.ts icon="/icons/typescript.svg"
-import { t, fn } from "bindgen";
+```ts
+import { fn, t } from "bindgen";
 
 export const action = fn({
   variants: [
@@ -106,35 +123,33 @@ export const action = fn({
 });
 ```
 
-In Zig, each variant gets a number, based on the order the schema defines.
+Each variant gets a numbered Rust function:
 
-```zig
-fn action1(a: i32) i32 {
-  return a;
+```rust
+pub fn action1(a: i32) -> i32 {
+    a
 }
 
-fn action2(a: bun.String) bun.String {
-  return a;
+pub fn action2(a: bun_core::String) -> bun_core::String {
+    a
 }
 ```
 
 ## `t.dictionary`
 
-A `dictionary` is a definition for a JavaScript object, typically as a function inputs. For function outputs, it is usually a smarter idea to declare a class type to add functions and destructuring.
+A `dictionary` describes a JavaScript object, typically a function input. For function outputs, prefer a class type so you can add methods and support destructuring.
 
 ## Enumerations
 
-To use [WebIDL's enumeration](https://webidl.spec.whatwg.org/#idl-enums) type, use either:
+`t.stringEnum` creates a [WebIDL enumeration](https://webidl.spec.whatwg.org/#idl-enums) and generates a new enum type for it.
 
-- `t.stringEnum`: Create and codegen a new enum type.
-- `t.zigEnum`: Derive a bindgen type off of an existing enum in the codebase.
-
-An example of `stringEnum` as used in `fmt.zig` / `bun:internal-for-testing`
+An example of `stringEnum` from `fmt_jsc.bind.ts` / `bun:internal-for-testing`:
 
 ```ts
-export const Formatter = t.stringEnum("highlight-javascript", "escape-powershell");
+export const Formatter = t.stringEnum("highlight-javascript", "highlight-javascript-redacted", "escape-powershell");
 
 export const fmtString = fn({
+  implNamespace: "js_bindings",
   args: {
     global: t.globalObject,
     code: t.UTF8String,
@@ -144,36 +159,82 @@ export const fmtString = fn({
 });
 ```
 
-WebIDL strongly encourages using kebab case for enumeration values, to be consistent with existing Web APIs.
+On the Rust side, the enum is mirrored as a `#[repr(u8)]` enum. Bindgen
+**sorts `t.stringEnum` values alphabetically** before emitting the C++
+`enum class`, so discriminants must match the generated header's order, not
+the `.bind.ts` declaration order:
 
-### Deriving enums from Zig code
+```rust
+pub mod js_bindings {
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    pub enum Formatter {
+        EscapePowershell = 0,
+        HighlightJavascript = 1,
+        HighlightJavascriptRedacted = 2,
+    }
 
-TODO: zigEnum
+    pub fn fmt_string(
+        global: &JSGlobalObject,
+        code: &[u8],
+        formatter_id: Formatter,
+    ) -> JsResult<bun_core::String> {
+        // ...
+    }
+}
+```
+
+WebIDL strongly encourages kebab-case for enumeration values, to be consistent with existing Web APIs.
+
+## `implNamespace`
+
+Setting `implNamespace: "foo"` on a `fn({...})` routes the generated call to
+`crate::<basename>::foo::fn_name` instead of `crate::<basename>::fn_name`. Use
+this to group related binding implementations under a submodule.
 
 ## `t.oneOf`
 
-A `oneOf` is a union between two or more types. It is represented by `union(enum)` in Zig.
-
-TODO:
+A `oneOf` is a union of two or more types. It is represented as a Rust
+`enum` with one variant per member type.
 
 ## Attributes
 
-There are set of attributes that can be chained onto `t.*` types. On all types there are:
+Attributes can be chained onto `t.*` types. On all types:
 
 - `.required`, in dictionary parameters only
 - `.optional`, in function arguments only
 - `.default(T)`
 
-When a value is optional, it is lowered to a Zig optional.
+When a value is `.optional`, it is lowered to a Rust `Option<T>`:
 
-Depending on the type, there are more attributes available. See the type definitions in auto-complete for more details. Note that one of the above three can only be applied, and they must be applied at the end.
+```ts
+export const requiredAndOptionalArg = fn({
+  args: {
+    a: t.boolean,
+    b: t.usize.optional,
+    c: t.i32.enforceRange(0, 100).default(42),
+    d: t.u8.optional,
+  },
+  ret: t.i32,
+});
+```
+
+```rust
+pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8>) -> i32 {
+    // ...
+}
+```
+
+Depending on the type, more attributes are available. See the type definitions
+in auto-complete for details. Only one of these three attributes can be
+applied, and it must be applied last.
 
 ### Integer Attributes
 
-Integer types allow customizing the overflow behavior with `clamp` or `enforceRange`
+Integer types take `clamp` or `enforceRange` to customize overflow behavior:
 
 ```ts
-import { t, fn } from "bindgen";
+import { fn, t } from "bindgen";
 
 export const add = fn({
   args: {
@@ -184,19 +245,24 @@ export const add = fn({
     b: t.u16,
     // enforce in arbitrary range, with a default if not provided
     c: t.i32.enforceRange(0, 1000).default(5),
-    // clamp to arbitrary range, or null
+    // clamp to arbitrary range, or None
     d: t.u16.clamp(0, 10).optional,
   },
   ret: t.i32,
 });
 ```
 
-Various Node.js validator functions such as `validateInteger`, `validateNumber`, and more are available. Use these when implementing Node.js APIs, so the error messages match 1:1 what Node would do.
+Node.js validator functions such as `validateInteger` and `validateNumber`
+are also available. Use these when implementing Node.js APIs so the error
+messages match Node exactly.
 
-Unlike `enforceRange`, which is taken from WebIDL, `validate*` functions are much more strict on the input they accept. For example, Node's numerical validator check `typeof value === 'number'`, while WebIDL uses `ToNumber` for lossy conversion.
+Unlike `enforceRange`, which is taken from WebIDL, the `validate*` functions
+are much stricter about the input they accept. For example, Node's numerical
+validator checks `typeof value === 'number'`, while WebIDL uses `ToNumber` for
+lossy conversion.
 
 ```ts
-import { t, fn } from "bindgen";
+import { fn, t } from "bindgen";
 
 export const add = fn({
   args: {
@@ -204,11 +270,11 @@ export const add = fn({
     // throw if not given a number
     a: t.f64.validateNumber(),
     // valid in i32 range
-    a: t.i32.validateInt32(),
+    b: t.i32.validateInt32(),
     // f64 within safe integer range
-    b: t.f64.validateInteger(),
+    c: t.f64.validateInteger(),
     // f64 in given range
-    c: t.f64.validateNumber(-10000, 10000),
+    d: t.f64.validateNumber(-10000, 10000),
   },
   ret: t.i32,
 });

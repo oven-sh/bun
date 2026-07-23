@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { once } from "events";
 import fs from "fs";
 import { gcTick, tls, tmpdirSync } from "harness";
+import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -105,6 +107,202 @@ describe("HTMLRewriter", () => {
     expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
   });
 
+  describe("transform rejects when the upstream body fails", () => {
+    // Sends response headers plus a partial HTML body, then resets the
+    // connection once the test calls `release()`. The transformed body must
+    // reject instead of resolving with a truncated document.
+    const fullBody = "<div id=a><p>hello <b>world</b></p></div>";
+    // Ties the rejection to the connection failure so an unrelated rejection
+    // ("Body already used", an internal rewriter error) can't keep this green.
+    // The exact RST message varies by platform, so match loosely.
+    const connectionError = /socket|connection|ECONNRESET/i;
+
+    async function withPartialBodyServer(fn) {
+      let release;
+      const released = new Promise(r => (release = r));
+      const server = createTcpServer(socket => {
+        socket.on("error", () => {});
+        socket.write(
+          "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: text/html\r\n" +
+            `Content-Length: ${fullBody.length}\r\n` +
+            "\r\n" +
+            fullBody.slice(0, 30),
+        );
+        released.then(() => socket.resetAndDestroy());
+      });
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        await fn(`http://127.0.0.1:${server.address().port}/`, release);
+      } finally {
+        release();
+        await new Promise(r => server.close(r));
+      }
+    }
+
+    function rewriter() {
+      return new HTMLRewriter().on("p", {
+        element(e) {
+          e.setAttribute("seen", "1");
+        },
+      });
+    }
+
+    // Reports either settlement so a failing test shows the truncated
+    // document that was wrongly produced instead of just "did not reject".
+    function settle(promise) {
+      return promise.then(
+        value => ({ rejected: false, value }),
+        error => ({ rejected: true, message: String(error?.message) }),
+      );
+    }
+    const rejectedWithConnectionError = {
+      rejected: true,
+      message: expect.stringMatching(connectionError),
+    };
+
+    it("control: .text() on the untransformed response rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const text = res.text();
+        release();
+        await expect(text).rejects.toThrow(connectionError);
+      });
+    });
+
+    it(".text() on the transformed response rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        const text = settle(transformed.text());
+        release();
+        // Must reject with the upstream connection error, and must never
+        // resolve with the truncated document.
+        expect(await text).toEqual(rejectedWithConnectionError);
+        // The body is now in its error state. A second read must report the
+        // same failure, not resolve as an empty "successful" document.
+        expect(await settle(transformed.text())).toEqual(rejectedWithConnectionError);
+      });
+    });
+
+    it(".arrayBuffer() on the transformed response rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const buf = rewriter().transform(res).arrayBuffer();
+        release();
+        await expect(buf).rejects.toThrow(connectionError);
+      });
+    });
+
+    it(".body on the transformed response is an errored stream", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        const text = settle(transformed.text());
+        release();
+        // Barrier: once this has rejected, the body is in its error state.
+        expect(await text).toEqual(rejectedWithConnectionError);
+        // Reading `.body` must reject with the same upstream error instead of
+        // closing cleanly as an empty "successful" document.
+        expect(await settle(transformed.body.getReader().read())).toEqual(rejectedWithConnectionError);
+      });
+    });
+
+    it("a read already pending on .body when the upstream fails rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        // Start the read BEFORE the upstream fails. This is the one shape
+        // (readable attached, no pending promise) where the error must reach
+        // the attached stream; discarding it would strand this read forever.
+        const read = settle(transformed.body.getReader().read());
+        release();
+        expect(await read).toEqual(rejectedWithConnectionError);
+      });
+    });
+
+    it(".clone() of a failed transformed body is also failed", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        const text = settle(transformed.text());
+        release();
+        // Barrier: the body is now in its error state.
+        expect(await text).toEqual(rejectedWithConnectionError);
+        // Cloning a failed body must produce a failed body, not an empty one
+        // that reads back as a complete (and empty) document.
+        expect(await settle(transformed.clone().text())).toEqual(rejectedWithConnectionError);
+      });
+    });
+
+    it("does not invoke onDocument end for a document that never completed", async () => {
+      // Sanity: end() fires exactly once on a complete document.
+      {
+        let endCalls = 0;
+        new HTMLRewriter()
+          .onDocument({
+            end() {
+              endCalls++;
+            },
+          })
+          .transform(fullBody);
+        expect(endCalls).toBe(1);
+      }
+
+      await withPartialBodyServer(async (url, release) => {
+        let endCalls = 0;
+        const rw = rewriter().onDocument({
+          end() {
+            endCalls++;
+          },
+        });
+        const res = await fetch(url);
+        const text = rw.transform(res).text();
+        release();
+        await expect(text).rejects.toThrow(connectionError);
+        expect(endCalls).toBe(0);
+      });
+    });
+
+    it("transform() of a body that already failed throws the upstream error", async () => {
+      // Same failure class, synchronous path: once the body is already in its
+      // error state, transform() must throw the upstream connection error,
+      // not an unrelated (and usually empty) HTMLRewriter internal error.
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const text = res.text();
+        release();
+        // Awaiting the rejection is the barrier: the body is now Value::Error.
+        await expect(text).rejects.toThrow(connectionError);
+        expect(() => rewriter().transform(res)).toThrow(connectionError);
+      });
+    });
+
+    it("transform() of an aborted body throws the abort reason", async () => {
+      // An abort reason is a DOMException, not a JSC ErrorInstance. transform()
+      // must still throw it rather than returning it in place of the Response.
+      await withPartialBodyServer(async url => {
+        const controller = new AbortController();
+        const res = await fetch(url, { signal: controller.signal });
+        // The body is mid-stream (the server is stalled until release()).
+        const text = res.text();
+        controller.abort();
+        await expect(text).rejects.toThrow(/abort/i);
+        let thrown;
+        try {
+          rewriter().transform(res);
+        } catch (e) {
+          thrown = e;
+        }
+        expect({ name: thrown?.name, threw: thrown !== undefined }).toEqual({
+          name: "AbortError",
+          threw: true,
+        });
+      });
+    });
+  });
+
   it("HTMLRewriter: async replacement using fetch + Bun.serve", async () => {
     await gcTick();
     let content;
@@ -187,6 +385,73 @@ describe("HTMLRewriter", () => {
     var output = rewriter.transform(input);
     expect(await output.text()).toBe('<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>');
     expect(expected.length).toBe(0);
+  });
+
+  it("attribute iterator is detached after handler returns", async () => {
+    // The lol-html attribute iterator borrows from the element's attribute
+    // buffer, which is freed when the handler returns. Previously we leaked
+    // the raw iterator pointer to JS, so calling .next() after the transform
+    // read freed memory. Now the iterator is detached and reports done.
+    let leaked;
+    let partiallyConsumed;
+    const inside = [];
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          // A fresh iterator leaked without being touched.
+          leaked = el.attributes;
+          // A second iterator fully consumed inside the handler must still work.
+          for (const pair of el.attributes) inside.push(pair);
+          // A third iterator partially consumed then leaked.
+          partiallyConsumed = el.attributes;
+          partiallyConsumed.next();
+        },
+      })
+      .transform(new Response('<div a="1" b="2" c="3"></div>'))
+      .text();
+
+    expect(inside).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+      ["c", "3"],
+    ]);
+
+    expect(leaked.next()).toEqual({ done: true, value: undefined });
+    expect(partiallyConsumed.next()).toEqual({ done: true, value: undefined });
+    // for..of over a detached iterator should simply not iterate.
+    expect([...leaked]).toEqual([]);
+  });
+
+  it("attribute iterator is detached when attributes are mutated", async () => {
+    // setAttribute pushes onto the backing Vec<Attribute> (possible realloc);
+    // removeAttribute shifts elements. Either invalidates a live slice::Iter.
+    let afterSet, afterRemove;
+    let fresh = [];
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          const it1 = el.attributes;
+          el.setAttribute("x", "9");
+          afterSet = it1.next();
+
+          const it2 = el.attributes;
+          el.removeAttribute("a");
+          afterRemove = it2.next();
+
+          // An iterator obtained after the mutations still sees the final state.
+          fresh = [...el.attributes];
+        },
+      })
+      .transform(new Response('<div a="1" b="2" c="3"></div>'))
+      .text();
+
+    expect(afterSet).toEqual({ done: true, value: undefined });
+    expect(afterRemove).toEqual({ done: true, value: undefined });
+    expect(fresh).toEqual([
+      ["b", "2"],
+      ["c", "3"],
+      ["x", "9"],
+    ]);
   });
 
   it("handles element specific mutations", async () => {
@@ -272,6 +537,41 @@ describe("HTMLRewriter", () => {
     replaceHtml: "<p><span>replace</span></p>",
     remove: "<p></p>",
   };
+
+  const commentMutationsMacro = async func => {
+    // before/after
+    let res = func(new HTMLRewriter(), comment => {
+      comment.before("<span>before</span>");
+      comment.before("<span>before html</span>", { html: true });
+      comment.after("<span>after</span>");
+      comment.after("<span>after html</span>", { html: true });
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.beforeAfter);
+
+    // replace
+    res = func(new HTMLRewriter(), comment => {
+      comment.replace("<span>replace</span>");
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.replace);
+    res = func(new HTMLRewriter(), comment => {
+      comment.replace("<span>replace</span>", { html: true });
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.replaceHtml);
+
+    // remove
+    res = func(new HTMLRewriter(), comment => {
+      expect(comment.removed).toBe(false);
+      comment.remove();
+      expect(comment.removed).toBe(true);
+    }).transform(new Response(commentsMutationsInput));
+    expect(await res.text()).toBe(commentsMutationsExpected.remove);
+  };
+
+  it("HTMLRewriter: handles comment mutations", () =>
+    commentMutationsMacro((rw, comments) => {
+      rw.on("p", { comments });
+      return rw;
+    }));
 
   const commentPropertiesMacro = async func => {
     const res = func(new HTMLRewriter(), comment => {
@@ -692,5 +992,272 @@ payloads.forEach(type => {
     expect(trimmed).toEndWith("</html>");
     expect(trimmed).toStartWith("<!DOCTYPE html>");
     expect(calls).toBeGreaterThan(0);
+  });
+});
+
+// lol-html reports an absent attribute with a NULL pointer and a
+// present-but-empty one with an empty string; they are not the same thing.
+describe("getAttribute distinguishes empty from absent", () => {
+  it("returns '' for present-but-empty and boolean attributes", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          got = {
+            explicitEmpty: el.getAttribute("a"),
+            boolean: el.getAttribute("b"),
+            valued: el.getAttribute("c"),
+            absent: el.getAttribute("zzz"),
+            hasExplicitEmpty: el.hasAttribute("a"),
+            hasBoolean: el.hasAttribute("b"),
+            hasAbsent: el.hasAttribute("zzz"),
+          };
+        },
+      })
+      .transform(new Response('<div a="" b c="v">t</div>'))
+      .text();
+    expect(got).toEqual({
+      explicitEmpty: "",
+      boolean: "",
+      valued: "v",
+      absent: null,
+      hasExplicitEmpty: true,
+      hasBoolean: true,
+      hasAbsent: false,
+    });
+  });
+
+  it("agrees with the attributes iterator", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          got = { iter: [...el.attributes], get: el.getAttribute("a") };
+        },
+      })
+      .transform(new Response('<div a="">t</div>'))
+      .text();
+    expect(got).toEqual({ iter: [["a", ""]], get: "" });
+  });
+
+  it("round-trips an attribute set to the empty string", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.setAttribute("x", "");
+          got = { value: el.getAttribute("x"), has: el.hasAttribute("x") };
+        },
+      })
+      .transform(new Response("<div>t</div>"))
+      .text();
+    expect(got).toEqual({ value: "", has: true });
+  });
+
+  it("removeAttribute works on a present-but-empty attribute", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.removeAttribute("a");
+          got = { value: el.getAttribute("a"), has: el.hasAttribute("a") };
+        },
+      })
+      .transform(new Response('<div a="">t</div>'))
+      .text();
+    expect(got).toEqual({ value: null, has: false });
+  });
+});
+
+describe("doctype publicId/systemId distinguish empty from absent", () => {
+  function readDoctype(html) {
+    let got;
+    new HTMLRewriter()
+      .onDocument({
+        doctype(d) {
+          got = { name: d.name, publicId: d.publicId, systemId: d.systemId };
+        },
+      })
+      .transform(html);
+    return got;
+  }
+
+  it("present but empty", () => {
+    expect(readDoctype('<!DOCTYPE html PUBLIC "" ""><div></div>')).toEqual({
+      name: "html",
+      publicId: "",
+      systemId: "",
+    });
+  });
+
+  it("absent", () => {
+    expect(readDoctype("<!DOCTYPE html><div></div>")).toEqual({
+      name: "html",
+      publicId: null,
+      systemId: null,
+    });
+  });
+
+  it("present with values", () => {
+    expect(
+      readDoctype(
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd"><div></div>',
+      ),
+    ).toEqual({
+      name: "html",
+      publicId: "-//W3C//DTD HTML 4.01//EN",
+      systemId: "http://www.w3.org/TR/html4/strict.dtd",
+    });
+  });
+});
+
+describe("invalid arguments throw instead of returning an error value", () => {
+  it("setAttribute with a forbidden character in the name throws", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.setAttribute("a b", "1");
+          },
+        })
+        .transform(new Response("<div>t</div>")),
+    ).toThrow("character is forbidden in the attribute name");
+  });
+
+  it("setAttribute with an empty name throws", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.setAttribute("", "1");
+          },
+        })
+        .transform(new Response("<div>t</div>")),
+    ).toThrow("Attribute name can't be empty.");
+  });
+
+  it("setAttribute failure leaves the element unchanged", async () => {
+    let after;
+    const out = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          try {
+            el.setAttribute("a b", "1");
+          } catch {}
+          after = [...el.attributes];
+        },
+      })
+      .transform(new Response('<div x="1">t</div>'))
+      .text();
+    expect(after).toEqual([["x", "1"]]);
+    expect(out).toBe('<div x="1">t</div>');
+  });
+
+  it("setAttribute with an invalid name throws on string input too", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.setAttribute("a b", "1");
+          },
+        })
+        .transform("<div>t</div>"),
+    ).toThrow("character is forbidden in the attribute name");
+  });
+
+  it("onEndTag with a non-function throws a TypeError", () => {
+    let err;
+    try {
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.onEndTag("nope");
+          },
+        })
+        .transform(new Response("<div>t</div>"));
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.message).toBe("Expected a function");
+  });
+});
+
+describe("tagName, endTag.name, and comment.text setters", () => {
+  it("element.tagName renames the start and end tag", () => {
+    const out = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          el.tagName = "section";
+        },
+      })
+      .transform("<p>hi</p>");
+    expect(out).toBe("<section>hi</section>");
+  });
+
+  it("endTag.name renames only the closing tag", () => {
+    const out = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          el.onEndTag(end => {
+            end.name = "div";
+          });
+        },
+      })
+      .transform("<p>hi</p>");
+    expect(out).toBe("<p>hi</div>");
+  });
+
+  it("the assigned value is coerced with ToString, which may re-enter the wrapper", () => {
+    const out = new HTMLRewriter()
+      .on("p", {
+        comments(comment) {
+          comment.text = {
+            toString() {
+              comment.before("A");
+              return "B";
+            },
+          };
+        },
+      })
+      .transform("<p><!--x--></p>");
+    expect(out).toBe("<p>A<!--B--></p>");
+  });
+
+  it("setters on a detached wrapper are a no-op and never coerce the value", () => {
+    let savedElement;
+    let savedEndTag;
+    let savedComment;
+    const out = new HTMLRewriter()
+      .on("p", {
+        element(el) {
+          savedElement = el;
+          el.onEndTag(end => {
+            savedEndTag = end;
+          });
+        },
+        comments(c) {
+          savedComment = c;
+        },
+      })
+      .transform("<p><!--x--></p>");
+    expect(out).toBe("<p><!--x--></p>");
+
+    // Every handler has returned, so every wrapper is detached; each setter
+    // must return before running the assigned value's toString.
+    const coerced = [];
+    const probe = tag => ({
+      toString() {
+        coerced.push(tag);
+        return "never";
+      },
+    });
+    savedElement.tagName = probe("element.tagName");
+    savedEndTag.name = probe("endTag.name");
+    savedComment.text = probe("comment.text");
+    expect(coerced).toEqual([]);
+    expect(savedElement.tagName).toBeUndefined();
+    expect(savedEndTag.name).toBeUndefined();
+    expect(savedComment.text).toBeNull();
   });
 });

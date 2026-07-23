@@ -61,45 +61,45 @@ struct AsyncSocket {
 public:
     /* Returns SSL pointer or FD as pointer */
     void *getNativeHandle() {
-        return us_socket_get_native_handle(SSL, (us_socket_t *) this);
+        return us_socket_get_native_handle((us_socket_t *) this);
     }
 
     /* Get loop data for socket */
     LoopData *getLoopData() {
-        return (LoopData *) us_loop_ext(us_socket_context_loop(SSL, us_socket_context(SSL, (us_socket_t *) this)));
+        return (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this)));
     }
 
     /* Get socket extension */
     AsyncSocketData<SSL> *getAsyncSocketData() {
-        return (AsyncSocketData<SSL> *) us_socket_ext(SSL, (us_socket_t *) this);
+        return (AsyncSocketData<SSL> *) us_socket_ext((us_socket_t *) this);
     }
 
     /* Socket timeout */
     void timeout(unsigned int seconds) {
-        us_socket_timeout(SSL, (us_socket_t *) this, seconds);
+        us_socket_timeout((us_socket_t *) this, seconds);
     }
 
     /* Shutdown socket without any automatic drainage */
     void shutdown() {
-        us_socket_shutdown(SSL, (us_socket_t *) this);
+        us_socket_shutdown((us_socket_t *) this);
     }
 
     /* Experimental pause */
     us_socket_t *pause() {
-        us_socket_pause(SSL, (us_socket_t *) this);
+        us_socket_pause((us_socket_t *) this);
         return (us_socket_t *) this;
     }
 
     /* Experimental resume */
     us_socket_t *resume() {
-        us_socket_resume(SSL, (us_socket_t *) this);
+        us_socket_resume((us_socket_t *) this);
         return (us_socket_t *) this;
     }
 
     /* Immediately close socket */
     us_socket_t *close() {
         this->uncork();
-        return us_socket_close(SSL, (us_socket_t *) this, 0, nullptr);
+        return us_socket_close((us_socket_t *) this, 0, nullptr);
     }
 
     void uncorkWithoutSending() {
@@ -183,8 +183,24 @@ public:
 
     /* Returns the user space backpressure. */
     size_t getBufferedAmount() {
-        /* We return the actual amount of bytes in backbuffer, including pendingRemoval */
-        return getAsyncSocketData()->buffer.totalLength();
+        /* Unsent bytes; already-written bytes sitting behind the head cursor
+         * are not backpressure (maxBackpressure checks, drain progress). */
+        return getAsyncSocketData()->buffer.length();
+    }
+
+    /* Whether every byte handed to us_socket_write() has reached the kernel.
+     * For TLS, us_socket_write() can report a batch as written while its
+     * ciphertext still sits in the loop's spill slot (openssl.c
+     * ssl_flush_write_batch); the close-after-drain gates in HttpResponse /
+     * HttpContext must wait for that too. Kept separate from
+     * getBufferedAmount() so WebSocket's maxBackpressure policy and the
+     * JS-exposed bufferedAmount stay a plaintext count. */
+    bool hasFullyDrained() {
+        if (getAsyncSocketData()->buffer.length()) return false;
+        if constexpr (SSL) {
+            return us_socket_ssl_spill_pending((us_socket_t *) this) == 0;
+        }
+        return true;
     }
 
     /* Returns the text representation of an IPv4 or IPv6 address */
@@ -213,7 +229,7 @@ public:
     std::string_view getRemoteAddress() {
         static thread_local char buf[16];
         int ipLength = 16;
-        us_socket_remote_address(SSL, (us_socket_t *) this, buf, &ipLength);
+        us_socket_remote_address((us_socket_t *) this, buf, &ipLength);
         return std::string_view(buf, (unsigned int) ipLength);
     }
 
@@ -229,7 +245,7 @@ public:
     */
     size_t flush() {
         /* Check if socket is valid for operations */
-        if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
+        if (us_socket_is_closed((us_socket_t *) this)) {
             /* Socket is closed, no flushing is possible */
             return 0;
         }
@@ -247,13 +263,13 @@ public:
             int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
 
             /* Attempt to write data to the socket */
-            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len);
+            int written = us_socket_write((us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len);
             total_written += written;
 
             /* Check if we couldn't write the entire buffer */
             if ((unsigned int) written < buffer_len) {
                 /* Remove the successfully written data from the buffer */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 /* If we wrote less than we attempted, the socket buffer is likely full
                 * likely is used as an optimization hint to the compiler
@@ -284,7 +300,7 @@ public:
      * writable (or we are in a state that implies polling for writable). */
     std::pair<int, bool> write(const char *src, int length, bool optionally = false, int nextLength = 0) {
         /* Fake success if closed, simple fix to allow uncork of closed socket to succeed */
-        if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
+        if (us_socket_is_closed((us_socket_t *) this)) {
             return {length, false};
         }
 
@@ -297,11 +313,11 @@ public:
             int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
 
             /* Write off as much as we can */
-            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len);
+            int written = us_socket_write((us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len);
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 if (optionally) {
                     /* Thankfully we can exit early here */
@@ -335,7 +351,7 @@ public:
                 }
             } else {
                 /* We are not corked */
-                int written = us_socket_write(SSL, (us_socket_t *) this, src, length);
+                int written = us_socket_write((us_socket_t *) this, src, length);
 
                 /* Did we fail? */
                 if (written < length) {

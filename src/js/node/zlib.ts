@@ -2,10 +2,10 @@
 
 const BufferModule = require("node:buffer");
 
-const crc32 = $newZigFunction("node_zlib_binding.zig", "crc32", 1);
-const NativeZlib = $zig("node_zlib_binding.zig", "NativeZlib");
-const NativeBrotli = $zig("node_zlib_binding.zig", "NativeBrotli");
-const NativeZstd = $zig("node_zlib_binding.zig", "NativeZstd");
+const crc32 = $newRustFunction("node_zlib_binding.rs", "crc32", 1);
+const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
+const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
+const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
 
 const ObjectKeys = Object.keys;
 const ArrayPrototypePush = Array.prototype.push;
@@ -82,10 +82,11 @@ function zlibBufferOnData(chunk) {
   if (!this.buffers) this.buffers = [chunk];
   else ArrayPrototypePush.$call(this.buffers, chunk);
   this.nread += chunk.length;
-  if (this.nread > this._maxOutputLength) {
+  const maxOutputLength = this._maxOutputLength;
+  if (this.nread > maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb($ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
+    this.cb($ERR_BUFFER_TOO_LARGE(maxOutputLength));
   }
 }
 
@@ -197,6 +198,8 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._defaultFullFlushFlag = fullFlush;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
+
+  this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 
@@ -360,9 +363,10 @@ function processChunkSync(self, chunk, flushFlag) {
       ArrayPrototypePush.$call(buffers, out);
       nread += out.byteLength;
 
-      if (nread > self._maxOutputLength) {
+      const maxOutputLength = self._maxOutputLength;
+      if (nread > maxOutputLength) {
         _close(self);
-        throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
+        throw $ERR_BUFFER_TOO_LARGE(maxOutputLength);
       }
     } else {
       $assert(have === 0, "have should not go down");
@@ -453,10 +457,12 @@ function processCallback() {
   }
 
   // Exhausted the output buffer, or used all the input create a new one.
-  if (availOutAfter === 0 || self._outOffset >= self._chunkSize) {
-    handle.availOutBefore = self._chunkSize;
+  let chunkSize;
+  if (availOutAfter === 0 || self._outOffset >= (chunkSize = self._chunkSize)) {
+    chunkSize ??= self._chunkSize;
+    handle.availOutBefore = chunkSize;
     self._outOffset = 0;
-    self._outBuffer = Buffer.allocUnsafe(self._chunkSize);
+    self._outBuffer = Buffer.allocUnsafe(chunkSize);
   }
 
   if (availOutAfter === 0) {
@@ -503,6 +509,14 @@ function processCallback() {
     // stream has ended early.
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
+
+    if (self._rejectGarbageAfterEnd) {
+      const err = $ERR_TRAILING_JUNK_AFTER_STREAM_END();
+      self.destroy(err);
+      this.cb(err);
+      return;
+    }
+
     self.push(null);
   }
 
@@ -560,7 +574,11 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE(
+          "options.dictionary",
+          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+          dictionary,
+        );
       }
     }
   }
@@ -709,10 +727,23 @@ function Brotli(opts, mode) {
     });
   }
 
+  let dictionary = opts?.dictionary;
+  if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
+    if (isAnyArrayBuffer(dictionary)) {
+      dictionary = Buffer.from(dictionary);
+    } else {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.dictionary",
+        ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+        dictionary,
+      );
+    }
+  }
+
   const handle = new NativeBrotli(mode);
 
   this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
@@ -763,7 +794,16 @@ class Zstd extends ZlibBase {
     const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
+    // Node does not validate options.dictionary here (unlike Zlib/Brotli) — a
+    // non-view is silently ignored — and re-reads it rather than caching. Both
+    // are load-bearing for parity, so this mirrors lib/zlib.js:920 verbatim.
+    handle.init(
+      initParamsArray,
+      pledgedSrcSize,
+      writeState,
+      processCallback,
+      opts?.dictionary && isArrayBufferView(opts.dictionary) ? opts.dictionary : undefined,
+    );
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

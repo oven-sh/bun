@@ -113,9 +113,9 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
     prototype: Worker;
     new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
     /**
-     * This is the cloned value of the `data` property passed to `new Worker()`
+     * The cloned value of the `data` property passed to `new Worker()`.
      *
-     * This is Bun's equivalent of `workerData` in Node.js.
+     * Bun's equivalent of `workerData` in Node.js.
      */
     data: any;
   }
@@ -126,7 +126,7 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
  */
 interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {}
 /**
- * A WebSocket client implementation
+ * A WebSocket client implementation.
  */
 declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
   "WebSocket",
@@ -136,8 +136,8 @@ declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Creates a new WebSocket instance with the given URL and options.
      *
-     * @param url The URL to connect to.
-     * @param options The options to use for the connection.
+     * @param url The URL to connect to
+     * @param options Connection options: protocols, headers, TLS, proxy, and compression
      *
      * @example
      * ```ts
@@ -154,8 +154,8 @@ declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Creates a new WebSocket instance with the given URL and protocols.
      *
-     * @param url The URL to connect to.
-     * @param protocols The protocols to use for the connection.
+     * @param url The URL to connect to
+     * @param protocols One or more subprotocols to request from the server
      *
      * @example
      * ```ts
@@ -227,7 +227,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * const { read, written } = encoder.encodeInto(src, dest);
    * ```
    * @param src The text to encode.
-   * @param dest The array to hold the encode result.
+   * @param dest The array that receives the encoded bytes.
    */
   encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
@@ -245,7 +245,8 @@ declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
  *
  * ```js
  * const decoder = new TextDecoder();
- * const uint8array = decoder.decode('this is some data');
+ * const text = decoder.decode(new Uint8Array([104, 105])); // "hi"
+ * ```
  */
 interface TextDecoder extends Bun.__internal.LibEmptyOrNodeUtilTextDecoder {}
 declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
@@ -269,7 +270,7 @@ interface Event {
   composedPath(): [EventTarget?];
   /** Alias for event.target. */
   readonly currentTarget: EventTarget | null;
-  /** Is true if cancelable is true and event.preventDefault() has been called. */
+  /** `true` if `cancelable` is `true` and `event.preventDefault()` has been called. */
   readonly defaultPrevented: boolean;
   /** This is not used in Node.js and is provided purely for completeness. */
   readonly eventPhase: number;
@@ -289,7 +290,7 @@ interface Event {
   readonly target: EventTarget | null;
   /** The millisecond timestamp when the Event object was created. */
   readonly timeStamp: number;
-  /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+  /** The type of event, for example "click", "hashchange", or "submit". */
   readonly type: string;
 }
 declare var Event: {
@@ -316,7 +317,7 @@ interface EventTarget {
     listener: EventListener | EventListenerObject,
     options?: AddEventListenerOptions | boolean,
   ): void;
-  /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+  /** Dispatches a synthetic event `event` to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
   dispatchEvent(event: Event): boolean;
   /** Removes the event listener in target's event listener list with the same type, callback, and options. */
   removeEventListener(
@@ -341,9 +342,9 @@ declare var File: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
      *
-     * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-     * @param `name` - The name of the file
-     * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+     * @param parts An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param name The name of the file
+     * @param options Properties for the file, such as `type` and `lastModified`
      */
     new (
       parts: Bun.BlobPart[],
@@ -354,29 +355,29 @@ declare var File: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 /**
- * ShadowRealms are a distinct global environment, with its own global object
- * containing its own intrinsics and built-ins (standard objects that are not
- * bound to global variables, like the initial value of Object.prototype).
+ * A [ShadowRealm](https://github.com/tc39/proposal-shadowrealm/blob/main/explainer.md#introduction)
+ * is a distinct global environment with its own global object containing its
+ * own intrinsics and built-ins (standard objects that are not bound to global
+ * variables, like the initial value of Object.prototype).
  *
  * @example
  *
  * ```js
  * const red = new ShadowRealm();
  *
- * // realms can import modules that will execute within it's own environment.
- * // When the module is resolved, it captured the binding value, or creates a new
+ * // Realms can import modules that execute within their own environment.
+ * // When the module resolves, it captures the binding value, or creates a new
  * // wrapped function that is connected to the callable binding.
  * const redAdd = await red.importValue('./inside-code.js', 'add');
  *
- * // redAdd is a wrapped function exotic object that chains it's call to the
+ * // redAdd is a wrapped function exotic object that chains its call to the
  * // respective imported binding.
  * let result = redAdd(2, 3);
  *
  * console.assert(result === 5); // yields true
  *
- * // The evaluate method can provide quick code evaluation within the constructed
- * // shadowRealm without requiring any module loading, while it still requires CSP
- * // relaxing.
+ * // The evaluate method runs code inside the ShadowRealm without loading a
+ * // module, though it still requires CSP relaxing.
  * globalThis.someValue = 1;
  * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
  * console.assert(globalThis.someValue === 1);
@@ -394,40 +395,16 @@ declare var File: Bun.__internal.UseLibDomIfAvailable<
  */
 interface ShadowRealm {
   /**
-   * Creates a new [ShadowRealm](https://github.com/tc39/proposal-shadowrealm/blob/main/explainer.md#introduction)
+   * Imports `bindingName` from the module at `specifier`, executed inside the
+   * realm, and resolves with its value. Functions come back as wrapped
+   * functions that chain their calls to the binding inside the realm.
    *
    * @example
    *
    * ```js
    * const red = new ShadowRealm();
-   *
-   * // realms can import modules that will execute within it's own environment.
-   * // When the module is resolved, it captured the binding value, or creates a new
-   * // wrapped function that is connected to the callable binding.
    * const redAdd = await red.importValue('./inside-code.js', 'add');
-   *
-   * // redAdd is a wrapped function exotic object that chains it's call to the
-   * // respective imported binding.
-   * let result = redAdd(2, 3);
-   *
-   * console.assert(result === 5); // yields true
-   *
-   * // The evaluate method can provide quick code evaluation within the constructed
-   * // shadowRealm without requiring any module loading, while it still requires CSP
-   * // relaxing.
-   * globalThis.someValue = 1;
-   * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
-   * console.assert(globalThis.someValue === 1);
-   *
-   * // The wrapped functions can also wrap other functions the other way around.
-   * const setUniqueValue =
-   * await red.importValue('./inside-code.js', 'setUniqueValue');
-   *
-   * // setUniqueValue = (cb) => (cb(globalThis.someValue) * 2);
-   *
-   * result = setUniqueValue((x) => x ** 3);
-   *
-   * console.assert(result === 16); // yields true
+   * console.assert(redAdd(2, 3) === 5);
    * ```
    */
   importValue(specifier: string, bindingName: string): Promise<any>;
@@ -456,22 +433,22 @@ interface Timer {
 }
 
 /**
- * Cancel a repeating timer by its timer ID.
- * @param id timer id
+ * Cancel a repeating timer.
+ * @param id the timer returned by {@link setInterval}, or its numeric id
  */
 declare function clearInterval(id?: number | Timer): void;
 /**
- * Cancel a delayed function call by its timer ID.
- * @param id timer id
+ * Cancel a delayed function call.
+ * @param id the timer returned by {@link setTimeout}, or its numeric id
  */
 declare function clearTimeout(id?: number | Timer): void;
 /**
- * Cancel an immediate function call by its immediate ID.
- * @param id immediate id
+ * Cancel an immediate function call.
+ * @param id the immediate returned by {@link setImmediate}, or its numeric id
  */
 declare function clearImmediate(id?: number | Timer): void;
 /**
- * Run a function immediately after main event loop is vacant
+ * Run a function immediately after the main event loop is vacant
  * @param handler function to call
  */
 declare function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): Timer;
@@ -482,9 +459,9 @@ declare function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): T
  */
 declare function setInterval(handler: Bun.TimerHandler, interval?: number, ...arguments: any[]): Timer;
 /**
- * Run a function after `timeout` (milliseconds)
+ * Run a function after `timeout` milliseconds
  * @param handler function to call
- * @param timeout milliseconds to wait between calls
+ * @param timeout milliseconds to wait before the call
  */
 declare function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
 
@@ -510,7 +487,7 @@ declare function removeEventListener(
 ): void;
 
 /**
- * Events providing information related to errors in scripts or in files.
+ * An event that provides information about an error in a script or in a file.
  */
 interface ErrorEvent extends Event {
   readonly colno: number;
@@ -550,7 +527,7 @@ declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 interface CustomEvent<T = any> extends Event {
-  /** Returns any custom data event was created with. Typically used for synthetic events. */
+  /** Any custom data the event was created with. Typically used for synthetic events. */
   readonly detail: T;
 }
 
@@ -589,7 +566,7 @@ interface AddEventListenerOptions extends Bun.EventListenerOptions {
 }
 
 /**
- * Low-level JavaScriptCore API for accessing the native ES Module loader (not a Bun API)
+ * Low-level JavaScriptCore API for accessing the native ES module loader (not a Bun API)
  *
  * Before using this, be aware of a few things:
  *
@@ -597,32 +574,28 @@ interface AddEventListenerOptions extends Bun.EventListenerOptions {
  *
  * This API may change any time JavaScriptCore is updated.
  *
- * Bun may rewrite ESM import specifiers to point to bundled code. This will
- * be confusing when using this API, as it will return a string like
- * "/node_modules.server.bun".
+ * Bun may rewrite ESM import specifiers to point to bundled code, so this API
+ * can return a string like "/node_modules.server.bun".
  *
- * Bun may inject additional imports into your code. This usually has a `bun:` prefix.
+ * Bun may inject additional imports into your code. These usually have a `bun:` prefix.
  */
 declare var Loader: {
   /**
-   * ESM module registry
+   * The ES module registry. Keys are module specifiers; values are metadata
+   * about the module.
    *
-   * This lets you implement live reload in Bun. If you
-   * delete a module specifier from this map, the next time it's imported, it
-   * will be re-transpiled and loaded again.
-   *
-   * The keys are the module specifiers and the
-   * values are metadata about the module.
+   * Use this to implement live reloading: delete a module specifier from this
+   * map and the next import re-transpiles and reloads the module.
    *
    * The keys are an implementation detail for Bun that will change between
    * versions.
    *
-   * - Userland modules are an absolute file path
-   * - Virtual modules have a `bun:` prefix or `node:` prefix
+   * - Userland modules are absolute file paths
+   * - Virtual modules have a `bun:` or `node:` prefix
    * - JS polyfills start with `"/bun-vfs/"`. `"buffer"` is an example of a JS polyfill
-   * - If you have a `node_modules.bun` file, many modules will point to that file
+   * - If you have a `node_modules.bun` file, many modules point to that file
    *
-   * Virtual modules and JS polyfills are embedded in bun's binary. They don't
+   * Virtual modules and JS polyfills are embedded in Bun's binary. They don't
    * point to anywhere in your local filesystem.
    */
   registry: Map<
@@ -630,9 +603,7 @@ declare var Loader: {
     {
       key: string;
       /**
-       * This refers to the state the ESM module is in
-       *
-       * TODO: make an enum for this number
+       * The load state of the ESM module
        */
       state: number;
       fetch: Promise<any>;
@@ -653,9 +624,9 @@ declare var Loader: {
     }
   >;
   /**
-   * For an already-evaluated module, return the dependencies as module specifiers
+   * Returns the dependencies of an already-evaluated module as module specifiers
    *
-   * This list is already sorted and uniqued.
+   * The list is sorted and deduplicated.
    *
    * @example
    *
@@ -679,10 +650,9 @@ declare var Loader: {
   /**
    * The function JavaScriptCore internally calls when you use an import statement.
    *
-   * This may return a path to `node_modules.server.bun`, which will be confusing.
-   *
-   * Consider {@link Bun.resolve} or {@link ImportMeta.resolve}
-   * instead.
+   * This may return a path to `node_modules.server.bun` rather than the
+   * original specifier. Consider {@link Bun.resolve} or
+   * {@link ImportMeta.resolve} instead.
    *
    * @param specifier - module specifier as it appears in transpiled source code
    * @param referrer - module specifier that is resolving this specifier
@@ -697,14 +667,15 @@ interface QueuingStrategy<T = any> {
 
 interface QueuingStrategyInit {
   /**
-   * Creates a new ByteLengthQueuingStrategy with the provided high water mark.
+   * The high water mark for the new queuing strategy.
    *
-   * Note that the provided high water mark will not be validated ahead of time. Instead, if it is negative, NaN, or not a number, the resulting ByteLengthQueuingStrategy will cause the corresponding stream constructor to throw.
+   * The value is not validated ahead of time. If it is negative, NaN, or not a
+   * number, the stream constructor the strategy is passed to throws.
    */
   highWaterMark: number;
 }
 
-/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+/** A built-in byte-length queuing strategy for use when constructing streams. */
 interface ByteLengthQueuingStrategy extends QueuingStrategy<ArrayBufferView> {
   readonly highWaterMark: number;
   // changed from QueuingStrategySize<BufferSource>
@@ -726,9 +697,36 @@ interface ReadableStreamDefaultController<R = any> {
 
 interface ReadableStreamDirectController {
   close(error?: Error): void;
+  /**
+   * Write a chunk directly to the destination.
+   *
+   * Returns the number of bytes written, or a **negative number** when the
+   * destination's internal buffer is full (backpressure). When negative, the
+   * chunk *was* accepted; pause writing and `await controller.flush(true)`,
+   * which resolves once the destination has drained:
+   *
+   * ```ts
+   * const n = controller.write(chunk);
+   * if (typeof n === "number" && n < 0) {
+   *   await controller.flush(true);
+   * }
+   * ```
+   *
+   * For some destinations (e.g. {@link Bun.FileSink} on Windows pipes) the
+   * write itself is asynchronous and a `Promise<number>` is returned instead;
+   * the `typeof` check above skips the backpressure wait for those — the
+   * promise carries its own flow control.
+   */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;
-  flush(): number | Promise<number>;
+  /**
+   * Flush any locally buffered data to the destination.
+   *
+   * @param wait When `true`, the returned promise resolves only once the
+   * destination has drained its own internal buffer (i.e. backpressure has
+   * cleared). Use this after {@link write} returns a negative value.
+   */
+  flush(wait?: boolean): number | Promise<number>;
   start(): void;
 }
 
@@ -740,8 +738,8 @@ declare var ReadableStreamDefaultController: {
 interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
   read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
   /**
-   * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
-   * Will only return a promise if the data is not immediately available.
+   * Only available in Bun. If there are multiple chunks in the queue, returns all of them at once.
+   * Returns a promise only if the data is not immediately available.
    */
   readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
   releaseLock(): void;
@@ -767,13 +765,16 @@ interface ReadableStreamDefaultReadValueResult<T> {
   value: T;
 }
 
+/**
+ * A `{ readable, writable }` pair, such as a transform stream.
+ *
+ * `pipeThrough()` pipes the source stream into the pair's writable side and
+ * returns the readable side for further use. Piping locks the source stream
+ * for the duration of the pipe, preventing any other consumer from acquiring
+ * a reader.
+ */
 interface ReadableWritablePair<R = any, W = any> {
   readable: ReadableStream<R>;
-  /**
-   * Provides a convenient, chainable way of piping this readable stream through a transform stream (or any other { writable, readable } pair). It simply pipes the stream into the writable side of the supplied pair, and returns the readable side for further use.
-   *
-   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
-   */
   writable: WritableStream<W>;
 }
 
@@ -786,7 +787,7 @@ declare var WritableStreamDefaultController: {
   new (): WritableStreamDefaultController;
 };
 
-/** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
+/** The object returned by `WritableStream.getWriter()`. Once created, it locks the writer to the `WritableStream`, ensuring that no other streams can write to the underlying sink. */
 interface WritableStreamDefaultWriter<W = any> {
   readonly closed: Promise<void>;
   readonly desiredSize: number | null;
@@ -828,31 +829,44 @@ declare var TransformStreamDefaultController: {
   new (): TransformStreamDefaultController;
 };
 
+/**
+ * Options that control how piping behaves under errors and closure.
+ *
+ * Piping a stream locks it for the duration of the pipe, preventing any other
+ * consumer from acquiring a reader. Errors and closures of the source and
+ * destination streams propagate as follows:
+ *
+ * An error in the source readable stream aborts the destination, unless
+ * `preventAbort` is truthy. The returned promise rejects with the source's
+ * error, or with any error that occurs while aborting the destination.
+ *
+ * An error in the destination cancels the source readable stream, unless
+ * `preventCancel` is truthy. The returned promise rejects with the
+ * destination's error, or with any error that occurs while canceling the source.
+ *
+ * When the source readable stream closes, the destination is closed, unless
+ * `preventClose` is truthy. The returned promise fulfills once this process
+ * completes, unless an error occurs while closing the destination, in which
+ * case it rejects with that error.
+ *
+ * If the destination starts out closed or closing, the source readable stream
+ * is canceled, unless `preventCancel` is true. The returned promise rejects
+ * with an error indicating piping to a closed stream failed, or with any error
+ * that occurs while canceling the source.
+ *
+ * `signal` can be set to an `AbortSignal` to abort an ongoing pipe operation
+ * with the corresponding `AbortController`. In this case, the source readable
+ * stream is canceled and the destination aborted, unless `preventCancel` or
+ * `preventAbort` is set.
+ */
 interface StreamPipeOptions {
   preventAbort?: boolean;
   preventCancel?: boolean;
-  /**
-   * Pipes this readable stream to a given writable stream destination. The way in which the piping process behaves under various error conditions can be customized with a number of passed options. It returns a promise that fulfills when the piping process completes successfully, or rejects if any errors were encountered.
-   *
-   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
-   *
-   * Errors and closures of the source and destination streams propagate as follows:
-   *
-   * An error in this source readable stream will abort destination, unless preventAbort is truthy. The returned promise will be rejected with the source's error, or with any error that occurs during aborting the destination.
-   *
-   * An error in destination will cancel this source readable stream, unless preventCancel is truthy. The returned promise will be rejected with the destination's error, or with any error that occurs during canceling the source.
-   *
-   * When this source readable stream closes, destination will be closed, unless preventClose is truthy. The returned promise will be fulfilled once this process completes, unless an error is encountered while closing the destination, in which case it will be rejected with that error.
-   *
-   * If destination starts out closed or closing, this source readable stream will be canceled, unless preventCancel is true. The returned promise will be rejected with an error indicating piping to a closed stream failed, or with any error that occurs during canceling the source.
-   *
-   * The signal option can be set to an AbortSignal to allow aborting an ongoing pipe operation via the corresponding AbortController. In this case, this source readable stream will be canceled, and destination aborted, unless the respective options preventCancel or preventAbort are set.
-   */
   preventClose?: boolean;
   signal?: AbortSignal;
 }
 
-/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+/** A built-in chunk-counting queuing strategy for use when constructing streams. */
 interface CountQueuingStrategy extends QueuingStrategy {
   readonly highWaterMark: number;
   readonly size: QueuingStrategySize;
@@ -891,8 +905,8 @@ interface ErrnoException extends Error {
 }
 
 /**
- * An abnormal event (called an exception) which occurs as a result of calling a
- * method or accessing a property of a web API
+ * An abnormal event (called an exception) that occurs when calling a method or
+ * accessing a property of a web API
  */
 interface DOMException extends Error {
   readonly message: string;
@@ -1053,7 +1067,7 @@ interface ArrayBufferConstructor {
 
 interface ArrayBuffer {
   /**
-   * Read-only. The length of the ArrayBuffer (in bytes).
+   * The length of the ArrayBuffer in bytes.
    */
   readonly byteLength: number;
 
@@ -1087,7 +1101,7 @@ interface ArrayConstructor {
    * ```
    *
    * @param arrayLike - The iterable or async iterable to convert to an array.
-   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+   * @returns A {@link Promise} that resolves with a new {@link Array} containing the awaited values
    */
   fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
 
@@ -1106,7 +1120,7 @@ interface ArrayConstructor {
    * @param arrayLike - The iterable or async iterable to convert to an array.
    * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
    * @param thisArg - The `this` to which `mapFn` is bound.
-   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+   * @returns A {@link Promise} that resolves with a new {@link Array} containing the awaited values
    */
   fromAsync<T, U>(
     arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
@@ -1143,14 +1157,14 @@ interface Console {
    * newline or spaces between arguments. You can pass it strings or bytes or
    * any combination of the two.
    *
+   * Not available in browsers.
+   *
    * ```ts
-   * console.write("hello world!", "\n"); // "hello world\n"
+   * console.write("hello world!", "\n"); // "hello world!\n"
    * ```
    *
    * @param data - The data to write
    * @returns The number of bytes written
-   *
-   * This function is not available in the browser.
    */
   write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
 
@@ -1163,7 +1177,7 @@ interface Console {
 
   /**
    * Increment a [count](https://www.youtube.com/watch?v=2AoxCkySv34&t=22s)
-   * @param label label counter
+   * @param label Label for the counter
    */
   count(label?: string): void;
   countReset(label?: string): void;
@@ -1187,7 +1201,7 @@ interface Console {
   info(...data: any[]): void;
   log(...data: any[]): void;
   /**
-   * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to just
+   * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to
    * logging the argument if it can't be parsed as tabular.
    *
    * ```js
@@ -1287,9 +1301,8 @@ interface ImportMeta {
    */
   readonly path: string;
   /**
-   * Absolute path to the directory containing the source file.
-   *
-   * Does not have a trailing slash
+   * Absolute path to the directory containing the source file, without a
+   * trailing slash
    */
   readonly dir: string;
   /**
@@ -1306,11 +1319,11 @@ interface ImportMeta {
   readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
-   * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
-   *
    * Resolve a module ID the same as if you imported it
    *
    * The `parent` argument is optional, and defaults to the current module's path.
+   *
+   * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
    */
   resolveSync(moduleId: string, parent?: string): string;
 
@@ -1325,7 +1338,7 @@ interface ImportMeta {
   require: NodeJS.Require;
 
   /**
-   * Did the current file start the process?
+   * `true` if the current file started the process
    *
    * @example
    * ```ts
@@ -1386,11 +1399,8 @@ interface EventSourceInit {
 
 interface PromiseConstructor {
   /**
-   * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
-   * separately.
-   *
-   * This is useful when you want to return a Promise and have code outside the Promise
-   * resolve or reject it.
+   * Create a deferred promise with its `resolve` and `reject` functions exposed,
+   * so code outside the promise can settle it.
    *
    * @example
    * ```ts
@@ -1410,12 +1420,12 @@ interface PromiseConstructor {
   };
 
   /**
-   * Try to run a function and return the result.
-   * If the function throws, return the result of the `catch` function.
+   * Run a function and return a promise of its result. If the function throws,
+   * the returned promise rejects with the thrown error.
    *
    * @param fn - The function to run
    * @param args - The arguments to pass to the function. This is similar to `setTimeout` and avoids the extra closure.
-   * @returns The result of the function or the result of the `catch` function
+   * @returns A promise that resolves with the function's result
    */
   try<T, A extends any[] = []>(fn: (...args: A) => T | PromiseLike<T>, ...args: A): Promise<T>;
 }
@@ -1456,13 +1466,25 @@ interface Blob {
   json(): Promise<any>;
 
   /**
+   * Wrap this blob in a {@link Bun.Image} pipeline. Equivalent to
+   * `new Bun.Image(this, options)` — the constructor is synchronous (the
+   * underlying read happens lazily when an Image terminal is awaited), so
+   * this works on `Bun.file()`, `Bun.s3()`, fd-backed and in-memory blobs
+   * alike:
+   *
+   * ```ts
+   * await Bun.file("photo.jpg").image().resize(400).webp().write("thumb.webp");
+   * ```
+   */
+  image(options?: Bun.Image.ConstructorOptions): Bun.Image;
+
+  /**
    * Read the data from the blob as a {@link FormData} object.
    *
    * This first decodes the data from UTF-8, then parses it as a
-   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   * `multipart/form-data` body or an `application/x-www-form-urlencoded` body.
    *
-   * The `type` property of the blob is used to determine the format of the
-   * body.
+   * The blob's `type` property determines the format of the body.
    *
    * This is a non-standard addition to the `Blob` API, to make it conform more
    * closely to the `BodyMixin` API.
@@ -1480,7 +1502,7 @@ interface Blob {
   arrayBuffer(): Promise<ArrayBuffer>;
 
   /**
-   * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
+   * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes). Equivalent to `new Uint8Array(await blob.arrayBuffer())`
    */
   bytes(): Promise<Uint8Array<ArrayBuffer>>;
 
@@ -1501,7 +1523,6 @@ declare var Blob: Bun.__internal.UseLibDomIfAvailable<
 interface Uint8Array {
   /**
    * Convert the Uint8Array to a base64 encoded string
-   * @returns The base64 encoded string representation of the Uint8Array
    */
   toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
 
@@ -1519,22 +1540,21 @@ interface Uint8Array {
      */
     read: number;
     /**
-     * The number of bytes written to the Uint8Array
-     * Will never be greater than the `.byteLength` of this Uint8Array
+     * The number of bytes written to the Uint8Array.
+     * Never greater than the `.byteLength` of this Uint8Array
      */
     written: number;
   };
 
   /**
    * Convert the Uint8Array to a hex encoded string
-   * @returns The hex encoded string representation of the Uint8Array
    */
   toHex(): string;
 
   /**
    * Set the contents of the Uint8Array from a hex encoded string
    * @param hex The hex encoded string to decode into the array. The string must have
-   * an even number of characters, be valid hexadecimal characters and contain no whitespace.
+   * an even number of characters, contain only hexadecimal characters, and contain no whitespace.
    */
   setFromHex(hex: string): {
     /**
@@ -1542,8 +1562,8 @@ interface Uint8Array {
      */
     read: number;
     /**
-     * The number of bytes written to the Uint8Array
-     * Will never be greater than the `.byteLength` of this Uint8Array
+     * The number of bytes written to the Uint8Array.
+     * Never greater than the `.byteLength` of this Uint8Array
      */
     written: number;
   };
@@ -1553,7 +1573,7 @@ interface Uint8ArrayConstructor {
   /**
    * Create a new Uint8Array from a base64 encoded string
    * @param base64 The base64 encoded string to convert to a Uint8Array
-   * @param options Optional options for decoding the base64 string
+   * @param options Options for decoding the base64 string
    * @returns A new Uint8Array containing the decoded data
    */
   fromBase64(
@@ -1591,19 +1611,20 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
      */
     canParse(url: string, base?: string): boolean;
     /**
-     * Create a URL from an object.
+     * Create a `blob:` URL for a {@link Blob}.
      *
-     * @param object - The object to create a URL from.
+     * @param object - The Blob to create a URL for.
      */
     createObjectURL(object: Blob): `blob:${string}`;
     /**
-     * Revoke a URL.
+     * Revoke a `blob:` URL created with `URL.createObjectURL`.
      *
      * @param url - The URL to revoke.
      */
     revokeObjectURL(url: string): void;
     /**
-     * Parse a URL.
+     * Parse a string into a {@link URL}. Returns `null` if the string is not a
+     * valid URL.
      *
      * @param url - The URL to parse.
      * @param base - The base URL to use.
@@ -1613,7 +1634,8 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 /**
- * The **`AbortController`** interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+ * An **`AbortController`** cancels one or more Web requests: pass its `signal`
+ * to a request, then call `abort()`.
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
  */
@@ -1641,21 +1663,18 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
     prototype: AbortSignal;
     new (): AbortSignal;
     /**
-     * Create an AbortSignal that will be aborted after a timeout
+     * Create an AbortSignal that aborts after a timeout
      * @param ms The timeout in milliseconds
-     * @returns An AbortSignal that will be aborted after the timeout
      */
     timeout(ms: number): AbortSignal;
     /**
      * Create an immediately-aborted AbortSignal
      * @param reason The reason for the abort
-     * @returns An AbortSignal that is already aborted
      */
     abort(reason?: any): AbortSignal;
     /**
-     * Create an AbortSignal that will be aborted if any of the signals are aborted
+     * Create an AbortSignal that aborts as soon as any of the given signals aborts
      * @param signals The signals to combine
-     * @returns An AbortSignal that will be aborted if any of the signals are aborted
      */
     any(signals: AbortSignal[]): AbortSignal;
   }
@@ -1838,13 +1857,14 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
   {
     new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): Response;
     /**
-     * Create a new {@link Response} with a JSON body
+     * Create a new {@link Response} with a JSON body.
      *
-     * @param body - The body of the response
-     * @param options - options to pass to the response
+     * Syntactic sugar for:
+     * ```js
+     * new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
+     * ```
      *
      * @example
-     *
      * ```ts
      * const response = Response.json({hi: "there"});
      * console.assert(
@@ -1852,34 +1872,31 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
      *   `{"hi":"there"}`
      * );
      * ```
-     * -------
      *
-     * This is syntactic sugar for:
-     * ```js
-     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
-     * ```
+     * @param body Value to serialize with `JSON.stringify`
+     * @param init Options for the response
      * @link https://github.com/whatwg/fetch/issues/1389
      */
     json(body?: any, init?: ResponseInit | number): Response;
 
     /**
-     * Create a new {@link Response} that redirects to url
+     * Create a new {@link Response} that redirects to `url`.
      *
-     * @param url - the URL to redirect to
-     * @param status - the HTTP status code to use for the redirect
+     * @param url The URL to redirect to
+     * @param status The HTTP status code to use for the redirect
      */
     redirect(url: string, status?: number): Response;
 
     /**
-     * Create a new {@link Response} that redirects to url
+     * Create a new {@link Response} that redirects to `url`.
      *
-     * @param url - the URL to redirect to
-     * @param options - options to pass to the response
+     * @param url The URL to redirect to
+     * @param init Options for the response
      */
     redirect(url: string, init?: ResponseInit): Response;
 
     /**
-     * Create a new {@link Response} that has a network error
+     * Create a new {@link Response} that represents a network error.
      */
     error(): Response;
   }
@@ -1899,11 +1916,10 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
 }
 
 /**
- * BunFetchRequestInit represents additional options that Bun supports in `fetch()` only.
+ * Extra options Bun supports in `fetch()`.
  *
- * Bun extends the `fetch` API with some additional options, except
- * this interface is not quite a `RequestInit`, because they won't work
- * if passed to `new Request()`. This is why it's a separate type.
+ * These extensions are not part of `RequestInit` because they don't work
+ * when passed to `new Request()`.
  */
 interface BunFetchRequestInit extends RequestInit {
   /**
@@ -1912,18 +1928,21 @@ interface BunFetchRequestInit extends RequestInit {
   tls?: BunFetchRequestInitTLS;
 
   /**
-   * Log the raw HTTP request & response to stdout. This API may be
-   * removed in a future version of Bun without notice.
-   * This is a custom property that is not part of the Fetch API specification.
-   * It exists mostly as a debugging tool
+   * Log the raw HTTP request and response to stdout, as a debugging aid.
+   * This API may be removed in a future version of Bun without notice.
+   * Not part of the Fetch API specification.
    */
   verbose?: boolean;
 
   /**
-   * Override http_proxy or HTTPS_PROXY
-   * This is a custom property that is not part of the Fetch API specification.
+   * The proxy to send the request through, overriding the `http_proxy` and
+   * `HTTPS_PROXY` environment variables. Accepts a URL string, a URL instance,
+   * or an object with `url` and optional `headers`.
    *
-   * Can be a string URL or an object with `url` and optional `headers`.
+   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
+   * precedence over credentials parsed from the proxy URL.
+   *
+   * Not part of the Fetch API specification.
    *
    * @example
    * ```js
@@ -1943,17 +1962,15 @@ interface BunFetchRequestInit extends RequestInit {
    *  }
    * });
    * ```
-   *
-   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
-   * precedence over credentials parsed from the proxy URL.
    */
   proxy?:
     | string
+    | URL
     | {
         /**
-         * The proxy URL
+         * The proxy URL, as a string or a `URL`.
          */
-        url: string;
+        url: string | URL;
         /**
          * Custom headers to send to the proxy server.
          * These headers are sent in the CONNECT request (for HTTPS targets)
@@ -1989,11 +2006,24 @@ interface BunFetchRequestInit extends RequestInit {
   unix?: string;
 
   /**
-   * Control automatic decompression of the response body.
-   * When set to `false`, the response body will not be automatically decompressed,
-   * and the `Content-Encoding` header will be preserved. This can improve performance
-   * when you need to handle compressed data manually or forward it as-is.
-   * This is a custom property that is not part of the Fetch API specification.
+   * Force the underlying HTTP version. `"http2"` advertises only `h2` in
+   * the TLS ALPN list and the request fails with `HTTP2Unsupported` if the
+   * server doesn't select it. `"http1.1"` pins the request to HTTP/1.1,
+   * overriding `--experimental-http2-fetch` /
+   * `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` if set. Omit to use the
+   * default (h2 is offered iff the flag is on).
+   *
+   * Requires `https`. Not part of the Fetch API specification.
+   * @experimental
+   */
+  protocol?: "http2" | "http1.1" | "h2" | "h1";
+
+  /**
+   * Control automatic decompression of the response body. When `false`, the
+   * body is not decompressed and the `Content-Encoding` header is preserved.
+   * This can improve performance when you handle compressed data yourself or
+   * forward it as-is.
+   * Not part of the Fetch API specification.
    *
    * @default true
    * @example
@@ -2006,15 +2036,84 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   decompress?: boolean;
+
+  /**
+   * Automatically compress the request body before sending and set the
+   * `Content-Encoding` request header accordingly.
+   *
+   * - `true` is equivalent to `"gzip"`.
+   * - A string selects the encoding with its default level.
+   * - An object selects the encoding and an explicit compression `level`.
+   *
+   * Only buffered bodies (string, `ArrayBuffer`/`TypedArray`, `Blob`) are
+   * compressed; `ReadableStream` bodies are sent as-is. If the request
+   * already has a `Content-Encoding` header, the body is left unchanged.
+   * Not part of the Fetch API specification.
+   *
+   * @default false
+   * @example
+   * ```js
+   * await fetch("https://example.com/upload", {
+   *   method: "POST",
+   *   body: JSON.stringify(bigPayload),
+   *   compress: "gzip",
+   * });
+   * ```
+   */
+  compress?:
+    | boolean
+    | "gzip"
+    | "deflate"
+    | "br"
+    | "zstd"
+    | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
+
+  /**
+   * The maximum number of redirects to follow when `redirect` is `"follow"`.
+   * If the response chain redirects more than this many times, the request
+   * rejects with a "too many redirects" error.
+   * Not part of the Fetch API specification.
+   *
+   * @default 126
+   * @example
+   * ```js
+   * const response = await fetch("https://example.com/", { maxRedirects: 3 });
+   * ```
+   */
+  maxRedirects?: number;
+
+  /**
+   * Control the socket idle timeout for this request. The timer is reset on
+   * every byte sent or received; if the connection stays idle for longer than
+   * this, the request fails with a timeout error.
+   *
+   * - A finite positive number sets the idle deadline in milliseconds,
+   *   overriding the `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default (5 minutes).
+   * - `0`, `false`, or a non-finite number disables the idle timer for this
+   *   request.
+   * - `true` or an omitted value uses the default.
+   *
+   * This is not a whole-request deadline; use `AbortSignal.timeout(ms)` for
+   * that. Not part of the Fetch API specification.
+   *
+   * @example
+   * ```js
+   * // Allow a slow streaming response to stay idle for up to an hour
+   * const response = await fetch("https://example.com/llm", {
+   *   timeout: 60 * 60 * 1000,
+   * });
+   * ```
+   */
+  timeout?: number | boolean;
 }
 
 /**
- * Send a HTTP(s) request
+ * Send an HTTP(S) request.
  *
- * @param input URL string or Request object
- * @param init A structured value that contains settings for the fetch() request.
+ * @param input URL string, {@link URL}, or {@link Request} object
+ * @param init Options for the request
  *
- * @returns A promise that resolves to {@link Response} object.
+ * @returns A promise that resolves to the {@link Response}
  */
 declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
@@ -2025,23 +2124,24 @@ declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit
  */
 declare namespace fetch {
   /**
-   * Preconnect to a URL. This can be used to improve performance by pre-resolving the DNS and establishing a TCP connection before the request is made.
+   * Resolve a URL's DNS and establish a TCP connection before a request is
+   * made, to speed up the eventual `fetch`.
    *
-   * This is a custom property that is not part of the Fetch API specification.
+   * Not part of the Fetch API specification.
    *
-   * @param url - The URL to preconnect to
-   * @param options - Options for the preconnect
+   * @param url The URL to preconnect to
+   * @param options Which stages of the connection to set up
    */
   export function preconnect(
     url: string | URL,
     options?: {
-      /** Preconnect to the DNS of the URL */
+      /** Resolve the URL's DNS */
       dns?: boolean;
-      /** Preconnect to the TCP connection of the URL */
+      /** Open the TCP connection */
       tcp?: boolean;
-      /** Preconnect to the HTTP connection of the URL */
+      /** Establish the HTTP connection */
       http?: boolean;
-      /** Preconnect to the HTTPS connection of the URL */
+      /** Establish the HTTPS connection */
       https?: boolean;
     },
   ): void;

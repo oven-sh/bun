@@ -4,7 +4,7 @@ sidebarTitle: Web debugger
 mode: center
 ---
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts). To enable debugging when running code with Bun, use the `--inspect` flag. For demonstration purposes, consider the following web server.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts). To enable debugging when running code with Bun, use the `--inspect` flag. Consider the following web server.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
@@ -17,9 +17,9 @@ Bun.serve({
 
 ---
 
-Let's run this file with the `--inspect` flag.
+Run the file with the `--inspect` flag.
 
-This automatically starts a WebSocket server on an available port that can be used to introspect the running Bun process. Various debugging tools can connect to this server to provide an interactive debugging experience.
+This starts a WebSocket server on an available port. Debugging tools connect to this server to introspect the running Bun process.
 
 Bun hosts a web-based debugger at [debug.bun.sh](https://debug.bun.sh). It is a modified version of WebKit's [Web Inspector Interface](https://webkit.org/web-inspector/web-inspector-interface/), which will look familiar to Safari users.
 
@@ -28,18 +28,17 @@ bun --inspect server.ts
 ```
 
 ```txt
------------------- Bun Inspector ------------------
-Listening at:
+--------------------- Bun Inspector ---------------------
+Listening:
   ws://localhost:6499/0tqxs9exrgrm
-
 Inspect in browser:
   https://debug.bun.sh/#localhost:6499/0tqxs9exrgrm
------------------- Bun Inspector ------------------
+--------------------- Bun Inspector ---------------------
 ```
 
 ---
 
-Open the provided `debug.bun.sh` URL in your browser to start a debugging session. From this interface, you'll be able to view the source code of the running file, view and set breakpoints, and execute code with the built-in console.
+Open the provided `debug.bun.sh` URL in your browser to start a debugging session. From this interface, you can view the source code of the running file, view and set breakpoints, and execute code with the built-in console.
 
 <Frame>
   ![Screenshot of Bun debugger, Console
@@ -48,7 +47,7 @@ Open the provided `debug.bun.sh` URL in your browser to start a debugging sessio
 
 ---
 
-Let's set a breakpoint. Navigate to the Sources tab; you should see the code from earlier. Click on the line number `3` to set a breakpoint on our `console.log(req.url)` statement.
+Next, set a breakpoint. Open the Sources tab, which shows the code from earlier, and click line number `3` to set a breakpoint on the `console.log(req.url)` statement.
 
 <Frame>
   ![screenshot of Bun debugger](https://github.com/oven-sh/bun/assets/3084745/3b69c7e9-25ff-4f9d-acc4-caa736862935)
@@ -56,7 +55,7 @@ Let's set a breakpoint. Navigate to the Sources tab; you should see the code fro
 
 ---
 
-Then visit [`http://localhost:3000`](http://localhost:3000) in your web browser. This will send an HTTP request to our `localhost` web server. It will seem like the page isn't loading. Why? Because the program has paused execution at the breakpoint we set earlier.
+Then visit [`http://localhost:3000`](http://localhost:3000) in your browser to send an HTTP request to the server. The page hangs because the program is paused at the breakpoint you set.
 
 Note how the UI has changed.
 
@@ -66,7 +65,7 @@ Note how the UI has changed.
 
 ---
 
-At this point there's a lot we can do to introspect the current execution environment. We can use the console at the bottom to run arbitrary code in the context of the program, with full access to the variables in scope at our breakpoint.
+Use the console at the bottom to run arbitrary code in the context of the program, with full access to the variables in scope at the breakpoint.
 
 <Frame>
   ![Bun debugger console](https://github.com/oven-sh/bun/assets/3084745/f4312b76-48ba-4a7d-b3b6-6205968ac681)
@@ -74,7 +73,7 @@ At this point there's a lot we can do to introspect the current execution enviro
 
 ---
 
-On the right side of the Sources pane, we can see all local variables currently in scope, and drill down to see their properties and methods. Here, we're inspecting the `req` variable.
+The right side of the Sources pane lists the local variables in scope; drill down to see their properties and methods. The screenshot shows the `req` variable.
 
 <Frame>
   ![Bun debugger variables panel](https://github.com/oven-sh/bun/assets/3084745/63d7f843-5180-489c-aa94-87c486e68646)
@@ -82,7 +81,7 @@ On the right side of the Sources pane, we can see all local variables currently 
 
 ---
 
-In the upper left of the Sources pane, we can control the execution of the program.
+The buttons in the upper left of the Sources pane control the program's execution.
 
 <Frame>
   ![Bun debugger controls](https://github.com/oven-sh/bun/assets/3084745/41b76deb-7371-4461-9d5d-81b5a6d2f7a4)
@@ -90,12 +89,12 @@ In the upper left of the Sources pane, we can control the execution of the progr
 
 ---
 
-Here's a cheat sheet explaining the functions of the control flow buttons.
+Here's what each control flow button does.
 
-- _Continue script execution_ — continue running the program until the next breakpoint or exception.
-- _Step over_ — The program will continue to the next line.
-- _Step into_ — If the current statement contains a function call, the debugger will "step into" the called function.
-- _Step out_ — If the current statement is a function call, the debugger will finish executing the call, then "step out" of the function to the location where it was called.
+- _Continue script execution_ — runs the program until the next breakpoint or exception.
+- _Step over_ — continues to the next line.
+- _Step into_ — if the current statement contains a function call, steps into the called function.
+- _Step out_ — if the current statement is a function call, finishes executing it, then steps out of the function to the location where it was called.
 
 <Frame>
   ![Debugger control buttons cheat

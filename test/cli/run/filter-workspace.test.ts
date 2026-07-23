@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -436,7 +437,7 @@ describe("bun", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /No packages matched/);
   });
   test("should warn about malformed package.json", () => {
-    runInCwdFailure(cwd_root, "*", "x", /Failed to read package.json/);
+    runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
   });
   test("nonzero exit code on failure", () => {
     const dir = tempDirWithFiles("testworkspace", {
@@ -474,12 +475,10 @@ describe("bun", () => {
     elideLines,
     target_pattern,
     antipattern,
-    win32ExpectedError,
   }: {
     elideLines: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
-    win32ExpectedError: RegExp;
   }) {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
@@ -500,15 +499,32 @@ describe("bun", () => {
     });
 
     if (process.platform === "win32") {
-      const { exitCode, stderr } = spawnSync({
+      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
+      // `state.pretty_output` is false, and `redraw()` short-circuits before
+      // ever emitting elision output. `target_pattern` is intentionally NOT
+      // iterated here: every caller bundles TTY-only regexes such as
+      // `/\[N lines elided\]/` that would never appear in piped Windows output
+      // and would fail the test for the wrong reason. The hardcoded log_line
+      // match covers the non-TTY subset of every caller's target_pattern.
+      // `antipattern` is iterated because absence-checks remain valid on either
+      // code path.
+      const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
         cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
         env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(stderr.toString()).toMatch(win32ExpectedError);
-      expect(exitCode).not.toBe(0);
+
+      const stdoutval = stdout.toString();
+      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
+      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+      if (antipattern) {
+        for (const r of antipattern) {
+          expect(stdoutval).not.toMatch(r);
+        }
+      }
+      expect(exitCode).toBe(0);
       return;
     }
 
@@ -527,7 +543,6 @@ describe("bun", () => {
     runElideLinesTest({
       elideLines: 10,
       target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
@@ -535,7 +550,6 @@ describe("bun", () => {
     runElideLinesTest({
       elideLines: 15,
       target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
@@ -544,7 +558,107 @@ describe("bun", () => {
       elideLines: 0,
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
+  });
+
+  test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    // Use a non-zero value so the test would fail if elision ever leaked into
+    // the non-TTY code path. With `--elide-lines 5`, a broken implementation
+    // would only surface 5 log_line entries and the 20-match regex would fail.
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "5", "script"],
+      env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
+    // Elision text is written to stdout via std.fs.File.stdout().writeAll() in
+    // filter_run.zig's flushDrawBuf; guard the correct stream.
+    expect(stdoutval).not.toMatch(/lines elided/);
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("self-referential directory symlink in a workspace does not loop", () => {
+    const dir = tempDirWithFiles("filter-symlink-loop", {
+      packages: {
+        pkga: {
+          "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
+        },
+        cyc: {
+          "package.json": JSON.stringify({ name: "cyc", scripts: { present: "echo scriptcyc" } }),
+        },
+      },
+      // `packages/**` makes workspace discovery recurse into every package.
+      "package.json": JSON.stringify({
+        name: "ws",
+        scripts: { present: "echo rootscript" },
+        workspaces: ["packages/**"],
+      }),
+    });
+    // "junction" so the link is creatable on unprivileged Windows; the type is
+    // ignored on POSIX.
+    symlinkSync(join(dir, "packages", "cyc"), join(dir, "packages", "cyc", "loop"), "junction");
+
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+    const count = (needle: string) => stdoutval.split(needle).length - 1;
+    // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
+    // through its own `loop` alias, where the cycle is detected and descent
+    // stops instead of recursing until the path length limit.
+    expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
+      scripta: 1,
+      scriptcyc: 2,
+      exitCode: 0,
+    });
+  });
+
+  test("warning names which package.json failed to parse", async () => {
+    const dir = tempDirWithFiles("filter-bad-pkgjson", {
+      packages: {
+        good: {
+          "package.json": JSON.stringify({ name: "good", scripts: { go: "echo ok" } }),
+        },
+        broken: {
+          "package.json": "this is { not valid json",
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The good package still runs; the broken one is skipped with a warning
+    // that names its path.
+    expect(stdout).toContain("ok");
+    const sep = process.platform === "win32" ? "\\" : "/";
+    expect(stderr).toContain(`broken${sep}package.json`);
+    expect(stderr).toContain("skipping this workspace package");
+    expect(exitCode).toBe(0);
   });
 });

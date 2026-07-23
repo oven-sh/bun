@@ -1,4 +1,7 @@
+.rustup
 .claude/settings.local.json
+.cargo
+Library/Caches
 .direnv
 .DS_Store
 .env
@@ -19,7 +22,6 @@
 .vs
 .vscode/clang*
 .vscode/cpp*
-.zig-cache
 .bake-debug
 *.a
 *.bc
@@ -54,13 +56,13 @@
 /.cache
 /.webkit-cache
 /build-*/
+/test/build/
 /bun-webkit
 /kcov-out
 /test-report.json
 /test-report.md
 /test.js
 /test.ts
-/test.zig
 /testdir
 /build/
 cmake/sources
@@ -123,15 +125,8 @@ scripts/env.local
 sign.*.json
 sign.json
 src/bake/generated.ts
-src/generated_enum_extractor.zig
-src/bun.js/bindings-obj
-src/bun.js/bindings/GeneratedJS2Native.zig
-src/bun.js/bindings/GeneratedBindings.zig
+src/jsc/bindings-obj
 src/bun.js/debug-bindings-obj
-src/deps/zig-clap/.gitattributes
-src/deps/zig-clap/.github
-src/deps/zig-clap/example
-src/deps/zig-clap/README.md
 src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*
@@ -140,7 +135,6 @@ src/js/out/tmp
 src/node-fallbacks/node_modules
 src/node-fallbacks/out/*
 src/runtime.version
-src/tests.zig
 test.txt
 test/js/bun/glob/fixtures
 test/node.js/upstream
@@ -148,10 +142,7 @@ tsconfig.tsbuildinfo
 txt.js
 x64
 yarn.lock
-zig-cache
-zig-out
 test/node.js/upstream
-.zig-cache
 scripts/env.local
 *.generated.ts
 src/bake/generated.ts
@@ -185,12 +176,45 @@ codegen-for-zig-team.tar.gz
 
 # Generated files
 
+# Written at configure time from the discovered toolchain by
+# scripts/build/cargo-config.ts — see scripts/build/CLAUDE.md.
+.cargo/config.toml
+
 .buildkite/ci.yml
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
+/a.js
+scratch
 
 *.bun-build
 
 scripts/lldb-inline
 
 test/integration/bun-types/fixture/bun.lock
+.claude/scheduled_tasks.lock
+.claude/worktrees
+src/runtime/bake/generated.ts
+/target/
+# Heap snapshots, profiler output, and core dumps can contain secrets from
+# process memory (env vars, tokens). Never commit them, compressed or not.
+*.heapsnapshot
+*.heapsnapshot.*
+*.heapprofile
+*.heapprofile.*
+*.heaptimeline
+*.heaptimeline.*
+*.cpuprofile
+*.cpuprofile.*
+Heap-*.json
+Heap-*.json.*
+isolate-*.log
+core
+core.[0-9]*
+# Legacy codegen outputs (no longer written, but old build trees still have
+# them on disk; keep ignored so they don't show as untracked).
+src/jsc/bindings/GeneratedJS2Native.zig
+src/jsc/bindings/GeneratedBindings.zig
+
+# Web Streams rewrite working notes (design docs, spec transcription, review logs).
+# Kept locally for the ongoing work; not part of the source tree.
+/specs/

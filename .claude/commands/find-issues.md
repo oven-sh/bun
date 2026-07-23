@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gh pr view:*), Bash(gh pr diff:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh issue view:*), Bash(gh api:*), Bash(gh pr comment:*)
+allowed-tools: Bash(gh pr view:*), Bash(gh pr diff:*), Bash(gh search:*), Bash(gh issue list:*), Bash(gh issue view:*), Bash(gh api:*), Bash(gh pr comment:*), Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git status:*), Bash(git rev-parse:*), Bash(git ls-files:*), Bash(git grep:*), Bash(git branch:*), Bash(git remote:*)
 description: Find GitHub issues that a PR might fix
 ---
 
@@ -26,12 +26,13 @@ To do this, follow these steps precisely:
 Notes (be sure to tell this to your agents, too):
 
 - Use `gh` to interact with GitHub, rather than web fetch
-- Do not use other tools, beyond `gh` (eg. don't use other MCP servers, file edit, etc.)
+- You may also use read-only `git` commands (`git diff`, `git log`, `git show`, `git grep`, etc.) against the local checkout
+- Do not use other tools beyond `gh` and `git` (eg. don't use other MCP servers, file edit, etc.)
 - Make a todo list first
 - Always scope searches with `repo:owner/repo` to prevent cross-repo false positives
 - Only match against **open** issues - do not suggest closed issues
 - Exclude issues that are already linked in the PR description
-- For your comment, follow the following format precisely (assuming for this example that you found 3 related issues):
+- For your comment, follow the following format precisely (assuming for this example that you found 3 related issues). The fenced block at the bottom must contain one `Fixes #<number>` line per issue, in the same order, so the PR author can copy-paste it directly into the PR description:
 
 ---
 
@@ -41,7 +42,13 @@ Found 3 issues this PR may fix:
 2. <link to issue> - <one-line summary of why this PR is relevant>
 3. <link to issue> - <one-line summary of why this PR is relevant>
 
-> If this is helpful, consider adding `Fixes #<number>` to the PR description to auto-close the issue on merge.
+> If this is helpful, copy the block below into the PR description to auto-close these issues on merge.
+
+```
+Fixes #<number>
+Fixes #<number>
+Fixes #<number>
+```
 
 🤖 Generated with [Claude Code](https://claude.ai/code)
 

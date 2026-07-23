@@ -129,8 +129,8 @@ export function runOnEndCallbacks(
   }
 
   if (promises.length > 0) {
-    // we return the promise here because detecting if the promise was handled or not
-    // in bundle_v2.zig is done by checking if this function did not return undefined
+    // we return the promise here because the native bundler detects whether the
+    // promise was handled by checking if this function did not return undefined
     return Promise.all(promises).then(
       () => {
         if (buildRejection !== undefined) {
@@ -255,7 +255,12 @@ export function runSetupFunction(
 
     const ret = callback();
     if ($isPromise(ret)) {
-      if (($getPromiseInternalField(ret, $promiseFieldFlags) & $promiseStateMask) != $promiseStateFulfilled) {
+      if ($peekPromiseStatus(ret) != 1) {
+        // Stash the deferred promise; the aggregate handler is attached later
+        // (in loadAndResolvePluginsForServe via Promise.all). Mark it as
+        // handled now so a rejection that lands while it's only sitting in
+        // the array doesn't fire the unhandled-rejection tracker.
+        $pokePromiseAsHandled(ret);
         self.promises ??= [];
         self.promises.push(ret);
       }
@@ -369,12 +374,13 @@ export function runSetupFunction(
   } as PluginBuilderExt);
 
   if (setupResult && $isPromise(setupResult)) {
-    if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {
-      setupResult = $getPromiseInternalField(setupResult, $promiseFieldReactionsOrResult);
+    if ($peekPromiseStatus(setupResult) === 1) {
+      setupResult = $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
-        if (is_last && self.promises !== undefined && self.promises.length > 0) {
-          const awaitAll = Promise.all(self.promises);
+        let selfPromises;
+        if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {
+          const awaitAll = Promise.all(selfPromises);
           return awaitAll.$then(processSetupResult);
         }
         return processSetupResult();
@@ -382,8 +388,9 @@ export function runSetupFunction(
     }
   }
 
-  if (is_last && this.promises !== undefined && this.promises.length > 0) {
-    const awaitAll = Promise.all(this.promises);
+  let pendingPromises;
+  if (is_last && (pendingPromises = this.promises) !== undefined && pendingPromises.length > 0) {
+    const awaitAll = Promise.all(pendingPromises);
     return awaitAll.$then(processSetupResult);
   }
 
@@ -413,12 +420,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           // pluginData
         });
 
-        while (
-          result &&
-          $isPromise(result) &&
-          ($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
-        ) {
-          result = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
+        while (result && $isPromise(result) && $peekPromiseStatus(result) === 1) {
+          result = $peekPromiseSettledValue(result);
         }
 
         if (result && $isPromise(result)) {
@@ -480,12 +483,8 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     return null;
   })(specifier, inputNamespace, importer, kind);
 
-  while (
-    promiseResult &&
-    $isPromise(promiseResult) &&
-    ($getPromiseInternalField(promiseResult, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
-  ) {
-    promiseResult = $getPromiseInternalField(promiseResult, $promiseFieldReactionsOrResult);
+  while (promiseResult && $isPromise(promiseResult) && $peekPromiseStatus(promiseResult) === 1) {
+    promiseResult = $peekPromiseSettledValue(promiseResult);
   }
 
   if (promiseResult && $isPromise(promiseResult)) {
@@ -529,12 +528,8 @@ export function runOnLoadPlugins(
           side: isServerSide ? "server" : "client",
         });
 
-        while (
-          result &&
-          $isPromise(result) &&
-          ($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
-        ) {
-          result = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
+        while (result && $isPromise(result) && $peekPromiseStatus(result) === 1) {
+          result = $peekPromiseSettledValue(result);
         }
 
         if (result && $isPromise(result)) {
@@ -580,12 +575,8 @@ export function runOnLoadPlugins(
     return null;
   })(internalID, path, namespace, isServerSide, loaderName, generateDefer);
 
-  while (
-    promiseResult &&
-    $isPromise(promiseResult) &&
-    ($getPromiseInternalField(promiseResult, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
-  ) {
-    promiseResult = $getPromiseInternalField(promiseResult, $promiseFieldReactionsOrResult);
+  while (promiseResult && $isPromise(promiseResult) && $peekPromiseStatus(promiseResult) === 1) {
+    promiseResult = $peekPromiseSettledValue(promiseResult);
   }
 
   if (promiseResult && $isPromise(promiseResult)) {

@@ -1,0 +1,485 @@
+//! This "Store" is a specialized memory allocation strategy very similar to an
+//! arena, used for allocating expression and statement nodes during JavaScript
+//! parsing and visiting. Allocations are grouped into large blocks, where each
+//! block is treated as a fixed-buffer arena. When a block runs out of
+//! space, a new one is created; all blocks are joined as a linked list.
+//!
+//! Similarly to an arena, you can call .reset() to reset state, reusing memory
+//! across operations.
+
+/// Compile-time membership check for
+/// the type list of a `new_store!`-generated store.
+///
+/// `new_store!` implements this for every `$T` in its list (with `S` = the
+/// generated `Store` type), and bounds `Store::allocate`/`Store::append` (and
+/// the `thread_local_ast_store!` front-end `append`) on it. Allocating a type
+/// the store was not declared with is therefore a compile error.
+pub trait StoredIn<S>: sealed::Sealed<S> {}
+
+#[doc(hidden)]
+pub mod sealed {
+    /// Sealing supertrait — only `new_store!` expansions implement it.
+    pub trait Sealed<S> {}
+}
+
+/// Rust cannot take a slice of types as a generic parameter, and the body
+/// derives array sizes and alignment from that list (which would require
+/// `generic_const_exprs`). Per PORTING.md this falls under the
+/// `macro_rules!` type-generator exception: heterogeneous type-list
+/// iteration that determines struct layout.
+///
+/// Usage: `new_store!(ExprStore, [EArray, EBinary, /* ... */], 256);`
+/// emits `pub mod ExprStore { pub struct Store { ... } /* Block, ... */ }`.
+#[macro_export]
+macro_rules! new_store {
+    ($mod_name:ident, [$($T:ty),+ $(,)?], $count:expr) => {
+        pub mod $mod_name {
+            #[allow(unused_imports)]
+            use super::*;
+            use ::core::mem::{align_of, size_of, MaybeUninit};
+            use ::core::ptr::{addr_of_mut, NonNull};
+
+            const LARGEST_SIZE: usize = {
+                let sizes = [$(size_of::<$T>()),+];
+                let mut largest_size = 0;
+                let mut i = 0;
+                while i < sizes.len() {
+                    assert!(sizes[i] > 0, "NewStore does not support 0 size type");
+                    if sizes[i] > largest_size { largest_size = sizes[i]; }
+                    i += 1;
+                }
+                largest_size
+            };
+            const LARGEST_ALIGN: usize = {
+                let aligns = [$(align_of::<$T>()),+];
+                let mut largest_align = 1;
+                let mut i = 0;
+                while i < aligns.len() {
+                    if aligns[i] > largest_align { largest_align = aligns[i]; }
+                    i += 1;
+                }
+                largest_align
+            };
+
+            // Allocation goes through the global mimalloc allocator
+            // (#[global_allocator]); Box/alloc use it.
+            // The log scope is declared once at crate level:
+            // `bun_output::declare_scope!(Store, hidden);`
+
+            pub struct Store {
+                /// Lazily-allocated head of the block chain — `None` until the
+                /// first [`Store::allocate`]. Owns the entire `Box<Block>`
+                /// `next`-linked list; `Store`'s `Drop` walks it iteratively.
+                ///
+                /// An earlier design co-allocated `Store` + the first
+                /// `Block` so `create()` always paid one `~BLOCK_SIZE`
+                /// malloc. Splitting them lets a store that is `create()`d but
+                /// never written to (e.g. the `Stmt` store during
+                /// `Transpiler::configure_defines`, which only emits `E::String`
+                /// expression nodes for `--define` / `NODE_ENV`) cost nothing
+                /// beyond this small header.
+                head: Option<Box<Block>>,
+                /// Bump-pointer target for the active block. Null iff `head` is
+                /// `None` (no allocation has happened on this thread yet);
+                /// otherwise points into the `head` chain and stays valid until
+                /// `destroy()`.
+                current: *mut Block,
+            }
+
+            // `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
+            // requires a literal. Over-approximate with align(16) — every AST payload
+            // type is `<= 16` aligned (asserted below). Switch to a
+            // `#[repr(C)] union AlignUnion { $($T),+ }` element type if a >16-aligned
+            // payload is ever introduced.
+            const _: () = assert!(LARGEST_ALIGN <= 16, "NewStore payload type with align>16; bump Block repr(align)");
+            pub(crate) const BLOCK_SIZE: usize = LARGEST_SIZE * $count * 2;
+            #[repr(C, align(16))]
+            pub struct Block {
+                buffer: [MaybeUninit<u8>; BLOCK_SIZE],
+                bytes_used: BlockSize,
+                next: Option<Box<Block>>,
+            }
+
+            // Only the types listed in this `new_store!`
+            // invocation may be allocated from this store. `allocate`/`append`
+            // are bounded on `StoredIn<Store>`, so an unsupported type is a
+            // compile error.
+            $(
+                impl $crate::new_store::sealed::Sealed<Store> for $T {}
+                impl $crate::new_store::StoredIn<Store> for $T {}
+            )+
+
+            impl Block {
+                pub const SIZE: usize = BLOCK_SIZE;
+
+                // PERF: could pick the smallest uN that fits; using u32 (Block::SIZE
+                // for AST node stores fits comfortably). Profile.
+
+                /// Initialize the non-buffer fields without touching the (large,
+                /// `MaybeUninit`-wrapped) `buffer`.
+                #[inline]
+                pub fn zero(this: &mut MaybeUninit<Block>) {
+                    let this = this.as_mut_ptr();
+                    // SAFETY: `this` is a valid `MaybeUninit<Block>` allocation
+                    // — non-null, aligned, writable. `addr_of_mut!` projects
+                    // field pointers without forming a `&Block` to uninit data.
+                    unsafe {
+                        addr_of_mut!((*this).bytes_used).write(0);
+                        addr_of_mut!((*this).next).write(None);
+                    }
+                }
+
+                pub fn try_alloc<T>(block: &mut Block) -> Option<NonNull<T>> {
+                    // Align `bytes_used` forward to `align_of::<T>()`.
+                    let start = ((block.bytes_used as usize) + align_of::<T>() - 1)
+                        & !(align_of::<T>() - 1);
+                    if start + size_of::<T>() > block.buffer.len() {
+                        return None;
+                    }
+
+                    // it's simpler to use a pointer cast, but as a sanity check, we also
+                    // try to compute the slice. Rust will report an out of bounds
+                    // panic if the null detection logic above is wrong
+                    if cfg!(debug_assertions) {
+                        let _ = &block.buffer[block.bytes_used as usize..][..size_of::<T>()];
+                    }
+
+                    block.bytes_used =
+                        BlockSize::try_from(start + size_of::<T>()).unwrap();
+
+                    // SAFETY: `start` is in-bounds (checked above) and aligned for T
+                    // (align_forward above). Buffer base alignment must be >= align_of::<T>()
+                    // — guaranteed by `repr(align(16))` on Block plus the
+                    // `LARGEST_ALIGN <= 16` const assert above.
+                    Some(unsafe {
+                        NonNull::new_unchecked(
+                            block.buffer.as_mut_ptr().add(start).cast::<T>(),
+                        )
+                    })
+                }
+
+                /// Heap-allocate a Block without placing the (large) buffer on the stack.
+                fn new_boxed() -> Box<Block> {
+                    let mut b: Box<MaybeUninit<Block>> = Box::new_uninit();
+                    Block::zero(&mut b);
+                    // SAFETY: `zero` initialized every non-buffer field; `buffer` is
+                    // `[MaybeUninit<u8>; _]` and is valid uninitialized.
+                    unsafe { b.assume_init() }
+                }
+            }
+
+            type BlockSize = u32;
+
+            /// `Store` owns its `Box<Block>` chain (`head` → `next` → …). The
+            /// derived drop glue for `Box<Block>` is recursive (`Block.next:
+            /// Option<Box<Block>>`); a long parse can build a deep chain, so
+            /// dismantle it iteratively here to keep `Drop` O(1)-stack.
+            impl Drop for Store {
+                fn drop(&mut self) {
+                    let mut it = self.head.take();
+                    while let Some(mut block) = it {
+                        #[cfg(debug_assertions)]
+                        {
+                            // SAFETY: poisoning a buffer that is being freed.
+                            unsafe {
+                                ::core::ptr::write_bytes(
+                                    block.buffer.as_mut_ptr(),
+                                    0xAA,
+                                    Block::SIZE,
+                                );
+                            }
+                        }
+                        it = block.next.take();
+                        drop(block);
+                    }
+                }
+            }
+
+            impl Store {
+                pub fn init() -> *mut Store {
+                    /* scoped_log elided — debug_logs feature only */
+                    // The first `Block`'s ~`BLOCK_SIZE` heap buffer
+                    // is *not* allocated here — only the small `Store` header.
+                    // `allocate()` lazily mallocs the first `Block` on the first
+                    // `append()` (see the `head` field doc). Box aborts on OOM.
+                    bun_core::heap::into_raw(Box::new(Store {
+                        head: None,
+                        current: ::core::ptr::null_mut(),
+                    }))
+                }
+
+                /// SAFETY: `store` must have been returned by `Store::init()` and not
+                /// yet destroyed.
+                pub unsafe fn destroy(store: *mut Store) {
+                    /* scoped_log elided — debug_logs feature only */
+                    // SAFETY: caller contract — reconstitute the `Box<Store>`
+                    // leaked in `init()`. Its `Drop` (above) walks the block
+                    // chain iteratively, so no deep `Box<Block>` drop recursion.
+                    drop(unsafe { bun_core::heap::take(store) });
+                }
+
+                pub fn reset(store: &mut Store) {
+                    /* scoped_log elided — debug_logs feature only */
+
+                    // Nothing was ever allocated on this thread — the first
+                    // `Block` is still un-materialised (`current` is null; the
+                    // next `allocate()` mallocs it). Equivalent to a fresh store.
+                    if store.head.is_none() {
+                        debug_assert!(store.current.is_null());
+                        return;
+                    }
+
+                    #[cfg(debug_assertions)]
+                    {
+                        // `next: Option<Box<Block>>` makes the chain a safe
+                        // singly-linked list; walk it via `&mut` reborrows.
+                        let mut it: Option<&mut Block> = store.head.as_deref_mut();
+                        while let Some(block) = it {
+                            // SAFETY: poisoning; buffer is MaybeUninit<u8>.
+                            unsafe {
+                                ::core::ptr::write_bytes(
+                                    block.buffer.as_mut_ptr(),
+                                    0xAA,
+                                    Block::SIZE,
+                                );
+                            }
+                            it = block.next.as_deref_mut();
+                        }
+                    }
+
+                    // Rewind to the head block; overflow blocks keep their stale
+                    // `bytes_used` until `allocate()` advances onto them and
+                    // zeroes them then (matches the pre-split behaviour).
+                    let head_ptr: *mut Block = {
+                        let head = store
+                            .head
+                            .as_deref_mut()
+                            .expect("head is Some — checked above");
+                        head.bytes_used = 0;
+                        ::core::ptr::from_mut(head)
+                    };
+                    store.current = head_ptr;
+                }
+
+                fn allocate<T: $crate::new_store::StoredIn<Store>>(store: &mut Store) -> NonNull<T> {
+                    debug_assert!(size_of::<T>() > 0); // don't allocate!
+
+                    // Lazily materialise the first `Block` on first use — this is
+                    // the only `~BLOCK_SIZE` allocation a never-written store
+                    // would otherwise pay up front (see `init()` / the `head` doc).
+                    if store.current.is_null() {
+                        debug_assert!(store.head.is_none());
+                        let mut first = Block::new_boxed();
+                        store.current = &raw mut *first;
+                        store.head = Some(first);
+                    }
+
+                    // SAFETY: `current` is non-null (ensured just above, or by a
+                    // prior `allocate()`/`reset()`) and points into the owned
+                    // `head`/`next` chain; the pointee outlives `store`.
+                    let current: &mut Block = unsafe { &mut *store.current };
+                    if let Some(ptr) = Block::try_alloc::<T>(current) {
+                        return ptr;
+                    }
+
+                    // The active block is full — advance to the next one,
+                    // allocating it if the chain ends here.
+                    let next_block: *mut Block = match &mut current.next {
+                        Some(next) => {
+                            next.bytes_used = 0;
+                            &raw mut **next
+                        }
+                        slot @ None => {
+                            let mut new_block = Block::new_boxed();
+                            let ptr = &raw mut *new_block;
+                            *slot = Some(new_block);
+                            ptr
+                        }
+                    };
+                    store.current = next_block;
+
+                    // SAFETY: a freshly created/reset block always has room for
+                    // at least one `T` (`assert!(LARGEST_ALIGN <= 16)` plus
+                    // `BLOCK_SIZE = LARGEST_SIZE * count * 2`).
+                    Block::try_alloc::<T>(unsafe { &mut *store.current })
+                        .unwrap_or_else(|| unreachable!())
+                }
+
+                #[inline]
+                pub fn append<T: $crate::new_store::StoredIn<Store>>(
+                    store: &mut Store,
+                    data: T,
+                ) -> NonNull<T> {
+                    let ptr = Store::allocate::<T>(store);
+                    /* scoped_log elided — debug_logs feature only */
+                    // SAFETY: `allocate` returned aligned, in-bounds, exclusive storage for T.
+                    unsafe { ptr.as_ptr().write(data) };
+                    ptr
+                }
+
+                // Type-list membership is enforced by the
+                // `StoredIn<Store>` impls generated above `impl Block`.
+            }
+        }
+    };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// thread_local_ast_store! — the per-thread *front-end* wrapper around a
+// `new_store!`-generated slab.
+//
+// `Expr` and `Stmt` each need three `#[thread_local]` slots (instance ptr,
+// optional `ASTMemoryAllocator` override, `disable_reset` flag) plus the
+// twelve identical accessor/lifecycle fns. The two hand-written copies in
+// expr.rs / stmt.rs were byte-for-byte twins modulo the backing type and the
+// "Expr"/"Stmt" panic-string label. This macro stamps out one
+// `pub mod Store { … }` per call site so the duplication lives here once.
+//
+// Why a macro and not a generic struct: `#[thread_local] static` cannot be
+// generic over `T`, so a `struct Front<B>` with `static INSTANCE: Cell<*mut B>`
+// is rejected; the storage must be monomorphised at the item level.
+//
+// Usage (inside `pub mod data { use super::*; … }`):
+//   crate::thread_local_ast_store!(expr_store::Store, "Expr");
+//
+// Expects in scope via `use super::*;`: the `$Backing` path and a
+// `type Disabler = DebugOnlyDisabler<…>;` alias for the debug re-entrancy
+// guard called from `append()`.
+#[macro_export]
+macro_rules! thread_local_ast_store {
+    ($Backing:path, $label:literal) => {
+        #[allow(non_snake_case)]
+        pub mod Store {
+            use super::*;
+            use ::core::cell::Cell;
+            type Backing = $Backing;
+
+            // `#[thread_local]` (bare `__thread` slot) — `memory_allocator()` is
+            // read on every node `alloc` (the hottest TLS in the parser), and
+            // the `thread_local!` macro's `LocalKey` wrapper showed up in
+            // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
+            // const init).
+            #[thread_local]
+            pub(crate) static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
+            /// Back-reference to the `ASTMemoryAllocator` installed by the
+            /// enclosing `ASTMemoryAllocatorScope` stack frame. Stored as
+            /// `Option<BackRef>` (vs. raw `*mut`) so `append()` can read it via
+            /// safe `Deref`; the back-reference invariant (pointee outlives every
+            /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
+            /// always restores the previous value before its frame returns.
+            #[thread_local]
+            pub(crate) static MEMORY_ALLOCATOR: Cell<
+                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
+            > = Cell::new(None);
+            #[thread_local]
+            pub(crate) static DISABLE_RESET: Cell<bool> = Cell::new(false);
+
+            #[inline]
+            fn instance() -> *mut Backing {
+                INSTANCE.get()
+            }
+            /// Reborrow the thread-local backing store. Centralises the raw
+            /// deref so `begin`/`reset`/`append` stay safe; `None` iff
+            /// `create()` has not run (or `deinit()` cleared it).
+            #[inline]
+            fn instance_mut<'a>() -> Option<&'a mut Backing> {
+                // SAFETY: `INSTANCE` is thread-local; the `*mut Backing` it holds
+                // is either null or was returned by `Backing::init()` (a `Box`
+                // leaked via `bun_core::heap::into_raw`) and remains valid
+                // until `deinit()` clears it.
+                // Single-threaded access — no other `&mut` to the slab is live.
+                unsafe { INSTANCE.get().as_mut() }
+            }
+            #[inline]
+            pub fn memory_allocator() -> *mut $crate::ASTMemoryAllocator {
+                MEMORY_ALLOCATOR
+                    .get()
+                    .map_or(::core::ptr::null_mut(), ::bun_ptr::BackRef::as_ptr)
+            }
+            #[inline]
+            pub(crate) fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
+                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(::bun_ptr::BackRef::from));
+            }
+
+            pub fn create() {
+                if !instance().is_null() || !memory_allocator().is_null() {
+                    return;
+                }
+                INSTANCE.set(Backing::init());
+            }
+
+            /// create || reset
+            pub(crate) fn begin() {
+                if !memory_allocator().is_null() {
+                    return;
+                }
+                match instance_mut() {
+                    None => create(),
+                    Some(store) => {
+                        if !DISABLE_RESET.get() {
+                            Backing::reset(store);
+                        }
+                    }
+                }
+            }
+
+            pub fn reset() {
+                if DISABLE_RESET.get() || !memory_allocator().is_null() {
+                    return;
+                }
+                // Caller contract — instance is set when reset() is called.
+                Backing::reset(
+                    instance_mut().expect(concat!($label, " Store::reset: instance not set")),
+                );
+            }
+
+            /// Toggled by long-lived
+            /// callers (transpiler, bundler) that want the Store to persist
+            /// across multiple parse calls.
+            #[inline]
+            pub(crate) fn set_disable_reset(b: bool) {
+                DISABLE_RESET.set(b);
+            }
+            #[inline]
+            pub fn disable_reset() -> bool {
+                DISABLE_RESET.get()
+            }
+
+            pub fn deinit() {
+                if instance().is_null() || !memory_allocator().is_null() {
+                    return;
+                }
+                // SAFETY: checked non-null above; `destroy` frees the `Store`
+                // box and its lazily-allocated block chain.
+                unsafe { Backing::destroy(instance()) };
+                INSTANCE.set(::core::ptr::null_mut());
+            }
+
+            #[inline]
+            pub(crate) fn assert() {
+                if cfg!(debug_assertions) {
+                    if instance().is_null() && memory_allocator().is_null() {
+                        unreachable!("Store must be init'd");
+                    }
+                }
+            }
+
+            #[inline]
+            pub fn append<T: $crate::new_store::StoredIn<Backing>>(
+                value: T,
+            ) -> $crate::StoreRef<T> {
+                if let Some(ma) = MEMORY_ALLOCATOR.get() {
+                    // `BackRef<ASTMemoryAllocator>: Deref` — owning scope outlives this call.
+                    return ma.append(value);
+                }
+                Disabler::assert();
+                // assert() guarantees instance is non-null on this thread; slab
+                // returns stable addresses until reset().
+                $crate::StoreRef::from_non_null(Backing::append(
+                    instance_mut().expect(concat!($label, " Store must be init'd")),
+                    value,
+                ))
+            }
+        }
+    };
+}

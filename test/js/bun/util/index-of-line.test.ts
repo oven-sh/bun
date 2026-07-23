@@ -1,5 +1,6 @@
 import { indexOfLine } from "bun";
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("indexOfLine handles non-number offset", () => {
   // Regression test: passing a non-number offset should not crash
@@ -50,4 +51,49 @@ test("indexOfLine", () => {
     expect(i++ - delta).toBe(j++);
     nonEmptyLineCount++;
   }
+});
+
+// A single byte >=0x80 late in the buffer used to trigger an O(n^2) rescan.
+// Size chosen so the quadratic loop cannot complete inside the spawn timeout
+// while the linear scan finishes in well under a second.
+test("indexOfLine is linear on large input with a non-ASCII byte", async () => {
+  const n = 500_000;
+  const fixture = `
+    const n = ${n};
+    const buf = Buffer.alloc(n + 3, "a");
+    buf[n] = 0xc3; buf[n + 1] = 0xa9; // 'é'
+    buf[n + 2] = 0x0a;                // '\\n'
+    const i = Bun.indexOfLine(buf);
+    console.log(JSON.stringify({ i, len: buf.length }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr: /error|panic|assert|abort/i.test(stderr) ? stderr : "", exitCode }).toEqual({
+    stdout: JSON.stringify({ i: n + 2, len: n + 3 }),
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(proc.signalCode).toBeNull();
+}, 60_000);
+
+test("indexOfLine skips multi-byte sequences correctly", () => {
+  // ascii prefix, multi-byte char, ascii, newline
+  const buf = Buffer.from("abé d\n");
+  expect(indexOfLine(buf)).toBe(buf.length - 1);
+  // newline immediately after a multi-byte char
+  const buf2 = Buffer.from("é\n");
+  expect(indexOfLine(buf2)).toBe(2);
+  // search starting mid-buffer with non-ASCII before the offset
+  const buf3 = Buffer.from("é\nabc\néé\n");
+  expect(indexOfLine(buf3, 3)).toBe(6);
+  expect(indexOfLine(buf3, 7)).toBe(11);
 });

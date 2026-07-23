@@ -47,11 +47,111 @@ export const profiles = {
     asan: false,
   },
 
+  /**
+   * Android aarch64 cross-compile. Requires ANDROID_NDK_ROOT.
+   * Sanitizers are forced off in resolveConfig() regardless of profile.
+   */
+  android: {
+    buildType: "Debug",
+    os: "linux",
+    arch: "aarch64",
+    abi: "android",
+    webkit: "prebuilt",
+  },
+
+  "android-release": {
+    buildType: "Release",
+    os: "linux",
+    arch: "aarch64",
+    abi: "android",
+    webkit: "prebuilt",
+  },
+
+  /**
+   * FreeBSD x64 cross-compile. Requires FREEBSD_SYSROOT (extracted base.txz).
+   * Sanitizers are forced off in resolveConfig() regardless of profile.
+   */
+  freebsd: {
+    buildType: "Debug",
+    os: "freebsd",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "freebsd-arm64": {
+    buildType: "Debug",
+    os: "freebsd",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
+  "freebsd-release": {
+    buildType: "Release",
+    os: "freebsd",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  /**
+   * Windows cross-compile from a non-Windows host: clang-cl + lld-link from
+   * the host LLVM plus an xwin-style Windows sysroot (see config.ts
+   * `winsysroot`). On a Windows host just use the regular debug/release
+   * profiles. Sanitizers are forced off in resolveConfig().
+   */
+  "windows-x64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64": {
+    buildType: "Debug",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
+  "windows-x64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "windows-arm64-release": {
+    buildType: "Release",
+    os: "windows",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",
     webkit: "prebuilt",
     lto: false,
+  },
+
+  /**
+   * Bench-till-green profile. Mirrors the codegen the CI release build
+   * actually ships (`ci-release` resolves `lto: true` for ci+release+linux),
+   * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
+   * symbol ordering, no special-case linker layout. lto=true selects the
+   * `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic` under
+   * `-flto=thin -fwhole-program-vtables`) so cross-TU inlining runs; without
+   * it the non-LTO WebKit .a lands ~555 KB of C++ vtables in `.data.rel.ro`,
+   * keeps `.eh_frame` (+962 KB), and outlines JSC slow-paths — the bench then
+   * reports a ~6-8% time / ~1 MB RSS "regression" that is pure binary layout.
+   */
+  btg: {
+    buildType: "Release",
+    webkit: "prebuilt",
+    lto: true,
+    // Pin the build dir so `--profile=btg` alone lands here and can never
+    // be confused with `--profile=release --build-dir=build/btg` (which
+    // would persist lto:false and silently de-LTO the bench binary).
+    buildDir: "build/btg",
   },
 
   /** Release with local WebKit. */
@@ -62,8 +162,9 @@ export const profiles = {
   },
 
   /**
-   * Release + assertions + logs. RelWithDebInfo → zig gets ReleaseSafe
-   * (runtime safety checks), matching the old cmake build:assert script.
+   * Release + assertions + logs. RelWithDebInfo → cargo `release` profile
+   * with `debug-assertions = true` (runtime safety checks), matching the
+   * old cmake build:assert script.
    */
   "release-assertions": {
     buildType: "RelWithDebInfo",
@@ -86,7 +187,7 @@ export const profiles = {
     assertions: true,
   },
 
-  /** CI: compile C++ to libbun.a only (parallelized with zig build). */
+  /** CI: compile C++ to libbun.a only (parallelized with the cargo build). */
   "ci-cpp-only": {
     buildType: "Release",
     mode: "cpp-only",
@@ -96,12 +197,13 @@ export const profiles = {
   },
 
   /**
-   * CI: cross-compile bun-zig.o only. Target platform via --os/--arch
-   * overrides (zig cross-compiles cleanly; this runs on a fast linux box).
+   * CI: compile libbun_rust.a only. Target platform via --os/--arch
+   * overrides (cargo `--target <triple>`). Superseded in CI by
+   * `ci-rust-and-link`; kept for ad-hoc rust-only builds.
    */
-  "ci-zig-only": {
+  "ci-rust-only": {
     buildType: "Release",
-    mode: "zig-only",
+    mode: "rust-only",
     ci: true,
     buildkite: true,
     webkit: "prebuilt",
@@ -111,6 +213,20 @@ export const profiles = {
   "ci-link-only": {
     buildType: "Release",
     mode: "link-only",
+    ci: true,
+    buildkite: true,
+    webkit: "prebuilt",
+  },
+
+  /**
+   * CI: cargo build + link on one machine. Polls the sibling build-cpp step
+   * for its archive/dep-lib artifacts, then links and packages. Saves an
+   * agent spawn vs rust-only → link-only. Resolves the full toolchain (link
+   * needs ld/strip/rc), unlike rust-only.
+   */
+  "ci-rust-and-link": {
+    buildType: "Release",
+    mode: "rust-and-link",
     ci: true,
     buildkite: true,
     webkit: "prebuilt",

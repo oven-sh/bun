@@ -1,0 +1,57 @@
+//! CSS selector parsing and serialization.
+//!
+//! Hub for `selector.rs` (high-level API + downleveling) / `parser.rs`
+//! (Component / Selector / SelectorList grammar) / `builder.rs`.
+//!
+//! `parser.rs` carries the full grammar
+//! (`GenericComponent`/`GenericSelector`/`GenericSelectorList`, `Combinator`,
+//! `PseudoClass`/`PseudoElement`, `attrs::*`, `NthSelectorData`/`NthType`/
+//! `NthOfSelectorData`, `SpecificityAndFlags`/`SelectorFlags`,
+//! `SelectorParseErrorKind`, `compute_specificity`, the recursive-descent
+//! `parse_*` functions). `selector.rs` carries the high-level API
+//! (`is_equivalent`/`downlevel_selectors`/`get_prefix`/`is_compatible`) and
+//! the two serializer namespaces (`serialize::*`, `tocss_servo::*`).
+//! `builder.rs` carries `SelectorBuilder`.
+//!
+//! The `impl_::Selectors` marker lives here in
+//! the hub so the parser↔selector cycle has a single anchor; both files reach
+//! it via `bun_css::selector::impl_` / `super::impl_`.
+
+pub mod builder;
+pub mod parser;
+#[path = "selector.rs"]
+pub mod selector;
+
+pub use parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList};
+
+/// Our implementation of the `SelectorImpl` interface. Defined in the hub
+/// (not in `selector.rs`) to break the parser↔selector dependency cycle:
+/// `parser.rs`
+/// needs `impl_::Selectors` to instantiate `Component`/`Selector`/
+/// `SelectorList`, and `selector.rs` needs those instantiations.
+pub mod impl_ {
+    use crate::VendorPrefix;
+    use crate::css_values::ident::{Ident, IdentOrRef};
+    use crate::css_values::string::CssString;
+
+    /// Marker type carrying the associated-type bundle for Bun's selector
+    /// grammar.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Selectors;
+
+    impl super::parser::SelectorImpl for Selectors {
+        type AttrValue = CssString;
+        type Identifier = Ident;
+        /// An identifier which could be a local name for use in CSS modules
+        type LocalIdentifier = IdentOrRef;
+        type LocalName = Ident;
+        type NamespacePrefix = Ident;
+        // TODO: lifetime — should borrow the parser input.
+        type NamespaceUrl = &'static [u8];
+        type NonTSPseudoClass = super::parser::PseudoClass;
+        type PseudoElement = super::parser::PseudoElement;
+        type VendorPrefix = VendorPrefix;
+    }
+}
+
+// ported from: src/css/selectors/

@@ -1,4 +1,4 @@
-This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Zig with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
+This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Rust with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
 
 ## Building and Running Bun
 
@@ -15,7 +15,7 @@ BUN_JSC_dumpSimulatedThrows=1 bun bd <command>`
 
 Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
 
-**All build scripts support build-then-exec.** Any `bun run build*` command (and `bun bd`, and `bun scripts/build.ts` directly) accepts trailing args which are passed to the built executable after building. This is the recommended way to run your build — you never invoke `./build/debug/bun-debug` directly.
+**All build scripts support build-then-exec.** Any `bun run build*` command (and `bun bd`) accepts trailing args which are passed to the built executable after building — you never invoke `./build/debug/bun-debug` directly.
 
 ```sh
 bun bd test foo.test.ts                    # debug build + quiet debug logs
@@ -26,11 +26,15 @@ bun run build:local run script.ts          # debug build with local WebKit
 
 When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.
 
-**Comparing builds:** normally use the default `build/<profile>/` dir. If you need to preserve a build as a comparison point (rare — e.g. benchmarking before/after a change), `--build-dir` parks it somewhere the next build won't overwrite:
+### Changes that don't require a build
+
+Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do not touch any compiled code, so `bun bd` is unnecessary. The types test just packs the `.d.ts` files and runs `tsc` against fixtures — it never executes your build. Run it directly with the system Bun (an explicit exception to the "never use `bun test` directly" rule):
 
 ```sh
-bun run build:release --build-dir=build/baseline
+bun test test/integration/bun-types/bun-types.test.ts
 ```
+
+This is an explicit exception to the "never use `bun test` directly" rule. There are no native changes for a debug build to pick up, so don't wait on one.
 
 ## Testing
 
@@ -42,9 +46,7 @@ bun run build:release --build-dir=build/baseline
 
 ### Test Organization
 
-If a test is for a specific numbered GitHub Issue, it should be placed in `test/regression/issue/${issueNumber}.test.ts`. Ensure the issue number is **REAL** and not a placeholder!
-
-If no valid issue number is provided, find the best existing file to modify instead, such as;
+**Default: add your test to the existing test file for the code you're changing.** Do not create a new file. A fetch bug goes in `test/js/web/fetch/fetch.test.ts`, a `Bun.serve` bug goes in `test/js/bun/http/serve.test.ts`, and so on. Keeping tests next to related coverage is what makes them discoverable and prevents duplicated setup.
 
 - `test/js/bun/` - Bun-specific API tests (http, crypto, ffi, shell, etc.)
 - `test/js/node/` - Node.js compatibility tests
@@ -55,41 +57,23 @@ If no valid issue number is provided, find the best existing file to modify inst
 - `test/napi/` - N-API compatibility tests
 - `test/v8/` - V8 C++ API compatibility tests
 
+**Exception:** `test/regression/issue/${issueNumber}.test.ts` is reserved for bugs with a GitHub issue number **and** that are true regressions (worked in a previous release, then broke). If the behavior was never correct, it's not a regression — the test belongs in the existing file for that module. The issue number must be **REAL**, not a placeholder.
+
 ### Writing Tests
 
-Tests use Bun's Jest-compatible test runner with proper test fixtures.
-
-- For **single-file tests**, prefer `-e` over `tempDir`.
-- For **multi-file tests**, prefer `tempDir` and `Bun.spawn`.
+Tests use Bun's Jest-compatible test runner. For **single-file tests**, prefer spawning with `-e`; for **multi-file tests**, prefer `tempDir` and `Bun.spawn`:
 
 ```typescript
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
-test("(single-file test) my feature", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "console.log('Hello, world!')"],
-    env: bunEnv,
-  });
-
   const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
-
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"Hello, world!"`);
-  expect(exitCode).toBe(0);
-});
-
 test("(multi-file test) my feature", async () => {
-  // Create temp directory with test files
   using dir = tempDir("test-prefix", {
     "index.js": `import { foo } from "./foo.ts"; foo();`,
     "foo.ts": `export function foo() { console.log("foo"); }`,
   });
-
-  // Spawn Bun process
+  // For a single-file test, use: cmd: [bunExe(), "-e", `console.log("foo")`] and omit cwd.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
@@ -104,7 +88,7 @@ test("(multi-file test) my feature", async () => {
   ]);
 
   // Prefer snapshot tests over expect(stdout).toBe("hello\n");
-  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"hello"`);
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"foo"`);
 
   // Assert the exit code last. This gives you a more useful error message on test failure.
   expect(exitCode).toBe(0);
@@ -116,92 +100,54 @@ test("(multi-file test) my feature", async () => {
 - NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. These tests will never fail in CI.
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
 - When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
-- **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` in tests. Instead, `await` the condition to be met. You are not testing the TIME PASSING, you are testing the CONDITION.
+- Keep tests fast: budget roughly 1s per test and 10s per file. Debug+ASAN builds run 10-100x slower than release, so a 1s local test can take a minute in CI. Use `test.concurrent` for independent subprocess-spawning tests.
+- Never contact the public internet (registry.npmjs.org, github.com, CDNs). Use `VerdaccioRegistry` from `"harness"` for package installs and a local `Bun.serve({ port: 0 })` for HTTP.
+- `setDefaultTimeout` is a ceiling, not a target. Leave the default and pass a per-test timeout only for the rare outlier; a 5-minute file default multiplies across retries when one test hangs.
+- Leak tests branch their RSS threshold on `isASAN`/`isDebug` and keep the bound well below what the unfixed leak produces. An un-branched absolute delta flakes under ASAN quarantine and GC jitter.
+- **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` or `await sleep(N)` to wait for a condition; poll with a deadline or `await` the event itself. You are not testing the TIME PASSING, you are testing the CONDITION.
 - **CRITICAL**: Verify your test fails with `USE_SYSTEM_BUN=1 bun test <file>` and passes with `bun bd test <file>`. Your test is NOT VALID if it passes with `USE_SYSTEM_BUN=1`.
 
 ## Code Architecture
 
 ### Language Structure
 
-- **Zig code** (`src/*.zig`): Core runtime, JavaScript bindings, package manager
-- **C++ code** (`src/bun.js/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
+- **Rust code** (`src/**/*.rs`): Core runtime, JavaScript bindings, bundler, package manager. This is what compiles and ships.
+- **C++ code** (`src/jsc/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
-- **Generated code**: Many files are auto-generated from `.classes.ts` and other sources. Bun will automatically rebuild these files when you make changes to them.
+- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
 
 ### Core Source Organization
 
-#### Runtime Core (`src/`)
+The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The key ones:
 
-- `bun.zig` - Main entry point
-- `cli.zig` - CLI command orchestration
-- `js_parser.zig`, `js_lexer.zig`, `js_printer.zig` - JavaScript parsing/printing
-- `transpiler.zig` - Wrapper around js_parser with sourcemap support
-- `resolver/` - Module resolution system
-- `allocators/` - Custom memory allocators for performance
-
-#### JavaScript Runtime (`src/bun.js/`)
-
-- `bindings/` - C++ JavaScriptCore bindings
-  - Generated classes from `.classes.ts` files
-  - Manual bindings for complex APIs
-- `api/` - Bun-specific APIs
-  - `server.zig` - HTTP server implementation
-  - `FFI.zig` - Foreign Function Interface
-  - `crypto.zig` - Cryptographic operations
-  - `glob.zig` - File pattern matching
-- `node/` - Node.js compatibility layer
-  - Module implementations (fs, path, crypto, etc.)
-  - Process and Buffer APIs
-- `webcore/` - Web API implementations
-  - `fetch.zig` - Fetch API
-  - `streams.zig` - Web Streams
-  - `Blob.zig`, `Response.zig`, `Request.zig`
-- `event_loop/` - Event loop and task management
-
-#### Build Tools & Package Manager
-
-- `src/bundler/` - JavaScript bundler
-  - Advanced tree-shaking
-  - CSS processing
-  - HTML handling
-- `src/install/` - Package manager
-  - `lockfile/` - Lockfile handling
-  - `npm.zig` - npm registry client
-  - `lifecycle_script_runner.zig` - Package scripts
-
-#### Other Key Components
-
+- `src/bun_core/` - The `bun.*`-namespace foundation: strings/`String` (`string/`), formatting (`fmt.rs`), logging (`output.rs`), feature flags, env vars, allocator helpers
+- `src/sys/` - Cross-platform syscall wrappers (`file.rs`, `dir.rs`, `fd.rs`, `Error.rs`, `tmp.rs`) — the `bun.sys` equivalent
+- `src/collections/`, `src/threading/`, `src/paths/`, `src/semver/`, `src/sourcemap/` - shared utilities
+- `src/bun_bin/` - Cargo entrypoint; produces `libbun_rust.a`, linked into the final binary
+- `src/runtime/cli/` - CLI argument parsing and command dispatch
+- `src/js_parser/`, `src/js_printer/` - JavaScript/TypeScript parsing and printing (each is its own crate; the lexer is `src/js_parser/lexer.rs`)
+- `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
+- `src/resolver/` - Module resolution system
+- `src/ast/` - AST node types and arena allocation
+- `src/jsc/bindings/` - C++ JavaScriptCore bindings (generated classes from `.classes.ts` + manual bindings)
+- `src/jsc/` - Rust-side JSC glue (`VirtualMachine.rs`, `web_worker.rs`, `event_loop.rs`, FFI imports)
+- `src/runtime/api/` - Bun-specific JS-visible APIs (`BunObject.rs`, `JSBundler.rs`, `Glob`, `Archive`, …)
+- `src/runtime/server/` - `Bun.serve` HTTP/WebSocket server
+- `src/runtime/node/` - Node.js compatibility layer (fs, path, process, Buffer, …)
+- `src/runtime/crypto/` - WebCrypto + `node:crypto` (`EVP.rs`, `HMAC.rs`, `CryptoHasher.rs`, …)
+- `src/runtime/webcore/` - Web API implementations (`fetch.rs`, `streams.rs`, `Blob.rs`, `Response.rs`, `Request.rs`, …)
+- `src/event_loop/` - Event loop and task management
+- `src/bundler/` - JavaScript bundler (tree-shaking, CSS processing, HTML handling)
+- `src/install/` - Package manager (`lockfile/`, `npm.rs` registry client, `lifecycle_script_runner.rs`)
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
-- `src/http/` - HTTP client implementation
-  - `websocket_client/` - WebSocket client (including deflate support)
-- `src/sql/` - SQL database integrations
-- `src/bake/` - Server-side rendering framework
+- `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
+- `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
+- `src/bake/` - Server-side rendering / dev server framework
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party C/C++ libraries are vendored locally and can be read from disk (these are not git submodules):
-
-- `vendor/boringssl/` - BoringSSL (TLS/crypto)
-- `vendor/brotli/` - Brotli compression
-- `vendor/cares/` - c-ares (async DNS)
-- `vendor/hdrhistogram/` - HdrHistogram (latency tracking)
-- `vendor/highway/` - Google Highway (SIMD)
-- `vendor/libarchive/` - libarchive (tar/zip)
-- `vendor/libdeflate/` - libdeflate (fast deflate)
-- `vendor/libuv/` - libuv (Windows event loop)
-- `vendor/lolhtml/` - lol-html (HTML rewriter)
-- `vendor/lshpack/` - ls-hpack (HTTP/2 HPACK)
-- `vendor/mimalloc/` - mimalloc (memory allocator)
-- `vendor/nodejs/` - Node.js headers (compatibility)
-- `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
-- `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
-- `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
-- `vendor/zig/` - Zig compiler/stdlib
-- `vendor/zlib/` - zlib (compression, cloudflare fork)
-- `vendor/zstd/` - Zstandard (compression)
-
-Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party C/C++ libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 
@@ -211,21 +157,20 @@ When implementing JavaScript classes in C++:
    - `class Foo : public JSC::JSDestructibleObject` (if has C++ fields)
    - `class FooPrototype : public JSC::JSNonFinalObject`
    - `class FooConstructor : public JSC::InternalFunction`
-
 2. Define properties using HashTableValue arrays
 3. Add iso subspaces for classes with C++ fields
-4. Cache structures in ZigGlobalObject
+4. Cache structures in `ZigGlobalObject`
 
 ### Code Generation
 
 Code generation happens automatically as part of the build process. The main scripts are:
 
-- `src/codegen/generate-classes.ts` - Generates Zig & C++ bindings from `*.classes.ts` files
+- `src/codegen/generate-classes.ts` - Generates Rust & C++ bindings from `*.classes.ts` files
 - `src/codegen/generate-jssink.ts` - Generates stream-related classes
 - `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`
 - `src/codegen/bundle-functions.ts` - Bundles global functions like `ReadableStream`
 
-In development, bundled modules can be reloaded without rebuilding Zig by running `bun run build`.
+In development, bundled JS modules can be reloaded without rebuilding native code by running `bun run build`.
 
 ## JavaScript Modules (`src/js/`)
 
@@ -237,6 +182,12 @@ Built-in JavaScript modules use special syntax and are organized as:
 - `internal/` - Internal modules not exposed to users
 - `builtins/` - Core JavaScript builtins (streams, console, etc.)
 
+## Landing PRs: What Bun Reviewers Catch
+
+The code review rules — what blocks merges, distilled from ~2,500 merged PRs — live in `REVIEW.md`. Read it before writing code that makes a non-obvious choice.
+
+Several situational sections live in `.claude/docs/landing-prs.md` — read the relevant one before the work it covers: **Node/Web compat** (touching `node:*` modules, Web APIs, or `src/runtime/node/`), **API design** (adding or changing user-facing API surface), **Performance** (optimizing, touching hot paths, or making perf claims), **Cross-platform** (platform-gated code, FFI/ABI, or platform-sensitive tests), **Dependencies & vendoring** (bumping deps or touching `vendor/`), **Docs, types, and comments** (docs, `.d.ts`, JSDoc), and **PR process** (opening or responding to a PR).
+
 ## Important Development Notes
 
 1. **Never use `bun test` or `bun <file>` directly** - always use `bun bd test` or `bun bd <command>`. `bun bd` compiles & runs the debug build.
@@ -246,11 +197,13 @@ Built-in JavaScript modules use special syntax and are organized as:
 5. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
 6. **Use absolute paths** - Always use absolute paths in file operations
 7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
-8. **Memory management** - In Zig code, be careful with allocators and use defer for cleanup
-9. **Cross-platform** - Run `bun run zig:check-all` to compile the Zig code on all platforms when making platform-specific changes
-10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<scopeName>=1` to enable specific `Output.scoped(.${scopeName}, .visible)`s
+8. **Memory management** - Prefer RAII (`Drop`) over manual cleanup. Arena edge case: values allocated in an arena (`Arena<T>`/`bumpalo`) do **not** run `Drop` on arena reset — types owning a heap allocation or refcount must be freed/deref'd explicitly first, mirroring the original Zig `deinit()` order.
+9. **Cross-platform** - Run `bun run rust:check-all` to compile across all targets (linux/macos/windows × x64/aarch64) when making platform-specific changes. `#[cfg(...)]`-gated code is not type-checked unless the matching target is built.
+10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
+13. **If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code.**.
+14. After every code comment you write, ask yourself, "Is this information the next Claude would spend multiple tool calls trying to understand?". If the answer isn't clearly yes, the code comment is noise - delete it.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
 
@@ -259,25 +212,28 @@ Built-in JavaScript modules use special syntax and are organized as:
 Requires the BuildKite CLI (`brew install buildkite/buildkite/bk`) and a read-scoped token in `BUILDKITE_API_TOKEN`. The repo's `.bk.yaml` sets the org/pipeline so `-p bun` is not needed.
 
 ```bash
-# Show rendered test-failure output for the current branch's latest build,
-# tagged [new] vs [also on main]
-bun run ci:errors
+bun run ci:errors    # rendered test-failure output for this branch's latest build, [new] vs [also on main]
 bun run ci:errors '#26173'          # or a PR number / URL / branch / build number
-
-# One-screen progress summary (job counts, failed jobs, failing tests so far)
-bun run ci:status
-
-# Save full logs for every failed job to ./tmp/ci-<build>/
-bun run ci:logs
-
-# Just the build number, for composing with raw `bk`
-bun run ci:find
-bk job log <job-uuid> -b $(bun run ci:find)
-
-# Watch the current branch's build until it finishes
-bun run ci:watch
+bun run ci:status    # one-screen progress summary (job counts, failed jobs, failing tests so far)
+bun run ci:logs      # save full logs for every failed job to ./tmp/ci-<build>/
+bun run ci:find      # just the build number, e.g. bk job log <job-uuid> -b $(bun run ci:find)
+bun run ci:watch     # watch the current branch's build until it finishes
 ```
 
 For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
 
-If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.
+If output from these commands looks wrong (mis-parsed annotation HTML, a field BuildKite changed shape on), fix `scripts/find-build.ts` directly rather than working around it — it's a thin presenter over `bk`.
+
+## Reading PR Feedback
+
+`gh pr view --comments` silently omits review summaries and line-level review comments. For the complete picture — especially when responding to a review — use `bun run pr:comments`, which fetches issue comments, reviews, and line comments in one chronological, labelled listing.
+
+```bash
+bun run pr:comments                    # current branch's PR — resolved threads hidden
+bun run pr:comments 28838              # by PR number; '#28838' and full URLs also work
+bun run pr:comments --include-resolved # also show threads already marked resolved
+
+# Machine-readable output for jq pipelines — one object per entry.
+# Resolved threads and bot noise (robobun CI status, CodeRabbit summaries) are filtered out.
+bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
+```

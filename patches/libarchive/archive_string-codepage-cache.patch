@@ -1,0 +1,81 @@
+--- a/libarchive/archive_string.c
++++ b/libarchive/archive_string.c
+@@ -1551,10 +1551,10 @@ my_atoi(const char *p)
+ }
+ 
+ /*
+- * Return ANSI Code Page of current locale set by setlocale().
++ * Return ANSI Code Page of current locale set by setlocale() (uncached).
+  */
+ static unsigned
+-get_current_codepage(void)
++get_current_codepage_uncached(void)
+ {
+ 	char *locale, *p;
+ 	unsigned cp;
+@@ -1574,6 +1574,28 @@ get_current_codepage(void)
+ 	return (cp);
+ }
+ 
++/*
++ * Bun: cache the codepage after the first call. The process never changes
++ * its locale at runtime, but `bun install` creates a charset converter per
++ * extracted archive on many worker threads at once, and hammering the UCRT's
++ * setlocale(LC_CTYPE, NULL) query from all of them concurrently is both
++ * wasted work and a needless trip through the CRT locale machinery (and its
++ * heap) on every archive. Compute once; later callers read the cached value.
++ */
++static unsigned
++get_current_codepage(void)
++{
++	static volatile LONG cached_cp = -1;
++	LONG cp = cached_cp;
++
++	if (cp == -1) {
++		cp = (LONG)get_current_codepage_uncached();
++		InterlockedCompareExchange(&cached_cp, cp, -1);
++		cp = cached_cp;
++	}
++	return ((unsigned)cp);
++}
++
+ /*
+  * Translation table between Locale Name and ACP/OEMCP.
+  */
+@@ -1626,10 +1648,10 @@ static struct {
+ };
+ 
+ /*
+- * Return OEM Code Page of current locale set by setlocale().
++ * Return OEM Code Page of current locale set by setlocale() (uncached).
+  */
+ static unsigned
+-get_current_oemcp(void)
++get_current_oemcp_uncached(void)
+ {
+ 	int i;
+ 	char *locale, *p;
+@@ -1652,6 +1674,23 @@ get_current_oemcp(void)
+ 	}
+ 	return (GetOEMCP());
+ }
++
++/*
++ * Bun: cached for the same reason as get_current_codepage() above.
++ */
++static unsigned
++get_current_oemcp(void)
++{
++	static volatile LONG cached_ocp = -1;
++	LONG ocp = cached_ocp;
++
++	if (ocp == -1) {
++		ocp = (LONG)get_current_oemcp_uncached();
++		InterlockedCompareExchange(&cached_ocp, ocp, -1);
++		ocp = cached_ocp;
++	}
++	return ((unsigned)ocp);
++}
+ #else
+ 
+ /*

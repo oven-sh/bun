@@ -1,0 +1,30 @@
+[package]
+name = "bun_patch"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+bun_errno.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_event_loop.workspace = true
+bun_paths.workspace = true
+# bun_spawn is a workspace member but not in [workspace.dependencies] yet.
+bun_spawn = { path = "../spawn" }
+bun_sys.workspace = true
+bun_which.workspace = true

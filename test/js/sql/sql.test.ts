@@ -1,7 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
-import * as net from "node:net";
+import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
@@ -16,6 +15,7 @@ function rel(filename: string) {
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
+import { neverAnsweringServer } from "./wire-frames";
 
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", async () => {
@@ -139,6 +139,30 @@ if (isDockerEnabled()) {
     });
 
     describe("Array helpers", () => {
+      test("sql.array rejects type names with parentheses outside numeric modifiers", async () => {
+        await using sql = postgres(options);
+
+        // The type name is interpolated verbatim into `$N::${type}[]`. Parentheses,
+        // commas and spaces are only legal as `(digits[,digits])` modifiers after an
+        // identifier; a value that closes the cast and appends further expression
+        // terms must be refused before it reaches the query text.
+        for (const type of [
+          "INT) OR PG_SLEEP(10) IS NOT NULL OR ID IN (1",
+          "INT) OR ARRAY_LENGTH(CAST(NULL AS INT",
+          "TEXT(1)) , (SELECT PG_SLEEP(10",
+          "INT(1,2,X)",
+        ]) {
+          expect(() => sql.array([1, 2], type)).toThrow(/valid PostgreSQL type name/);
+        }
+
+        // Legitimate parameterized and qualified type names are still accepted.
+        expect(() => sql.array([1.5], "NUMERIC(10,2)")).not.toThrow();
+        expect(() => sql.array([new Date()], "TIMESTAMP(3) WITH TIME ZONE")).not.toThrow();
+        expect(() => sql.array(["a"], "MYSCHEMA.MY_ENUM")).not.toThrow();
+        const [{ x }] = await sql`select ${sql.array(["hello", "world"], "CHARACTER VARYING(255)")} as x`;
+        expect(x).toEqual(["hello", "world"]);
+      });
+
       test("SQL helper should support sql.array", async () => {
         await using sql = postgres(options);
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -682,6 +706,33 @@ if (isDockerEnabled()) {
       const sql = postgres(options);
       afterAll(() => sql.close());
 
+      // Mixed named + integer-aliased columns past JSFinalObject's inline capacity
+      // take the un-cached structure path where property names come from a raw
+      // column-identifier array; the names cursor must skip integer-aliased entries
+      // so every named column keeps a real column name.
+      test("keeps property names aligned for mixed named and integer-aliased columns past the inline capacity", async () => {
+        const namedCount = 65;
+        const columns = [`1000 as "2"`, ...Array.from({ length: namedCount }, (_, i) => `${i + 1} as a${i + 1}`)];
+        const result = await sql.unsafe(`select ${columns.join(", ")}`);
+        expect(result).toHaveLength(1);
+        const row = result[0];
+
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+
+        // Exactly the selected column names appear as keys: the numeric alias plus
+        // a1..a65 — no missing trailing column and no extra/empty property names.
+        const expectedKeys = ["2", ...Array.from({ length: namedCount }, (_, i) => `a${i + 1}`)].sort();
+        expect(Object.keys(row).sort()).toEqual(expectedKeys);
+
+        // The integer-aliased column keeps its value under its numeric key.
+        expect(row["2"]).toBe(1000);
+
+        // Every selected value shows up exactly once across the row's properties.
+        const expectedValues = [1000, ...Array.from({ length: namedCount }, (_, i) => i + 1)].sort((a, b) => a - b);
+        expect(Object.values(row).sort((a, b) => a - b)).toEqual(expectedValues);
+      });
+
       for (let size of [50, 60, 62, 64, 70, 100]) {
         for (let duplicated of [true, false]) {
           test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
@@ -710,7 +761,7 @@ if (isDockerEnabled()) {
         username: "bun_sql_test",
         host: "example.com",
         port: 5432,
-        connection_timeout: 4,
+        connection_timeout: 0.5,
         onconnect,
         onclose,
         max: 1,
@@ -724,7 +775,7 @@ if (isDockerEnabled()) {
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
       expect(error.code).toBe(`ERR_POSTGRES_CONNECTION_TIMEOUT`);
-      expect(error.message).toContain("Connection timeout after 4s");
+      expect(error.message).toContain("Connection timeout after 500ms");
       expect(onconnect).not.toHaveBeenCalled();
       expect(onclose).toHaveBeenCalledTimes(1);
     });
@@ -734,13 +785,13 @@ if (isDockerEnabled()) {
       const onconnect = mock();
       await using sql = postgres({
         ...options,
-        idle_timeout: 1,
+        idle_timeout: 0.5,
         onconnect,
         onclose,
       });
       let error: any;
       try {
-        await sql`select pg_sleep(2)`;
+        await sql`select pg_sleep(1)`;
       } catch (e) {
         error = e;
       }
@@ -759,7 +810,7 @@ if (isDockerEnabled()) {
       const onconnect = mock();
       await using sql = postgres({
         ...options,
-        idle_timeout: 1,
+        idle_timeout: 0.5,
         onconnect,
         onclose,
       });
@@ -780,7 +831,7 @@ if (isDockerEnabled()) {
       const onconnect = mock();
       const sql = postgres({
         ...options,
-        max_lifetime: 1,
+        max_lifetime: 0.5,
         onconnect,
         onclose,
       });
@@ -862,7 +913,9 @@ if (isDockerEnabled()) {
       //   rss: 49152000,
       // }
       // ~440 MB.
-      expect((after - rss) / 1024 / 1024).toBeLessThan(200);
+      // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+      // deltas run far higher under bun-asan; widen the threshold there.
+      expect((after - rss) / 1024 / 1024).toBeLessThan(isASAN ? 500 : 200);
     });
 
     // Last one wins.
@@ -1261,9 +1314,11 @@ if (isDockerEnabled()) {
     });
 
     test("Idle timeout retry works", async () => {
-      await using sql = postgres({ ...options, idleTimeout: 1 });
+      const closed = Promise.withResolvers();
+      await using sql = postgres({ ...options, idleTimeout: 0.25, onclose: () => closed.resolve() });
       await sql`select 1`;
-      await Bun.sleep(1100); // 1.1 seconds so it should retry
+      // wait for the idle timer to actually close the connection so the next query must reconnect
+      await closed.promise;
       await sql`select 1`;
       expect().pass();
     });
@@ -1404,7 +1459,9 @@ if (isDockerEnabled()) {
             login_md5.username +
             ":" +
             (login_md5.password || "") +
-            "@localhost:" +
+            "@" +
+            container.host +
+            ":" +
             container.port.toString() +
             "/" +
             options.db,
@@ -1917,6 +1974,19 @@ if (isDockerEnabled()) {
       expect(result[1][0].x).toEqual(2);
     });
 
+    test("simple query with multiple statements and different column names", async () => {
+      // Each result set has its own RowDescription; the statement's cached
+      // structure must be rebuilt for the second one instead of reusing the
+      // first (which would surface as {x: 2} below).
+      const result = await sql`select 1 as x;select 2 as y`.simple();
+      expect(result).toEqual([[{ x: 1 }], [{ y: 2 }]]);
+    });
+
+    test("simple query with multiple statements and different column counts", async () => {
+      const result = await sql.unsafe("select 1 as one; select 1 as a, 2 as b, 3 as c; select 'hi' as greeting");
+      expect(result).toEqual([[{ one: 1 }], [{ a: 1, b: 2, c: 3 }], [{ greeting: "hi" }]]);
+    });
+
     // t('listen and notify', async() => {
     //   const sql = postgres(options)
     //   const channel = 'hello'
@@ -2232,7 +2302,7 @@ if (isDockerEnabled()) {
       }
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
     });
 
     test("dynamic table name", async () => {
@@ -2763,6 +2833,30 @@ if (isDockerEnabled()) {
       10000,
     );
 
+    // Regression: src/sql_jsc/postgres/PostgresSQLQuery.zig:234 `push()` appends each
+    // DataRow JSValue into the codegen-backed `pending_value` cached array. The Rust port
+    // stubbed push() as a no-op under the mistaken belief that `pending_value` is not a
+    // field (it is — generated from `values: ["pendingValue", ...]` in sql.classes.ts).
+    // This test asserts the Zig spec: every streamed row must land in the result array,
+    // in order, with no rows dropped — for both objects mode and .values() mode.
+    test("multi-row results accumulate every row in pending_value (push contract)", async () => {
+      await using sql = postgres(options);
+
+      // objects mode (default): each DataRow → { n: i } pushed into pending_value
+      const rows = await sql`select generate_series(1, 500) as n`;
+      expect(rows.length).toBe(500);
+      for (let i = 0; i < 500; i++) {
+        expect(rows[i].n).toBe(i + 1);
+      }
+
+      // .values() mode: result_mode = .values, rows are arrays-of-columns
+      const vals = await sql`select generate_series(1, 500) as n`.values();
+      expect(vals.length).toBe(500);
+      for (let i = 0; i < 500; i++) {
+        expect(vals[i][0]).toBe(i + 1);
+      }
+    });
+
     // t('Debug', async() => {
     //   let result
     //   const sql = postgres({
@@ -2860,12 +2954,15 @@ if (isDockerEnabled()) {
     //   ]
     // })
 
+    // Fault-injection test: requires a server that refuses / drops / sends malformed
+    // frames, which a healthy container will not do on demand. DO NOT COPY THIS
+    // PATTERN — anything a real server can produce belongs in describeWithContainer.
+    // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+    // Buffer.alloc frame construction here.
     test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
       "connection timeout key %p throws",
       async key => {
-        const server = net.createServer().listen();
-
-        const port = (server.address() as import("node:net").AddressInfo).port;
+        const { port, server } = await neverAnsweringServer();
 
         const sql = postgres({ port, host: "127.0.0.1", [key]: 0.2 });
 
@@ -9196,8 +9293,8 @@ CREATE TABLE ${table_name} (
       `;
 
         const values = result[0].special_dates;
-        expect(values[0].toString()).toBe("Invalid Date");
-        expect(values[1].toString()).toBe("Invalid Date");
+        expect(values[0]).toBe(Infinity);
+        expect(values[1]).toBe(-Infinity);
         // Skip testing today/yesterday/tomorrow as they depend on current date
       });
 
@@ -9617,8 +9714,8 @@ CREATE TABLE ${table_name} (
         ]::timestamp[] as special_timestamps
       `;
 
-        expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
-        expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+        expect(result[0].special_timestamps[0]).toBe(Infinity);
+        expect(result[0].special_timestamps[1]).toBe(-Infinity);
         expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
       });
 
@@ -9820,8 +9917,8 @@ CREATE TABLE ${table_name} (
         ]::timestamptz[] as special_timestamps
       `;
 
-        expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
-        expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+        expect(result[0].special_timestamps[0]).toBe(Infinity);
+        expect(result[0].special_timestamps[1]).toBe(-Infinity);
         expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
       });
 
@@ -12342,6 +12439,31 @@ CREATE TABLE ${table_name} (
         });
       });
     }); // Close "Misc" describe
+    test("sql.begin rejects transaction option strings containing statement separators", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const marker = "inj_" + randomUUIDv7("hex").replaceAll("-", "");
+
+      // The transaction-mode string is interpolated into `BEGIN ${options}` and sent
+      // down the simple-query path, which accepts multiple semicolon-separated
+      // statements. Anything other than keyword lists must be refused up front.
+      const error = await sql
+        .begin(`; CREATE TABLE ${marker} (a int)`, async tx => {
+          await tx`select 1`;
+        })
+        .catch(e => e);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("Transaction options can only contain letters, spaces, and commas.");
+
+      // The statement embedded in the options string must not have executed.
+      const [{ found }] = await sql`SELECT to_regclass(${marker}) IS NOT NULL AS found`;
+      expect(found).toBe(false);
+
+      // Legitimate transaction modes still work.
+      const [{ x }] = await sql.begin("read only", async tx => await tx`select 1 as x`);
+      expect(x).toBe(1);
+      const [{ y }] = await sql.begin("isolation level serializable, read only", async tx => await tx`select 2 as y`);
+      expect(y).toBe(2);
+    });
     test("Handles empty integer array stored as {}", async () => {
       await using db = postgres(options);
       const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
@@ -12384,5 +12506,255 @@ CREATE TABLE ${table_name} (
         expect(e.message).toContain("65535");
       }
     });
+    // A simple-query response can contain several result sets. The first one
+    // here has zero columns (a real zero-column Postgres table), which caches a
+    // zero-property row Structure when its DataRow is materialized. The next
+    // RowDescription widens the field list to three named columns; the cached
+    // structure must be invalidated so the second result set's rows are built
+    // with the new column layout instead of writing the new cells past the
+    // inline capacity of an empty object. Runs in a subprocess because a
+    // regression corrupts the JS heap of the process that parses the response.
+    test("result set following a zero-column result set uses its own column layout", async () => {
+      const tableName = `t_${randomUUIDv7("hex").replaceAll("-", "")}`;
+      const fixtureDir = tempDirWithFiles("pg-zero-column-then-wide", {
+        "fixture.ts": `
+import { SQL } from "bun";
+
+const sql = new SQL({ url: process.env.DATABASE_URL!, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+try {
+  await sql\`CREATE TEMPORARY TABLE ${tableName} ()\`.simple();
+  await sql\`INSERT INTO ${tableName} DEFAULT VALUES\`.simple();
+  // First result set: zero columns, one row. Second result set: three named
+  // columns, one row.
+  const result = await sql\`SELECT * FROM ${tableName}; SELECT '1' AS a, '2' AS b, '3' AS c\`.simple();
+  console.log("SECOND_RESULT_SET " + JSON.stringify(result[1]));
+  console.log("SECOND_RESULT_SET_KEYS " + Object.keys(result[1][0]).sort().join(","));
+} finally {
+  await sql\`DROP TABLE IF EXISTS ${tableName}\`.simple().catch(() => {});
+  await sql.close().catch(() => {});
+}
+console.log("FIXTURE_DONE");
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts"],
+        cwd: fixtureDir,
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const filteredStderr = stderr
+        .split(/\r?\n/)
+        .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+
+      // The second result set must expose all three named columns with their
+      // values; reusing the zero-property structure from the first result set
+      // would yield a row object with no own properties.
+      expect(stdout).toContain('SECOND_RESULT_SET [{"a":"1","b":"2","c":"3"}]');
+      expect(stdout).toContain("SECOND_RESULT_SET_KEYS a,b,c");
+      expect(stdout).toContain("FIXTURE_DONE");
+      expect(filteredStderr).toBe("");
+      expect(exitCode).toBe(0);
+    }, 30_000);
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
+// A malicious or buggy Postgres server can send a text-format json[]/jsonb[]
+// DataRow whose array literal contains an unquoted element starting with 'f' or
+// 't' that is not exactly "false"/"true". The array parser must reject it;
+// previously it consumed no input and re-entered the element loop forever,
+// blocking the JS thread. The fixture runs in a subprocess so a regression
+// shows up as a killed child instead of a hung test file.
+test("text-format json[] with a malformed boolean literal returns an error instead of looping", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-json-array-bool-literal.fixture.ts")],
+    cwd: import.meta.dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if the array parser regresses into an unbounded loop.
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  expect(stdout).toContain("REJECTED {falsy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
+  expect(stdout).toContain("REJECTED {truthy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
+  expect(stdout).toContain("ROWS {false,true} => [false,true]");
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// Connection options are serialized into the NUL-delimited Postgres
+// StartupMessage as `key\0value\0`. A key or value containing a NUL byte
+// would be parsed by the server as additional startup parameters (an injected
+// `user`, `options`, etc.), so it must be refused before any connection is
+// attempted. The username/password/database fields already get this check
+// natively; the pre-encoded options blob must get it too.
+test("rejects Postgres connection options containing null bytes", async () => {
+  const url = "postgres://bun_sql_test@127.0.0.1:5432/bun_sql_test";
+
+  // NUL inside an option value splits it into extra key/value pairs.
+  expect(() => new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // NUL inside an option key does the same.
+  expect(() => new SQL(url, { max: 1, connection: { ["application_name\0user"]: "postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // The same options arriving through the connection URL's query string.
+  expect(() => new SQL(url + "?application_name=x%00user%00postgres", { max: 1 })).toThrow(
+    "must not contain null bytes",
+  );
+
+  let err: any;
+  try {
+    new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } });
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+
+  // A normal application_name is still accepted. Construction is lazy, so no
+  // server needs to be listening for this to succeed.
+  const ok = new SQL(url, { max: 1, connection: { application_name: "bun_sql_test_app" } });
+  expect(ok).toBeDefined();
+  await ok.close();
+});
+
+// Native createInstance argument validation (src/sql_jsc/shared/
+// ConnectionCtorArgs.rs / QueryCtorArgs.rs, and the Postgres null-byte guard
+// in PostgresSQLConnection.rs). Every error here is thrown by the native
+// parser before any socket is created, so no server needs to be listening:
+// the address below is never dialed.
+describe("shared createInstance validation (no server)", () => {
+  const base = { adapter: "postgres", hostname: "127.0.0.1", port: 1, max: 1 } as const;
+
+  // Credentials are written into the NUL-delimited Postgres StartupMessage as
+  // `key\0value\0`; a NUL byte inside one would inject extra parameters, so
+  // the native parser must refuse it before connecting. The rejection is an
+  // ERR_INVALID_ARG_TYPE TypeError, matching the MySQL adapter and the Zig
+  // reference (`PostgresSQLConnection.zig` `throwInvalidArguments`). `path`
+  // is guarded the same way natively, but the JS layer drops it via
+  // `existsSync` before it ever reaches createInstance.
+  test.concurrent.each(["username", "password", "database"] as const)(
+    "rejects %s containing null bytes",
+    async field => {
+      await using sql = new SQL({ ...base, username: "u", [field]: "a\0b" });
+      // `Query` is a lazy thenable, so collect the rejection explicitly.
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe(`${field} must not contain null bytes`);
+      expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err instanceof TypeError).toBe(true);
+    },
+  );
+
+  test.concurrent("SSL_CTX creation failure throws the structured BoringSSL error", async () => {
+    // An unparseable CA makes `SSL_CTX` creation fail synchronously inside
+    // createInstance, before any socket exists. The failure carries
+    // `code: "ERR_BORINGSSL"` like the MySQL adapter and the Zig reference
+    // (`err.toJS(globalObject)`).
+    await using sql = new SQL({ ...base, username: "u", tls: { ca: "not a pem" } });
+    const err: any = await sql`select 1`.then(
+      () => null,
+      e => e,
+    );
+    expect(err?.message).toBe("Invalid CA");
+    expect(err?.code).toBe("ERR_BORINGSSL");
+  });
+
+  test.concurrent.each(["postgres", "mysql"] as const)(
+    "%s: rejects tls that is neither a boolean nor an object",
+    async adapter => {
+      // A truthy non-boolean/non-object upgrades sslMode to `require` in JS and
+      // reaches the native parser as-is. The constructor throws synchronously,
+      // and createPooledConnectionHandle defers onClose via process.nextTick so
+      // the pending query rejects cleanly instead of hanging (see #32145).
+      await using sql = new SQL({ ...base, adapter, username: "u", tls: 1 as any });
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe("tls must be a boolean or an object");
+    },
+  );
+
+  test.concurrent("rejects simple queries with parameters", async () => {
+    await using sql = new SQL({ ...base, username: "u" });
+    // Query-handle creation fails before the pool ever connects.
+    const err: any = await sql
+      .unsafe("select $1", [1])
+      .simple()
+      .then(
+        () => null,
+        e => e,
+      );
+    expect(err?.message).toBe("simple query cannot have parameters");
+  });
+});
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
+// A Postgres server controls two independent column counts: the
+// RowDescription's field list (which sizes the per-row cell buffer and the
+// cached row Structure) and each DataRow's own column count. When a DataRow
+// declares fewer columns than the RowDescription, the unfilled cells stay in
+// their default "named null" state; building the row object must only write
+// as many properties as the Structure actually has, leaving the missing
+// columns as null instead of writing past the row object's property storage.
+// The row description here uses 62 identically-named fields so the cached
+// Structure has a single property while the cell buffer has 62 entries.
+// Runs in a subprocess because a regression corrupts the JS heap of the
+// process that parses the response.
+test("data row that omits columns declared in the row description yields nulls for the missing columns", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-short-data-row.fixture.ts")],
+    cwd: import.meta.dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  // The row built from the short DataRow has exactly the structure's one
+  // property, valued null; the fully-populated row still maps the duplicate
+  // column name to the last column's value (last one wins, matching the
+  // existing duplicate-column-name behavior).
+  expect(stdout).toContain('EMPTY_ROW {"c":null}');
+  expect(stdout).toContain('FULL_ROW {"c":"v61"}');
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);

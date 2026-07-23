@@ -1,0 +1,64 @@
+use crate::postgres::types::int_types::int4;
+
+// The big-endian (network-order) byte representation of `n`.
+#[inline(always)]
+const fn to_bytes(n: int4) -> [u8; 4] {
+    n.to_be_bytes()
+}
+
+#[inline(always)]
+const fn tag_len(tag: u8, n: int4) -> [u8; 5] {
+    let b = to_bytes(n);
+    [tag, b[0], b[1], b[2], b[3]]
+}
+
+pub const CLOSE_COMPLETE: [u8; 5] = tag_len(b'3', 4);
+pub const EMPTY_QUERY_RESPONSE: [u8; 5] = tag_len(b'I', 4);
+
+pub const BIND_COMPLETE: [u8; 5] = tag_len(b'2', 4);
+
+pub const PARSE_COMPLETE: [u8; 5] = tag_len(b'1', 4);
+
+pub const SYNC: [u8; 5] = tag_len(b'S', 4);
+pub const FLUSH: [u8; 5] = tag_len(b'H', 4);
+pub const NO_DATA: [u8; 5] = tag_len(b'n', 4);
+
+pub fn write_query<Context: WriterContext>(
+    query: &[u8],
+    writer: &mut NewWriter<Context>,
+) -> Result<(), crate::postgres::AnyPostgresError> {
+    let count: u32 =
+        core::mem::size_of::<u32>() as u32 + u32::try_from(query.len()).expect("int cast") + 1;
+    let header: [u8; 5] = {
+        let b = to_bytes(count);
+        [b'Q', b[0], b[1], b[2], b[3]]
+    };
+    writer.write(&header)?;
+    writer.string(query)?;
+    Ok(())
+}
+
+pub use crate::postgres::protocol::authentication::Authentication;
+pub use crate::postgres::protocol::backend_key_data::BackendKeyData;
+pub use crate::postgres::protocol::command_complete::CommandComplete;
+pub use crate::postgres::protocol::copy_data::CopyData;
+pub use crate::postgres::protocol::data_row as DataRow;
+pub use crate::postgres::protocol::describe::Describe;
+pub use crate::postgres::protocol::error_response::ErrorResponse;
+pub use crate::postgres::protocol::execute::Execute;
+pub use crate::postgres::protocol::field_description::FieldDescription;
+pub use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
+pub use crate::postgres::protocol::new_writer::{NewWriter, WriterContext};
+pub use crate::postgres::protocol::notice_response::NoticeResponse;
+pub use crate::postgres::protocol::notification_response::NotificationResponse;
+pub use crate::postgres::protocol::parameter_description::ParameterDescription;
+pub use crate::postgres::protocol::parameter_status::ParameterStatus;
+pub use crate::postgres::protocol::parse::Parse;
+pub use crate::postgres::protocol::password_message::PasswordMessage;
+pub use crate::postgres::protocol::portal_or_prepared_statement::PortalOrPreparedStatement;
+pub use crate::postgres::protocol::ready_for_query::ReadyForQuery;
+pub use crate::postgres::protocol::row_description::RowDescription;
+pub use crate::postgres::protocol::sasl_initial_response::SASLInitialResponse;
+pub use crate::postgres::protocol::sasl_response::SASLResponse;
+pub use crate::postgres::protocol::stack_reader::StackReader;
+pub use crate::postgres::protocol::startup_message::StartupMessage;

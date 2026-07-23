@@ -1,0 +1,914 @@
+//! Shell lexer, parser, AST, and JS-bridge utilities for Bun's shell.
+
+#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
+
+use core::fmt;
+use std::io::Write as _;
+
+use bun_alloc::Arena as Bump;
+use bun_core::strings;
+use bun_core::{OwnedString, String as BunString, ZStr};
+use bun_jsc::StringJsc as _;
+use bun_jsc::{
+    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
+    MarkedArgumentBuffer,
+};
+use bun_simdutf_sys::simdutf;
+use bun_sys::{self as sys, SystemError};
+
+// ───────────────────────────── re-exports ─────────────────────────────
+
+pub use super::interpreter as interpret;
+pub use super::subproc; // declared once in `shell/mod.rs`
+
+// ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
+// The encoding-agnostic lex/parse/AST surface lives in the lower-tier
+// `bun_shell_parser` crate so `Interpreter::parse` can compile without the
+// (still-draft) JSC bridge below. This file keeps the JSC-coupled half
+// (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
+pub use bun_shell_parser::parse::{
+    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexerAscii, LexerUnicode, ParseError,
+    Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
+    needs_escape_utf8_ascii_latin1,
+};
+
+pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
+
+// ───────────────────────────── ShellErr ─────────────────────────────
+
+/// The strings in this type are allocated with event loop ctx allocator
+// `Sys(SystemError)` is constructed/matched directly in subproc.rs, Builtin.rs,
+// and builtin/cp.rs; boxing it would ripple through those call sites.
+#[allow(clippy::large_enum_variant)]
+pub enum ShellErr {
+    Sys(SystemError),
+    Custom(Box<[u8]>),
+    InvalidArguments { val: Box<[u8]> },
+    Todo(Box<[u8]>),
+}
+
+impl ShellErr {
+    /// Wrap a low-level syscall error.
+    pub fn new_sys(e: &sys::Error) -> Self {
+        ShellErr::Sys(e.to_shell_system_error())
+    }
+    /// Spec `ShellErr.newSys(jsc.SystemError)` — already JS-shaped.
+    pub fn from_system(e: SystemError) -> Self {
+        ShellErr::Sys(e)
+    }
+
+    /// Spec `ShellErr.throwJS` — "basically `transferToJS`". Consumes `self`:
+    /// each arm takes ownership of its payload and releases it exactly once.
+    pub fn throw_js(self, global: &JSGlobalObject) -> bun_jsc::JsError {
+        match self {
+            ShellErr::Sys(sys) => {
+                // `to_error_instance` decrements every string ref itself, so we
+                // must hand it the *owned* value (move) — no extra deref here.
+                let err = bun_jsc::SystemError::from(sys).to_error_instance(global);
+                global.throw_value(err)
+            }
+            ShellErr::Custom(custom) => {
+                let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
+                // `custom: Box<[u8]>` drops here.
+                global.throw_value(err_value)
+            }
+            ShellErr::InvalidArguments { val } => {
+                global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&*val)))
+                // `val` drops here.
+            }
+            ShellErr::Todo(todo) => global.throw_todo(&todo),
+        }
+    }
+
+    /// Spec `ShellErr.throwMini` — print and `exit(1)`. Consumes `self`.
+    pub fn throw_mini(self) -> ! {
+        match self {
+            ShellErr::Sys(err) => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Failed due to error: <b>bunsh: {}: {}<r>",
+                    err.message,
+                    err.path
+                );
+                err.deref();
+            }
+            ShellErr::Custom(custom) => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Failed due to error: <b>{}<r>",
+                    bstr::BStr::new(&*custom)
+                );
+            }
+            ShellErr::InvalidArguments { val } => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Failed due to error: <b>bunsh: invalid arguments: {}<r>",
+                    bstr::BStr::new(&*val)
+                );
+            }
+            ShellErr::Todo(todo) => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Failed due to error: <b>TODO: {}<r>",
+                    bstr::BStr::new(&*todo)
+                );
+            }
+        }
+        bun_core::Global::exit(1)
+    }
+
+    /// Spec `ShellErr.deinit`. Explicit release for callers that drop a
+    /// `ShellErr` without throwing it (the `Box<[u8]>` arms free on ordinary
+    /// drop, so only `.sys` needs work).
+    pub fn deinit(self) {
+        if let ShellErr::Sys(sys) = self {
+            sys.deref();
+        }
+    }
+}
+
+impl fmt::Display for ShellErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ShellErr::Sys(e) => write!(f, "bun: {}: {}", e.message, e.path),
+            ShellErr::Custom(msg) => write!(f, "bun: {}", bstr::BStr::new(msg)),
+            ShellErr::InvalidArguments { val } => {
+                write!(f, "bun: invalid arguments: {}", bstr::BStr::new(val))
+            }
+            ShellErr::Todo(msg) => write!(f, "bun: TODO: {}", bstr::BStr::new(msg)),
+        }
+    }
+}
+
+// Note: no `impl Drop for ShellErr`. Release is *manual* and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
+// `toErrorInstance` already consumed those refs. An unconditional `Drop` would
+// re-introduce the double-deref. Ownership is instead expressed by `throw_js` /
+// `throw_mini` / `deinit` taking `self` by value; the `Box<[u8]>` payloads free
+// on ordinary drop, and `.sys` is released exactly once on whichever consume
+// path runs.
+
+// ───────────────────────────── Test ─────────────────────────────
+
+pub mod test {
+    use super::*;
+
+    pub enum TestToken<'a> {
+        Pipe,
+        DoublePipe,
+        Ampersand,
+        DoubleAmpersand,
+        Redirect(ast::RedirectFlags),
+        Dollar,
+        Asterisk,
+        DoubleAsterisk,
+        Eq,
+        Semicolon,
+        Newline,
+        BraceBegin,
+        Comma,
+        BraceEnd,
+        CmdSubstBegin,
+        CmdSubstQuoted,
+        CmdSubstEnd,
+        OpenParen,
+        CloseParen,
+        Var(&'a [u8]),
+        VarArgv(u8),
+        Text(&'a [u8]),
+        SingleQuotedText(&'a [u8]),
+        DoubleQuotedText(&'a [u8]),
+        JSObjRef(u32),
+        DoubleBracketOpen,
+        DoubleBracketClose,
+        Delimit,
+        Eof,
+    }
+
+    impl<'a> TestToken<'a> {
+        pub fn from_real(the_token: Token, buf: &'a [u8]) -> TestToken<'a> {
+            match the_token {
+                Token::Var(txt) => TestToken::Var(&buf[txt.start as usize..txt.end as usize]),
+                Token::VarArgv(int) => TestToken::VarArgv(int),
+                Token::Text(txt) => TestToken::Text(&buf[txt.start as usize..txt.end as usize]),
+                Token::SingleQuotedText(txt) => {
+                    TestToken::SingleQuotedText(&buf[txt.start as usize..txt.end as usize])
+                }
+                Token::DoubleQuotedText(txt) => {
+                    TestToken::DoubleQuotedText(&buf[txt.start as usize..txt.end as usize])
+                }
+                Token::JSObjRef(val) => TestToken::JSObjRef(val),
+                Token::Pipe => TestToken::Pipe,
+                Token::DoublePipe => TestToken::DoublePipe,
+                Token::Ampersand => TestToken::Ampersand,
+                Token::DoubleAmpersand => TestToken::DoubleAmpersand,
+                Token::Redirect(r) => TestToken::Redirect(r),
+                Token::Dollar => TestToken::Dollar,
+                Token::Asterisk => TestToken::Asterisk,
+                Token::DoubleAsterisk => TestToken::DoubleAsterisk,
+                Token::Eq => TestToken::Eq,
+                Token::Semicolon => TestToken::Semicolon,
+                Token::Newline => TestToken::Newline,
+                Token::BraceBegin => TestToken::BraceBegin,
+                Token::Comma => TestToken::Comma,
+                Token::BraceEnd => TestToken::BraceEnd,
+                Token::CmdSubstBegin => TestToken::CmdSubstBegin,
+                Token::CmdSubstQuoted => TestToken::CmdSubstQuoted,
+                Token::CmdSubstEnd => TestToken::CmdSubstEnd,
+                Token::OpenParen => TestToken::OpenParen,
+                Token::CloseParen => TestToken::CloseParen,
+                Token::DoubleBracketOpen => TestToken::DoubleBracketOpen,
+                Token::DoubleBracketClose => TestToken::DoubleBracketClose,
+                Token::Delimit => TestToken::Delimit,
+                Token::Eof => TestToken::Eof,
+            }
+        }
+    }
+
+    // ─── JSON serialization of test tokens ──────────────────────────────────
+    // Tagged variants serialize as `{"Tag":payload}`; unit payloads as `{"Tag":{}}`.
+    use bun_shell_parser::json_fmt::{encode_json_string, write_redirect_flags};
+    use core::fmt::Write as _;
+
+    impl<'a> TestToken<'a> {
+        pub fn write_json(&self, w: &mut impl core::fmt::Write) -> core::fmt::Result {
+            use TestToken as T;
+            macro_rules! unit {
+                ($tag:literal) => {{ w.write_str(concat!("{\"", $tag, "\":{}}")) }};
+            }
+            match self {
+                T::Pipe => unit!("Pipe"),
+                T::DoublePipe => unit!("DoublePipe"),
+                T::Ampersand => unit!("Ampersand"),
+                T::DoubleAmpersand => unit!("DoubleAmpersand"),
+                T::Redirect(r) => {
+                    w.write_str("{\"Redirect\":")?;
+                    write_redirect_flags(w, *r)?;
+                    w.write_char('}')
+                }
+                T::Dollar => unit!("Dollar"),
+                T::Asterisk => unit!("Asterisk"),
+                T::DoubleAsterisk => unit!("DoubleAsterisk"),
+                T::Eq => unit!("Eq"),
+                T::Semicolon => unit!("Semicolon"),
+                T::Newline => unit!("Newline"),
+                T::BraceBegin => unit!("BraceBegin"),
+                T::Comma => unit!("Comma"),
+                T::BraceEnd => unit!("BraceEnd"),
+                T::CmdSubstBegin => unit!("CmdSubstBegin"),
+                T::CmdSubstQuoted => unit!("CmdSubstQuoted"),
+                T::CmdSubstEnd => unit!("CmdSubstEnd"),
+                T::OpenParen => unit!("OpenParen"),
+                T::CloseParen => unit!("CloseParen"),
+                T::Var(s) => {
+                    w.write_str("{\"Var\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::VarArgv(n) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::Text(s) => {
+                    w.write_str("{\"Text\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::SingleQuotedText(s) => {
+                    w.write_str("{\"SingleQuotedText\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::DoubleQuotedText(s) => {
+                    w.write_str("{\"DoubleQuotedText\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::JSObjRef(n) => write!(w, "{{\"JSObjRef\":{}}}", n),
+                T::DoubleBracketOpen => unit!("DoubleBracketOpen"),
+                T::DoubleBracketClose => unit!("DoubleBracketClose"),
+                T::Delimit => unit!("Delimit"),
+                T::Eof => unit!("Eof"),
+            }
+        }
+    }
+
+    /// `Display` adapter that renders the token list as a JSON array.
+    pub fn tokens_json_fmt<'b>(tokens: &'b [TestToken<'_>]) -> impl core::fmt::Display + 'b {
+        struct Fmt<'a, 'b>(&'b [TestToken<'a>]);
+        impl core::fmt::Display for Fmt<'_, '_> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_char('[')?;
+                for (i, tok) in self.0.iter().enumerate() {
+                    if i != 0 {
+                        f.write_char(',')?;
+                    }
+                    tok.write_json(f)?;
+                }
+                f.write_char(']')
+            }
+        }
+        Fmt(tokens)
+    }
+}
+
+// ───────────────────────────── JS bridge ─────────────────────────────
+
+/// RAII owner for the `bun.String` array threaded through `shell_cmd_from_js` →
+/// `Interpreter::parse`. `bun.String` is `Copy` (no `Drop`) for FFI, so the
+/// per-element `deref()` must be explicit. Wrapping the `Vec`
+/// avoids the unit-state `scopeguard` + raw-pointer-reborrow pattern that is UB
+/// under Stacked Borrows (PORTING.md §Idiom-map: `defer <side effect>`).
+pub struct JsStrings(pub Vec<BunString>);
+
+impl JsStrings {
+    #[inline]
+    pub fn with_capacity(cap: usize) -> Self {
+        Self(Vec::with_capacity(cap))
+    }
+}
+
+impl core::ops::Deref for JsStrings {
+    type Target = Vec<BunString>;
+    #[inline]
+    fn deref(&self) -> &Vec<BunString> {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for JsStrings {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Vec<BunString> {
+        &mut self.0
+    }
+}
+
+impl Drop for JsStrings {
+    fn drop(&mut self) {
+        for s in &self.0 {
+            s.deref();
+        }
+    }
+}
+
+pub fn shell_cmd_from_js(
+    global: &JSGlobalObject,
+    string_args: JSValue,
+    template_args: &mut JSArrayIterator,
+    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
+    // (a GC root); the heap-backed Vec is index storage only.
+    out_jsobjs: &mut Vec<JSValue>,
+    jsstrings: &mut Vec<BunString>,
+    out_script: &mut Vec<u8>,
+    marked_argument_buffer: &mut MarkedArgumentBuffer,
+) -> JsResult<()> {
+    let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
+    let mut jsobjref_buf = [0u8; 128];
+
+    let mut string_iter = string_args.array_iterator(global)?;
+    let mut i: u32 = 0;
+    let last = string_iter.len.saturating_sub(1);
+    while let Some(js_value) = string_iter.next()? {
+        if !builder.append_js_value_str::<false>(js_value)? {
+            return Err(global.throw(format_args!("Shell script string contains invalid UTF-16")));
+        }
+        if i < last {
+            let template_value = match template_args.next()? {
+                Some(v) => v,
+                None => {
+                    return Err(global.throw(format_args!("Shell script is missing JSValue arg")));
+                }
+            };
+            // Note: builder holds &mut out_script/jsstrings; NLL releases the
+            // borrow here (builder is reassigned below before next use).
+            handle_template_value(
+                global,
+                template_value,
+                out_jsobjs,
+                out_script,
+                jsstrings,
+                &mut jsobjref_buf[..],
+                marked_argument_buffer,
+                0,
+            )?;
+            builder = ShellSrcBuilder::init(global, out_script, jsstrings);
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
+
+pub fn handle_template_value(
+    global: &JSGlobalObject,
+    template_value: JSValue,
+    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
+    // (a GC root); the heap-backed Vec is index storage only.
+    out_jsobjs: &mut Vec<JSValue>,
+    out_script: &mut Vec<u8>,
+    jsstrings: &mut Vec<BunString>,
+    jsobjref_buf: &mut [u8],
+    marked_argument_buffer: &mut MarkedArgumentBuffer,
+    depth: u32,
+) -> JsResult<()> {
+    let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
+    if !template_value.is_empty() {
+        if let Some(_array_buffer) = template_value.as_array_buffer(global) {
+            let idx = out_jsobjs.len();
+            marked_argument_buffer.append(template_value);
+            out_jsobjs.push(template_value);
+            let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
+            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
+                .map_err(|_| global.throw_out_of_memory())?;
+            let n = cursor.position() as usize;
+            out_script.extend_from_slice(&jsobjref_buf[..n]);
+            return Ok(());
+        }
+
+        if let Some(blob) = template_value.as_class_ref::<crate::webcore::Blob>() {
+            if let Some(store) = blob.store.get().as_deref() {
+                if let crate::webcore::blob::store::Data::File(file) = &store.data {
+                    if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
+                        let path: &[u8] = p.slice();
+
+                        // Check for null bytes in path (security: prevent null byte injection)
+                        if strings::index_of_char(path, 0).is_some() {
+                            return Err(global
+                                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
+                                    "The shell argument must be a string without null bytes. Received {}",
+                                    bun_core::fmt::quote(path)
+                                ))
+                                .throw());
+                        }
+
+                        if !builder.append_utf8::<true>(path)? {
+                            return Err(global.throw(format_args!(
+                                "Shell script string contains invalid UTF-16"
+                            )));
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+
+            let idx = out_jsobjs.len();
+            marked_argument_buffer.append(template_value);
+            out_jsobjs.push(template_value);
+            let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
+            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
+                .map_err(|_| global.throw_out_of_memory())?;
+            let n = cursor.position() as usize;
+            out_script.extend_from_slice(&jsobjref_buf[..n]);
+            return Ok(());
+        }
+
+        if let Some(_rstream) = crate::webcore::ReadableStream::from_js(template_value, global)? {
+            let idx = out_jsobjs.len();
+            marked_argument_buffer.append(template_value);
+            out_jsobjs.push(template_value);
+            let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
+            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
+                .map_err(|_| global.throw_out_of_memory())?;
+            let n = cursor.position() as usize;
+            out_script.extend_from_slice(&jsobjref_buf[..n]);
+            return Ok(());
+        }
+
+        if let Some(_req) = template_value.as_::<crate::webcore::Response>() {
+            let idx = out_jsobjs.len();
+            marked_argument_buffer.append(template_value);
+            out_jsobjs.push(template_value);
+            let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
+            write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
+                .map_err(|_| global.throw_out_of_memory())?;
+            let n = cursor.position() as usize;
+            out_script.extend_from_slice(&jsobjref_buf[..n]);
+            return Ok(());
+        }
+
+        if template_value.is_string() {
+            if !builder.append_js_value_str::<true>(template_value)? {
+                return Err(
+                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                );
+            }
+            return Ok(());
+        }
+
+        if template_value.js_type().is_array() {
+            if depth >= MAX_TEMPLATE_ARRAY_DEPTH {
+                return Err(global.throw(format_args!(
+                    "Shell script template arrays cannot be nested more than {} levels deep",
+                    MAX_TEMPLATE_ARRAY_DEPTH
+                )));
+            }
+            let mut array = template_value.array_iterator(global)?;
+            let last = array.len.saturating_sub(1);
+            let mut i: u32 = 0;
+            while let Some(arr) = array.next()? {
+                handle_template_value(
+                    global,
+                    arr,
+                    out_jsobjs,
+                    out_script,
+                    jsstrings,
+                    jsobjref_buf,
+                    marked_argument_buffer,
+                    depth + 1,
+                )?;
+                if i < last {
+                    let str = BunString::static_(b" ");
+                    let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
+                    if !b.append_bun_str::<false>(str)? {
+                        return Err(global
+                            .throw(format_args!("Shell script string contains invalid UTF-16")));
+                    }
+                }
+                i += 1;
+            }
+            return Ok(());
+        }
+
+        if template_value.is_object() {
+            if let Some(maybe_str) = template_value.get_own_truthy(global, "raw")? {
+                let bunstr = OwnedString::new(maybe_str.to_bun_string(global)?);
+
+                // Check for null bytes in shell argument (security: prevent null byte injection)
+                if bunstr.index_of_ascii_char(0).is_some() {
+                    return Err(global
+                        .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
+                            "The shell argument must be a string without null bytes. Received \"{}\"",
+                            bunstr.to_zig_string()
+                        ))
+                        .throw());
+                }
+
+                if !builder.append_bun_str::<false>(bunstr.get())? {
+                    return Err(
+                        global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                    );
+                }
+                return Ok(());
+            }
+        }
+
+        // Spec `JSValue.isPrimitive()` — `!isObject()` (covers number/bool/null/undef/symbol).
+        if !template_value.is_object() {
+            if !builder.append_js_value_str::<true>(template_value)? {
+                return Err(
+                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                );
+            }
+            return Ok(());
+        }
+
+        if template_value.implements_to_string(global)? {
+            if !builder.append_js_value_str::<true>(template_value)? {
+                return Err(
+                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                );
+            }
+            return Ok(());
+        }
+
+        return Err(global.throw(format_args!(
+            "Invalid JS object used in shell: {}, you might need to call `.toString()` on it",
+            template_value.fmt_string(global)
+        )));
+    }
+
+    Ok(())
+}
+
+// ───────────────────────────── ShellSrcBuilder ─────────────────────────────
+
+pub struct ShellSrcBuilder<'a> {
+    pub global_this: &'a JSGlobalObject,
+    pub outbuf: &'a mut Vec<u8>,
+    pub jsstrs_to_escape: &'a mut Vec<BunString>,
+    pub jsstr_ref_buf: [u8; 128],
+}
+
+impl<'a> ShellSrcBuilder<'a> {
+    pub fn init(
+        global: &'a JSGlobalObject,
+        outbuf: &'a mut Vec<u8>,
+        jsstrs_to_escape: &'a mut Vec<BunString>,
+    ) -> Self {
+        Self {
+            global_this: global,
+            outbuf,
+            jsstrs_to_escape,
+            jsstr_ref_buf: [0u8; 128],
+        }
+    }
+
+    pub fn append_js_value_str<const ALLOW_ESCAPE: bool>(
+        &mut self,
+        jsval: JSValue,
+    ) -> JsResult<bool> {
+        let bunstr = OwnedString::new(jsval.to_bun_string(self.global_this)?);
+
+        // Check for null bytes in shell argument (security: prevent null byte injection)
+        if bunstr.index_of_ascii_char(0).is_some() {
+            return Err(self
+                .global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The shell argument must be a string without null bytes. Received \"{}\"",
+                        bunstr.to_zig_string()
+                    ),
+                )
+                .throw());
+        }
+
+        Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?)
+    }
+
+    pub fn append_bun_str<const ALLOW_ESCAPE: bool>(
+        &mut self,
+        bunstr: BunString,
+    ) -> Result<bool, bun_alloc::AllocError> {
+        let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
+            || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
+        if invalid {
+            return Ok(false);
+        }
+        if ALLOW_ESCAPE {
+            // `needs_escape_bunstr` is true for empty strings: `${''}` must still
+            // produce an argument. Routing through appendJSStrRef makes the \x08
+            // marker recognized regardless of quote context (e.g. inside single quotes).
+            if needs_escape_bunstr(bunstr) || is_if_clause_keyword_bunstr(bunstr) {
+                self.append_js_str_ref(bunstr)?;
+                return Ok(true);
+            }
+        }
+        if bunstr.is_utf16() {
+            self.append_utf16_impl(bunstr.utf16())?;
+            return Ok(true);
+        }
+        if bunstr.is_utf8() || strings::is_all_ascii(bunstr.byte_slice()) {
+            self.append_utf8_impl(bunstr.byte_slice())?;
+            return Ok(true);
+        }
+        self.append_latin1_impl(bunstr.byte_slice())?;
+        Ok(true)
+    }
+
+    pub fn append_utf8<const ALLOW_ESCAPE: bool>(&mut self, utf8: &[u8]) -> crate::Result<bool> {
+        let invalid = simdutf::validate::utf8(utf8);
+        // Note: the name `invalid` is misleading — it holds the validity bool.
+        if !invalid {
+            return Ok(false);
+        }
+        if ALLOW_ESCAPE {
+            if needs_escape_utf8_ascii_latin1(utf8) || IfClauseTok::from_text(utf8).is_some() {
+                let bunstr = OwnedString::new(BunString::clone_utf8(utf8));
+                self.append_js_str_ref(bunstr.get())?;
+                return Ok(true);
+            }
+        }
+
+        self.append_utf8_impl(utf8)?;
+        Ok(true)
+    }
+
+    pub fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
+        let size = simdutf::length::utf8::from::utf16::le(utf16);
+        self.outbuf.reserve(size);
+        strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
+        // Infallible: invalid UTF-16 takes the WTF-8 fallback inside the
+        // conversion, and Rust aborts on OOM.
+        Ok(())
+    }
+
+    pub fn append_utf8_impl(&mut self, utf8: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        self.outbuf.extend_from_slice(utf8);
+        Ok(())
+    }
+
+    pub fn append_latin1_impl(&mut self, latin1: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        // `allocate_latin1_into_utf8_with_list` appends ALL of `latin1` after `len`,
+        // including its leading ASCII run; pre-appending any of it would duplicate it.
+        let len = self.outbuf.len();
+        let buf = core::mem::take(self.outbuf);
+        *self.outbuf = strings::allocate_latin1_into_utf8_with_list(buf, len, latin1);
+        Ok(())
+    }
+
+    pub fn append_js_str_ref(&mut self, bunstr: BunString) -> Result<(), bun_alloc::AllocError> {
+        let idx = self.jsstrs_to_escape.len();
+        let mut cursor = std::io::Cursor::new(&mut self.jsstr_ref_buf[..]);
+        write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_STRING_PREFIX), idx).expect("Impossible");
+        let n = cursor.position() as usize;
+        self.outbuf.extend_from_slice(&self.jsstr_ref_buf[..n]);
+        bunstr.ref_();
+        self.jsstrs_to_escape.push(bunstr);
+        Ok(())
+    }
+}
+
+// ───────────────────────────── TestingAPIs ─────────────────────────────
+
+/// Used in JS tests, see `internal-for-testing.ts` and shell tests.
+pub mod testing_apis {
+    use super::*;
+
+    #[bun_jsc::host_fn]
+    pub fn disabled_on_this_platform(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(windows)]
+        {
+            let _ = (global, callframe);
+            return Ok(JSValue::FALSE);
+        }
+        #[cfg(not(windows))]
+        {
+            let arguments_ = callframe.arguments_old::<1>();
+            // SAFETY: bun_vm() is non-null for a Bun-owned global.
+            let vm = global.bun_vm();
+            let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+            let string: JSValue = match arguments.next_eat() {
+                Some(s) => s,
+                None => {
+                    return Err(global.throw(format_args!(
+                        "shellInternals.disabledOnPosix: expected 1 arguments, got 0"
+                    )));
+                }
+            };
+
+            let bunstr = OwnedString::new(string.to_bun_string(global)?);
+            let utf8str = bunstr.to_utf8();
+
+            for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {
+                // `strum::IntoStaticStr` would yield the PascalCase variant name
+                // ("Cp"), so use `Kind::as_str` for the lowercase name.
+                if utf8str.slice() == disabled.as_str().as_bytes() {
+                    return Ok(JSValue::TRUE);
+                }
+            }
+            Ok(JSValue::FALSE)
+        }
+    }
+
+    /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
+    /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
+    pub fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, callframe, buf))
+    }
+
+    fn shell_lex_impl(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        marked_argument_buffer: &mut MarkedArgumentBuffer,
+    ) -> JsResult<JSValue> {
+        let arguments_ = callframe.arguments_old::<2>();
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        let vm = global.bun_vm();
+        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let string_args: JSValue = match arguments.next_eat() {
+            Some(s) => s,
+            None => {
+                return Err(global.throw(format_args!("shell_parse: expected 2 arguments, got 0")));
+            }
+        };
+
+        let arena = Bump::new();
+
+        let template_args_js: JSValue = match arguments.next_eat() {
+            Some(s) => s,
+            None => {
+                return Err(global.throw(format_args!("shell: expected 2 arguments, got 0")));
+            }
+        };
+        let mut template_args = template_args_js.array_iterator(global)?;
+        let mut jsstrings = JsStrings::with_capacity(4);
+        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
+        let mut jsobjs: Vec<JSValue> = Vec::new();
+
+        let mut script: Vec<u8> = Vec::new();
+        shell_cmd_from_js(
+            global,
+            string_args,
+            &mut template_args,
+            &mut jsobjs,
+            &mut jsstrings,
+            &mut script,
+            marked_argument_buffer,
+        )?;
+
+        let jsobjs_len: u32 = u32::try_from(jsobjs.len()).expect("int cast");
+        let lex_result = 'brk: {
+            if strings::is_all_ascii(&script[..]) {
+                let mut lexer =
+                    LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
+                if let Err(err) = lexer.lex() {
+                    return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
+                }
+                break 'brk lexer.get_result();
+            }
+            let mut lexer = LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
+            if let Err(err) = lexer.lex() {
+                return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
+            }
+            lexer.get_result()
+        };
+
+        if !lex_result.errors.is_empty() {
+            let str = lex_result.combine_errors(&arena);
+            return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
+        }
+
+        let mut test_tokens: Vec<test::TestToken> = Vec::with_capacity(lex_result.tokens.len());
+        for &tok in lex_result.tokens {
+            let test_tok = test::TestToken::from_real(tok, lex_result.strpool);
+            test_tokens.push(test_tok);
+        }
+
+        let str = format!("{}", test::tokens_json_fmt(&test_tokens[..]));
+        let bun_str = BunString::from_bytes(str.as_bytes());
+        bun_str.to_js(global)
+    }
+
+    /// Testing API: parse the shell template-string arguments and return the
+    /// AST as a JSON string (or throw on a parse error). Arguments are pinned
+    /// in a `MarkedArgumentBuffer` for GC safety while parsing.
+    pub fn shell_parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        MarkedArgumentBuffer::new(|buf| shell_parse_impl(global, callframe, buf))
+    }
+
+    fn shell_parse_impl(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        marked_argument_buffer: &mut MarkedArgumentBuffer,
+    ) -> JsResult<JSValue> {
+        let arguments_ = callframe.arguments_old::<2>();
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        let vm = global.bun_vm();
+        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let string_args: JSValue = match arguments.next_eat() {
+            Some(s) => s,
+            None => {
+                return Err(global.throw(format_args!("shell_parse: expected 2 arguments, got 0")));
+            }
+        };
+
+        let arena = Bump::new();
+
+        let template_args_js: JSValue = match arguments.next_eat() {
+            Some(s) => s,
+            None => {
+                return Err(global.throw(format_args!("shell: expected 2 arguments, got 0")));
+            }
+        };
+        let mut template_args = template_args_js.array_iterator(global)?;
+        let mut jsstrings = JsStrings::with_capacity(4);
+        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
+        let mut jsobjs: Vec<JSValue> = Vec::new();
+        let mut script: Vec<u8> = Vec::new();
+        shell_cmd_from_js(
+            global,
+            string_args,
+            &mut template_args,
+            &mut jsobjs,
+            &mut jsstrings,
+            &mut script,
+            marked_argument_buffer,
+        )?;
+
+        let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
+        let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
+
+        let script_ast = match interpret::Interpreter::parse(
+            &arena,
+            &script[..],
+            &mut jsobjs[..],
+            &mut jsstrings[..],
+            &mut out_parser,
+            &mut out_lex_result,
+        ) {
+            Ok(a) => a,
+            Err(err) => {
+                // `out_lex_result` is populated by `parse()` only on lex errors.
+                if let Some(lex) = out_lex_result.as_ref() {
+                    let str = lex.combine_errors(&arena);
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
+                }
+
+                if let Some(p) = out_parser.as_mut() {
+                    let errstr = p.combine_errors();
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
+                }
+
+                return Err(global.throw_error(err, "failed to lex/parse shell"));
+            }
+        };
+
+        // `crate::shell::ast::Script` is a `'static`-erased alias of
+        // `bun_shell_parser::ast::Script`, so it formats directly.
+        let str = format!(
+            "{}",
+            bun_shell_parser::json_fmt::script_json_fmt(&script_ast)
+        );
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
+    }
+}
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
+// (the codegen splits on capitalisation runs).
+pub use testing_apis as testing_ap_is;

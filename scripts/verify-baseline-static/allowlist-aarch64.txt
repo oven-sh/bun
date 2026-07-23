@@ -5,56 +5,155 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (48 symbols)
+# (133 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
+_ZN3bun10N_SVE2_12813JsonIndexImplEPKhmmPjPmS4_S3_                            [SVE]
+_ZN3bun10N_SVE2_12814DecodeHex8ImplEPKhPhm                                    [SVE]
+_ZN3bun10N_SVE2_12814LowerAsciiImplEPKhmPh                                    [SVE]
 _ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]
+_ZN3bun10N_SVE2_12815DecodeHex16ImplEPKtPhm                                   [SVE]
 _ZN3bun10N_SVE2_12815IndexOfCharImplEPKhmh                                    [SVE]
+_ZN3bun10N_SVE2_12816LowerAscii16ImplEPKtmPt                                  [SVE]
+_ZN3bun10N_SVE2_12818EncodeHexLowerImplEPKhmPh                                [SVE]
+_ZN3bun10N_SVE2_12818FirstNonAscii8ImplEPKhm                                  [SVE]
 _ZN3bun10N_SVE2_12818IndexOfAnyCharImplEPKhmS2_m                              [SVE]
+_ZN3bun10N_SVE2_12819CopyAsciiPrefixImplEPKhmPh                               [SVE]
+_ZN3bun10N_SVE2_12819FirstNonAscii16ImplEPKtm                                 [SVE]
 _ZN3bun10N_SVE2_12820FillWithSkipMaskImplEPKhmPhS2_mb                         [SVE]
+_ZN3bun10N_SVE2_12821VisibleUTF16WidthImplEPKtmPm                             [SVE]
+_ZN3bun10N_SVE2_12822IndexOfEscapeChar8ImplEPKhm                              [SVE]
+_ZN3bun10N_SVE2_12822VisibleLatin1WidthImplEPKhm                              [SVE]
+_ZN3bun10N_SVE2_12823HtmlEscapeExtraLen8ImplEPKhm                             [SVE]
+_ZN3bun10N_SVE2_12823IndexOfEscapeChar16ImplEPKtm                             [SVE]
+_ZN3bun10N_SVE2_12824HtmlEscapeExtraLen16ImplEPKtm                            [SVE]
+_ZN3bun10N_SVE2_12825CountPrintableAscii16ImplEPKtm                           [SVE]
+_ZN3bun10N_SVE2_12826IndexOfFirstAsciiUpperImplEPKhm                          [SVE]
+_ZN3bun10N_SVE2_12826IndexOfHTMLEscapeChar8ImplEPKhm                          [SVE]
+_ZN3bun10N_SVE2_12827IndexOfHTMLEscapeChar16ImplEPKtm                         [SVE]
+_ZN3bun10N_SVE2_12828IndexOfFirstAsciiUpper16ImplEPKtm                        [SVE]
 _ZN3bun10N_SVE2_12828IndexOfNewlineOrNonASCIIImplEPKhm                        [SVE]
+_ZN3bun10N_SVE2_12833VisibleLatin1WidthExcludeANSIImplEPKhm                   [SVE]
 _ZN3bun10N_SVE2_12835IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                 [SVE]
 _ZN3bun10N_SVE2_12836ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                [SVE]
 _ZN3bun10N_SVE2_12838IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm              [SVE]
 _ZN3bun10N_SVE2_12846IndexOfInterestingCharacterInStringLiteralImplEPKhmh     [SVE]
 _ZN3bun10N_SVE2_12846IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh     [SVE]
+_ZN3bun10N_SVE2_12849IndexOfInterestingCharacterInMultilineCommentImplEPKhm   [SVE]
 _ZN3bun10N_SVE2_12849IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh  [SVE]
 _ZN3bun5N_SVE10MemMemImplEPKhmS2_m                                            [SVE]
+_ZN3bun5N_SVE14DecodeHex8ImplEPKhPhm                                          [SVE]
+_ZN3bun5N_SVE14LowerAsciiImplEPKhmPh                                          [SVE]
 _ZN3bun5N_SVE15CopyU16ToU8ImplEPKtmPh                                         [SVE]
+_ZN3bun5N_SVE15DecodeHex16ImplEPKtPhm                                         [SVE]
 _ZN3bun5N_SVE15IndexOfCharImplEPKhmh                                          [SVE]
+_ZN3bun5N_SVE16LowerAscii16ImplEPKtmPt                                        [SVE]
+_ZN3bun5N_SVE18EncodeHexLowerImplEPKhmPh                                      [SVE]
+_ZN3bun5N_SVE18FirstNonAscii8ImplEPKhm                                        [SVE]
 _ZN3bun5N_SVE18IndexOfAnyCharImplEPKhmS2_m                                    [SVE]
+_ZN3bun5N_SVE19CopyAsciiPrefixImplEPKhmPh                                     [SVE]
+_ZN3bun5N_SVE19FirstNonAscii16ImplEPKtm                                       [SVE]
 _ZN3bun5N_SVE20FillWithSkipMaskImplEPKhmPhS2_mb                               [SVE]
+_ZN3bun5N_SVE21VisibleUTF16WidthImplEPKtmPm                                   [SVE]
+_ZN3bun5N_SVE22IndexOfEscapeChar8ImplEPKhm                                    [SVE]
+_ZN3bun5N_SVE22VisibleLatin1WidthImplEPKhm                                    [SVE]
+_ZN3bun5N_SVE23HtmlEscapeExtraLen8ImplEPKhm                                   [SVE]
+_ZN3bun5N_SVE23IndexOfEscapeChar16ImplEPKtm                                   [SVE]
+_ZN3bun5N_SVE24HtmlEscapeExtraLen16ImplEPKtm                                  [SVE]
+_ZN3bun5N_SVE25CountPrintableAscii16ImplEPKtm                                 [SVE]
+_ZN3bun5N_SVE26IndexOfFirstAsciiUpperImplEPKhm                                [SVE]
+_ZN3bun5N_SVE26IndexOfHTMLEscapeChar8ImplEPKhm                                [SVE]
+_ZN3bun5N_SVE27IndexOfHTMLEscapeChar16ImplEPKtm                               [SVE]
+_ZN3bun5N_SVE28IndexOfFirstAsciiUpper16ImplEPKtm                              [SVE]
 _ZN3bun5N_SVE28IndexOfNewlineOrNonASCIIImplEPKhm                              [SVE]
+_ZN3bun5N_SVE33VisibleLatin1WidthExcludeANSIImplEPKhm                         [SVE]
 _ZN3bun5N_SVE35IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                       [SVE]
 _ZN3bun5N_SVE36ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [SVE]
 _ZN3bun5N_SVE38IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                    [SVE]
 _ZN3bun5N_SVE46IndexOfInterestingCharacterInStringLiteralImplEPKhmh           [SVE]
 _ZN3bun5N_SVE46IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh           [SVE]
+_ZN3bun5N_SVE49IndexOfInterestingCharacterInMultilineCommentImplEPKhm         [SVE]
 _ZN3bun5N_SVE49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [SVE]
 _ZN3bun6N_SVE210MemMemImplEPKhmS2_m                                           [SVE]
+_ZN3bun6N_SVE214DecodeHex8ImplEPKhPhm                                         [SVE]
+_ZN3bun6N_SVE214LowerAsciiImplEPKhmPh                                         [SVE]
 _ZN3bun6N_SVE215CopyU16ToU8ImplEPKtmPh                                        [SVE]
+_ZN3bun6N_SVE215DecodeHex16ImplEPKtPhm                                        [SVE]
 _ZN3bun6N_SVE215IndexOfCharImplEPKhmh                                         [SVE]
+_ZN3bun6N_SVE216LowerAscii16ImplEPKtmPt                                       [SVE]
+_ZN3bun6N_SVE218EncodeHexLowerImplEPKhmPh                                     [SVE]
+_ZN3bun6N_SVE218FirstNonAscii8ImplEPKhm                                       [SVE]
 _ZN3bun6N_SVE218IndexOfAnyCharImplEPKhmS2_m                                   [SVE]
+_ZN3bun6N_SVE219CopyAsciiPrefixImplEPKhmPh                                    [SVE]
+_ZN3bun6N_SVE219FirstNonAscii16ImplEPKtm                                      [SVE]
 _ZN3bun6N_SVE220FillWithSkipMaskImplEPKhmPhS2_mb                              [SVE]
+_ZN3bun6N_SVE221VisibleUTF16WidthImplEPKtmPm                                  [SVE]
+_ZN3bun6N_SVE222IndexOfEscapeChar8ImplEPKhm                                   [SVE]
+_ZN3bun6N_SVE222VisibleLatin1WidthImplEPKhm                                   [SVE]
+_ZN3bun6N_SVE223HtmlEscapeExtraLen8ImplEPKhm                                  [SVE]
+_ZN3bun6N_SVE223IndexOfEscapeChar16ImplEPKtm                                  [SVE]
+_ZN3bun6N_SVE224HtmlEscapeExtraLen16ImplEPKtm                                 [SVE]
+_ZN3bun6N_SVE225CountPrintableAscii16ImplEPKtm                                [SVE]
+_ZN3bun6N_SVE226IndexOfFirstAsciiUpperImplEPKhm                               [SVE]
+_ZN3bun6N_SVE226IndexOfHTMLEscapeChar8ImplEPKhm                               [SVE]
+_ZN3bun6N_SVE227IndexOfHTMLEscapeChar16ImplEPKtm                              [SVE]
+_ZN3bun6N_SVE228IndexOfFirstAsciiUpper16ImplEPKtm                             [SVE]
 _ZN3bun6N_SVE228IndexOfNewlineOrNonASCIIImplEPKhm                             [SVE]
+_ZN3bun6N_SVE233VisibleLatin1WidthExcludeANSIImplEPKhm                        [SVE]
 _ZN3bun6N_SVE235IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                      [SVE]
 _ZN3bun6N_SVE236ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                     [SVE]
 _ZN3bun6N_SVE238IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                   [SVE]
 _ZN3bun6N_SVE246IndexOfInterestingCharacterInStringLiteralImplEPKhmh          [SVE]
 _ZN3bun6N_SVE246IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh          [SVE]
+_ZN3bun6N_SVE249IndexOfInterestingCharacterInMultilineCommentImplEPKhm        [SVE]
 _ZN3bun6N_SVE249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh       [SVE]
 _ZN3bun9N_SVE_25610MemMemImplEPKhmS2_m                                        [SVE]
+_ZN3bun9N_SVE_25614DecodeHex8ImplEPKhPhm                                      [SVE]
+_ZN3bun9N_SVE_25614LowerAsciiImplEPKhmPh                                      [SVE]
 _ZN3bun9N_SVE_25615CopyU16ToU8ImplEPKtmPh                                     [SVE]
+_ZN3bun9N_SVE_25615DecodeHex16ImplEPKtPhm                                     [SVE]
 _ZN3bun9N_SVE_25615IndexOfCharImplEPKhmh                                      [SVE]
+_ZN3bun9N_SVE_25616LowerAscii16ImplEPKtmPt                                    [SVE]
+_ZN3bun9N_SVE_25618EncodeHexLowerImplEPKhmPh                                  [SVE]
+_ZN3bun9N_SVE_25618FirstNonAscii8ImplEPKhm                                    [SVE]
 _ZN3bun9N_SVE_25618IndexOfAnyCharImplEPKhmS2_m                                [SVE]
+_ZN3bun9N_SVE_25619CopyAsciiPrefixImplEPKhmPh                                 [SVE]
+_ZN3bun9N_SVE_25619FirstNonAscii16ImplEPKtm                                   [SVE]
 _ZN3bun9N_SVE_25620FillWithSkipMaskImplEPKhmPhS2_mb                           [SVE]
+_ZN3bun9N_SVE_25621VisibleUTF16WidthImplEPKtmPm                               [SVE]
+_ZN3bun9N_SVE_25622IndexOfEscapeChar8ImplEPKhm                                [SVE]
+_ZN3bun9N_SVE_25622VisibleLatin1WidthImplEPKhm                                [SVE]
+_ZN3bun9N_SVE_25623HtmlEscapeExtraLen8ImplEPKhm                               [SVE]
+_ZN3bun9N_SVE_25623IndexOfEscapeChar16ImplEPKtm                               [SVE]
+_ZN3bun9N_SVE_25624HtmlEscapeExtraLen16ImplEPKtm                              [SVE]
+_ZN3bun9N_SVE_25625CountPrintableAscii16ImplEPKtm                             [SVE]
+_ZN3bun9N_SVE_25626IndexOfFirstAsciiUpperImplEPKhm                            [SVE]
+_ZN3bun9N_SVE_25626IndexOfHTMLEscapeChar8ImplEPKhm                            [SVE]
+_ZN3bun9N_SVE_25627IndexOfHTMLEscapeChar16ImplEPKtm                           [SVE]
+_ZN3bun9N_SVE_25628IndexOfFirstAsciiUpper16ImplEPKtm                          [SVE]
 _ZN3bun9N_SVE_25628IndexOfNewlineOrNonASCIIImplEPKhm                          [SVE]
+_ZN3bun9N_SVE_25633VisibleLatin1WidthExcludeANSIImplEPKhm                     [SVE]
 _ZN3bun9N_SVE_25635IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                   [SVE]
 _ZN3bun9N_SVE_25636ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                  [SVE]
 _ZN3bun9N_SVE_25638IndexOfNewlineOrNonASCIIOrHashOrAtImplEPKhm                [SVE]
 _ZN3bun9N_SVE_25646IndexOfInterestingCharacterInStringLiteralImplEPKhmh       [SVE]
 _ZN3bun9N_SVE_25646IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh       [SVE]
+_ZN3bun9N_SVE_25649IndexOfInterestingCharacterInMultilineCommentImplEPKhm     [SVE]
 _ZN3bun9N_SVE_25649IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh    [SVE]
+
+
+# ----------------------------------------------------------------------------
+# Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
+# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (8 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun5N_SVE15CountDelimsImplEPKhm                                           [SVE]
+_ZN3bun5N_SVE17ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [SVE]
+_ZN3bun6N_SVE215CountDelimsImplEPKhm                                          [SVE]
+_ZN3bun6N_SVE217ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                      [SVE]
+_ZN3bun9N_SVE_25615CountDelimsImplEPKhm                                       [SVE]
+_ZN3bun9N_SVE_25617ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                   [SVE]
+_ZN3bun10N_SVE2_12815CountDelimsImplEPKhm                                     [SVE]
+_ZN3bun10N_SVE2_12817ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [SVE]
 
 
 # ----------------------------------------------------------------------------
@@ -67,7 +166,7 @@ _ZN3hwy3armL26DetectAdditionalSveTargetsEl  [SVE]
 # ----------------------------------------------------------------------------
 # compiler-rt outline atomics. Each helper has both LSE and LDXR/STXR paths;
 # __aarch64_have_lse_atomics (= AT_HWCAP & HWCAP_ATOMICS) picks at runtime.
-# (41 symbols)
+# (54 symbols)
 # ----------------------------------------------------------------------------
 __aarch64_cas1_acq        [LSE]
 __aarch64_cas1_acq_rel    [LSE]
@@ -84,6 +183,7 @@ __aarch64_cas8_rel        [LSE]
 __aarch64_cas8_relax      [LSE]
 __aarch64_ldadd1_acq_rel  [LSE]
 __aarch64_ldadd2_acq_rel  [LSE]
+__aarch64_ldadd4_acq      [LSE]
 __aarch64_ldadd4_acq_rel  [LSE]
 __aarch64_ldadd4_rel      [LSE]
 __aarch64_ldadd4_relax    [LSE]
@@ -91,25 +191,37 @@ __aarch64_ldadd8_acq_rel  [LSE]
 __aarch64_ldadd8_rel      [LSE]
 __aarch64_ldadd8_relax    [LSE]
 __aarch64_ldclr1_acq_rel  [LSE]
+__aarch64_ldclr1_relax    [LSE]
 __aarch64_ldclr2_acq_rel  [LSE]
 __aarch64_ldclr4_acq_rel  [LSE]
 __aarch64_ldclr8_acq_rel  [LSE]
+__aarch64_ldclr8_rel      [LSE]
+__aarch64_ldclr8_relax    [LSE]
 __aarch64_ldeor1_acq_rel  [LSE]
 __aarch64_ldeor2_acq_rel  [LSE]
 __aarch64_ldeor4_acq_rel  [LSE]
 __aarch64_ldeor8_acq_rel  [LSE]
 __aarch64_ldset1_acq_rel  [LSE]
+__aarch64_ldset1_relax    [LSE]
 __aarch64_ldset2_acq_rel  [LSE]
 __aarch64_ldset4_acq_rel  [LSE]
+__aarch64_ldset4_rel      [LSE]
+__aarch64_ldset4_relax    [LSE]
 __aarch64_ldset8_acq_rel  [LSE]
+__aarch64_ldset8_relax    [LSE]
 __aarch64_swp1_acq        [LSE]
 __aarch64_swp1_acq_rel    [LSE]
+__aarch64_swp1_rel        [LSE]
 __aarch64_swp1_relax      [LSE]
 __aarch64_swp2_acq_rel    [LSE]
 __aarch64_swp4_acq        [LSE]
 __aarch64_swp4_acq_rel    [LSE]
 __aarch64_swp4_rel        [LSE]
+__aarch64_swp4_relax      [LSE]
+__aarch64_swp8_acq        [LSE]
 __aarch64_swp8_acq_rel    [LSE]
+__aarch64_swp8_rel        [LSE]
+__aarch64_swp8_relax      [LSE]
 
 
 # ----------------------------------------------------------------------------
@@ -124,7 +236,39 @@ uw_update_context_1  [SVE]
 
 
 # ----------------------------------------------------------------------------
+# libgcc SME lazy-save ABI routines (gcc 14+). Gate: only called from code
+# compiled with __arm_streaming/__arm_new_za (Bun has none); the routines
+# themselves early-return when TPIDR2_EL0 is null on non-SME hardware.
+# (1 symbols)
+# ----------------------------------------------------------------------------
+__arm_tpidr2_save  [SVE]
+
+
+# ----------------------------------------------------------------------------
 # libdeflate Adler-32 NEON DotProd. Gate: HWCAP_ASIMDDP.
 # (1 symbols)
 # ----------------------------------------------------------------------------
 adler32_arm_neon_dotprod  [DotProd]
+
+
+# ----------------------------------------------------------------------------
+# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
+# hwy::SupportedTargets() via getauxval(AT_HWCAP). Same gate as the
+# highway_strings.cpp block above.
+# (5 symbols)
+# ----------------------------------------------------------------------------
+_ZN9bun_image10N_SVE2_128L12ModulateImplEPhmff                                [SVE]
+_ZN9bun_image10N_SVE2_128L13Rotate180ImplEPKhmmPh                             [SVE]
+_ZN9bun_image10N_SVE2_128L8VertPassEPKhmmPhmPKNS_4SpanEPKsm                   [SVE]
+_ZN9bun_image10N_SVE2_128L9FlipHImplEPKhmmPh                                  [SVE]
+_ZN9bun_image10N_SVE2_128L9HorizPassEPKhmmPhmPKNS_4SpanEPKsm                  [SVE]
+
+
+# ----------------------------------------------------------------------------
+# Bun xxHash3 SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP). (4 symbols)
+# (Variants that don't materialize on this target show up as STALE.)
+# ----------------------------------------------------------------------------
+_ZN3bun4xxh35N_SVE8HashLongEPKhmS3_                                           [SVE]
+_ZN3bun4xxh36N_SVE28HashLongEPKhmS3_                                          [SVE]
+_ZN3bun4xxh39N_SVE_2568HashLongEPKhmS3_                                       [SVE]
+_ZN3bun4xxh310N_SVE2_1288HashLongEPKhmS3_                                     [SVE]

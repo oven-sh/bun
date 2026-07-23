@@ -28,9 +28,7 @@ const empty = Buffer.alloc(0);
 
 describe.concurrent("fetch() with streaming", () => {
   [-1, 0, 20, 50, 100].forEach(timeout => {
-    // This test is flaky.
-    // Sometimes, we don't throw if signal.abort(). We need to fix that.
-    it.todo(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
+    it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
       using server = Bun.serve({
         port: 0,
         async fetch(req) {
@@ -147,6 +145,29 @@ describe.concurrent("fetch() with streaming", () => {
     const promise = res.text();
     expect(() => body.getReader()).toThrow("ReadableStream is locked");
     await promise;
+  });
+
+  it("throws a TypeError when the request body stream is already locked", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("payload"));
+        controller.close();
+      },
+    });
+    // A locked (or disturbed) body init is rejected at Request construction with a
+    // TypeError (fetch spec; Node agrees on the error), surfaced as a rejected promise.
+    stream.getReader();
+
+    await expect(fetch(server.url, { method: "POST", body: stream })).rejects.toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Body object should not be disturbed or locked" }),
+    );
   });
 
   it("can deflate with and without headers #4478", async () => {

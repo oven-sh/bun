@@ -57,6 +57,8 @@ const noop = () => {};
 const hasCrypto = Boolean(process.versions.openssl) &&
                   !process.env.NODE_SKIP_CRYPTO;
 
+const hasSQLite = Boolean(process.versions.sqlite);
+
 // Synthesize OPENSSL_VERSION_NUMBER format with the layout 0xMNN00PPSL
 const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   assert(major >= 0 && major <= 0xf);
@@ -130,13 +132,47 @@ if (process.argv.length === 2 &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
+      if (flag === "--no-warnings" && process.versions.bun) {
+        // Harmless under Bun; keep scanning so a later --expose-internals (or
+        // --expose-gc) in the same Flags line still installs its shim instead
+        // of re-spawning the test as a child process.
+        continue;
+      }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
-        globalThis.gc ??= () => Bun.gc(true);
+        // onGCSweepSync (common/gc.js) clears [[KeptAlive]] then collects and
+        // checks onGC()'s WeakRefs synchronously, so ongc() fires before gc()
+        // returns and upstream onGC's one-setImmediate contract holds
+        // regardless of FinalizationRegistry-vs-setImmediate task ordering.
+        const { onGCSweepSync } = require('./gc');
+        const { releaseWeakRefs } = require('bun:jsc');
+        globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
+        break;
+      }
+      if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
+        // V8's externalized-string test helpers. JavaScriptCore has no string
+        // externalization to force, so the create/externalize helpers are
+        // identity/no-op; isOneByteString answers the representation-independent
+        // question V8's helper answers (are all code units <= 0xFF).
+        globalThis.createExternalizableString ??= s => `${s}`;
+        globalThis.createExternalizableTwoByteString ??= s => `${s}`;
+        globalThis.externalizeString ??= () => {};
+        globalThis.isOneByteString ??= s => {
+          for (let i = 0; i < s.length; i++) {
+            if (s.charCodeAt(i) > 0xff) return false;
+          }
+          return true;
+        };
         break;
       }
       if (flag === "--expose-internals" && process.versions.bun) {
         process.env.SKIP_FLAG_CHECK = "1";
+        installBunExposeInternalsRequireInterceptor();
         break;
+      }
+      if ((flag === "--experimental-sqlite" || flag === "--no-experimental-sqlite") && process.versions.bun) {
+        // node:sqlite is always available in Bun; the Node experimental gate
+        // does not exist, so don't re-spawn just to pass the flag through.
+        continue;
       }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
@@ -157,6 +193,43 @@ if (process.argv.length === 2 &&
       }
     }
   }
+}
+
+// Bun: cluster workers re-run the test file but skip the flag-check block
+// above (it is gated on cluster.isPrimary), so tests gated on
+// `// Flags: --expose-internals` would lose access to internal/* in the
+// worker. Install the same require interceptor for workers.
+if (process.versions.bun &&
+    process.argv.length === 2 &&
+    isMainThread &&
+    !require('cluster').isPrimary &&
+    fs.existsSync(process.argv[1]) &&
+    parseTestFlags().includes('--expose-internals')) {
+  installBunExposeInternalsRequireInterceptor();
+}
+
+// Serve require("internal/*") from bun's internal module registry
+// (via bun:internal-for-testing, which is expose-internals-gated:
+// always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+// for release). Unknown internal/* specifiers fall through to the
+// original require and fail exactly as before.
+function installBunExposeInternalsRequireInterceptor() {
+  const BunModule = require('module');
+  const originalRequire = BunModule.prototype.require;
+  let exposedInternals;
+  BunModule.prototype.require = function require(id) {
+    if (typeof id === 'string' && id.startsWith('internal/')) {
+      exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
+      if (exposedInternals[id] !== undefined) {
+        return exposedInternals[id];
+      }
+    }
+    return originalRequire.apply(this, arguments);
+  };
+  // http2-specific internal modules (internal/http2/util, …) are
+  // served separately via Bun.plugin module shims backed by the
+  // node:http2 implementation's own internals.
+  installBunExposeInternalsShim();
 }
 
 const isWindows = process.platform === 'win32';
@@ -185,7 +258,7 @@ const isPi = (() => {
 const isDumbTerminal = process.env.TERM === 'dumb';
 
 // When using high concurrency or in the CI we need much more time for each connection attempt
-net.setDefaultAutoSelectFamilyAttemptTimeout(platformTimeout(net.getDefaultAutoSelectFamilyAttemptTimeout() * 10));
+net.setDefaultAutoSelectFamilyAttemptTimeout(platformTimeout(net.getDefaultAutoSelectFamilyAttemptTimeout() * 5));
 const defaultAutoSelectFamilyAttemptTimeout = net.getDefaultAutoSelectFamilyAttemptTimeout();
 
 const buildType = process.config.target_defaults ?
@@ -791,6 +864,12 @@ function skipIfWorker() {
   }
 }
 
+function skipIfSQLiteMissing() {
+  if (!hasSQLite) {
+    skip('missing SQLite');
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -1039,6 +1118,12 @@ function expectRequiredModule(mod, expectation, checkESModule = true) {
   assert.deepStrictEqual(clone, { ...expectation });
 }
 
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const i32 = new Int32Array(sab);
+  Atomics.wait(i32, 0, 0, ms);
+}
+
 const common = {
   allowGlobals,
   buildType,
@@ -1060,6 +1145,7 @@ const common = {
   hasCrypto,
   hasOpenSSL,
   hasQuic,
+  hasSQLite,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
@@ -1094,7 +1180,9 @@ const common = {
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfSQLiteMissing,
   skipIfWorker,
+  sleepSync,
   spawnPromisified,
 
   get enoughTestMem() {
@@ -1127,6 +1215,15 @@ const common = {
 
   get hasOpenSSL31() {
     return hasOpenSSL(3, 1);
+  },
+
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
   },
 
   get hasOpenSSL32() {
@@ -1227,3 +1324,109 @@ module.exports = new Proxy(common, {
     return obj[prop];
   },
 });
+
+// Bun: tests gated on `// Flags: --expose-internals` import node-internal modules for access to
+// internal symbols and classes (kSocket, ServerHttp2Session, NghttpError, ...). Provide those as
+// virtual modules backed by Bun's actual internals, so the tests exercise real behavior rather
+// than being skipped on the import.
+function installBunExposeInternalsShim() {
+  if (typeof Bun === "undefined" || typeof Bun.plugin !== "function") return;
+  let http2Internals = {};
+  try {
+    http2Internals = require("http2")[Symbol.for("::bunhttp2internals::")] ?? {};
+  } catch {
+    // http2 may be unavailable in some builds; the shim then only provides symbols.
+  }
+  class NghttpError extends Error {
+    constructor(message) {
+      super(message);
+      this.code = "ERR_HTTP2_ERROR";
+    }
+  }
+
+  // Webstreams tests read Node's `stream[kState].state` / `.storedError` and
+  // use isPromisePending from internal/webstreams/util. Bun's web streams keep
+  // that state in private fields; surface it through the same kState shape via
+  // bun:internal-for-testing.
+  const kWebStreamState = Symbol('kState');
+  let getWebStreamState;
+  try {
+    ({ getWebStreamState } = require('bun:internal-for-testing'));
+  } catch {
+    // bun:internal-for-testing is gated; without it the kState lookups below
+    // return undefined and the test fails on the assertion rather than here.
+  }
+  if (typeof getWebStreamState === 'function') {
+    for (const ctor of [ReadableStream, WritableStream]) {
+      Object.defineProperty(ctor.prototype, kWebStreamState, {
+        __proto__: null,
+        configurable: true,
+        get() { return getWebStreamState(this); },
+      });
+    }
+  }
+
+  Bun.plugin({
+    name: "node-test-expose-internals",
+    setup(build) {
+      build.module("internal/http2/util", () => ({
+        loader: "object",
+        exports: {
+          // The same registered symbol node:http2 stores the raw socket under.
+          kSocket: Symbol.for("::bunhttp2socket::"),
+          NghttpError,
+          ...(http2Internals.util ?? {}),
+        },
+      }));
+      build.module("internal/http2/core", () => ({
+        loader: "object",
+        exports: { ...(http2Internals.core ?? {}) },
+      }));
+      build.module("internal/timers", () => ({
+        loader: "object",
+        // TIMEOUT_MAX mirrors Node's internal/timers (2 ** 31 - 1) so vendored
+        // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
+        exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
+      }));
+      build.module("internal/webstreams/util", () => ({
+        loader: "object",
+        exports: {
+          kState: kWebStreamState,
+          isPromisePending: promise => Bun.peek.status(promise) === "pending",
+        },
+      }));
+      // node's internal/http: serve the very same symbols Bun's _http_outgoing
+      // attaches to OutgoingMessage instances, so tests poke at real state.
+      build.module("internal/http", () => {
+        const { kOutHeaders, kHighWaterMark } = require("node:_http_outgoing");
+        return {
+          loader: "object",
+          exports: { kOutHeaders, kHighWaterMark },
+        };
+      });
+      // node's internal/streams/state: getDefaultHighWaterMark is also part of
+      // the public node:stream API, so reuse that (same function in Bun).
+      build.module("internal/streams/state", () => ({
+        loader: "object",
+        exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
+      }));
+      // node's internal/options: map the few CLI options vendored http tests ask
+      // about onto the equivalent runtime values. Unknown options return undefined.
+      build.module("internal/options", () => ({
+        loader: "object",
+        exports: {
+          getOptionValue(name) {
+            switch (name) {
+              case "--max-http-header-size":
+                return require("node:http").maxHeaderSize;
+              case "--insecure-http-parser":
+                return false;
+              default:
+                return undefined;
+            }
+          },
+        },
+      }));
+    },
+  });
+}

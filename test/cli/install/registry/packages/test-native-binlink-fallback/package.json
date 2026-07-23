@@ -1,0 +1,25 @@
+{
+  "_id": "test-native-binlink-fallback",
+  "name": "test-native-binlink-fallback",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-fallback",
+      "version": "1.0.0",
+      "_id": "test-native-binlink-fallback@1.0.0",
+      "bin": {
+        "fallback-cmd": "cli.js"
+      },
+      "optionalDependencies": {
+        "test-native-binlink-fallback-target": "1.0.0"
+      },
+      "dist": {
+        "integrity": "sha512-7wTC93oXq0lFzwwgXqwAl2ZxYfRs3QR0PefTq285QGV7DrFv1UrjlzwHAn5XsXnB3KW0WxAAge5wbkooY+MqJA==",
+        "shasum": "c67472b6d621adb00161b2368c8174532700c9ab",
+        "tarball": "http://localhost:4873/test-native-binlink-fallback/-/test-native-binlink-fallback-1.0.0.tgz"
+      }
+    }
+  }
+}

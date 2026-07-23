@@ -10,3 +10,7 @@ test("request error doesn't leak", async () => {
 test("response error doesn't leak", async () => {
   expect([join(import.meta.dir, "response-constructor-leak-fixture.js")]).toRun();
 });
+
+test("server.fetch(string) doesn't leak the URL buffer", async () => {
+  expect([join(import.meta.dir, "server-fetch-string-leak-fixture.js")]).toRun();
+});

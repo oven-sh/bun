@@ -13,12 +13,16 @@ globalThis.require = require;
 globalThis.__dirname = "/";
 globalThis.__filename = "/fuzzilli.js";
 
+// process.execve replaces the process image on success, which kills the REPRL
+// child, so fuzzed scripts must not be able to reach the real implementation.
+process.execve = () => {};
+
 // ============================================================================
 // REPRL Protocol Loop
 // ============================================================================
 
 // Verify we're running under Fuzzilli before starting REPRL loop
-// The Zig code should have already checked, but double-check here
+// The native side should have already checked, but double-check here
 try {
   // Try to stat fd 100 to see if it exists
   fs.fstatSync(REPRL_CRFD);

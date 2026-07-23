@@ -2,7 +2,7 @@
 
 exports[`yarn.lock migration basic simple yarn.lock migration produces correct bun.lock: simple-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -21,7 +21,7 @@ exports[`yarn.lock migration basic simple yarn.lock migration produces correct b
 
 exports[`yarn.lock migration basic complex yarn.lock with multiple dependencies and versions: complex-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -169,7 +169,7 @@ exports[`yarn.lock migration basic complex yarn.lock with multiple dependencies 
 
 exports[`yarn.lock migration basic yarn.lock with npm aliases: aliases-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -195,7 +195,7 @@ exports[`yarn.lock migration basic yarn.lock with npm aliases: aliases-yarn-migr
 
 exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -219,7 +219,7 @@ exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-
 
 exports[`yarn.lock migration basic yarn.lock with workspace dependencies: workspace-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -238,7 +238,7 @@ exports[`yarn.lock migration basic yarn.lock with workspace dependencies: worksp
 
 exports[`yarn.lock migration basic yarn.lock with scoped packages and parent/child relationships: scoped-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -266,7 +266,7 @@ exports[`yarn.lock migration basic yarn.lock with scoped packages and parent/chi
 
 exports[`yarn.lock migration basic migration with realistic complex yarn.lock: complex-realistic-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -321,7 +321,7 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
 
 exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3066,7 +3066,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] 
 
 exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp: yarn-lock-mkdirp 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3084,7 +3084,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp: yarn-lock-mkdir
 
 exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-file-dep: yarn-lock-mkdirp-file-dep 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3102,7 +3102,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-file-dep: yarn-l
 
 exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-no-resolved: yarn-lock-mkdirp-no-resolved 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3163,7 +3163,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
 exports[`bun pm migrate for existing yarn.lock yarn-stuff/abbrev-link-target: yarn-stuff/abbrev-link-target 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3177,7 +3177,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff/abbrev-link-target: ya
 
 exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have os/cpu requirements: os-cpu-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

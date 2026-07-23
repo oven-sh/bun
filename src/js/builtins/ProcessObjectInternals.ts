@@ -65,6 +65,11 @@ export function getStdioWriteStream(
           // stdout/stderr don't produce readable data, so yield nothing
         })();
       };
+    } else {
+      // File-backed stdio: Node's SyncWriteStream runs end() -> finish ->
+      // destroy -> the _destroy override below -> _undestroy(), which resets
+      // writable state so later writes succeed. autoClose:false disabled that.
+      stream._writableState.autoDestroy = true;
     }
   }
 
@@ -122,18 +127,19 @@ export function getStdinStream(
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
-  var shouldDisown = false;
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
 
   function own() {
+    // After EOF there is nothing left to read: no acquisition path ('readable'
+    // listeners, resume(), ref(), an explicit read()) may take the reader back.
+    if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
-    shouldDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
       internalRead(stream);
@@ -145,22 +151,13 @@ export function getStdinStream(
     source?.setFlowing?.(false);
 
     if (reader) {
-      try {
-        reader.releaseLock();
-        reader = undefined;
-        $debug("released reader");
-      } catch (e: any) {
-        $debug("reader lock cannot be released, waiting");
-        $assert(e.message === "There are still pending read requests, cannot release the lock");
-
-        // Releasing the lock is not possible as there are active reads
-        // we will instead pretend we are unref'd, and release the lock once the reads are finished.
-        shouldDisown = true;
-        source?.updateRef?.(false);
-      }
-    } else if (source) {
-      source.updateRef(false);
+      // releaseLock() rejects any in-flight internalRead() with a TypeError; that
+      // rejection is handled there by observing that `reader` was cleared here.
+      reader.releaseLock();
+      reader = undefined;
+      $debug("released reader");
     }
+    source?.updateRef?.(false);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
@@ -169,7 +166,7 @@ export function getStdinStream(
   const originalOn = stream.on;
 
   let stream_destroyed = false;
-  let stream_endEmitted = false;
+  let stream_reachedEof = false;
   stream.addListener = stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -215,43 +212,68 @@ export function getStdinStream(
     return originalResume.$call(this);
   };
 
+  const originalRead = stream.read;
+  stream.read = function (size) {
+    const ret = originalRead.$call(this, size);
+    // An explicit read() must acquire the native reader: _read() without one only
+    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
+    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
+    if (size !== 0 && reader === undefined && !stream_destroyed) {
+      own();
+    }
+    return ret;
+  };
+
+  function rethrowUncaught(err) {
+    throw err;
+  }
+
   async function internalRead(stream) {
     $debug("internalRead();");
+    // The reader this read belongs to. releaseLock() rejects the in-flight read(); by the
+    // time that rejection lands, own() may already have acquired a NEW reader, so the catch
+    // must key on this acquisition rather than on the current `reader`.
+    const readerForThisRead = reader;
+    let value;
     try {
-      $assert(reader);
-      const { value } = await reader.read();
-
-      if (value) {
-        stream.push(value);
-
-        if (shouldDisown) disown();
-      } else {
-        if (!stream_endEmitted) {
-          stream_endEmitted = true;
-          stream.emit("end");
-        }
-        if (!stream_destroyed) {
-          stream_destroyed = true;
-          stream.destroy();
-          disown();
-        }
-      }
+      $assert(readerForThisRead);
+      ({ value } = await readerForThisRead.read());
     } catch (err) {
-      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // The stream was unref()ed. It may be ref()ed again in the future,
-        // or maybe it has already been ref()ed again and we just need to
-        // restart the internalRead() function. triggerRead() will figure that out.
+      if (readerForThisRead !== reader) {
+        // disown() released this read's reader while it was in flight (stdin may have been
+        // re-owned since), so the read rejected because the stream was unref()ed, not
+        // because it failed. triggerRead() re-arms if/when it is ref()ed again.
         triggerRead.$call(stream, undefined);
         return;
       }
       stream.destroy(err);
+      return;
+    }
+
+    try {
+      if (value) {
+        stream.push(value);
+      } else {
+        // EOF. Nothing is left to read, so release the native reader before
+        // push(null) runs user 'readable' listeners; the process must be able
+        // to exit even if one of them throws or never drains the buffer.
+        stream_reachedEof = true;
+        disown();
+        // push(null) instead of emitting 'end' by hand so read(n) can still
+        // return the buffered < n byte remainder and 'end'/'readableEnded'
+        // come from the stream machinery once the buffer drains.
+        stream.push(null);
+      }
+    } catch (err) {
+      if (value) triggerRead.$call(stream, undefined);
+      process.nextTick(rethrowUncaught, err);
     }
   }
 
   function triggerRead(_size) {
     $debug("_read();", reader);
 
-    if (reader && !shouldDisown) {
+    if (reader) {
       internalRead(this);
     } else {
       // The stream has not been ref()ed yet. If it is ever ref()ed,
@@ -281,6 +303,17 @@ export function getStdinStream(
     });
   });
 
+  // The stream is created with autoClose: false so autoDestroy is off; match
+  // Node by destroying stdin once 'end' has emitted ('close' follows 'end').
+  stream.on("end", () => {
+    if (!stream_destroyed) {
+      stream_destroyed = true;
+      process.nextTick(() => {
+        stream.destroy();
+      });
+    }
+  });
+
   stream.on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
@@ -300,6 +333,7 @@ export function initializeNextTickQueue(
   reportUncaughtExceptionFn,
 ) {
   var queue;
+  var tickInitHooks;
   var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
@@ -311,6 +345,7 @@ export function initializeNextTickQueue(
   setup = () => {
     const { FixedQueue } = require("internal/fixed_queue");
     queue = new FixedQueue();
+    tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
 
     function processTicksAndRejections() {
       var tock;
@@ -368,13 +403,37 @@ export function initializeNextTickQueue(
     }
     if (process._exiting) return;
 
-    queue.push({
+    const tock = {
       callback: cb,
       // We want to avoid materializing the args if there are none because it's
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
-    });
+    };
+    if (tickInitHooks.length !== 0) {
+      // node fires one TickObject init per process.nextTick() call, at
+      // construction time (before the callback runs).
+      const asyncHooksTick = require("internal/async_hooks_tick");
+      const asyncId = asyncHooksTick.newAsyncId();
+      // Snapshot: enable()/disable() from inside a hook must not affect the
+      // in-flight dispatch (node stages such mutations in tmp_array until
+      // the emit completes).
+      const hooks = tickInitHooks.slice();
+      for (let i = 0; i < hooks.length; i++) {
+        try {
+          hooks[i](asyncId, "TickObject", 0, tock);
+        } catch (err) {
+          // node: a throwing init hook is fatal (fatalError: print + exit 1),
+          // never surfaced to the process.nextTick() caller. console is a
+          // user-mutable global, so shield the print; exit regardless.
+          try {
+            console.error(typeof err?.stack === "string" ? err.stack : err);
+          } catch {}
+          process.exit(1);
+        }
+      }
+    }
+    queue.push(tock);
     $putInternalField(nextTickQueue, 0, 1);
   }
 
@@ -403,18 +462,45 @@ export function windowsEnv(
   };
 
   (internalEnv as any).toJSON = () => {
-    return { ...internalEnv };
+    // Mirror enumeration: original-case key names, case-insensitive values.
+    // Spreading internalEnv directly would leak the canonical UPPERCASE
+    // storage keys into JSON.stringify(process.env) and IPC env echoes.
+    let o = {};
+    for (let k of envMapList) {
+      o[k] = internalEnv[k.toUpperCase()];
+    }
+    return o;
   };
 
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+      if (typeof p !== "string") {
+        // Symbol keys (e.g. Bun.inspect.custom) live on internalEnv as-is.
+        return (internalEnv as any)[p];
+      }
+      // Env-var lookup is case-insensitive on Windows: the canonical
+      // uppercase key wins when the variable exists.
+      const k = p.toUpperCase();
+      if (k in internalEnv) {
+        return internalEnv[k];
+      }
+      // Not an env var: fall through to own as-is properties (toJSON) and
+      // inherited Object.prototype methods (hasOwnProperty, toString, ...),
+      // matching node where `process.env.hasOwnProperty` is callable.
+      return internalEnv[p];
     },
     set(_, p, value) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      // Track the key for enumeration if it isn't already there. Don't gate on
+      // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
+      // HTTPS_PROXY, NO_PROXY and lowercase variants) always exist on
+      // `internalEnv` as DontEnum CustomAccessors even when the var was never
+      // in the OS env block, so the `in` check is true while envMapList
+      // correctly omits them. A first-time runtime assignment must still add
+      // the key so `Object.keys(process.env)` / `{...process.env}` see it.
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
       if (internalEnv[k] !== value) {
@@ -424,7 +510,13 @@ export function windowsEnv(
       return true;
     },
     has(_, p) {
-      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
+      // Case-insensitive env-var query first, then ordinary lookup so own
+      // as-is properties and Object.prototype methods answer `in` like node
+      // (`'hasOwnProperty' in process.env` is true on all platforms).
+      if (typeof p === "string" && p.toUpperCase() in internalEnv) {
+        return true;
+      }
+      return p in internalEnv;
     },
     deleteProperty(_, p) {
       const k = String(p).toUpperCase();
@@ -445,7 +537,12 @@ export function windowsEnv(
       return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {
-      return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;
+      if (typeof p === "string") {
+        const desc = Reflect.getOwnPropertyDescriptor(target, p.toUpperCase());
+        if (desc) return desc;
+      }
+      // Own as-is properties (toJSON, Bun.inspect.custom symbol).
+      return Reflect.getOwnPropertyDescriptor(target, p);
     },
     ownKeys() {
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
@@ -456,7 +553,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
+  const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
   return new (class Control extends EventEmitter {
     constructor() {
       super();

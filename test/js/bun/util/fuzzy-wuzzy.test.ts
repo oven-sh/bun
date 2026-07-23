@@ -100,8 +100,11 @@ const banned = [
   "close",
   "connect",
   "listen",
+  // Readable#pipe() with no destination throws, but first registers an 'end'
+  // listener that later throws an uncatchable TypeError (dest.end() with dest
+  // undefined) once process.stdin ends. Node leaves the same listener behind.
+  "pipe",
   "_start",
-  "wait",
   "wait",
   "sleep",
   "exit",
@@ -178,14 +181,9 @@ function allThePropertyNames(object, banned) {
     pro = Object.getPrototypeOf(pro);
   }
 
-  for (const ban of banned) {
-    const index = names.indexOf(ban);
-    if (index !== -1) {
-      names.splice(index, 1);
-    }
-  }
-
-  return names;
+  // A name can appear once per prototype that defines it (process.stdin sees
+  // "pipe" from ReadStream, Readable and Stream), so drop every occurrence.
+  return names.filter(name => !banned.includes(name));
 }
 
 if (ENABLE_LOGGING) {

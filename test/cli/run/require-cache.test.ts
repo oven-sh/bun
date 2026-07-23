@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isBroken, isCI, isIntelMacOS, isMacOS, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isBroken,
+  isCI,
+  isIntelMacOS,
+  isMacOS,
+  isMusl,
+  isWindows,
+  tempDirWithFiles,
+} from "harness";
 import { join } from "path";
 
 describe.concurrent("require.cache", () => {
@@ -77,7 +89,7 @@ describe.concurrent("require.cache", () => {
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > 100 * 1024 * 1024) {
+          if (diff > ${isASAN ? 400 : 100} * 1024 * 1024) {
             // Bun v1.1.21 reported 844 MB here on macOS arm64.
             throw new Error("Memory leak detected");
           }
@@ -129,7 +141,7 @@ describe.concurrent("require.cache", () => {
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > 64 * 1024 * 1024) {
+          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
             // Bun v1.1.22 reported 1 MB here on macoS arm64.
             // Bun v1.1.21 reported 257 MB here on macoS arm64.
             throw new Error("Memory leak detected");
@@ -178,7 +190,7 @@ describe.concurrent("require.cache", () => {
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > 64 * 1024 * 1024) {
+          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
             // Bun v1.1.21 reported 423 MB here on macoS arm64.
             // Bun v1.1.22 reported 4 MB here on macoS arm64.
             throw new Error("Memory leak detected");
@@ -199,8 +211,10 @@ describe.concurrent("require.cache", () => {
     }, 60000);
 
     test.todoIf(
-      // Flaky specifically on macOS CI.
-      isBroken && isMacOS && isCI,
+      // Flaky specifically on macOS CI, and on musl-aarch64 under ThinLTO +
+      // -Zshare-generics where RSS reports ~280 MB for the same workload
+      // that measures under 64 MB elsewhere (intermittent).
+      isBroken && isCI && (isMacOS || (isMusl && isArm64)),
     )(
       "via require() with a lot of function calls",
       async () => {
@@ -241,7 +255,7 @@ describe.concurrent("require.cache", () => {
           const diff = rss - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > 64 * 1024 * 1024) {
+          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
             // Bun v1.1.22 reported 4 MB here on macoS arm64.
             // Bun v1.1.21 reported 248 MB here on macoS arm64.
             throw new Error("Memory leak detected");

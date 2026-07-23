@@ -88,6 +88,45 @@ describe("Bun.markdown.react", () => {
     expect(img.props.children).toBeUndefined();
   });
 
+  test("reference-style link has href/title in props", () => {
+    const md = '[click here][ref]\n\n[ref]: https://example.com/path "the title"\n';
+    const link = children(md)[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect({ href: link.props.href, title: link.props.title, children: link.props.children }).toEqual({
+      href: "https://example.com/path",
+      title: "the title",
+      children: ["click here"],
+    });
+  });
+
+  test("shortcut reference link has href/title in props", () => {
+    const md = '[ref]\n\n[ref]: https://example.com/path "the title"\n';
+    const link = children(md)[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect({ href: link.props.href, title: link.props.title }).toEqual({
+      href: "https://example.com/path",
+      title: "the title",
+    });
+  });
+
+  test("collapsed reference link has href in props", () => {
+    const md = "[ref][]\n\n[ref]: https://example.com/path\n";
+    const link = children(md)[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect(link.props.href).toBe("https://example.com/path");
+  });
+
+  test("reference-style image has src/title in props", () => {
+    const md = '![alt text][ref]\n\n[ref]: https://example.com/img.png "the title"\n';
+    const img = children(md)[0].props.children[0];
+    expect(img.type).toBe("img");
+    expect({ src: img.props.src, title: img.props.title, alt: img.props.alt }).toEqual({
+      src: "https://example.com/img.png",
+      title: "the title",
+      alt: "alt text",
+    });
+  });
+
   test("code block with language", () => {
     const pre = children("```ts\nconst x = 1;\n```\n")[0];
     expect(pre.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);

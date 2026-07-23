@@ -12,7 +12,7 @@
  * }
  * ```
  *
- * Enable feature flags via CLI:
+ * Enable feature flags from the CLI:
  * ```bash
  * # During build
  * bun build --feature=SUPER_SECRET index.ts
@@ -51,13 +51,13 @@ declare module "bun:bundle" {
   interface Registry {}
 
   /**
-   * Check if a feature flag is enabled at compile time.
+   * Checks whether a feature flag is enabled at compile time.
    *
-   * This function is replaced with a boolean literal (`true` or `false`) at bundle time,
-   * enabling dead-code elimination. The bundler will remove unreachable branches.
+   * At bundle time, Bun replaces each call with a boolean literal (`true` or `false`)
+   * and removes the unreachable branch.
    *
-   * @param flag - The name of the feature flag to check
-   * @returns `true` if the flag was passed via `--feature=FLAG`, `false` otherwise
+   * @param flag Name of the feature flag to check
+   * @returns `true` if the flag was passed with `--feature=FLAG`, `false` otherwise
    *
    * @example
    * ```ts

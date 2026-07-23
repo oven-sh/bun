@@ -143,8 +143,8 @@ const ONLY_ENUMERABLE = 2;
  *
  * @type {(value: string) => string[] | undefined}
  */
-const extractedSplitNewLinesFastPathStringsOnly = $newZigFunction(
-  "node_util_binding.zig",
+const extractedSplitNewLinesFastPathStringsOnly = $newRustFunction(
+  "node_util_binding.rs",
   "extractedSplitNewLinesFastPathStringsOnly",
   1,
 );
@@ -154,30 +154,6 @@ const isAsyncFunction = v =>
 const isGeneratorFunction = v =>
   typeof v === "function" && StringPrototypeMatch(FunctionPrototypeToString(v), /^(async\s+)?function *\*/);
 
-function vmSafeInstanceof(val, ctor) {
-  if (val instanceof ctor) return true;
-  // instanceof doesn't work across vm boundaries, so check the whole inheritance chain
-  while (val) {
-    if (typeof val !== "object") return false;
-    if (ctor.name === internalGetConstructorName(val)) return true;
-    val = ObjectGetPrototypeOf(val);
-  }
-  return false;
-}
-function checkBox(ctor) {
-  return val => {
-    if (!vmSafeInstanceof(val, ctor)) return false;
-    try {
-      ctor.prototype.valueOf.$call(val);
-    } catch {
-      return false;
-    }
-    return true;
-  };
-}
-const isBigIntObject = checkBox(BigInt);
-const isSymbolObject = checkBox(Symbol);
-
 const {
   //! The native versions of the commented out functions are currently buggy, so we use the polyfills above for now.
   //isAsyncFunction,
@@ -185,28 +161,26 @@ const {
   isAnyArrayBuffer,
   isArrayBuffer,
   isArgumentsObject,
-  isBoxedPrimitive: _native_isBoxedPrimitive,
+  isBigIntObject,
+  isBooleanObject,
+  isBoxedPrimitive,
   isDataView,
   isExternal,
   isMap,
   isMapIterator,
   isModuleNamespaceObject,
   isNativeError,
+  isNumberObject,
   isPromise,
   isSet,
   isSetIterator,
+  isStringObject,
   isWeakMap,
   isWeakSet,
   isRegExp,
   isDate,
   isTypedArray,
-  isStringObject,
-  isNumberObject,
-  isBooleanObject,
 } = require("node:util/types");
-
-//! temp workaround to apply is{BigInt,Symbol}Object fix
-const isBoxedPrimitive = val => isBigIntObject(val) || isSymbolObject(val) || _native_isBoxedPrimitive(val);
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
@@ -273,23 +247,26 @@ const codes = {}; // exported from errors.js
         ArrayPrototypePush.$call(instances, "Object");
       }
     }
-    if (types.length > 0) {
-      if (types.length > 2) msg += `one of type ${ArrayPrototypeJoin(types, ", ")}, or ${ArrayPrototypePop(types)}`;
-      else if (types.length === 2) msg += `one of type ${types[0]} or ${types[1]}`;
+    const typesLength = types.length;
+    if (typesLength > 0) {
+      if (typesLength > 2) msg += `one of type ${ArrayPrototypeJoin(types, ", ")}, or ${ArrayPrototypePop(types)}`;
+      else if (typesLength === 2) msg += `one of type ${types[0]} or ${types[1]}`;
       else msg += `of type ${types[0]}`;
       if (instances.length > 0 || other.length > 0) msg += " or ";
     }
-    if (instances.length > 0) {
-      if (instances.length > 2)
+    const instancesLength = instances.length;
+    if (instancesLength > 0) {
+      if (instancesLength > 2)
         msg += `an instance of ${ArrayPrototypeJoin(instances, ", ")}, or ${ArrayPrototypePop(instances)}`;
-      else msg += `an instance of ${instances[0]}` + (instances.length === 2 ? ` or ${instances[1]}` : "");
+      else msg += `an instance of ${instances[0]}` + (instancesLength === 2 ? ` or ${instances[1]}` : "");
       if (other.length > 0) msg += " or ";
     }
-    if (other.length > 0) {
-      if (other.length > 2) {
+    const otherLength = other.length;
+    if (otherLength > 0) {
+      if (otherLength > 2) {
         const last = ArrayPrototypePop(other);
         msg += `one of ${ArrayPrototypeJoin(other, ", ")}, or ${last}`;
-      } else if (other.length === 2) {
+      } else if (otherLength === 2) {
         msg += `one of ${other[0]} or ${other[1]}`;
       } else {
         if (StringPrototypeToLowerCase(other[0]) !== other[0]) msg += "an ";
@@ -297,10 +274,13 @@ const codes = {}; // exported from errors.js
       }
     }
 
+    let actualName;
     if (actual == null) msg += `. Received ${actual}`;
-    else if (typeof actual === "function" && actual.name) msg += `. Received function ${actual.name}`;
+    else if (typeof actual === "function" && (actualName = actual.name)) msg += `. Received function ${actualName}`;
     else if (typeof actual === "object") {
-      if (actual.constructor && actual.constructor.name) msg += `. Received an instance of ${actual.constructor.name}`;
+      const actualCtor = actual.constructor;
+      const actualCtorName = actualCtor ? actualCtor.name : undefined;
+      if (actualCtorName) msg += `. Received an instance of ${actualCtorName}`;
       else msg += `. Received ${inspect(actual, { depth: -1 })}`;
     } else {
       let inspected = inspect(actual, { colors: false });
@@ -711,13 +691,14 @@ function inspect(value, opts) {
     getters: inspectDefaultOptions.getters,
     numericSeparator: inspectDefaultOptions.numericSeparator,
   };
-  if (arguments.length > 1) {
+  const argc = arguments.length;
+  if (argc > 1) {
     // Legacy...
-    if (arguments.length > 2) {
+    if (argc > 2) {
       if (arguments[2] !== undefined) {
         ctx.depth = arguments[2];
       }
-      if (arguments.length > 3 && arguments[3] !== undefined) {
+      if (argc > 3 && arguments[3] !== undefined) {
         ctx.colors = arguments[3];
       }
     }
@@ -1000,16 +981,15 @@ function getConstructorName(obj, ctx, recurseTimes, protoProps) {
       }
     }
     const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
-    if (
-      descriptor !== undefined &&
-      typeof descriptor.value === "function" &&
-      descriptor.value.name !== "" &&
-      isInstanceof(tmp, descriptor.value)
-    ) {
-      if (protoProps !== undefined && (firstProto !== obj || !builtInObjects.has(descriptor.value.name))) {
-        addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
+    const descriptorValue = descriptor !== undefined ? descriptor.value : undefined;
+    if (typeof descriptorValue === "function") {
+      const descriptorValueName = descriptorValue.name;
+      if (descriptorValueName !== "" && isInstanceof(tmp, descriptorValue)) {
+        if (protoProps !== undefined && (firstProto !== obj || !builtInObjects.has(descriptorValueName))) {
+          addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
+        }
+        return String(descriptorValueName);
       }
-      return String(descriptor.value.name);
     }
 
     obj = ObjectGetPrototypeOf(obj);
@@ -1450,8 +1430,9 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     }
     throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
   }
-  if (ctx.circular !== undefined) {
-    const index = ctx.circular.get(value);
+  const circular = ctx.circular;
+  if (circular !== undefined) {
+    const index = circular.get(value);
     if (index !== undefined) {
       ctx.seenRefs ??= new Set();
       const SEEN = ctx.seenRefs.has(index);
@@ -1476,14 +1457,18 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   }
   ctx.seen.pop();
 
-  if (ctx.sorted) {
-    const comparator = ctx.sorted === true ? undefined : ctx.sorted;
+  const ctxSorted = ctx.sorted;
+  if (ctxSorted) {
+    const comparator = ctxSorted === true ? undefined : ctxSorted;
     if (extrasType === kObjectType) {
       ArrayPrototypeSort(output, comparator);
-    } else if (keys.length > 1) {
-      const sorted = ArrayPrototypeSort(ArrayPrototypeSlice(output, output.length - keys.length), comparator);
-      ArrayPrototypeUnshift(sorted, output, output.length - keys.length, keys.length);
-      ArrayPrototypeSplice.$apply(null, sorted);
+    } else {
+      const keysLength = keys.length;
+      if (keysLength > 1) {
+        const sorted = ArrayPrototypeSort(ArrayPrototypeSlice(output, output.length - keysLength), comparator);
+        ArrayPrototypeUnshift(sorted, output, output.length - keysLength, keysLength);
+        ArrayPrototypeSplice.$apply(null, sorted);
+      }
     }
   }
 
@@ -1831,8 +1816,9 @@ function formatError(err, constructor, tag, ctx, keys) {
     stack = newStack;
   }
   // The message and the stack have to be indented as well!
-  if (ctx.indentationLvl !== 0) {
-    const indentation = StringPrototypeRepeat(" ", ctx.indentationLvl);
+  const indentationLvl = ctx.indentationLvl;
+  if (indentationLvl !== 0) {
+    const indentation = StringPrototypeRepeat(" ", indentationLvl);
     stack = StringPrototypeReplaceAll(stack, "\n", `\n${indentation}`);
   }
   return stack;
@@ -1865,7 +1851,9 @@ function groupArrayElements(ctx, output, value) {
   // of arrays that contains entries of very different length (i.e., if a single
   // entry is longer than 1/5 of all other entries combined). Otherwise the
   // space in-between small entries would be enormous.
-  if (actualMax * 3 + ctx.indentationLvl < ctx.breakLength && (totalLength / actualMax > 5 || maxLength <= 6)) {
+  const indentationLvl = ctx.indentationLvl;
+  const breakLength = ctx.breakLength;
+  if (actualMax * 3 + indentationLvl < breakLength && (totalLength / actualMax > 5 || maxLength <= 6)) {
     const approxCharHeights = 2.5;
     const averageBias = MathSqrt(actualMax - totalLength / output.length);
     const biasedMax = MathMax(actualMax - 3 - averageBias, 1);
@@ -1878,7 +1866,7 @@ function groupArrayElements(ctx, output, value) {
       // The added bias increases the columns for short entries.
       MathRound(MathSqrt(approxCharHeights * biasedMax * outputLength) / biasedMax),
       // Do not exceed the breakLength.
-      MathFloor((ctx.breakLength - ctx.indentationLvl) / actualMax),
+      MathFloor((breakLength - indentationLvl) / actualMax),
       // Limit array grouping for small `compact` modes as the user requested
       // minimal grouping.
       ctx.compact * 4,
@@ -1994,23 +1982,27 @@ function formatBigInt(fn, bigint, numericSeparator) {
 function formatPrimitive(fn, value, ctx) {
   if (typeof value === "string") {
     let trailer = "";
-    if (value.length > ctx.maxStringLength) {
-      const remaining = value.length - ctx.maxStringLength;
-      value = StringPrototypeSlice(value, 0, ctx.maxStringLength);
+    const maxStringLength = ctx.maxStringLength;
+    let valueLength = value.length;
+    if (valueLength > maxStringLength) {
+      const remaining = valueLength - maxStringLength;
+      value = StringPrototypeSlice(value, 0, maxStringLength);
+      valueLength = value.length;
       trailer = `... ${remaining} more character${remaining > 1 ? "s" : ""}`;
     }
+    const indentationLvl = ctx.indentationLvl;
     if (
       ctx.compact !== true &&
       // We do not support handling unicode characters width with
       // the readline getStringWidth function as there are
       // performance implications.
-      value.length > kMinLineLength &&
-      value.length > ctx.breakLength - ctx.indentationLvl - 4
+      valueLength > kMinLineLength &&
+      valueLength > ctx.breakLength - indentationLvl - 4
     ) {
       return (
         ArrayPrototypeJoin(
           ArrayPrototypeMap(extractedSplitNewLines(value), line => fn(strEscape(line), "string")),
-          ` +\n${StringPrototypeRepeat(" ", ctx.indentationLvl + 2)}`,
+          ` +\n${StringPrototypeRepeat(" ", indentationLvl + 2)}`,
         ) + trailer
       );
     }
@@ -2297,15 +2289,17 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
   let name, str;
   let extra = " ";
   desc ||= ObjectGetOwnPropertyDescriptor(value, key) || { value: value[key], enumerable: true };
-  if (desc.value !== undefined) {
+  const descValue = desc.value;
+  let descGet;
+  if (descValue !== undefined) {
     const diff = ctx.compact !== true || type !== kObjectType ? 2 : 3;
     ctx.indentationLvl += diff;
-    str = formatValue(ctx, desc.value, recurseTimes);
+    str = formatValue(ctx, descValue, recurseTimes);
     if (diff === 3 && ctx.breakLength < getStringWidth(str, ctx.colors)) {
       extra = `\n${StringPrototypeRepeat(" ", ctx.indentationLvl)}`;
     }
     ctx.indentationLvl -= diff;
-  } else if (desc.get !== undefined) {
+  } else if ((descGet = desc.get) !== undefined) {
     const label = desc.set !== undefined ? "Getter/Setter" : "Getter";
     const s = ctx.stylize;
     const sp = "special";
@@ -2316,7 +2310,7 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
         (ctx.getters === "set" && desc.set !== undefined))
     ) {
       try {
-        const tmp = desc.get.$call(original);
+        const tmp = descGet.$call(original);
         ctx.indentationLvl += 2;
         if (tmp === null) {
           str = `${s(`[${label}:`, sp)} ${s("null", "null")}${s("]", sp)}`;
@@ -2379,8 +2373,9 @@ function isBelowBreakLength(ctx, output, start, base) {
 }
 
 function reduceToSingleString(ctx, output, base, braces, extrasType, recurseTimes, value) {
-  if (ctx.compact !== true) {
-    if (typeof ctx.compact === "number" && ctx.compact >= 1) {
+  const compact = ctx.compact;
+  if (compact !== true) {
+    if (typeof compact === "number" && compact >= 1) {
       // Memorize the original output length. In case the output is grouped,
       // prevent lining up the entries on a single line.
       const entries = output.length;
@@ -2403,11 +2398,12 @@ function reduceToSingleString(ctx, output, base, braces, extrasType, recurseTime
       // Consolidate all entries of the local most inner depth up to
       // `ctx.compact`, as long as the properties are smaller than
       // `ctx.breakLength`.
-      if (ctx.currentDepth - recurseTimes < ctx.compact && entries === output.length) {
+      let outputLength;
+      if (ctx.currentDepth - recurseTimes < compact && entries === (outputLength = output.length)) {
         // Line up all entries on a single line in case the entries do not
         // exceed `breakLength`. Add 10 as constant to start next to all other
         // factors that may reduce `breakLength`.
-        const start = output.length + ctx.indentationLvl + braces[0].length + base.length + 10;
+        const start = outputLength + ctx.indentationLvl + braces[0].length + base.length + 10;
         if (isBelowBreakLength(ctx, output, start, base)) {
           const joinedOutput = ArrayPrototypeJoin(output, ", ");
           if (!StringPrototypeIncludes(joinedOutput, "\n")) {
@@ -2644,7 +2640,7 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 const stripANSI = Bun.stripANSI;
-const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */
@@ -2678,12 +2674,9 @@ function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
   return ret;
 }
 function getPromiseDetails(promise) {
-  const state = $getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask;
-  if (state !== $promiseStatePending) {
-    return [
-      state === $promiseStateRejected ? kRejected : kFulfilled,
-      $getPromiseInternalField(promise, $promiseFieldReactionsOrResult),
-    ];
+  const state = $peekPromiseStatus(promise);
+  if (state !== 0) {
+    return [state === 2 ? kRejected : kFulfilled, $peekPromiseSettledValue(promise)];
   }
   return [kPending, undefined];
 }
@@ -2725,7 +2718,8 @@ function previewEntries(val, isIterator = false) {
 }
 function internalGetConstructorName(val) {
   if (!val || typeof val !== "object") throw new Error("Invalid object");
-  if (val.constructor?.name) return val.constructor.name;
+  const ctorName = val.constructor?.name;
+  if (ctorName) return ctorName;
   const str = ObjectPrototypeToString(val);
   const m = StringPrototypeMatch(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
   return m ? m[1] : "Object";

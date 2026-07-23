@@ -1,16 +1,11 @@
 import { file, spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 import { exists, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, stderrForInstall, tmpdirSync } from "harness";
 import { join } from "path";
 
-let run_dir: string;
-
-beforeEach(() => {
-  run_dir = tmpdirSync();
-});
-
-it("should download dependency to run local file", async () => {
+it.concurrent("should download dependency to run local file", async () => {
+  const run_dir = tmpdirSync();
   await writeFile(
     join(run_dir, "test.js"),
     `
@@ -69,7 +64,8 @@ console.log(minify("print(6 * 7)").code);
   expect(await exited2).toBe(0);
 });
 
-it("should download dependencies to run local file", async () => {
+it.concurrent("should download dependencies to run local file", async () => {
+  const run_dir = tmpdirSync();
   const filePath = join(import.meta.dir, "baz-0.0.3.tgz").replace(/\\/g, "\\\\");
   await writeFile(
     join(run_dir, "test.js"),
@@ -150,7 +146,8 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(await exited2).toBe(0);
 });
 
-it("should not crash when downloading a non-existent module, issue#4240", async () => {
+it.concurrent("should not crash when downloading a non-existent module, issue#4240", async () => {
+  const run_dir = tmpdirSync();
   await writeFile(
     join(run_dir, "test.js"),
     `

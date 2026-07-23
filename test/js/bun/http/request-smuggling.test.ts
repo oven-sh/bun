@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import net from "net";
+import { createServer } from "node:http";
 
 // CVE-2020-8287 style request smuggling tests
 // These tests ensure Bun's HTTP server properly validates Transfer-Encoding headers
@@ -148,6 +149,105 @@ test("rejects Transfer-Encoding + Content-Length", async () => {
     });
     client.write(maliciousRequest);
   });
+});
+
+test("rejects conflicting duplicate Content-Length headers", async () => {
+  // RFC 9112 6.3: multiple Content-Length headers with differing values must be rejected
+  // to prevent request smuggling.
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  const maliciousRequest = [
+    "POST / HTTP/1.1",
+    "Host: localhost",
+    "Content-Length: 6",
+    "Content-Length: 5",
+    "",
+    "ABCDEF",
+  ].join("\r\n");
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 400");
+      client.end();
+      resolve();
+    });
+    client.write(maliciousRequest);
+  });
+});
+
+test("accepts duplicate Content-Length headers with identical values", async () => {
+  // RFC 9112 6.3 permits duplicate Content-Length headers if they carry the same value.
+  let receivedBody = "";
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      receivedBody = await req.text();
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  const request = ["POST / HTTP/1.1", "Host: localhost", "Content-Length: 5", "Content-Length: 5", "", "Hello"].join(
+    "\r\n",
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 200");
+      expect(receivedBody).toBe("Hello");
+      client.end();
+      resolve();
+    });
+    client.write(request);
+  });
+});
+
+test("rejects empty-valued Content-Length followed by smuggled Content-Length", async () => {
+  // An empty first Content-Length value must be rejected so it cannot be used to bypass
+  // the duplicate-Content-Length check and smuggle a second request in the body.
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname}`);
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+  const smuggled = "GET /admin HTTP/1.1\r\nHost: x\r\n\r\n";
+  const payload =
+    "POST /api HTTP/1.1\r\n" +
+    "Host: target\r\n" +
+    "Content-Length:\r\n" +
+    `Content-Length: ${smuggled.length}\r\n` +
+    "\r\n" +
+    smuggled;
+
+  await new Promise<void>((resolve, reject) => {
+    client.on("error", reject);
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toContain("HTTP/1.1 400");
+      client.end();
+      resolve();
+    });
+    client.write(payload);
+  });
+
+  expect(seen).not.toContain("GET /admin");
 });
 
 test("accepts valid Transfer-Encoding: chunked", async () => {
@@ -558,6 +658,211 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       });
       client.write(validRequest);
     });
+  });
+
+  // TE.TE desync: the last-chunk "0\r\n" must be followed by a strict "\r\n"
+  // (end-of-body). Consuming arbitrary bytes there lets an attacker smuggle a
+  // second request while an upstream proxy parses the same bytes as a valid
+  // trailer line. See https://github.com/oven-sh/bun/issues/29732.
+  test("rejects arbitrary bytes in place of final CRLF after zero-chunk", async () => {
+    const urls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        urls.push(new URL(req.url).pathname);
+        if (new URL(req.url).pathname === "/admin") {
+          return new Response("ADMIN-ACCESS");
+        }
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // The bytes "X:" replace the required "\r\n" after the zero-chunk.
+    // A vulnerable server consumes "X:" as the terminator and then parses
+    // "POST /admin HTTP/1.1" as a second (smuggled) request.
+    const smuggleAttempt =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "0\r\n" +
+      "X:POST /admin HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Content-Length: 5\r\n" +
+      "\r\n" +
+      "admin";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        // The smuggled second request must never reach the handler.
+        expect(urls).not.toContain("/admin");
+        // No ADMIN-ACCESS body should have been produced.
+        expect(responseData).not.toContain("ADMIN-ACCESS");
+        resolve();
+      });
+      client.write(smuggleAttempt);
+    });
+  });
+
+  test("rejects zero-chunk terminator with wrong first byte", async () => {
+    // First byte of the terminator must be '\r'. Anything else must be rejected.
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "A\n"; // 'A' instead of '\r'
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("rejects zero-chunk terminator with CR but wrong second byte", async () => {
+    // Second byte of the terminator must be '\n'. Anything else must be rejected.
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\rA"; // '\r' followed by 'A' instead of '\n'
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("rejects zero-chunk terminator split across TCP segments with invalid byte", async () => {
+    // The terminator validation must persist across TCP boundaries. Send the
+    // first (valid) '\r', yield to the event loop so the server's recv() runs
+    // on just that byte, then send a bad second byte in a separate segment.
+    // `setNoDelay` disables Nagle so loopback doesn't coalesce the two writes;
+    // `Bun.sleep` yields to the uSockets poll phase (unlike `queueMicrotask`
+    // which drains synchronously in the same turn and leaves both writes in
+    // one recv).
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+    client.setNoDelay(true);
+
+    // Attach the data/close listeners BEFORE any write so the response can't
+    // arrive between the write and the listener attach (which would drop it).
+    let data = "";
+    const responseReady = new Promise<string>((resolve, reject) => {
+      client.on("error", reject);
+      client.on("data", chunk => {
+        data += chunk.toString();
+      });
+      client.on("close", () => resolve(data));
+    });
+
+    await new Promise<void>(connected => client.once("connect", connected));
+    client.write(
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
+    );
+    await Bun.sleep(50);
+    client.write("X"); // bad second byte in its own TCP segment
+
+    expect(await responseReady).toContain("HTTP/1.1 400");
+  });
+
+  test("accepts zero-chunk with correct CRLF terminator split across segments", async () => {
+    // Control for the fragmentation test above: a valid split must still work.
+    //
+    // Tricky bit: the parser emits the FIN chunk as soon as it sees the
+    // zero-chunk size line (`0\r\n`) — before the terminator bytes are
+    // consumed. That means the server can respond to request 1 based on just
+    // the first segment. To prove the `\n` in the second segment *does* get
+    // validated (rather than being ignored or causing an error), we pipeline
+    // a second request after it: if the drop-trailer loop rejected the `\n`
+    // as malformed, the state would go to STATE_IS_ERROR, the connection
+    // would be torn down, and the pipelined GET would never complete.
+    const seen: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        seen.push(`${req.method} ${path}`);
+        await req.text();
+        return new Response("OK " + path);
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+    client.setNoDelay(true);
+
+    // Listeners first — see comment in the previous test.
+    let data = "";
+    const bothResponses = Promise.withResolvers<string>();
+    client.on("error", bothResponses.reject);
+    client.on("data", chunk => {
+      data += chunk.toString();
+      // Two 200 responses means both requests reached the handler and
+      // the connection survived the fragmented terminator intact.
+      if ((data.match(/HTTP\/1\.1 200/g) ?? []).length >= 2) {
+        client.end();
+      }
+    });
+    client.on("close", () => bothResponses.resolve(data));
+
+    await new Promise<void>(connected => client.once("connect", connected));
+    client.write(
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
+    );
+    await Bun.sleep(50);
+    client.write("\n"); // valid second half in its own TCP segment
+    // Pipelined second request — only reaches the server if the parser
+    // correctly consumed the split \r\n terminator and returned to a ready
+    // state. The second request must come in its own segment too, otherwise
+    // it could coalesce with the `\n` into one recv.
+    await Bun.sleep(50);
+    client.write("GET /done HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+    const responseData = await bothResponses.promise;
+    expect(responseData).toContain("HTTP/1.1 200");
+    expect(responseData).not.toContain("HTTP/1.1 400");
+    expect(seen).toEqual(["POST /", "GET /done"]);
   });
 });
 
@@ -1035,4 +1340,222 @@ describe("pipelined request header isolation", () => {
     // with stale headers from the first request)
     expect(secondRequestReached).toBe(false);
   });
+});
+
+test("rejects Transfer-Encoding header with empty value", async () => {
+  // RFC 9112 requires rejecting a request whose Transfer-Encoding field names no
+  // valid transfer coding. Treating a present-but-empty Transfer-Encoding value as
+  // if the header were absent falls back to Content-Length framing, so the bytes
+  // after the declared body get parsed as a second pipelined request (CL.TE desync).
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname}`);
+      await req.text();
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  // Transfer-Encoding is present but its value is empty. If it were treated as
+  // absent, Content-Length would frame only the first 4 bytes ("ABCD") and the
+  // remainder would be handled as a second request to /admin.
+  const payload =
+    "POST / HTTP/1.1\r\n" +
+    "Host: localhost\r\n" +
+    "Transfer-Encoding: \r\n" +
+    "Content-Length: 4\r\n" +
+    "\r\n" +
+    "ABCD" +
+    "GET /admin HTTP/1.1\r\n" +
+    "Host: localhost\r\n" +
+    "\r\n";
+
+  await new Promise<void>((resolve, reject) => {
+    let responseData = "";
+    client.on("error", reject);
+    client.on("data", data => {
+      responseData += data.toString();
+    });
+    client.on("close", () => {
+      // The request must be rejected outright, not framed by Content-Length.
+      expect(responseData).toContain("HTTP/1.1 400");
+      expect(responseData).not.toContain("HTTP/1.1 200");
+      resolve();
+    });
+    client.write(payload);
+  });
+
+  // The trailing bytes must never be interpreted as a second request.
+  expect(seen).not.toContain("GET /admin");
+});
+
+describe("Host header field values in request.url", () => {
+  // Windows refuses connections under accept-backlog/TIME_WAIT churn even while the
+  // server is listening, so a refused connect (before anything was read) is retried.
+  const maxRefusedConnects = 20;
+  async function sendRawRequest(server: { port: number }, payload: string): Promise<string> {
+    for (let attempt = 0; ; attempt++) {
+      const outcome = await new Promise<{ response: string } | { refused: true }>((resolve, reject) => {
+        const client = net.connect(server.port, "127.0.0.1");
+        const chunks: Buffer[] = [];
+        client.on("error", error => {
+          if (
+            chunks.length === 0 &&
+            (error as NodeJS.ErrnoException).code === "ECONNREFUSED" &&
+            attempt < maxRefusedConnects
+          ) {
+            resolve({ refused: true });
+          } else {
+            reject(error);
+          }
+        });
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("end", () => resolve({ response: Buffer.concat(chunks).toString() }));
+        // latin1 keeps bytes >= 0x80 as single bytes on the wire (a string write would UTF-8-encode them).
+        client.write(Buffer.from(payload, "latin1"));
+      });
+      if ("response" in outcome) return outcome.response;
+    }
+  }
+
+  test.each([
+    ["example.com/other"],
+    ["example com"],
+    ["user@example.com"],
+    ["example.com#frag"],
+    ["example.com\\other:8080"],
+    ["[::1]:3000?q"],
+  ])("an HTTP/1.1 request whose Host header is %j is served, with the request-target as request.url", async host => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(server, `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+    expect(response).toStartWith("HTTP/1.1 200");
+    // The handler ran, and none of the Host field's bytes were copied into the synthesized URL.
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+  });
+
+  test.each([
+    ["example.com", "http://example.com/index"],
+    ["example.com:8080", "http://example.com:8080/index"],
+    ["[::1]:3000", "http://[::1]:3000/index"],
+  ])("request.url is synthesized from the valid Host header %j", async (host, url) => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(server, `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+    expect(response).toStartWith("HTTP/1.1 200");
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe(url);
+  });
+
+  test.each([
+    [" \t foo\tcom\t", "foo\tcom"],
+    [" example com ", "example com"],
+  ])("a node:http server serves a request whose raw Host header value is %j", async (raw, received) => {
+    const server = createServer((req, res) => {
+      res.end(String(req.headers.host));
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+      const response = await new Promise<string>((resolve, reject) => {
+        const client = net.connect(port, "127.0.0.1");
+        const chunks: Buffer[] = [];
+        client.on("error", reject);
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+        client.write(`GET / HTTP/1.1\r\nHost:${raw}\r\nConnection: close\r\n\r\n`);
+      });
+      expect(response).toContain("HTTP/1.1 200");
+      const body = response.slice(response.indexOf("\r\n\r\n") + 4);
+      expect(body).toBe(received);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("accepts an empty Host header field value on HTTP/1.1, serving a request URL with no host", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(server, "GET /index HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n");
+    expect(response).toContain("HTTP/1.1 200");
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+  });
+
+  test.each([
+    [0x21, 0x40],
+    [0x41, 0x60],
+    [0x61, 0x7e],
+    [0x7f, 0xff],
+  ])(
+    "HTTP/1.1 and HTTP/1.0 requests synthesize request.url from the same Host bytes (%i-%i)",
+    async (firstByte, lastByte) => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(req.url);
+        },
+      });
+
+      // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]".
+      // Every byte in [0x7f, 0xff] is outside that set, so neither URL uses any of them.
+      const isHostByte = (char: string) => /^[A-Za-z0-9._~%!$&'()*+,;=:\[\]-]$/.test(char);
+
+      async function checkByte(byte: number) {
+        const char = String.fromCharCode(byte);
+        const host = `a${char}b`;
+        // Request::is_valid_host_header decides whether the Host header becomes the
+        // request URL's authority; the request itself is served either way.
+        // The two probes run sequentially so each batch keeps at most one socket per byte open.
+        const http11 = await sendRawRequest(server, `GET /p HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+        const http10 = await sendRawRequest(server, `GET /p HTTP/1.0\r\nHost: ${host}\r\n\r\n`);
+        return {
+          char,
+          http11Accepted: http11.startsWith("HTTP/1.1 200"),
+          http11Url: http11.slice(http11.indexOf("\r\n\r\n") + 4),
+          http10Url: http10.slice(http10.indexOf("\r\n\r\n") + 4),
+        };
+      }
+
+      const bytes = Array.from({ length: lastByte - firstByte + 1 }, (_, i) => firstByte + i);
+      // Connect in small batches: opening every connection at once can overflow the
+      // listen backlog (Windows answers with ECONNREFUSED instead of queueing).
+      const results: Awaited<ReturnType<typeof checkByte>>[] = [];
+      const batchSize = 8;
+      for (let i = 0; i < bytes.length; i += batchSize) {
+        results.push(...(await Promise.all(bytes.slice(i, i + batchSize).map(checkByte))));
+      }
+      expect(results).toEqual(
+        bytes.map(byte => {
+          const char = String.fromCharCode(byte);
+          // `req.url` carries the lowercased host (URL host normalization).
+          const url = isHostByte(char) ? `http://a${char.toLowerCase()}b/p` : "/p";
+          return {
+            char,
+            http11Accepted: true,
+            http11Url: url,
+            http10Url: url,
+          };
+        }),
+      );
+    },
+  );
 });

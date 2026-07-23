@@ -1,8 +1,8 @@
-import type { Server, Subprocess, WebSocketHandler } from "bun";
+import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc } from "harness";
-import { isIP } from "node:net";
+import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
+import net, { isIP } from "node:net";
 import path from "node:path";
 
 const strings = [
@@ -62,7 +62,7 @@ const binaryTypes = [
 let servers: Server[] = [];
 let clients: Subprocess[] = [];
 
-it("should work fine if you repeatedly call methods on closed websockets", async () => {
+it.concurrent("should work fine if you repeatedly call methods on closed websockets", async () => {
   let env = { ...bunEnv };
   forceGuardMalloc(env);
 
@@ -93,7 +93,7 @@ afterEach(() => {
 // the other client should not receive the message
 // the server should not crash
 // https://github.com/oven-sh/bun/issues/4443
-it("websocket/4443", async () => {
+it.concurrent("websocket/4443", async () => {
   var serverSockets: ServerWebSocket<unknown>[] = [];
   var onFirstConnected = Promise.withResolvers();
   var onSecondMessageEchoedBack = Promise.withResolvers();
@@ -168,7 +168,7 @@ describe("Server", () => {
     },
   }));
 
-  it("subscriptions - basic usage", async () => {
+  it.concurrent("subscriptions - basic usage", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -220,7 +220,7 @@ describe("Server", () => {
     expect(subscriptions).not.toContain("topic2");
   });
 
-  it("subscriptions - all unsubscribed", async () => {
+  it.concurrent("subscriptions - all unsubscribed", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -263,7 +263,7 @@ describe("Server", () => {
     expect(subscriptions.length).toBe(0);
   });
 
-  it("subscriptions - after close", async () => {
+  it.concurrent("subscriptions - after close", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -298,7 +298,7 @@ describe("Server", () => {
     expect(subscriptions).toStrictEqual([]);
   });
 
-  it("subscriptions - duplicate subscriptions", async () => {
+  it.concurrent("subscriptions - duplicate subscriptions", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -336,7 +336,7 @@ describe("Server", () => {
     expect(subscriptions).toContain("topic1");
   });
 
-  it("subscriptions - multiple cycles", async () => {
+  it.concurrent("subscriptions - multiple cycles", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -385,6 +385,80 @@ describe("Server", () => {
     expect(subscriptions.length).toBe(2);
     expect(subscriptions).toContain("topic1");
     expect(subscriptions).toContain("topic3");
+  });
+
+  it.concurrent("publish() then unsubscribe() from last topic in same tick delivers queued messages", async () => {
+    const aDone = Promise.withResolvers<string[]>();
+    const bDone = Promise.withResolvers<string[]>();
+    const ready = { a: Promise.withResolvers<void>(), b: Promise.withResolvers<void>() };
+    const publishResults: number[] = [];
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        const id = new URL(req.url).searchParams.get("id")!;
+        if (server.upgrade(req, { data: { id } })) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("room");
+          ws.send("ready");
+        },
+        message(ws, msg) {
+          if (msg !== "go") return;
+          for (let i = 0; i < 5; i++) {
+            publishResults.push(server.publish("room", "msg" + i));
+          }
+          // Unsubscribing from the only topic used to free the uWS Subscriber
+          // without draining its queued publish() messages, dropping them.
+          ws.unsubscribe("room");
+          // Sentinel: once this arrives, anything queued for this socket
+          // has either been delivered ahead of it or dropped.
+          ws.send("done");
+        },
+      },
+    });
+
+    const collect = (id: "a" | "b", done: PromiseWithResolvers<string[]>, isDone: (data: string) => boolean) => {
+      const received: string[] = [];
+      const ws = new WebSocket(`ws://localhost:${server.port}/?id=${id}`);
+      ws.onmessage = e => {
+        const data = e.data as string;
+        if (data === "ready") return ready[id].resolve();
+        received.push(data);
+        if (isDone(data)) done.resolve([...received]);
+      };
+      const fail = (e: unknown) => {
+        ready[id].reject(e);
+        done.reject(e);
+      };
+      ws.onerror = fail;
+      ws.onclose = () => fail(new Error("closed before done"));
+      return ws;
+    };
+
+    // A never unsubscribes and never receives "done"; resolve once the full batch arrives.
+    const a = collect("a", aDone, data => data === "msg4");
+    // B must wait for the sentinel so we capture everything delivered before it.
+    const b = collect("b", bDone, data => data === "done");
+    try {
+      await Promise.all([ready.a.promise, ready.b.promise]);
+      b.send("go");
+
+      const [aReceived, bReceived] = await Promise.all([aDone.promise, bDone.promise]);
+      // publish() reported the message as queued for every call
+      expect(publishResults).toEqual([4, 4, 4, 4, 4]);
+      // A never unsubscribed; it must receive the full batch.
+      expect(aReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4"]);
+      // B unsubscribed in the same tick; it must still receive the batch
+      // that publish() had already accepted before the unsubscribe.
+      expect(bReceived).toEqual(["msg0", "msg1", "msg2", "msg3", "msg4", "done"]);
+    } finally {
+      a.onclose = b.onclose = null;
+      a.close();
+      b.close();
+    }
   });
 
   describe("websocket", () => {
@@ -521,6 +595,35 @@ describe("Server", () => {
       }));
       */
     it.todo("perMessageDeflate");
+    describe("perMessageDeflate (validation)", () => {
+      it.each([1073741824, "hello", 1n, Symbol()])("throws when not a boolean or object", value => {
+        expect(() => {
+          serve({
+            port: 0,
+            fetch: () => new Response(),
+            websocket: {
+              message() {},
+              // @ts-expect-error
+              perMessageDeflate: value,
+            },
+          });
+        }).toThrow("websocket expects perMessageDeflate to be a boolean or an object");
+      });
+      it.each([true, false, null, undefined, {}, { compress: true, decompress: "shared" }] as const)(
+        "accepts %p",
+        value => {
+          using server = serve({
+            port: 0,
+            fetch: () => new Response(),
+            websocket: {
+              message() {},
+              perMessageDeflate: value as any,
+            },
+          });
+          expect(server.port).toBeGreaterThan(0);
+        },
+      );
+    });
   });
 });
 describe("ServerWebSocket", () => {
@@ -835,6 +938,74 @@ describe("ServerWebSocket", () => {
       }));
     }
   });
+  // With the default publishToSelf: false, a ws.publish() from a socket that has never
+  // subscribed to anything must still deliver to other subscribers.
+  describe("publish() from a socket not subscribed to anything", () => {
+    const big = Buffer.alloc(20 * 1024, "x").toString();
+    const cases = [
+      ["publish", "publish", "small-text"],
+      ["publishText", "publishText", "small-text"],
+      ["publishBinary", "publishBinary", Buffer.from("small-binary")],
+      ["publish (>= cork buffer)", "publish", big],
+    ] as const;
+    for (const [label, method, payload] of cases) {
+      it.concurrent(label, async () => {
+        const subscribed = Promise.withResolvers<void>();
+        const received = Promise.withResolvers<string | ArrayBuffer>();
+        const published = Promise.withResolvers<number>();
+        let nextId = 0;
+        using server = serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req, { data: { id: nextId++ } })) return;
+            return new Response();
+          },
+          websocket: {
+            open(ws) {
+              if (ws.data.id === 0) {
+                ws.subscribe("chat");
+                subscribed.resolve();
+              } else {
+                expect(ws.isSubscribed("chat")).toBe(false);
+                // @ts-expect-error dynamic method dispatch
+                published.resolve(ws[method]("chat", payload));
+              }
+            },
+            message() {},
+          },
+        });
+        const url = `ws://${server.hostname}:${server.port}/`;
+        // A socket that errors or closes before the server's open() handler ran would
+        // otherwise leave one of the awaited slots pending until the test timeout.
+        const fail = (who: string) => (ev: Event) => {
+          const err = new Error(`${who} websocket ${ev.type}`);
+          subscribed.reject(err);
+          published.reject(err);
+          received.reject(err);
+        };
+        const sub = new WebSocket(url);
+        sub.binaryType = "arraybuffer";
+        sub.onmessage = e => received.resolve(e.data);
+        sub.onerror = sub.onclose = fail("subscriber");
+        await subscribed.promise;
+        expect(server.subscriberCount("chat")).toBe(1);
+        const pub = new WebSocket(url);
+        pub.onmessage = e => received.reject(new Error("publisher must not receive: " + e.data));
+        pub.onerror = pub.onclose = fail("publisher");
+
+        const ret = await published.promise;
+        expect(ret).toBe(Buffer.byteLength(payload));
+        const got = await received.promise;
+        if (typeof payload === "string") {
+          expect(got).toBe(payload);
+        } else {
+          expect(Buffer.from(got as ArrayBuffer)).toEqual(Buffer.from(payload));
+        }
+        sub.close();
+        pub.close();
+      });
+    }
+  });
   describe("ping()", () => {
     test("(no argument)", done => ({
       open(ws) {
@@ -899,6 +1070,41 @@ describe("ServerWebSocket", () => {
             ws.sendBinary(new TextEncoder().encode("3"));
           });
         }, 5);
+      },
+      message(_, message) {
+        if (typeof message === "string") {
+          expect(+message).toBe(++count);
+        } else {
+          expect(+new TextDecoder().decode(message)).toBe(++count);
+        }
+        if (count === 3) {
+          done();
+        }
+      },
+    };
+  });
+  // https://github.com/oven-sh/bun/issues/21588
+  test("cork() passes ws to callback", done => {
+    let count = 0;
+    return {
+      open(ws) {
+        try {
+          let thisInside;
+          const ret = ws.cork(function (ctx) {
+            thisInside = this;
+            ctx.send("1");
+            ctx.sendText("2");
+            ctx.sendBinary(new TextEncoder().encode("3"));
+            return ctx;
+          });
+          expect(ret).toBe(ws);
+          expect(thisInside).toBe(ws);
+          ws.cork(ctx => {
+            expect(ctx).toBe(ws);
+          });
+        } catch (err) {
+          done(err);
+        }
       },
       message(_, message) {
         if (typeof message === "string") {
@@ -987,15 +1193,18 @@ function test(
   ) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
-  it(
+  it.concurrent(
     label,
-    async testDone => {
+    async () => {
       let isDone = false;
+      const localClients: Subprocess[] = [];
+      const { promise: donePromise, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers<void>();
       const done = (err?: unknown) => {
         if (!isDone) {
           isDone = true;
           server.stop();
-          testDone(err);
+          if (err) rejectDone(err);
+          else resolveDone();
         }
       };
       let id = 0;
@@ -1014,18 +1223,26 @@ function test(
         websocket: {
           sendPings: false,
           message() {},
-          ...fn(done, () => connect(server), options as any),
+          ...fn(done, () => connect(server, localClients), options as any),
         },
       });
       options.server = server;
       expect(server.subscriberCount("empty topic")).toBe(0);
-      await connect(server);
+      const connected = connect(server, localClients);
+      try {
+        await Promise.all([donePromise, connected]);
+      } finally {
+        server.stop(true);
+        for (const client of localClients) {
+          client.kill();
+        }
+      }
     },
-    { timeout: timeout ?? 1000 },
+    { timeout: timeout ?? 10000 },
   );
 }
 
-async function connect(server: Server): Promise<void> {
+async function connect(server: Server, clientList: Subprocess[] = clients): Promise<void> {
   const url = new URL(`ws://${server.hostname}:${server.port}/`);
   const pathname = path.resolve(import.meta.dir, "./websocket-client-echo.mjs");
   const { promise, resolve } = Promise.withResolvers();
@@ -1041,7 +1258,7 @@ async function connect(server: Server): Promise<void> {
     },
     serialization: "json",
   });
-  clients.push(client);
+  clientList.push(client);
   await promise;
 }
 
@@ -1054,3 +1271,294 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
   });
   expect(server.subscriberCount("boop")).toBe(0);
 });
+
+// Regression: onUpgrade stored the ZigString returned by FetchHeaders.fastGet()
+// (which borrows directly from the header map entry's WTF::StringImpl) and then
+// called fastRemove(), which frees that StringImpl when the map holds the only
+// reference. The dangling pointer was later read in toSlice() and written to the
+// socket as the Sec-WebSocket-Protocol response header.
+//
+// To make the map entry the sole owner of the StringImpl (so fastRemove actually
+// frees it), we append() twice: the second append causes FetchHeaders to combine
+// the values with ", " via makeString(), producing a fresh StringImpl that no JS
+// string references. `Malloc=1` routes bmalloc through the system allocator so
+// ASAN-enabled builds detect the use-after-free; release builds fall through and
+// validate the header value round-trips correctly.
+it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use-after-free the header value", async () => {
+  const part = Buffer.alloc(128, "abcdefghijklmnopqrstuvwxyz0123456789").toString();
+
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const part = ${JSON.stringify(part)};
+        using server = Bun.serve({
+          port: 0,
+          websocket: { message() {} },
+          fetch(req, server) {
+            const h = new Headers();
+            // Double-append so the stored value is a freshly-combined StringImpl
+            // owned solely by the header map.
+            h.append("Sec-WebSocket-Protocol", part);
+            h.append("Sec-WebSocket-Protocol", "tail");
+            h.set("X-Custom", "hello");
+            if (server.upgrade(req, { headers: h })) return;
+            return new Response("no upgrade", { status: 400 });
+          },
+        });
+        const res = await fetch(server.url, {
+          headers: {
+            "Upgrade": "websocket",
+            "Connection": "Upgrade",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Protocol": "client-offered",
+          },
+        });
+        console.log(JSON.stringify({
+          status: res.status,
+          protocol: res.headers.get("sec-websocket-protocol"),
+          custom: res.headers.get("x-custom"),
+        }));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // Route bmalloc through the system heap so ASAN can observe the
+      // StringImpl allocation in sanitizer-enabled builds. On Windows
+      // bmalloc's SystemHeap is unimplemented and would RELEASE_BASSERT,
+      // so leave bmalloc in place there — Windows builds have no ASAN
+      // lane anyway.
+      ...(isWindows ? {} : { Malloc: "1" }),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // uWS selects the first subprotocol (substring before the first comma) from
+  // the value passed to resp.upgrade(), so the expected response protocol is
+  // `part`, not the combined "part, tail".
+  const expected = JSON.stringify({ status: 101, protocol: part, custom: "hello" });
+  // Don't truncate stderr — when this previously crashed on Windows ci_assert
+  // builds the panic line was past line 3, leaving "" and a misleading diff.
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: expected,
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// publish() fans out to N subscribers and must report backpressure/drops the
+// same way ws.send() does for a single socket.
+describe.concurrent("publish() return value reflects subscriber backpressure", () => {
+  // One paused raw-TCP subscriber; the server-side handle is captured so the
+  // test can compare publish() to send() on the same socket.
+  async function withSlowSubscriber(
+    run: (ctx: { server: Server; slow: ServerWebSocket<string>; sender: ServerWebSocket<string> }) => void,
+  ) {
+    const sockets: Record<string, ServerWebSocket<string>> = {};
+    const opened = { slow: Promise.withResolvers<void>(), sender: Promise.withResolvers<void>() };
+    await using server = serve<string, {}>({
+      port: 0,
+      websocket: {
+        backpressureLimit: 64 * 1024,
+        idleTimeout: 0,
+        open(ws) {
+          sockets[ws.data] = ws;
+          ws.subscribe("t");
+          opened[ws.data]?.resolve();
+        },
+        message() {},
+        close(ws) {
+          delete sockets[ws.data];
+        },
+      },
+      fetch(req, server) {
+        if (server.upgrade(req, { data: new URL(req.url).pathname.slice(1) })) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+    });
+
+    // "sender": ws.publish() excludes the sender, so we need a second socket
+    // distinct from the slow subscriber to exercise the per-socket path.
+    const sender = new WebSocket(`ws://127.0.0.1:${server.port}/sender`);
+    sender.binaryType = "arraybuffer";
+    sender.onmessage = () => {};
+    {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      sender.onopen = () => resolve();
+      sender.onerror = e => reject(e);
+      sender.onclose = () => reject(new Error("sender closed before open"));
+      await promise;
+    }
+
+    // "slow": raw RFC6455 client that handshakes then pauses its read side so
+    // the server accumulates backpressure for it.
+    const handshake = Promise.withResolvers<void>();
+    const slow = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
+      slow.write(
+        "GET /slow HTTP/1.1\r\n" +
+          "Host: x\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Version: 13\r\n\r\n",
+      );
+    });
+    // Buffer until the response headers are complete; the 101 may be split
+    // across TCP segments.
+    let response = "";
+    slow.on("data", (d: Buffer) => {
+      response += d.toString("latin1");
+      if (!response.includes("\r\n\r\n")) return;
+      if (response.includes(" 101 ")) {
+        slow.pause();
+        handshake.resolve();
+      } else {
+        handshake.reject(new Error("upgrade failed: " + response));
+      }
+    });
+    slow.on("error", handshake.reject);
+    slow.on("close", () => handshake.reject(new Error("slow socket closed before upgrade")));
+    try {
+      await handshake.promise;
+      await opened.slow.promise;
+      await opened.sender.promise;
+      run({ server, slow: sockets.slow, sender: sockets.sender });
+    } finally {
+      sender.close();
+      slow.destroy();
+    }
+  }
+
+  function histogram(results: number[]) {
+    let positive = 0;
+    let dropped = 0;
+    let backpressure = 0;
+    let other = 0;
+    for (const r of results) {
+      if (r > 0) positive++;
+      else if (r === 0) dropped++;
+      else if (r === -1) backpressure++;
+      else other++;
+    }
+    return { positive, dropped, backpressure, other };
+  }
+
+  it("returns 0 when the topic has no subscribers", async () => {
+    await withSlowSubscriber(({ server, sender }) => {
+      expect(server.publish("no-such-topic", "x")).toBe(0);
+      expect(sender.publish("no-such-topic", "x")).toBe(0);
+    });
+  });
+
+  it("ws.publish() returns 0 when the sender is the sole subscriber", async () => {
+    await withSlowSubscriber(({ sender }) => {
+      // "self" only has the sender subscribed; ws.publish() excludes the
+      // sender, so there are zero receivers on both the batched and direct
+      // send paths.
+      sender.subscribe("self");
+      expect({
+        small: sender.publish("self", Buffer.alloc(8000, "x").toString()),
+        big: sender.publish("self", Buffer.alloc(20000, "x").toString()),
+      }).toEqual({ small: 0, big: 0 });
+    });
+  });
+
+  for (const [label, size] of [
+    ["batched (<16KB)", 8000],
+    ["direct (>=16KB)", 20000],
+  ] as const) {
+    it(`server.publish() ${label} reports dropped / backpressure`, async () => {
+      await withSlowSubscriber(({ server, slow }) => {
+        const payload = Buffer.alloc(size, "x").toString();
+        // Enough iterations to blow well past backpressureLimit regardless of
+        // how much the kernel accepts before blocking.
+        const N = 1000;
+        const results: number[] = [];
+        for (let i = 0; i < N; i++) results.push(server.publish("t", payload));
+        const h = histogram(results);
+        // ws.send() on the same over-limit socket agrees the data is dropped;
+        // publish() must have reported the same for the majority of calls.
+        expect({ sendProbe: slow.send("probe"), histogram: h }).toEqual({
+          sendProbe: 0,
+          histogram: { ...h, other: 0 },
+        });
+        expect(h.dropped).toBeGreaterThan(0);
+        // Every call returned one of the documented values.
+        expect(h.positive + h.backpressure + h.dropped).toBe(N);
+      });
+    });
+
+    it(`ws.publish() ${label} reports dropped / backpressure`, async () => {
+      await withSlowSubscriber(({ slow, sender }) => {
+        const payload = Buffer.alloc(size, "x").toString();
+        const N = 1000;
+        const results: number[] = [];
+        for (let i = 0; i < N; i++) results.push(sender.publish("t", payload));
+        const h = histogram(results);
+        expect({ sendProbe: slow.send("probe"), histogram: h }).toEqual({
+          sendProbe: 0,
+          histogram: { ...h, other: 0 },
+        });
+        expect(h.dropped).toBeGreaterThan(0);
+        expect(h.positive + h.backpressure + h.dropped).toBe(N);
+      });
+    });
+  }
+
+  it("ws.publishText() and ws.publishBinary() report dropped", async () => {
+    await withSlowSubscriber(({ slow, sender }) => {
+      const text = Buffer.alloc(8000, "x").toString();
+      const bin = Buffer.alloc(8000, 0x61);
+      let sawDroppedText = false;
+      let sawDroppedBinary = false;
+      for (let i = 0; i < 1000; i++) {
+        if (sender.publishText("t", text) === 0) sawDroppedText = true;
+        if (sender.publishBinary("t", bin) === 0) sawDroppedBinary = true;
+        if (sawDroppedText && sawDroppedBinary) break;
+      }
+      expect({ sawDroppedText, sawDroppedBinary, sendProbe: slow.send("probe") }).toEqual({
+        sawDroppedText: true,
+        sawDroppedBinary: true,
+        sendProbe: 0,
+      });
+    });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/34158
+it.each(["server", "client"] as const)(
+  "server.stop() promise resolves after the last websocket closes (%s-initiated close)",
+  async initiator => {
+    const server = serve({
+      port: 0,
+      fetch(req, srv) {
+        if (srv.upgrade(req)) return;
+        return new Response("x");
+      },
+      websocket: {
+        open(ws) {
+          if (initiator === "server") queueMicrotask(() => ws.close());
+        },
+        message() {},
+        close() {},
+      },
+    });
+    const ws = new WebSocket(server.url.href.replace("http", "ws"));
+    const { promise: wsClosed, resolve: onWsClosed, reject: onWsError } = Promise.withResolvers<void>();
+    ws.onerror = e => onWsError(new Error(`ws error: ${e}`));
+    ws.onclose = () => onWsClosed();
+    if (initiator === "client") {
+      const { promise: opened, resolve: onOpen } = Promise.withResolvers<void>();
+      ws.onopen = () => onOpen();
+      await opened;
+      ws.close();
+    }
+    await wsClosed;
+    await server.stop();
+  },
+);

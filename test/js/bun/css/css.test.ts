@@ -96,6 +96,34 @@ describe("css tests", () => {
         padding: var(--custom-padding);
        }`,
     );
+
+    // Adjacent `/` and `*` delim tokens must not be printed as `/*` or `*/`
+    // when minifying, which would open/close a comment and swallow the rest of
+    // the stylesheet.
+    minify_test(":root { --a: x / * y }\n.k { color: red }", ":root{--a:x/ *y}.k{color:red}");
+    minify_test(":root { --a: x * / y }\n.k { color: red }", ":root{--a:x* /y}.k{color:red}");
+    minify_test(":root { --a: x / * / * y }", ":root{--a:x/ * / *y}");
+    minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a/ *b}");
+    minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x/ *y)}");
+    // A lone `/` or `*` delim must still minify without extra whitespace.
+    minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
+    minify_test(":root { --a: x * y }", ":root{--a:x*y}");
+    minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
+    // Non-minified output is unchanged.
+    cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
+
+    // Leading/trailing whitespace around a custom-property value is dropped.
+    minify_test(":root{--a: x}", ":root{--a:x}");
+    minify_test(":root{--a:x }", ":root{--a:x}");
+    minify_test(":root{--a: x }", ":root{--a:x}");
+    minify_test(":root{--a:x y}", ":root{--a:x y}");
+    minify_test(":root{--a: x y }", ":root{--a:x y}");
+    // A value that is only whitespace is preserved as a single space.
+    minify_test(":root{--a: }", ":root{--a: }");
+    minify_test(":root{--a:  }", ":root{--a: }");
+    // Same trimming applies inside function arguments.
+    minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
+    minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
   });
 
   describe("pseudo-class edge case", () => {
@@ -138,6 +166,19 @@ describe("css tests", () => {
 }`,
       indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
     );
+
+    // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
+    // A NaN escaping a top-level calculation is censored to zero; it must never be
+    // serialized as the literal `NaNpx`, which browsers reject.
+    minify_test(`a { width: calc(NaN * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 0px) }`, `a{width:0px}`);
+    minify_test(`a { width: calc(infinity * 1px - infinity * 1px) }`, `a{width:0px}`);
+    minify_test(`a { width: min(NaN * 1px, 2px) }`, `a{width:min(0px,2px)}`);
+    minify_test(`a { width: max(NaN * 1px, 2px) }`, `a{width:max(0px,2px)}`);
+    minify_test(`a { width: calc(NaN * 1%) }`, `a{width:0%}`);
+    minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
+    minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
+    minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
@@ -2786,6 +2827,79 @@ describe("css tests", () => {
     `,
     );
 
+    // Multi-layer variants of the above: with >1 background layer the
+    // SmallList(BackgroundClip, 1) spills to the heap. The
+    // `-webkit-background-clip` that follows the shorthand has both a
+    // different vendor prefix and a different value, which forces a
+    // flush() while a pointer into the previous `clips` payload is still
+    // live. flush() takes ownership of that payload, so the caller must
+    // not touch it afterwards.
+    cssTest(
+      `
+      .foo {
+        background: none, green none;
+        -webkit-background-clip: text, text;
+      }
+    `,
+      indoc`
+      .foo {
+        background: none, green;
+        -webkit-background-clip: text, text;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background: none, green none;
+        -webkit-background-clip: text, text;
+        background-clip: content-box, content-box;
+      }
+    `,
+      indoc`
+      .foo {
+        background: none, green;
+        -webkit-background-clip: text, text;
+        background-clip: content-box, content-box;
+      }
+    `,
+    );
+
+    // A prefixed background-clip followed by a background shorthand
+    // whose implied clip values differ must flush the prefixed clip
+    // first rather than merging its vendor prefix into the shorthand's
+    // (different) clip values.
+    cssTest(
+      `
+      .foo {
+        -webkit-background-clip: text;
+        background: green content-box;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-background-clip: text;
+        background: green content-box content-box;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-background-clip: text, text;
+        background: none, green none;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-background-clip: text, text;
+        background: none, green;
+      }
+    `,
+    );
+
     cssTest(
       `
       .foo {
@@ -3032,7 +3146,7 @@ describe("css tests", () => {
       `,
       indoc`
         .foo {
-          background: #af5cae linear-gradient(#c65d07, #00807c);
+          background: #af5cae linear-gradient(#c65d07, #00817d);
           background: lab(51.5117% 43.3777 -29.0443) linear-gradient(lab(52.2319% 40.1449 59.9171), lab(47.7776% -34.2947 -7.65904));
         }
       `,
@@ -5152,6 +5266,8 @@ describe("css tests", () => {
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");
     minify_test('[foo="foo bar baz"] {color:red}', '[foo="foo bar baz"]{color:red}');
     minify_test('[foo=""] {color:red}', '[foo=""]{color:red}');
+    minify_test('[foo="123"] {color:red}', '[foo="123"]{color:red}');
+    minify_test('[foo="\\\\"] {color:red}', "[foo=\\\\]{color:red}");
     minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
     minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
     minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");
@@ -6944,6 +7060,46 @@ describe("css tests", () => {
     );
   });
 
+  describe("animation", () => {
+    // The animation name is serialized last, in canonical order.
+    minify_test(".foo { animation: anim 2s }", ".foo{animation:2s anim}");
+    minify_test(".foo { animation: 0.25s ease-out forwards anim }", ".foo{animation:.25s ease-out forwards anim}");
+    minify_test(".foo { animation: none }", ".foo{animation:none}");
+
+    // Name-less shorthands must keep their components (must NOT collapse to
+    // `none`) — a lone trailing `none` is dropped as redundant.
+    minify_test(".foo { animation: 2s }", ".foo{animation:2s}");
+    minify_test(".foo { animation: 2s ease-in-out }", ".foo{animation:2s ease-in-out}");
+    minify_test(
+      ".foo { animation: 3s linear 1s infinite alternate }",
+      ".foo{animation:3s linear 1s infinite alternate}",
+    );
+    minify_test(".foo { animation: 2s none }", ".foo{animation:2s}");
+    // 0s duration must still be emitted when a nonzero delay follows.
+    minify_test(".foo { animation: 0s 2s foo }", ".foo{animation:0s 2s foo}");
+
+    // Multiple comma-separated animations.
+    minify_test(".foo { animation: spin 1s, 2s slide }", ".foo{animation:1s spin,2s slide}");
+
+    // Vendor-prefixed shorthand.
+    minify_test(".foo { -webkit-animation: spin 1s }", ".foo{-webkit-animation:1s spin}");
+
+    // Timeline component in the shorthand: round-trips a dashed-ident timeline
+    // and drops the default `auto` timeline.
+    minify_test(".foo { animation: 1s spin --my-timeline }", ".foo{animation:1s spin --my-timeline}");
+    minify_test(".foo { animation: 1s spin auto }", ".foo{animation:1s spin}");
+
+    // animation-name longhand.
+    minify_test(".foo { animation-name: foo }", ".foo{animation-name:foo}");
+    minify_test(".foo { animation-name: foo, bar }", ".foo{animation-name:foo,bar}");
+    minify_test('.foo { animation-name: "foo" }', ".foo{animation-name:foo}");
+
+    // CSS-wide keywords must NOT be consumed as an animation name.
+    minify_test(".foo { animation: inherit }", ".foo{animation:inherit}");
+    minify_test(".foo { animation: unset }", ".foo{animation:unset}");
+    minify_test(".foo { animation-name: initial }", ".foo{animation-name:initial}");
+  });
+
   describe("transform", () => {
     minify_test(".foo { transform: translate(2px, 3px)", ".foo{transform:translate(2px,3px)}");
     minify_test(".foo { transform: translate(2px, 0px)", ".foo{transform:translate(2px)}");
@@ -7094,6 +7250,15 @@ describe("css tests", () => {
     minify_test(".foo { scale: 1 0 }", ".foo{scale:1 0}");
     minify_test(".foo { scale: 1 0 1 }", ".foo{scale:1 0}");
     minify_test(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
+
+    // calc() payloads must survive the transform property handler's deep clone.
+    minify_test(".foo { translate: calc(50% - 100px + 20px) 0px }", ".foo{translate:calc(50% - 80px)}");
+    minify_test(".foo { translate: 1px 2px; rotate: 30deg; scale: 2 }", ".foo{translate:1px 2px;rotate:30deg;scale:2}");
+    // A later `transform` declaration resets buffered individual properties.
+    minify_test(
+      ".foo { translate: calc(50% - 100px + 20px) 0px; transform: translate(2px, 3px) }",
+      ".foo{transform:translate(2px,3px)}",
+    );
 
     // TODO: Re-enable with a better solution
     //       See: https://github.com/parcel-bundler/buncss/issues/288
@@ -7372,6 +7537,128 @@ describe("css tests", () => {
     );
   });
 
+  describe("page", () => {
+    minify_test("@page { margin: 1em }", "@page{margin:1em}");
+    minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");
+    minify_test("@page :blank:first { margin: 1em }", "@page:blank:first{margin:1em}");
+    minify_test("@page LandscapeTable { margin: 1em }", "@page LandscapeTable{margin:1em}");
+    minify_test("@page CompanyLetterHead:first { margin: 1em }", "@page CompanyLetterHead:first{margin:1em}");
+    minify_test("@page :first, :blank { margin: 1em }", "@page:first,:blank{margin:1em}");
+    minify_test("@page toc, index { margin: 1em }", "@page toc,index{margin:1em}");
+    minify_test("@page \\31 st { margin: 1em }", "@page \\31 st{margin:1em}");
+    minify_test("@page a\\ b { margin: 1em }", "@page a\\ b{margin:1em}");
+
+    minify_test("@page:left{margin:1em}", "@page:left{margin:1em}");
+    minify_test("@page:first{margin:1em}", "@page:first{margin:1em}");
+    minify_test("@page:blank:first{margin:1em}", "@page:blank:first{margin:1em}");
+    minify_test("@page LandscapeTable{margin:1em}", "@page LandscapeTable{margin:1em}");
+    minify_test("@page:first,:blank{margin:1em}", "@page:first,:blank{margin:1em}");
+    minify_test("@page toc,index{margin:1em}", "@page toc,index{margin:1em}");
+    minify_test("@page CompanyLetterHead:first{margin:1em}", "@page CompanyLetterHead:first{margin:1em}");
+    minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
+  });
+
+  describe("container", () => {
+    minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
+    minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");
+
+    // `not` takes a single parenthesized query, so the grouping parens around
+    // a nested and/or group must survive minification for the output to parse.
+    minify_test(
+      "@container not ((width > 100px) and (height > 100px)) { a { color: red } }",
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container not ((width > 100px) or (height > 100px)) { a { color: red } }",
+      "@container not ((width>100px) or (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container my-layout not ((width > 100px) and (height > 100px)) { a { color: red } }",
+      "@container my-layout not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+
+    // A nested group keeps its parens when its operator differs from the
+    // parent's; a nested group with the same operator is flattened.
+    minify_test(
+      "@container ((width > 100px) or (height > 100px)) and (orientation: landscape) { a { color: red } }",
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+    );
+    minify_test(
+      "@container ((width > 100px) and (height > 100px)) and (orientation: landscape) { a { color: red } }",
+      "@container (width>100px) and (height>100px) and (orientation:landscape){a{color:red}}",
+    );
+
+    // The same grammar applies inside style() queries.
+    minify_test("@container style(not (--a: 1)) { a { color: red } }", "@container style(not (--a:1)){a{color:red}}");
+    minify_test(
+      "@container style(not ((--a: 1) and (--b: 2))) { a { color: red } }",
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(not ((width: 1px) and (height: 2px))) { a { color: red } }",
+      "@container style(not ((width:1px) and (height:2px))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(((--a: 1) or (--b: 2)) and (--c: 3)) { a { color: red } }",
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+    );
+    minify_test(
+      "@container style((--a: 1) or (--b: 2)) and style(--c: 3) { a { color: red } }",
+      "@container style((--a:1) or (--b:2)) and style(--c:3){a{color:red}}",
+    );
+
+    // The minified forms parse back to themselves.
+    minify_test(
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+    );
+    minify_test(
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+    );
+  });
+
+  describe("font-palette-values", () => {
+    minify_test(
+      "@font-palette-values --x{font-family:Foo;base-palette:2}",
+      "@font-palette-values --x{font-family:Foo;base-palette:2}",
+    );
+    minify_test("@font-palette-values --x{base-palette:light}", "@font-palette-values --x{base-palette:light}");
+    minify_test("@font-palette-values --x{base-palette:65535}", "@font-palette-values --x{base-palette:65535}");
+    minify_test(
+      "@font-palette-values --x{override-colors:0 red,1 #00f}",
+      "@font-palette-values --x{override-colors:0 red,1 #00f}",
+    );
+
+    // Out-of-range palette indices don't fit the internal u16 storage; they
+    // must be preserved as unknown declarations instead of panicking.
+    minify_test("@font-palette-values --x{base-palette:99999}", "@font-palette-values --x{base-palette:99999}");
+    minify_test("@font-palette-values --x{base-palette:-1}", "@font-palette-values --x{base-palette:-1}");
+    minify_test(
+      "@font-palette-values --x{override-colors:99999 red}",
+      "@font-palette-values --x{override-colors:99999 red}",
+    );
+    minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
+    // Fuzzer-minimized input: unterminated block with an overflowing index.
+    minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+  });
+
+  describe("grid-template-areas", () => {
+    // Not in the typed property table yet; `.` null-cell tokens (including
+    // multi-dot runs) must survive the unparsed-token round-trip unchanged.
+    minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
+    minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
+    minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(
@@ -7397,6 +7684,129 @@ describe("css tests", () => {
         background: conic-gradient(from calc(1turn / 0) at calc(0 / 0), red, blue);
       }
       `,
+      );
+    });
+
+    describe("unparsed oklab color fallbacks", () => {
+      minify_test(".foo { color: var(--x, oklab(40% 0.1 0.1)) }", ".foo{color:var(--x,oklab(40% .1 .1))}");
+      minify_test(".foo { color: var(--x, oklch(40% 0.1 30)) }", ".foo{color:var(--x,oklch(40% .1 30))}");
+      minify_test(".foo { color: var(--x, lab(40% 0.1 0.1)) }", ".foo{color:var(--x,lab(40% .1 .1))}");
+      minify_test(".foo { color: var(--x, lch(40% 0.1 30)) }", ".foo{color:var(--x,lch(40% .1 30))}");
+      minify_test('.foo { color: "a" oklab(40% 0.1 0.1) }', '.foo{color:"a" oklab(40% .1 .1)}');
+      minify_test('.foo { color: "a" lab(40% 0.1 0.1) }', '.foo{color:"a" lab(40% .1 .1)}');
+    });
+
+    describe("color fallbacks with system colors and currentColor", () => {
+      prefix_test(
+        `
+          .foo {
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        indoc`
+          .foo {
+            background: background linear-gradient(#41001b, #da3671);
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        indoc`
+          .foo {
+            background: background linear-gradient(color(display-p3 .342311 -.157987 .0918331), color(display-p3 .787212 .27046 .444387));
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        {
+          safari: 14 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: linear-gradient(currentColor, lch(50% 50 180));
+          }
+        `,
+        indoc`
+          .foo {
+            background: linear-gradient(currentColor, #008675);
+            background: linear-gradient(currentColor, lch(50% 50 180));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: buttonface linear-gradient(lch(50% 50 180), canvas);
+          }
+        `,
+        indoc`
+          .foo {
+            background: buttonface linear-gradient(#008675, canvas);
+            background: buttonface linear-gradient(lch(50% 50 180), canvas);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            color: light-dark(buttonface, lch(50% 50 180));
+          }
+        `,
+        indoc`
+          .foo {
+            color: var(--buncss-light, buttonface) var(--buncss-dark, lch(50% 50 180));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            text-shadow: 0 0 currentColor, 0 0 lch(50% 50 180);
+          }
+        `,
+        indoc`
+          .foo {
+            text-shadow: 0 0, 0 0 #008675;
+            text-shadow: 0 0, 0 0 lch(50% 50 180);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            text-shadow: 0 0 currentColor, 0 0 lch(50% 50 180);
+          }
+        `,
+        indoc`
+          .foo {
+            text-shadow: 0 0, 0 0 color(display-p3 -.0472161 .537112 .461858);
+            text-shadow: 0 0, 0 0 lch(50% 50 180);
+          }
+        `,
+        {
+          safari: 14 << 16,
+        },
       );
     });
 

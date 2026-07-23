@@ -27,20 +27,43 @@ const TERM_ENVS = {
   "mosh": COLORS_16m,
   "putty": COLORS_16,
   "st": COLORS_16,
-  // https://github.com/da-x/rxvt-unicode/tree/v9.22-with-24bit-color
+  // http://lists.schmorp.de/pipermail/rxvt-unicode/2016q2/002261.html
   "rxvt-unicode-24bit": COLORS_16m,
-  // https://gist.github.com/XVilka/8346728#gistcomment-2823421
+  // https://bugs.launchpad.net/terminator/+bug/1030562
   "terminator": COLORS_16m,
+  "xterm-kitty": COLORS_16m,
 };
 
-const TERM_ENVS_REG_EXP = [/ansi/, /color/, /linux/, /^con[0-9]*x[0-9]/, /^rxvt/, /^screen/, /^xterm/, /^vt100/];
+const CI_ENVS = {
+  APPVEYOR: COLORS_256,
+  BUILDKITE: COLORS_256,
+  CIRCLECI: COLORS_16m,
+  DRONE: COLORS_256,
+  GITEA_ACTIONS: COLORS_16m,
+  GITHUB_ACTIONS: COLORS_16m,
+  GITLAB_CI: COLORS_256,
+  TRAVIS: COLORS_256,
+};
+
+const TERM_ENVS_REG_EXP = [
+  /ansi/,
+  /color/,
+  /linux/,
+  /direct/,
+  /^con[0-9]*x[0-9]/,
+  /^rxvt/,
+  /^screen/,
+  /^xterm/,
+  /^vt100/,
+  /^vt220/,
+];
 
 let warned = false;
 function warnOnDeactivatedColors(env) {
   if (warned) return;
   let name = "";
-  if (env.NODE_DISABLE_COLORS !== undefined) name = "NODE_DISABLE_COLORS";
-  if (env.NO_COLOR !== undefined) {
+  if (env.NODE_DISABLE_COLORS !== undefined && env.NODE_DISABLE_COLORS !== "") name = "NODE_DISABLE_COLORS";
+  if (env.NO_COLOR !== undefined && env.NO_COLOR !== "") {
     if (name !== "") {
       name += "' and '";
     }
@@ -76,9 +99,9 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
   }
 
   if (
-    env.NODE_DISABLE_COLORS !== undefined ||
+    (env.NODE_DISABLE_COLORS !== undefined && env.NODE_DISABLE_COLORS !== "") ||
     // See https://no-color.org/
-    env.NO_COLOR !== undefined ||
+    (env.NO_COLOR !== undefined && env.NO_COLOR !== "") ||
     // The "dumb" special terminal, as defined by terminfo, doesn't support
     // ANSI color control codes.
     // See https://invisible-island.net/ncurses/terminfo.ti.html#toc-_Specials
@@ -106,24 +129,28 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
   }
 
   if (env.TMUX) {
-    return COLORS_256;
+    return COLORS_16m;
   }
 
-  if (env.CI) {
-    if (
-      ["APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS"].some(
-        sign => sign in env,
-      ) ||
-      env.CI_NAME === "codeship"
-    ) {
+  // Azure DevOps
+  if ("TF_BUILD" in env && "AGENT_NAME" in env) {
+    return COLORS_16;
+  }
+
+  if ("CI" in env) {
+    for (const name in CI_ENVS) {
+      if (name in env) {
+        return CI_ENVS[name];
+      }
+    }
+    if (env.CI_NAME === "codeship") {
       return COLORS_256;
     }
     return COLORS_2;
   }
 
-  const TEAMCITY_VERSION = env.TEAMCITY_VERSION;
-  if (TEAMCITY_VERSION) {
-    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(TEAMCITY_VERSION) ? COLORS_16 : COLORS_2;
+  if ("TEAMCITY_VERSION" in env) {
+    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? COLORS_16 : COLORS_2;
   }
 
   switch (env.TERM_PROGRAM) {
@@ -150,7 +177,11 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
   const TERM = env.TERM;
 
   if (TERM) {
-    if (TERM.startsWith("xterm-256") !== null) {
+    if (/truecolor/.test(TERM)) {
+      return COLORS_16m;
+    }
+
+    if (TERM.startsWith("xterm-256")) {
       return COLORS_256;
     }
 

@@ -1,11 +1,11 @@
 import { file, spawn, write } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
   assertManifestsPopulated,
+  bunEnv as baseEnv,
   bunExe,
-  bunEnv as env,
   isLinux,
   isWindows,
   readdirSorted,
@@ -15,11 +15,10 @@ import {
 import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
-var packageDir: string;
-var packageJson: string;
+
+setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
   await verdaccio.start();
 });
 
@@ -31,16 +30,626 @@ function splitErrLines(err: string): string[] {
   return err.split(/\r?\n/).filter(s => !s.startsWith("WARNING: ASAN interferes"));
 }
 
-beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" } }));
-  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
-  env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+// Tests in this file each spawn `bun install` which itself spawns multiple lifecycle
+// script subprocesses. Running them all concurrently would fork-bomb the machine, so
+// gate concurrency with a small semaphore and give each test its own isolated dir/env.
+const MAX_CONCURRENT = 12;
+let activeSlots = 0;
+const slotWaiters: Array<() => void> = [];
+
+function acquireSlot(): Promise<void> {
+  if (activeSlots < MAX_CONCURRENT) {
+    activeSlots++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => slotWaiters.push(resolve));
+}
+
+function releaseSlot(): void {
+  const next = slotWaiters.shift();
+  if (next) {
+    next();
+  } else {
+    activeSlots--;
+  }
+}
+
+type TestCtx = {
+  packageDir: string;
+  packageJson: string;
+  env: Record<string, string>;
+  [Symbol.dispose](): void;
+};
+
+async function setupTest(): Promise<TestCtx> {
+  await acquireSlot();
+  let released = false;
+  try {
+    const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const env: Record<string, string> = {
+      ...baseEnv,
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+      BUN_TMPDIR: join(packageDir, ".bun-tmp"),
+      TMPDIR: join(packageDir, ".bun-tmp"),
+      TEMP: join(packageDir, ".bun-tmp"),
+    };
+    return {
+      packageDir,
+      packageJson,
+      env,
+      [Symbol.dispose]() {
+        if (!released) {
+          released = true;
+          releaseSlot();
+        }
+      },
+    };
+  } catch (e) {
+    releaseSlot();
+    released = true;
+    throw e;
+  }
+}
+
+// The six multi-install tests below are the longest in the file (2-3 serial `bun install`s
+// each, some with cold caches). Declare them first so they start before the ~110 shorter
+// tests and overlap with them instead of forming a serial tail at the end of the run.
+test.concurrent("ignore-scripts is read from npmrc", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.2.3",
+        dependencies: {
+          "uses-what-bin": "1.0.0",
+        },
+        scripts: {
+          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
+        },
+        trustedDependencies: ["uses-what-bin"],
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), "ignore-scripts=true"),
+  ]);
+
+  async function checkScripts(): Promise<boolean[]> {
+    return Promise.all([
+      exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")),
+      exists(join(packageDir, "postinstall.txt")),
+    ]);
+  }
+
+  await runBunInstall(env, packageDir);
+  expect(await checkScripts()).toEqual([false, false]);
+
+  await write(join(packageDir, ".npmrc"), "ignore-scripts=false");
+
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await checkScripts()).toEqual([false, true]);
+
+  await Promise.all([
+    rm(join(packageDir, "postinstall.txt")),
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+  ]);
+  expect(await checkScripts()).toEqual([false, false]);
+
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await checkScripts()).toEqual([true, true]);
 });
+
+test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  // A dependent controls the aliases of its own dependencies, so an entry like
+  // `"esbuild": "npm:uses-what-bin@1.0.0"` must not inherit lifecycle-script
+  // trust from `trustedDependencies: ["esbuild"]`. Trust is keyed on the
+  // resolved package name, never the alias.
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "esbuild": "npm:uses-what-bin@1.0.0",
+      },
+      trustedDependencies: ["esbuild"],
+    }),
+  );
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  let out = await stdout.text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Blocked 1 postinstall");
+  expect(await exists(join(packageDir, "node_modules", "esbuild", "package.json"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // Trusting the *resolved* package name still grants trust to the same
+  // aliased dependency.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "esbuild": "npm:uses-what-bin@1.0.0",
+      },
+      trustedDependencies: ["uses-what-bin"],
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+});
+
+test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  // No `trustedDependencies` in package.json: `electron` is on the default
+  // trusted list, so the genuine registry package's lifecycle scripts run.
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "electron": "1.0.0",
+      },
+    }),
+  );
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  let out = await stdout.text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+
+  // Tamper with the lockfile: keep the default-trusted name `electron` but
+  // point its tarball URL at a different package on the same registry. The
+  // install must still succeed, but the package must no longer inherit the
+  // default lifecycle-script grant because the URL is not the canonical
+  // registry tarball for `electron@1.0.0`.
+  const lockfilePath = join(packageDir, "bun.lock");
+  const lockfile = await file(lockfilePath).text();
+  expect(lockfile).toContain("/electron/-/electron-1.0.0.tgz");
+  await writeFile(
+    lockfilePath,
+    lockfile
+      .replace("/electron/-/electron-1.0.0.tgz", "/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz")
+      .replace(/"sha512-[^"]+"/, '""'),
+  );
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  // The redirected tarball (all-lifecycle-scripts content) installs under the
+  // recorded name, but its preinstall/install/postinstall must not run: the
+  // package no longer inherits default trust from the `electron` name because
+  // the URL is not the canonical registry tarball for `electron@1.0.0`.
+  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "electron", "install.js"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // Tamper again: keep the canonical path for `electron@1.0.0` but point the
+  // URL at a different origin — a second local server that proxies to the
+  // real registry. The tarball still downloads and the integrity still
+  // matches, but the origin is not the configured registry, so the default
+  // lifecycle-script grant must not apply.
+  using proxy = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
+        method: req.method,
+        headers: req.headers,
+      });
+    },
+  });
+  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+  expect(lockfile).toContain(canonicalUrl);
+  await writeFile(
+    lockfilePath,
+    lockfile.replace(canonicalUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
+  );
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+});
+
+test.concurrent("binary lockfile trusted dependency entries require an exact name match", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  // The binary lockfile (bun.lockb) stores trustedDependencies as truncated
+  // 32-bit name hashes with no name. A hash-only entry must never grant
+  // lifecycle-script trust to a different name that happens to collide with
+  // it. These two distinct names share the truncated hash 0x6c4a82d1 under
+  // `Wyhash11::hash(0, name) as u32` (same pair as "trustedDependencies entry
+  // must match by name, not truncated hash" above).
+  const trustedName = "pkg-xjd";
+  const colliderName = "pkg-ztd";
+
+  await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+
+  const colliderPath = join(packageDir, "collider");
+  await mkdir(colliderPath, { recursive: true });
+  await writeFile(
+    join(colliderPath, "package.json"),
+    JSON.stringify({
+      name: colliderName,
+      version: "1.0.0",
+      scripts: {
+        postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+      },
+    }),
+  );
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        [colliderName]: "file:./collider",
+      },
+      trustedDependencies: [trustedName],
+    }),
+  );
+
+  // First install writes a binary bun.lockb whose trustedDependencies entry
+  // for `pkg-xjd` is persisted as a hash with no name attached.
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  let out = await stdout.text();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Blocked 1 postinstall");
+  expect(await exists(join(packageDir, "bun.lockb"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // Reinstall from the binary lockfile. The hash-only entry loaded from disk
+  // must still not grant trust to the colliding name.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).toContain("Blocked 1 postinstall");
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
+
+  // A trustedDependencies entry that names the real package keeps working
+  // across the same binary-lockfile round trip.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lockb"), { force: true });
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        [colliderName]: "file:./collider",
+      },
+      trustedDependencies: [colliderName],
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Blocked");
+  expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
+  expect(await exited).toBe(0);
+});
+
+test.concurrent(
+  "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    // The user vets and trusts the names they wrote in `dependencies` /
+    // `trustedDependencies`. A folder/tarball/git dependency installed under a
+    // different alias must not inherit lifecycle-script trust just because the
+    // package.json inside the dependency declares the trusted name for itself.
+    const payloadDir = join(packageDir, "payload");
+    await mkdir(payloadDir, { recursive: true });
+    await writeFile(
+      join(payloadDir, "package.json"),
+      JSON.stringify({
+        name: "my-native-addon",
+        version: "1.0.0",
+        scripts: {
+          postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+        },
+      }),
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "unrelated-alias": "file:./payload",
+        },
+        trustedDependencies: ["my-native-addon"],
+      }),
+    );
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "unrelated-alias", "postinstall-ran.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+
+    // The same folder dependency declared under the alias the user actually
+    // listed in trustedDependencies still runs its lifecycle scripts.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "my-native-addon": "file:./payload",
+        },
+        trustedDependencies: ["my-native-addon"],
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exists(join(packageDir, "node_modules", "my-native-addon", "postinstall-ran.txt"))).toBeTrue();
+    expect(await exited).toBe(0);
+  },
+);
+
+test.concurrent(
+  "trustedDependencies entries for non-npm dependencies only apply to dependencies declared by the root or a workspace",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    // A transitive dependency picks the aliases of its own dependencies. An alias
+    // that happens to match an entry in the root's `trustedDependencies` must not
+    // grant lifecycle-script trust to a tarball/git/folder package the root never
+    // declared itself.
+    const tarballUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+    const middleDir = join(packageDir, "middle");
+    await mkdir(middleDir, { recursive: true });
+    await writeFile(
+      join(middleDir, "package.json"),
+      JSON.stringify({
+        name: "middle",
+        version: "1.0.0",
+        dependencies: {
+          "trusted-native-addon": tarballUrl,
+        },
+      }),
+    );
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "middle": "file:./middle",
+        },
+        trustedDependencies: ["trusted-native-addon"],
+      }),
+    );
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    // The remote tarball was introduced by `middle`, not by the root, so its
+    // preinstall must stay blocked even though the alias matches an entry in the
+    // root's trustedDependencies.
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeFalse();
+    expect(
+      await exists(
+        join(packageDir, "node_modules", "middle", "node_modules", "trusted-native-addon", "preinstall.txt"),
+      ),
+    ).toBeFalse();
+
+    // The same tarball declared by the root itself under the trusted alias still
+    // runs its lifecycle scripts.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "trusted-native-addon": tarballUrl,
+        },
+        trustedDependencies: ["trusted-native-addon"],
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "trusted-native-addon", "preinstall.txt"))).toBeTrue();
+  },
+);
 
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
-  describe("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
+  describe.concurrent("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {
     test("root package with all lifecycle scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
       const writeScript = async (name: string) => {
         const contents = `
@@ -224,6 +833,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("workspace lifecycle scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -320,6 +931,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
@@ -365,6 +978,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("install a dependency with lifecycle scripts, then add to trusted dependencies and install again", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -459,6 +1074,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("adding a package without scripts to trustedDependencies", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -628,6 +1245,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("lifecycle scripts run if node_modules is deleted", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -694,6 +1313,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("INIT_CWD is set to the correct directory", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -756,6 +1377,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("failing lifecycle script should print output", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -789,6 +1412,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("failing root lifecycle script should print output correctly", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -820,6 +1445,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("exit 0 in lifecycle scripts works", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -860,6 +1487,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("--ignore-scripts should skip lifecycle scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -900,6 +1529,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -942,6 +1573,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("automatic node-gyp scripts should not run for untrusted dependencies, and should run after adding to `trustedDependencies`", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const packageJSON: any = {
@@ -1007,6 +1640,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("automatic node-gyp scripts work in package root", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1066,6 +1701,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1115,6 +1752,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     for (const script of ["install", "preinstall"]) {
       test(`does not add auto node-gyp script when ${script} script exists`, async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         const packageJSON: any = {
@@ -1159,6 +1798,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     }
 
     test("git dependencies also run `preprepare`, `prepare`, and `postprepare` scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1245,6 +1886,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1293,6 +1936,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     async function createPackagesWithScripts(
+      packageDir: string,
+      packageJson: string,
       packagesCount: number,
       scripts: Record<string, string>,
     ): Promise<string[]> {
@@ -1334,13 +1979,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     }
 
     test("reach max concurrent scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const scripts = {
         "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
       };
 
-      const dependenciesList = await createPackagesWithScripts(4, scripts);
+      const dependenciesList = await createPackagesWithScripts(packageDir, packageJson, 4, scripts);
 
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install", "--concurrent-scripts=2"],
@@ -1369,9 +2016,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("stress test", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-      const dependenciesList = await createPackagesWithScripts(500, {
+      const dependenciesList = await createPackagesWithScripts(packageDir, packageJson, 500, {
         "postinstall": `${bunExe()} --version`,
       });
 
@@ -1404,6 +2053,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("it should install and use correct binary version", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       // this should install `what-bin` in two places:
@@ -1538,6 +2189,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("node-gyp should always be available for lifecycle scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1573,6 +2226,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     // if this test fails, `electron` might be removed from the default list
     test("default trusted dependencies should work", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1613,7 +2268,106 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    test("bun pm ls --trusted uses default trusted list when trustedDependencies is not set", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          dependencies: {
+            "electron": "1.0.0",
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("error:");
+        expect(err).toContain("Saved lockfile");
+        expect(await exited).toBe(0);
+      }
+
+      // Without `trustedDependencies` in package.json, `--trusted` falls back to
+      // the default trusted list. `electron` is on it, `no-deps` is not.
+      {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "ls", "--trusted"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const out = await stdout.text();
+        expect(await stderr.text()).toBe("");
+        expect(out).toBe(`${packageDir} node_modules (2)
+└── electron@1.0.0
+`);
+        expect(await exited).toBe(0);
+      }
+
+      // With `trustedDependencies` set, the default list is ignored.
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          dependencies: {
+            "electron": "1.0.0",
+            "no-deps": "1.0.0",
+          },
+          trustedDependencies: ["no-deps"],
+        }),
+      );
+
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+      }
+
+      {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "ls", "--trusted"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const out = await stdout.text();
+        expect(await stderr.text()).toBe("");
+        expect(out).toBe(`${packageDir} node_modules (2)
+└── no-deps@1.0.0
+`);
+        expect(await exited).toBe(0);
+      }
+    });
+
     test("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1713,6 +2467,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("does not run any scripts if trustedDependencies is an empty list", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -1761,6 +2517,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("default trusted dependencies should only apply to npm packages, not file: dependencies", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       // Create a file: dependency named "esbuild" (which is in the default trusted dependencies list)
@@ -1822,6 +2580,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("file: dependency with default trusted name should run scripts when explicitly added to trustedDependencies", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       // Create a file: dependency named "esbuild" with a postinstall script that creates a marker file
@@ -1881,9 +2641,105 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "esbuild", "postinstall-ran.txt"))).toBeTrue();
     });
 
-    test("will run default trustedDependencies after install that didn't include them", async () => {
-      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
+    test("trustedDependencies entry must match by name, not truncated hash", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      // Trusted-dependency lookups are keyed by `Wyhash11::hash(0, name) as u32`
+      // (the legacy 32-byte-round wyhash used by `String.Builder.string_hash`,
+      // NOT `Bun.hash.wyhash`). These two distinct names share the truncated
+      // 32-bit hash 0x6c4a82d1; they were found by an offline birthday search
+      // over `pkg-<base36>` candidates against that exact hash function.
+      const trustedName = "pkg-xjd";
+      const colliderName = "pkg-ztd";
+
+      const colliderPath = join(packageDir, "collider");
+      await mkdir(colliderPath, { recursive: true });
+      await writeFile(
+        join(colliderPath, "package.json"),
+        JSON.stringify({
+          name: colliderName,
+          version: "1.0.0",
+          scripts: {
+            postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+          },
+        }),
+      );
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            [colliderName]: "file:./collider",
+          },
+          // Trusts a *different* name whose truncated hash collides with the
+          // collider's. The collider's postinstall must NOT run.
+          trustedDependencies: [trustedName],
+        }),
+      );
+
+      let { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      let err = await stderr.text();
+      let out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("Blocked 1 postinstall");
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "node_modules", colliderName))).toBeTrue();
+      expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
+
+      // Trusting the collider by its exact name still grants trust to the same
+      // package. Start from a clean slate so this is a plain install with a
+      // matching trustedDependencies entry.
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lock"), { force: true });
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            [colliderName]: "file:./collider",
+          },
+          trustedDependencies: [colliderName],
+        }),
+      );
+
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      }));
+
+      err = await stderr.text();
+      out = await stdout.text();
+      expect(err).not.toContain("error:");
+      expect(out).not.toContain("Blocked");
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeTrue();
+    });
+
+    test("will run default trustedDependencies after install that didn't include them", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
 
       await writeFile(
         packageJson,
@@ -1968,6 +2824,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe("--trust", async () => {
       test("unhoisted untrusted scripts, none at root node_modules", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await Promise.all([
@@ -2020,6 +2878,75 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           await exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")),
         ).toBeTrue();
       });
+
+      test("must not trust a truncated-hash collision in the trusted subtree", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        // `--trust` collects the trusted subtree into a set keyed by
+        // `Wyhash11::hash(0, name) as u32` (the legacy 32-byte-round wyhash
+        // used by `String.Builder.string_hash`). "pkg-jodsufb" was found by an
+        // offline targeted search over `pkg-<base36>` candidates so that its
+        // truncated hash equals hash32("uses-what-bin") == 0x9f4d06e5.
+        const colliderName = "pkg-jodsufb";
+
+        const colliderPath = join(packageDir, "collider2");
+        await mkdir(colliderPath, { recursive: true });
+        await writeFile(
+          join(colliderPath, "package.json"),
+          JSON.stringify({
+            name: colliderName,
+            version: "1.0.0",
+            scripts: {
+              postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+            },
+          }),
+        );
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              [colliderName]: "file:./collider2",
+            },
+          }),
+        );
+
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i", "--trust", "uses-what-bin@1.0.0"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+          env: testEnv,
+        });
+
+        const err = await stderr.text();
+        const out = await stdout.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+
+        // The package that was actually trusted ran its scripts...
+        expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+        // ...the hash-colliding package did not.
+        expect(await exists(join(packageDir, "node_modules", colliderName, "postinstall-ran.txt"))).toBeFalse();
+
+        // Only the name passed to --trust is written back to package.json.
+        const pkgJson = await file(packageJson).json();
+        expect(pkgJson.trustedDependencies).toEqual(["uses-what-bin"]);
+
+        // The colliding alias is not persisted into the lockfile's
+        // trustedDependencies either.
+        const lockfile = await file(join(packageDir, "bun.lock")).text();
+        const trusted = lockfile.match(/"trustedDependencies":\s*\[([^\]]*)\]/);
+        expect(trusted).not.toBeNull();
+        expect(trusted![1]).toContain('"uses-what-bin"');
+        expect(trusted![1]).not.toContain(colliderName);
+      });
+
       const trustTests = [
         {
           label: "only name",
@@ -2083,11 +3010,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           },
         },
       ];
-      for (const { label, packageJson } of trustTests) {
+      for (const { label, packageJson: pkgJsonFixture } of trustTests) {
         test(label, async () => {
+          using ctx = await setupTest();
+          const { packageDir, env } = ctx;
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-          await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJson));
+          await writeFile(join(packageDir, "package.json"), JSON.stringify(pkgJsonFixture));
 
           let { stdout, stderr, exited } = spawn({
             cmd: [bunExe(), "i", "--trust", "uses-what-bin@1.0.0"],
@@ -2147,6 +3076,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }
       describe("packages without lifecycle scripts", async () => {
         test("initial install", async () => {
+          using ctx = await setupTest();
+          const { packageDir, packageJson, env } = ctx;
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
           await writeFile(
@@ -2188,6 +3119,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           });
         });
         test("already installed", async () => {
+          using ctx = await setupTest();
+          const { packageDir, packageJson, env } = ctx;
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
           await writeFile(
@@ -2270,6 +3203,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe("updating trustedDependencies", async () => {
       test("existing trustedDependencies, unchanged trustedDependencies", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
@@ -2343,6 +3278,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       test("existing trustedDependencies, removing trustedDependencies", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
@@ -2436,6 +3373,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       test("non-existent trustedDependencies, then adding it", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
@@ -2525,6 +3464,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("node -p should work in postinstall scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -2564,6 +3505,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("ensureTempNodeGypScript works", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -2601,6 +3544,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("bun pm trust and untrusted on missing package", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -2680,6 +3625,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       // for both cases, we need to update this test
       for (const withRm of [true, false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
+          using ctx = await setupTest();
+          const { packageDir, packageJson, env } = ctx;
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
           await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
@@ -2862,6 +3809,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
     describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
       test("install", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
@@ -2892,6 +3841,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       // https://github.com/oven-sh/bun/issues/11252
       test.todoIf(isWindows)("bun pm trust", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
@@ -2936,8 +3887,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
   });
 
-  describe("stdout/stderr is inherited from root scripts during install", async () => {
+  describe.concurrent("stdout/stderr is inherited from root scripts during install", async () => {
     test("without packages", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const exe = bunExe().replace(/\\/g, "\\\\");
@@ -2988,6 +3941,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("with a package", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const exe = bunExe().replace(/\\/g, "\\\\");
@@ -3044,47 +3999,3 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
   });
 }
-
-test("ignore-scripts is read from npmrc", async () => {
-  await Promise.all([
-    write(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.2.3",
-        dependencies: {
-          "uses-what-bin": "1.0.0",
-        },
-        scripts: {
-          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
-        },
-        trustedDependencies: ["uses-what-bin"],
-      }),
-    ),
-    write(join(packageDir, ".npmrc"), "ignore-scripts=true"),
-  ]);
-
-  async function checkScripts(): Promise<boolean[]> {
-    return Promise.all([
-      exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")),
-      exists(join(packageDir, "postinstall.txt")),
-    ]);
-  }
-
-  await runBunInstall(env, packageDir);
-  expect(await checkScripts()).toEqual([false, false]);
-
-  await write(join(packageDir, ".npmrc"), "ignore-scripts=false");
-
-  await runBunInstall(env, packageDir, { savesLockfile: false });
-  expect(await checkScripts()).toEqual([false, true]);
-
-  await Promise.all([
-    rm(join(packageDir, "postinstall.txt")),
-    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
-  ]);
-  expect(await checkScripts()).toEqual([false, false]);
-
-  await runBunInstall(env, packageDir, { savesLockfile: false });
-  expect(await checkScripts()).toEqual([true, true]);
-});

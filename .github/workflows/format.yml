@@ -22,7 +22,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Configure Git
         run: |
           git config --global core.autocrlf true
@@ -36,10 +36,19 @@ jobs:
         run: |
           bun install
       - name: Format Code
+        env:
+          # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
+          # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't
+          # need just to run rustfmt). Keep this in sync with `channel` there.
+          RUSTUP_TOOLCHAIN: nightly-2026-07-20
         run: |
+          # Without pipefail, `cmd | sed` always reports sed's exit status, so a
+          # failing formatter is invisible to the `wait $PID` checks below.
+          set -o pipefail
+
           # Start prettier in background with prefixed output
           echo "::group::Prettier"
-          (bun run prettier 2>&1 | sed 's/^/[prettier] /' || echo "[prettier] Failed with exit code $?") &
+          (bun run prettier 2>&1 | sed 's/^/[prettier] /') &
           PRETTIER_PID=$!
 
           # Start clang-format installation and formatting in background with prefixed output
@@ -55,21 +64,17 @@ jobs:
           ) &
           CLANG_PID=$!
 
-          # Setup Zig in temp directory and run zig fmt in background with prefixed output
-          echo "::group::Zig fmt"
+          # Run cargo fmt in background with prefixed output. RUSTUP_TOOLCHAIN
+          # (step env) overrides rust-toolchain.toml, so install only the host
+          # toolchain + rustfmt instead of the file's 11 cross-target std libs.
+          echo "::group::Cargo fmt"
           (
-            ZIG_TEMP=$(mktemp -d)
-            echo "[zig] Downloading Zig (musl build)..."
-            wget -q -O "$ZIG_TEMP/zig.zip" https://github.com/oven-sh/zig/releases/download/autobuild-e0b7c318f318196c5f81fdf3423816a7b5bb3112/bootstrap-x86_64-linux-musl.zip
-            unzip -q -d "$ZIG_TEMP" "$ZIG_TEMP/zig.zip"
-            export PATH="$ZIG_TEMP/bootstrap-x86_64-linux-musl:$PATH"
-            echo "[zig] Running zig fmt..."
-            zig fmt src 2>&1 | sed 's/^/[zig] /'
-            ./scripts/sort-imports.ts src 2>&1 | sed 's/^/[zig] /'
-            zig fmt src 2>&1 | sed 's/^/[zig] /'
-            rm -rf "$ZIG_TEMP"
+            echo "[rustfmt] Installing toolchain $RUSTUP_TOOLCHAIN..."
+            rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --no-self-update 2>&1 | sed 's/^/[rustfmt] /'
+            echo "[rustfmt] Running cargo fmt --all..."
+            cargo fmt --all 2>&1 | sed 's/^/[rustfmt] /'
           ) &
-          ZIG_PID=$!
+          RUST_PID=$!
 
           # Wait for all formatting tasks to complete
           echo ""
@@ -88,8 +93,8 @@ jobs:
           fi
           echo "::endgroup::"
 
-          if ! wait $ZIG_PID; then
-            echo "::error::Zig fmt failed"
+          if ! wait $RUST_PID; then
+            echo "::error::cargo fmt failed"
             FAILED=1
           fi
           echo "::endgroup::"
@@ -101,7 +106,11 @@ jobs:
           fi
 
           echo "✅ All formatters completed successfully"
-      - name: Ban Words
+      - name: Verify checked-in codegen
+        # `*.generated.rs` are deterministic outputs of `*.string-map.ts`; the
+        # source `.ts` is the truth. This step regenerates and fails if the
+        # committed `.generated.rs` is stale, so a forgotten regen surfaces in
+        # CI rather than as a confusing behaviour diff later.
         run: |
-          bun ./test/internal/ban-words.test.ts
+          bun run codegen:verify
       - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

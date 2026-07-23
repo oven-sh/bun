@@ -1,17 +1,52 @@
 ---
-title: Encode and decode base64 strings
+title: Encode and decode base64 data
 sidebarTitle: Base64 encoding
 mode: center
 ---
 
-Bun implements the Web-standard [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/atob) and [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/btoa) functions for encoding and decoding base64 strings.
+Prefer [`Uint8Array.prototype.toBase64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array/toBase64) and [`Uint8Array.fromBase64()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array/fromBase64) for encoding and decoding base64 data in Bun. These APIs work directly with bytes, so they are a better fit for binary data than the older `btoa()` and `atob()` globals.
 
 ```ts
-const data = "hello world";
-const encoded = btoa(data); // => "aGVsbG8gd29ybGQ="
-const decoded = atob(encoded); // => "hello world"
+const bytes = new Uint8Array([98, 117, 110]);
+const encoded = bytes.toBase64(); // => "YnVu"
+
+const decoded = Uint8Array.fromBase64(encoded);
+// => Uint8Array(3) [ 98, 117, 110 ]
 ```
+
+For strings, convert to and from UTF-8 bytes with [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder) and [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder).
+
+```ts
+const bytes = new TextEncoder().encode("hello world");
+const encoded = bytes.toBase64(); // => "aGVsbG8gd29ybGQ="
+
+const decoded = Uint8Array.fromBase64(encoded);
+const text = new TextDecoder().decode(decoded); // => "hello world"
+```
+
+Node.js `Buffer` extends `Uint8Array`, so buffers can be encoded with `toBase64()` and passed to APIs that accept `Uint8Array`. `Buffer` also provides Node.js-compatible base64 decoding with `Buffer.from(encoded, "base64")`.
+
+```ts
+const encoded = Buffer.from("hello world").toBase64();
+// => "aGVsbG8gd29ybGQ="
+
+const bytes = Buffer.from(encoded, "base64");
+bytes instanceof Uint8Array; // => true
+
+const text = bytes.toString("utf8");
+// => "hello world"
+```
+
+<Warning>
+  The older [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/btoa) and [`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/atob) APIs are still available for compatibility, but they operate on binary strings instead of byte arrays. Avoid them in new code, especially when handling arbitrary binary data or non-ASCII text.
+
+```ts
+const encoded = btoa("bun"); // => "YnVu"
+const decoded = atob(encoded); // => "bun"
+```
+
+</Warning>
 
 ---
 
-See [Docs > Web APIs](/runtime/web-apis) for a complete breakdown of the Web APIs implemented in Bun.
+See [Web APIs](/runtime/web-apis).

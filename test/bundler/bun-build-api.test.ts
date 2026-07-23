@@ -1,8 +1,9 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
+import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -68,6 +69,41 @@ describe("Bun.build", () => {
       return;
     }
     throw new Error("should have thrown");
+  });
+
+  // A `define:` value that isn't valid JSON or a JS identifier is auto-quoted
+  // (treated as a string literal). The JSON lexer must not error eagerly on the
+  // first character — a raw minified CSS string starts with `*{...}`, which
+  // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
+  describe.each([
+    "*{box-sizing:border-box}.root{all:initial}",
+    "?foo",
+    "(parenthesized)",
+    ")close",
+    "abc{not json}",
+    // Leading-operator chars must `step()` before falling back to auto-quote so
+    // `parse_string_literal`'s leading `step()` lands past index 1 (matching the
+    // reference lexer). Otherwise a LF at index 1 truncates the value to `"("`.
+    "(\nrest",
+    "*\nrest",
+  ])("define value %j is auto-quoted when not valid JSON", value => {
+    test("emits a quoted string literal", async () => {
+      const dir = tempDirWithFiles("bun-build-define-auto-quote", {
+        "entry.ts": `declare const X: string; console.log(X);`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(dir, "entry.ts")],
+        define: { X: value },
+      });
+      expect(result.success).toBe(true);
+      const out = await result.outputs[0].text();
+      // The printer emits the define as a `"..."` string literal, or as a
+      // `` `...` `` template literal when the value contains a literal newline.
+      // Either way the full value — not a truncated prefix — must round-trip.
+      if (!out.includes("`" + value + "`")) {
+        expect(out).toContain(JSON.stringify(value));
+      }
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/12818
@@ -191,25 +227,6 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("rebuilding busts the directory entries cache", () => {
-    Bun.gc(true);
-    const tmpdir = tempDirWithFiles("rebuild-bust-dirent-cache", {
-      "package.json": `{}`,
-    });
-
-    const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
-      env: { ...bunEnv, BUNDLER_RELOADER_SCRIPT_TMP_DIR: tmpdir },
-      stderr: "pipe",
-      stdout: "inherit",
-    });
-    if (stderr.byteLength > 0) {
-      throw new Error(stderr.toString());
-    }
-    expect(exitCode).toBe(0);
-    Bun.gc(true);
-  });
-
   test("outdir + reading out blobs works", async () => {
     Bun.gc(true);
     const fixture = tempDirWithFiles("build-outdir", {
@@ -302,6 +319,44 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
+    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot (visited in
+    // visitChildren); it must not also be held by a Strong root.
+    using dir = tempDir("build-artifact-sourcemap-gc", {
+      "index.js": "export const x = 1;\n",
+      "run.js": `
+        const { heapStats } = require("bun:jsc");
+        const result = await Bun.build({
+          entrypoints: ["./index.js"],
+          sourcemap: "external",
+          outdir: ".",
+        });
+        const entry = result.outputs[0];
+        const map = result.outputs[1];
+        console.log(JSON.stringify({
+          sourcemapIsMap: entry.sourcemap === map,
+          inspectShowsSourcemap: Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"),
+          protectedBuildArtifact: heapStats().protectedObjectTypeCounts.BuildArtifact ?? 0,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      sourcemapIsMap: true,
+      inspectShowsSourcemap: true,
+      protectedBuildArtifact: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // test("BuildArtifact properties splitting", async () => {
   //   Bun.gc(true);
   //   const x = await Bun.build({
@@ -376,7 +431,103 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
-  test("errors are returned as an array", async () => {
+  test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
+    // indexed by the property position instead of a dense counter, leaving garbage in
+    // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
+    // bundler thread surfaces as a test failure instead of taking down the test runner.
+    const dir = tempDirWithFiles("bun-build-loader-empty-key", {
+      "entry.ts": `export const x: number = 42;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const result = await Bun.build({
+            entrypoints: [${JSON.stringify(join(dir, "entry.ts"))}],
+            loader: { "": "js", ".ts": "ts", ".js": "js" },
+          });
+          if (!result.success) throw new AggregateError(result.logs, "build failed");
+          console.log(JSON.stringify({ success: result.success, outputs: result.outputs.length }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("rebuilding busts the directory entries cache", async () => {
+    Bun.gc(true);
+    const tmpdir = tempDirWithFiles("rebuild-bust-dirent-cache", {
+      "package.json": `{}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
+      env: { ...bunEnv, BUNDLER_RELOADER_SCRIPT_TMP_DIR: tmpdir },
+      stderr: "pipe",
+      stdout: "inherit",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (stderr.length > 0) {
+      throw new Error(stderr);
+    }
+    expect(exitCode).toBe(0);
+    Bun.gc(true);
+  });
+
+  // https://github.com/oven-sh/bun/issues/33099
+  // A package reached through a symlinked node_modules entry caches its file
+  // descriptor in the resolver. A second in-process Bun.build() used to reuse a
+  // descriptor the first build had already closed, failing with EBADF. The test
+  // host must also import the package so its fd is cached before the builds run.
+  test.concurrent.skipIf(isWindows)(
+    "repeated in-process builds of a symlinked package do not reuse a closed fd",
+    async () => {
+      using dir = tempDir("build-symlink-fd-cache", {
+        "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
+        "vendor/pkg/index.js": `export const value = 1;\n`,
+        "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
+        "repro.test.ts": `
+        import { it } from "bun:test";
+        import { value } from "pkg";
+        void value;
+        it("builds", async () => {
+          for (let i = 1; i <= 3; i++) {
+            const result = await Bun.build({ entrypoints: ["./entry.ts"] });
+            if (!result.success) {
+              throw new AggregateError(result.logs, "build " + i + " failed");
+            }
+          }
+          console.log("ALL_BUILDS_OK");
+        });
+      `,
+      });
+      mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+      symlinkSync("../vendor/pkg", join(String(dir), "node_modules", "pkg"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "repro.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("ALL_BUILDS_OK");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
       outdir: tempDirWithFiles("errors-are-returned-as-an-array", {}),
@@ -388,7 +539,7 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
-  test("warnings do not fail a build", async () => {
+  test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],
       outdir: tempDirWithFiles("warnings-do-not-fail-a-build", {}),
@@ -402,7 +553,7 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
-  test("module() throws error", async () => {
+  test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({
         entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
@@ -425,7 +576,7 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
-  test("non-object plugins throw invalid argument errors", () => {
+  test.concurrent("non-object plugins throw invalid argument errors", () => {
     for (const plugin of [null, undefined, 1, "hello", true, false, Symbol.for("hello")]) {
       expect(() => {
         Bun.build({
@@ -439,7 +590,7 @@ describe("Bun.build", () => {
     }
   });
 
-  test("hash considers cross chunk imports", async () => {
+  test.concurrent("hash considers cross chunk imports", async () => {
     Bun.gc(true);
     const fixture = tempDirWithFiles("build-hash-cross-chunk-imports", {
       "entry1.ts": `
@@ -503,7 +654,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("ignoreDCEAnnotations works", async () => {
+  test.concurrent("ignoreDCEAnnotations works", async () => {
     const fixture = tempDirWithFiles("build-ignore-dce-annotations", {
       "package.json": `{}`,
       "entry.ts": `
@@ -522,7 +673,7 @@ describe("Bun.build", () => {
     expect(await bundle.outputs[0].text()).toBe("console.log(1);\n");
   });
 
-  test("emitDCEAnnotations works", async () => {
+  test.concurrent("emitDCEAnnotations works", async () => {
     const fixture = tempDirWithFiles("build-emit-dce-annotations", {
       "package.json": `{}`,
       "entry.ts": `
@@ -541,9 +692,11 @@ describe("Bun.build", () => {
     expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
 
-  test("you can write onLoad and onResolve plugins using the 'html' loader, and it includes script and link tags as bundled entrypoints", async () => {
-    const fixture = tempDirWithFiles("build-html-plugins", {
-      "index.html": `
+  test.concurrent(
+    "you can write onLoad and onResolve plugins using the 'html' loader, and it includes script and link tags as bundled entrypoints",
+    async () => {
+      const fixture = tempDirWithFiles("build-html-plugins", {
+        "index.html": `
         <!DOCTYPE html>
         <html>
           <head>
@@ -552,69 +705,70 @@ describe("Bun.build", () => {
           </head>
         </html>
       `,
-      "style.css": ".foo { color: red; }",
+        "style.css": ".foo { color: red; }",
 
-      // Check we actually do bundle the script
-      "script.js": "console.log(1 + 2)",
-    });
+        // Check we actually do bundle the script
+        "script.js": "console.log(1 + 2)",
+      });
 
-    let onLoadCalled = false;
-    let onResolveCalled = false;
+      let onLoadCalled = false;
+      let onResolveCalled = false;
 
-    const build = await Bun.build({
-      entrypoints: [join(fixture, "index.html")],
-      minify: {
-        syntax: true,
-      },
-      plugins: [
-        {
-          name: "test-plugin",
-          setup(build) {
-            build.onLoad({ filter: /\.html$/ }, async args => {
-              onLoadCalled = true;
-              const contents = await Bun.file(args.path).text();
-              return {
-                contents: contents.replace("</head>", "<meta name='injected-by-plugin' content='true'></head>"),
-                loader: "html",
-              };
-            });
-
-            build.onResolve({ filter: /\.(js|css)$/ }, args => {
-              onResolveCalled = true;
-              return {
-                path: join(fixture, args.path),
-                namespace: "file",
-              };
-            });
-          },
+      const build = await Bun.build({
+        entrypoints: [join(fixture, "index.html")],
+        minify: {
+          syntax: true,
         },
-      ],
-    });
+        plugins: [
+          {
+            name: "test-plugin",
+            setup(build) {
+              build.onLoad({ filter: /\.html$/ }, async args => {
+                onLoadCalled = true;
+                const contents = await Bun.file(args.path).text();
+                return {
+                  contents: contents.replace("</head>", "<meta name='injected-by-plugin' content='true'></head>"),
+                  loader: "html",
+                };
+              });
 
-    expect(build.success).toBe(true);
-    expect(onLoadCalled).toBe(true);
-    expect(onResolveCalled).toBe(true);
+              build.onResolve({ filter: /\.(js|css)$/ }, args => {
+                onResolveCalled = true;
+                return {
+                  path: join(fixture, args.path),
+                  namespace: "file",
+                };
+              });
+            },
+          },
+        ],
+      });
 
-    // Should have 3 outputs - HTML, JS and CSS
-    expect(build.outputs).toHaveLength(3);
+      expect(build.success).toBe(true);
+      expect(onLoadCalled).toBe(true);
+      expect(onResolveCalled).toBe(true);
 
-    // Verify we have one of each type
-    const types = build.outputs.map(o => o.type);
-    expect(types).toContain("text/html;charset=utf-8");
-    expect(types).toContain("text/javascript;charset=utf-8");
-    expect(types).toContain("text/css;charset=utf-8");
+      // Should have 3 outputs - HTML, JS and CSS
+      expect(build.outputs).toHaveLength(3);
 
-    // Verify the JS output contains the __dirname
-    const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
-    expect(await js?.text()).toContain("console.log(3)");
+      // Verify we have one of each type
+      const types = build.outputs.map(o => o.type);
+      expect(types).toContain("text/html;charset=utf-8");
+      expect(types).toContain("text/javascript;charset=utf-8");
+      expect(types).toContain("text/css;charset=utf-8");
 
-    // Verify our plugin modified the HTML
-    const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
-    expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
-  });
+      // Verify the JS output contains the __dirname
+      const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
+      expect(await js?.text()).toContain("console.log(3)");
+
+      // Verify our plugin modified the HTML
+      const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
+      expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
+    },
+  );
 });
 
-test("macro with nested object", async () => {
+test.concurrent("macro with nested object", async () => {
   const dir = tempDirWithFilesAnon({
     "index.ts": `
 import { testMacro } from "./macro" assert { type: "macro" };
@@ -646,7 +800,7 @@ export function testMacro(val: any) {
 });
 
 // Since NODE_PATH has to be set, we need to run this test outside the bundler tests.
-test("regression/NODE_PATHBuild api", async () => {
+test.concurrent("regression/NODE_PATHBuild api", async () => {
   const dir = tempDirWithFiles("node-path-build", {
     "entry.js": `
       import MyClass from 'MyClass';
@@ -709,7 +863,7 @@ test("regression/NODE_PATHBuild api", async () => {
   expect(output.trim()).toBe("MyClass");
 });
 
-test("regression/GlobalThis", async () => {
+test.concurrent("regression/GlobalThis", async () => {
   const dir = tempDirWithFiles("global-this-regression", {
     "entry.js": `
       function identity(x) {
@@ -774,7 +928,7 @@ identity(mod23);
   expect(text).toContain(" globalThis.");
 });
 
-describe("sourcemap boolean values", () => {
+describe.concurrent("sourcemap boolean values", () => {
   test("sourcemap: true should work (boolean)", async () => {
     const dir = tempDirWithFiles("sourcemap-true-boolean", {
       "index.js": `console.log("hello");`,
@@ -834,6 +988,46 @@ describe("sourcemap boolean values", () => {
 
     const jsText = await jsOutput!.text();
     expect(jsText).toContain("//# sourceMappingURL=index.js.map");
+  });
+});
+
+describe.concurrent("sourcemap positions", () => {
+  // Source-map columns count UTF-16 code units. Tokens after the first
+  // non-ASCII character on a line (Latin-1, astral, CJK) must still map to
+  // their exact original column.
+  test("original columns after non-ASCII characters on the same line", async () => {
+    const source = [
+      `export function a1() { throw new Error("A"); } export const za = "e";`,
+      `export const zb = "é"; export function b1() { throw new Error("B"); }`,
+      `export const zc = "🎉"; export function c1() { throw new Error("C"); }`,
+      `export const zd = "汉字 wörld"; export function d1() { throw new Error("D"); }`,
+      ``,
+    ].join("\n");
+    const dir = tempDirWithFiles("build-sourcemap-unicode-columns", { "in.ts": source });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "in.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+    });
+    expect(build.success).toBe(true);
+
+    const generated = await build.outputs.find(o => o.kind === "entry-point")!.text();
+    const map = await build.outputs.find(o => o.kind === "sourcemap")!.json();
+
+    // 1-based line, 0-based UTF-16 column: the convention `source-map` uses on
+    // both sides of originalPositionFor.
+    const lineColumn = (text: string, index: number) => {
+      const before = text.slice(0, index);
+      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+    };
+
+    await SourceMapConsumer.with(map, null, consumer => {
+      for (const token of ['new Error("A")', 'new Error("B")', 'new Error("C")', 'new Error("D")']) {
+        const { line, column } = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
+        expect({ token, line, column }).toEqual({ token, ...lineColumn(source, source.indexOf(token)) });
+      }
+    });
   });
 });
 
@@ -1119,3 +1313,203 @@ export { greeting };`,
     expect(result.success).toBeDefined();
   });
 });
+
+// On release builds mimalloc's large-allocation arenas make RSS growth too
+// non-deterministic to draw a clean line between "leaking" and "not leaking"
+// for this path. Under debug/ASAN the allocator behaviour is stable enough to
+// measure reliably, so we only assert there.
+test.skipIf(!isDebug && !isASAN)(
+  "Bun.build sourcemap: 'inline' with no outdir does not leak sourcemap JSON",
+  async () => {
+    // The in-memory build path used to leak the intermediate sourcemap JSON
+    // buffer: it is base64-encoded into the output and then dropped without a
+    // free. To make the leak observable we make the sourcemap JSON huge —
+    // "sourcesContent" embeds the full input source, so a ~30MB comment in the
+    // entry produces a ~30MB sourcemap JSON while keeping the actual bundle
+    // work trivial. 8 leaked builds ≈ ~240MB that can never be reclaimed.
+    //
+    // RSS is noisy between builds, so we settle with several GC+sleep cycles
+    // before each sample to let JSC collect the output blobs and mimalloc
+    // purge freed pages.
+    const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
+      "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
+      "run.ts": `
+        const entry = process.argv[2];
+        async function build() {
+          const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
+          if (!res.success) throw new AggregateError(res.logs, "build failed");
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await Bun.sleep(10); }
+        }
+        for (let i = 0; i < 2; i++) await build();
+        await settle();
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 8; i++) await build();
+        await settle();
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", join(dir, "run.ts"), join(dir, "entry.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { growth } = JSON.parse(stdout.trim());
+    // Observed (2 warmup + 8 measured, settled): ~220-250MB with the free,
+    // ~590-650MB without it.
+    expect(growth).toBeLessThan(400 * 1024 * 1024);
+  },
+  120_000,
+);
+
+// Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`
+// walks a linear single-child scope chain in a `while(true)` loop, allocating a
+// fresh `NumberScope` from `number_scope_pool` for every level that declares
+// symbols. The trailing `defer if (s != initial_scope) { s.deinit; pool.put(s) }`
+// only returns the FINAL `s` to the pool — every intermediate NumberScope (and its
+// `name_counts` map) is abandoned. In Zig this is harmless: `name_counts` is backed
+// by the per-chunk worker arena (renamer.zig:533 `number_scope_pool = .init(arena)`,
+// findUnusedName puts via `r.allocator` = worker MimallocArena) and is bulk-freed
+// when the build completes. A port that drops the arena and backs `name_counts`
+// with the global heap leaks one HashMap per intermediate nested scope, per build,
+// forever — watch-mode / dev-server rebuilds grow unbounded.
+//
+// This test asserts the Zig invariant: repeated builds of a file with many deep
+// linear `{ let ...; { ... } }` chains must not grow RSS proportionally to
+// (chain depth × build count). Gated to debug/ASAN like the sourcemap-leak test
+// above because release mimalloc page retention makes RSS too noisy to threshold.
+// TODO(zig-rust-divergence): currently times out on the Rust debug build (the
+// per-chunk arena backing for NumberScope.name_counts was dropped — see
+// docs/ZIG_RUST_DIVERGENCE_AUDIT.md). Skipped instead of `.todo` because the
+// body never reaches its assertion before the 120s timeout, so `.todo` would
+// just burn two minutes of CI per run without exercising the check.
+test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_counts across builds", async () => {
+  // 8 independent linear chains, each 150 blocks deep, 80 `let` bindings per
+  // block. Every block has exactly one child block → renamer takes the linear
+  // fast-path and allocates a NumberScope per level; 149 of 150 are the
+  // "intermediate" ones the Zig defer never puts back. 80 bindings/level means
+  // each leaked `name_counts` holds 80 boxed-key entries.
+  const CHAINS = 8;
+  const DEPTH = 150;
+  const VARS_PER_SCOPE = 80;
+  let entry = "";
+  for (let c = 0; c < CHAINS; c++) {
+    for (let d = 0; d < DEPTH; d++) {
+      let decls = "";
+      for (let v = 0; v < VARS_PER_SCOPE; v++) decls += `c${c}_d${d}_v${v}=${v},`;
+      entry += `{let ${decls.slice(0, -1)};\n`;
+    }
+    entry += "}\n".repeat(DEPTH);
+  }
+
+  const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
+    "entry.js": entry,
+    "run.ts": `
+        const entry = process.argv[2];
+        async function build() {
+          // No identifier minification → NumberRenamer path (not MinifyRenamer).
+          const res = await Bun.build({ entrypoints: [entry], minify: false });
+          if (!res.success) throw new AggregateError(res.logs, "build failed");
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await Bun.sleep(10); }
+        }
+        // Warm up: fill any one-shot caches and let the worker arenas reach
+        // steady-state so the measured window only reflects per-build retention.
+        for (let i = 0; i < 2; i++) await build();
+        await settle();
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 20; i++) await build();
+        await settle();
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { growth } = JSON.parse(stdout.trim());
+  // With arena-backed scopes (Zig spec) the 20 measured builds reuse the same
+  // worker heap and settle near zero net growth. With global-heap name_counts
+  // and intermediate scopes never returned to the pool, each build abandons
+  // ~8×149 maps × 80 entries — roughly 4-5 MB/build, ~90-100 MB over 20
+  // iterations. 48 MB sits comfortably between the two with headroom for
+  // ASAN/LSan metadata noise.
+  expect(growth).toBeLessThan(48 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+}, 120_000);
+
+// Regression: repeated in-process `Bun.build()` calls panicked with
+// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP) after
+// a couple thousand builds. `Path.dupeAlloc` interns every module path into the
+// process-lifetime `FilenameStore`. The Rust port had dropped two things the
+// Zig original does: (1) the `isSliceInBuffer` short-circuit that returns an
+// already-interned path unchanged, and (2) routing the disjoint `text`/`pretty`
+// case (a freshly-relativized display path, recomputed every build) into the
+// per-build arena instead of the store. Without them, each build re-appended
+// every path, and once the store's overflow blocks filled
+// (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
+// fixed-capacity pointer array and panicked.
+//
+// Many modules per build reaches the cap in far fewer builds: with 500 modules
+// the broken binary panics roughly a third of the way through this loop, while
+// the fixed binary keeps the store bounded and exits cleanly after all 400.
+// (MODULES stays well under the ~550 where the unrelated recursive tree-shaker
+// overflows its thread stack.) Not gated to debug/ASAN — the panic reproduces
+// on release builds too.
+//
+// An explicit timeout is required (not optional): this runs hundreds of real
+// bundles, far past bun:test's 5s default. The sibling leak tests above do the
+// same. 180s matches the CI runner's own per-test ceiling.
+test("Bun.build can be called thousands of times in one process without crashing", async () => {
+  const MODULES = 500;
+  const BUILDS = 400;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < MODULES; i++) {
+    files[`m${i}.js`] =
+      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+      `export const v${i} = ${i};\n` +
+      `export function f${i}() { return v${i}; }\n`;
+  }
+  files["entry.js"] = Array.from(
+    { length: MODULES },
+    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+  ).join("\n");
+  files["run.ts"] = `
+    const entry = process.argv[2];
+    const BUILDS = ${BUILDS};
+    for (let i = 1; i <= BUILDS; i++) {
+      const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const o of res.outputs) await o.arrayBuffer();
+    }
+    console.log("OK " + BUILDS);
+  `;
+  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+  // the run completed cleanly instead.
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 400");
+  expect(exitCode).toBe(0);
+}, 180_000);

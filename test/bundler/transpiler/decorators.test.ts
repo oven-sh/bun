@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1019,6 +1020,24 @@ test("export default class works (anonymous name)", () => {
   expect(new DecoratedAnonClass()["methoddecorated"]).toBe(true);
 });
 
+test("field with supra-BMP string-literal key and initializer is assigned under the correct key", () => {
+  function dec(_t: any, _k: any) {}
+  class Foo {
+    @dec "\u{20BB7}\u{91BB6}": number = 42;
+    @dec static "\u{20BB7}\u{91BB6}": number = 7;
+  }
+  const f = new Foo();
+  expect({
+    instance: f["\u{20BB7}\u{91BB6}"],
+    instanceKeys: Object.getOwnPropertyNames(f),
+    staticVal: Foo["\u{20BB7}\u{91BB6}"],
+  }).toEqual({
+    instance: 42,
+    instanceKeys: ["\u{20BB7}\u{91BB6}"],
+    staticVal: 7,
+  });
+});
+
 test("decorator and declare", () => {
   let counter = 0;
   function d1() {
@@ -1036,3 +1055,53 @@ test("decorator and declare", () => {
   new A();
   expect(counter).toBe(1);
 });
+
+test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
+  // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
+  // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const N = 500000;
+        function gen(M) {
+          let src = "function d(t,k){}\\nclass Base {}\\nclass Foo extends Base {\\n";
+          for (let i = 0; i < M; i++) src += "@d f" + i + " = " + i + ";\\n";
+          src += "constructor() {\\nsuper();\\n";
+          src += Buffer.alloc(N * 2, "{}").toString();
+          src += "\\n}\\n}\\n";
+          return src;
+        }
+        const t = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { experimentalDecorators: true } },
+        });
+        function time(M) {
+          const src = gen(M);
+          const t0 = performance.now();
+          const out = t.transformSync(src);
+          const ms = performance.now() - t0;
+          if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
+            throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
+          return ms;
+        }
+        const tSmall = time(100);
+        const tLarge = time(50000);
+        console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(/^\{"tSmall":[\d.]+,"tLarge":[\d.]+,"ratio":[\d.]+\}\n$/),
+    exitCode: 0,
+  });
+  const { tSmall, tLarge } = JSON.parse(stdout);
+  expect(tLarge).toBeLessThan(tSmall * 3);
+}, 90_000);

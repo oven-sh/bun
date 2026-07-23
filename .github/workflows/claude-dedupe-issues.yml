@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Run Claude Code slash command
         uses: anthropics/claude-code-base-action@98d41f9809750c4c96f2cd285746ecef889f14bc

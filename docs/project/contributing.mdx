@@ -5,21 +5,18 @@ description: Contributing to Bun
 
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
-If you are using Windows, please refer to [this guide](/project/building-windows)
+If you are using Windows, see [Building Windows](/project/building-windows).
 
 ## Using Nix (Alternative)
 
-A Nix flake is provided as an alternative to manual dependency installation:
+The repository includes a Nix flake as an alternative to installing dependencies manually:
 
 ```bash
 nix develop
-# or explicitly use the pure shell
-# nix develop .#pure
-export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
 bun bd
 ```
 
-This provides all dependencies in an isolated, reproducible environment without requiring sudo.
+`nix develop` provides all dependencies in an isolated, reproducible environment without requiring sudo.
 
 ## Install Dependencies (Manual)
 
@@ -28,30 +25,34 @@ Using your system's package manager, install Bun's dependencies:
 <CodeGroup>
 
 ```bash macOS (Homebrew)
-brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
+brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby
 ```
 
 ```bash Ubuntu/Debian
-sudo apt install curl wget lsb-release software-properties-common cargo cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full xz-utils
 ```
 
 ```bash Arch
-sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
+sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby
 ```
 
 ```bash Fedora
-sudo dnf install cargo clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash openSUSE Tumbleweed
-sudo zypper install go cmake ninja automake git icu rustup && rustup toolchain install stable
+sudo zypper install go cmake ninja automake git icu rustup
 ```
 
 </CodeGroup>
 
-> **Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
+Bun is written in Rust and requires a specific nightly toolchain (pinned in `rust-toolchain.toml`). Install Rust with [rustup](https://rustup.rs) rather than your distro's `rust`/`cargo` packages — the build scripts use rustup to automatically install and update the pinned nightly:
 
-Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Before starting, install a release build of Bun: the build uses Bun's bundler to transpile and minify code, and to run the code generation scripts.
 
 <CodeGroup>
 
@@ -72,7 +73,7 @@ brew install bun
 
 ### Optional: Install `ccache`
 
-ccache is used to cache compilation artifacts, significantly speeding up builds:
+`ccache` caches compilation artifacts, which speeds up rebuilds:
 
 ```bash
 # For macOS
@@ -91,11 +92,11 @@ sudo dnf install ccache
 sudo zypper install ccache
 ```
 
-Our build scripts will automatically detect and use `ccache` if available. You can check cache statistics with `ccache --show-stats`.
+The build scripts detect and use `ccache` automatically if it's available. Check cache statistics with `ccache --show-stats`.
 
 ## Install LLVM
 
-Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 21.1.8 (`clang` is part of LLVM). The build system enforces this version: a mismatched version causes memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 <CodeGroup>
 
@@ -122,7 +123,7 @@ sudo zypper install clang21 lld21 llvm21
 
 </CodeGroup>
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
+If none of these work, install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
 
 Make sure Clang/LLVM 21 is in your path:
 
@@ -130,7 +131,7 @@ Make sure Clang/LLVM 21 is in your path:
 which clang-21
 ```
 
-If not, run this to manually add it:
+If not, add it manually:
 
 <CodeGroup>
 
@@ -148,18 +149,18 @@ export PATH="$PATH:/usr/lib/llvm21/bin"
 </CodeGroup>
 
 <Warning>
-⚠️ Ubuntu distributions (\<= 20.04) may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
+⚠️ On Ubuntu \<= 20.04, you may need to install the C++ standard library separately. See the [troubleshooting section](#span-file-not-found-on-ubuntu).
 </Warning>
 
 ## Building Bun
 
-After cloning the repository, run the following command to build. This may take a while as it will clone submodules and build dependencies.
+After cloning the repository, run the following command to build. This can take a while: it downloads and builds dependencies.
 
 ```bash
 bun run build
 ```
 
-The binary will be located at `./build/debug/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
+The binary is at `./build/debug/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, print its version:
 
 ```bash
 build/debug/bun-debug --version
@@ -168,9 +169,9 @@ x.y.z_debug
 
 ## VSCode
 
-VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+VSCode is the recommended IDE for working on Bun; the repository includes configuration for it. After opening the repository, run `Extensions: Show Recommended Extensions` to install the recommended extensions for Rust and C++. rust-analyzer picks up the workspace `Cargo.toml` automatically and uses the pinned toolchain in `rust-toolchain.toml` for analysis, so diagnostics match the build.
 
-If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./vendor/zig/zig.exe`. The filename is `zig.exe` so that it works as expected on Windows, but it still works on macOS/Linux (it just has a surprising file extension).
+If you use a different editor, point rust-analyzer (or your editor's Rust plugin) at the repo root — the Cargo workspace and `rust-toolchain.toml` are discovered automatically.
 
 We recommend adding `./build/debug` to your `$PATH` so that you can run `bun-debug` in your terminal:
 
@@ -188,25 +189,24 @@ bun bd test foo.test.ts
 bun bd ./foo.ts
 ```
 
-Bun generally takes about 2.5 minutes to compile a debug build when there are Zig changes. If your development workflow is "change one line, save, rebuild", you will spend too much time waiting for the build to finish. Instead:
+A full debug build can take a few minutes when Rust or C++ has changed; cargo's incremental compilation makes subsequent Rust-only rebuilds much faster. If your development workflow is "change one line, save, rebuild", you will still spend too much time waiting for the link step. Instead:
 
 - Batch up your changes
-- Ensure zls is running with incremental watching for LSP errors (if you use VSCode and install Zig and run `bun run build` once to download Zig, this should just work)
+- Use `cargo check -p <crate>` (or `bun run rust:check` for the whole workspace) to type-check Rust changes without linking. `bun run watch` runs `cargo check` on every save.
+- Ensure rust-analyzer is running for inline diagnostics (the recommended VSCode extensions set this up)
 - Prefer using the debugger ("CodeLLDB" in VSCode) to step through the code.
-- Use debug logs. `BUN_DEBUG_<scope>=1` will enable debug logging for the corresponding `Output.scoped(.<scope>, .hidden)` logs. You can also set `BUN_DEBUG_QUIET_LOGS=1` to disable all debug logging that isn't explicitly enabled. To dump debug logs into a file, `BUN_DEBUG=<path-to-file>.log`. Debug logs are aggressively removed in release builds.
-- src/js/\*\*.ts changes are pretty much instant to rebuild. C++ changes are a bit slower, but still much faster than the Zig code (Zig is one compilation unit, C++ is many).
+- Use debug logs. `BUN_DEBUG_<scope>=1` enables debug logging for the corresponding `declare_scope!(<scope>, ...)` / `scoped_log!(<scope>, ...)` logs. Set `BUN_DEBUG_QUIET_LOGS=1` to disable all debug logging that isn't explicitly enabled. To dump debug logs into a file, set `BUN_DEBUG=<path-to-file>.log`. Debug logs are removed in release builds.
+- src/js/\*\*.ts changes rebuild almost instantly. Single-crate Rust changes and C++ changes are incremental; only the final link is unavoidable.
 
 ## Code generation scripts
 
-Several code generation scripts are used during Bun's build process. These are run automatically when changes are made to certain files.
+Bun's build process runs several code generation scripts automatically when certain files change:
 
-In particular, these are:
-
-- `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams works.
-- `./src/codegen/generate-classes.ts` -- Generates `build/debug/codegen/ZigGeneratedClasses*`, which generates Zig & C++ bindings for JavaScriptCore classes implemented in Zig. In `**/*.classes.ts` files, we define the interfaces for various classes, methods, prototypes, getters/setters etc which the code generator reads to generate boilerplate code implementing the JavaScript objects in C++ and wiring them up to Zig
-- `./src/codegen/cppbind.ts` -- Generates automatic Zig bindings for C++ functions marked with `[[ZIG_EXPORT]]` attributes.
-- `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files we can include in the final binary. In development, these can be reloaded without rebuilding Zig (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
-- `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream`, `WritableStream`, and a handful more. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions so that we can copy-paste the implementations from WebKit as a starting point.
+- `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams work.
+- `./src/codegen/generate-classes.ts` -- Generates Rust & C++ bindings for JavaScriptCore classes implemented in Rust. `**/*.classes.ts` files define the interfaces for classes, methods, prototypes, and getters/setters; the code generator reads them to generate the boilerplate that implements the JavaScript objects in C++ and wires them up to Rust.
+- `./src/codegen/cppbind.ts` -- Scans the C++ bindings for functions marked with an export attribute and generates automatic Rust FFI wrappers (`cpp.rs`) for them.
+- `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files included in the final binary. In development, these can be reloaded without rebuilding native code (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
+- `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream` and `WritableStream`. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions, so implementations can be copy-pasted from WebKit as a starting point.
 
 ## Modifying ESM modules
 
@@ -220,13 +220,13 @@ To compile a release build of Bun, run:
 bun run build:release
 ```
 
-The binary will be located at `./build/release/bun` and `./build/release/bun-profile`.
+The binaries are at `./build/release/bun` and `./build/release/bun-profile`.
 
 ### Download release build from pull requests
 
-To save you time spent building a release build locally, we provide a way to run release builds from pull requests. This is useful for manually testing changes in a release build before they are merged.
+You can run the release build from a pull request without building it locally, which is useful for manually testing changes before they are merged.
 
-To run a release build from a pull request, you can use the `bun-pr` npm package:
+Use the `bun-pr` npm package:
 
 ```sh
 bunx bun-pr <pr-number>
@@ -235,13 +235,13 @@ bunx bun-pr "https://github.com/oven-sh/bun/pull/1234566"
 bunx bun-pr --asan <pr-number> # Linux x64 only
 ```
 
-This will download the release build from the pull request and add it to `$PATH` as `bun-${pr-number}`. You can then run the build with `bun-${pr-number}`.
+`bun-pr` downloads the release build from the pull request's GitHub Actions artifacts and adds it to `$PATH` as `bun-${pr-number}`, so you can run it directly:
 
 ```sh
 bun-1234566 --version
 ```
 
-This works by downloading the release build from the GitHub Actions artifacts on the linked pull request. You may need the `gh` CLI installed to authenticate with GitHub.
+You may need the `gh` CLI installed to authenticate with GitHub.
 
 ### Viewing CI failures from the terminal
 
@@ -259,15 +259,15 @@ All of these accept a target: `#1234` (PR number), a PR URL, a branch name, or a
 
 ## AddressSanitizer
 
-[AddressSanitizer](https://en.wikipedia.org/wiki/AddressSanitizer) helps find memory issues, and is enabled by default in debug builds of Bun on Linux and macOS. This includes the Zig code and all dependencies. It makes the Zig code take about 2x longer to build, if that's stopping you from being productive you can disable it with `bun run build:debug:noasan` (or pass `--asan=off` to `scripts/build.ts`), but generally we recommend batching your changes up between builds.
+[AddressSanitizer](https://en.wikipedia.org/wiki/AddressSanitizer) helps find memory issues, and is enabled by default in debug builds of Bun on Linux and macOS. This covers the Rust code, the C++ bindings, and all dependencies. It makes the build take about 2x longer; if that's stopping you from being productive you can disable it with `bun run build:debug:noasan` (or pass `--asan=off` to `scripts/build.ts`), but generally we recommend batching your changes up between builds.
 
-To build a release build with Address Sanitizer, run:
+To build a release build with AddressSanitizer, run:
 
 ```bash
-bun run build:release:asan
+bun run build:asan
 ```
 
-In CI, we run our test suite with at least one target that is built with Address Sanitizer.
+CI runs the test suite with at least one target built with AddressSanitizer.
 
 ## Building WebKit locally + Debug mode of JSC
 
@@ -277,40 +277,39 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 # Clone WebKit into ./vendor/WebKit
 git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
-# Check out the commit hash specified in WEBKIT_VERSION in scripts/build/deps/webkit.ts
-git -C vendor/WebKit checkout <commit_hash>
+# Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
+# (a commit sha or an autobuild-* release tag; this handles both)
+bun sync-webkit-source
 
 # Build bun with the local JSC build — this automatically configures and builds JSC
 bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and will build Bun+JSC.
+`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC rebuilds incrementally if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and builds both Bun and JSC.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
 - The first line in `src/js/builtins.d.ts`
 - The `CompilationDatabase` line in `.clangd` config should be `CompilationDatabase: build/debug-local`
-- In `build.zig`, the `codegen_path` option should be `build/debug-local/codegen` (instead of `build/debug/codegen`)
 - In `.vscode/launch.json`, many configurations use `./build/debug/`, change them as you see fit
 
-Note that the WebKit folder, including build artifacts, is 8GB+ in size.
+The WebKit folder, including build artifacts, is 8GB+ in size.
 
-If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
+If you are using a JSC debug build with VSCode, run the `C/C++: Select a Configuration` command so IntelliSense finds the debug headers.
 
-Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in `scripts/build/deps/webkit.ts` to point to the commit hash.
+If you make changes to Bun's [WebKit fork](https://github.com/oven-sh/WebKit), you also have to change `WEBKIT_VERSION` in `scripts/build/deps/webkit.ts` to point to your commit hash or release tag.
 
 ## Troubleshooting
 
 ### 'span' file not found on Ubuntu
 
 <Warning>
-  ⚠️ Please note that the instructions below are specific to issues occurring on Ubuntu. It is unlikely that the same
-  issues will occur on other Linux distributions.
+  ⚠️ These instructions are specific to Ubuntu. The same issues are unlikely on other Linux distributions.
 </Warning>
 
-The Clang compiler typically uses the `libstdc++` C++ standard library by default. `libstdc++` is the default C++ Standard Library implementation provided by the GNU Compiler Collection (GCC). While Clang may link against the `libc++` library, this requires explicitly providing the `-stdlib` flag when running Clang.
+Clang uses `libstdc++`, the C++ standard library implementation provided by the GNU Compiler Collection (GCC), by default. Clang can link against `libc++` instead, but that requires explicitly passing the `-stdlib` flag.
 
-Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. GCC 10 doesn't have all of the C++20 features implemented. As a result, running `make setup` may fail with the following error:
+Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. As a result, running `bun run build` may fail with the following error:
 
 ```txt
 fatal error: 'span' file not found
@@ -318,7 +317,7 @@ fatal error: 'span' file not found
          ^~~~~~
 ```
 
-The issue may manifest when initially running `bun setup` as Clang being unable to compile a simple program:
+The issue may also surface when first running `bun run build`, with Clang unable to compile a simple program:
 
 ```txt
 The C++ compiler
@@ -328,7 +327,7 @@ The C++ compiler
 is not able to compile a simple test program.
 ```
 
-To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:
+To fix the error, update GCC to version 11. It may be available in your distribution's official repositories; otherwise, add a third-party repository that provides GCC 11 packages:
 
 ```bash
 sudo apt update
@@ -340,7 +339,7 @@ sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
 sudo apt install gcc-11 g++-11
 ```
 
-Now, we need to set GCC 11 as the default compiler:
+Then set GCC 11 as the default compiler:
 
 ```bash
 sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
@@ -365,10 +364,10 @@ xcode-select --install
 
 ### Cannot find `libatomic.a`
 
-Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
+Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, enable dynamic linking with:
 
 ```bash
-bun run build -DUSE_STATIC_LIBATOMIC=OFF
+bun run build --static-libatomic=off
 ```
 
 The built version of Bun may not work on other systems if compiled this way.
@@ -376,5 +375,5 @@ The built version of Bun may not work on other systems if compiled this way.
 ## Using bun-debug
 
 - Disable logging: `BUN_DEBUG_QUIET_LOGS=1 bun-debug ...` (to disable all debug logging)
-- Enable logging for a specific zig scope: `BUN_DEBUG_EventLoop=1 bun-debug ...` (to allow `std.log.scoped(.EventLoop)`)
-- Bun transpiles every file it runs, to see the actual executed source in a debug build find it in `/tmp/bun-debug-src/...path/to/file`, for example the transpiled version of `/home/bun/index.ts` would be in `/tmp/bun-debug-src/home/bun/index.ts`
+- Enable logging for a specific scope: `BUN_DEBUG_EventLoop=1 bun-debug ...` (to enable `scoped_log!(EventLoop, ...)` output)
+- Bun transpiles every file it runs. To see the actual executed source in a debug build, find it in `/tmp/bun-debug-src/...path/to/file`. For example, the transpiled version of `/home/bun/index.ts` is in `/tmp/bun-debug-src/home/bun/index.ts`

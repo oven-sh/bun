@@ -30,17 +30,10 @@ export default {
 ## Writing Builtin Functions
 
 ```typescript
-export function initializeReadableStream(
-  this: ReadableStream,
-  underlyingSource,
-  strategy,
-) {
-  if (!$isObject(underlyingSource)) {
-    throw new TypeError(
-      "ReadableStream constructor takes an object as first argument",
-    );
-  }
-  $putByIdDirectPrivate(this, "state", $streamReadable);
+// Fifo.ts
+export function createFIFO<T>(): Dequeue<T> {
+  const Dequeue = require("internal/fifo");
+  return new Dequeue();
 }
 ```
 
@@ -48,7 +41,7 @@ C++ access:
 
 ```cpp
 object->putDirectBuiltinFunction(vm, globalObject, identifier,
-  readableStreamInitializeReadableStreamCodeGenerator(vm), 0);
+  fifoCreateFIFOCodeGenerator(vm), 0);
 ```
 
 ## $ Globals and Special Syntax
@@ -95,7 +88,7 @@ function myAPI(callback) {
 3. Bundle, convert `export default` to `return`
 4. Replace `__intrinsic__` with `@`, inline into C++
 
-ModuleLoader.zig loads modules by numeric ID via `InternalModuleRegistry.cpp`.
+ModuleLoader.rs loads modules by numeric ID via `InternalModuleRegistry.cpp`.
 
 ## Key Rules
 

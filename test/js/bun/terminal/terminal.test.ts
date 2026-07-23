@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 
 // Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
 function enableEcho(terminal: Bun.Terminal) {
@@ -7,8 +7,7 @@ function enableEcho(terminal: Bun.Terminal) {
   terminal.localFlags = terminal.localFlags | ECHO;
 }
 
-// Terminal (PTY) is only supported on POSIX platforms
-describe.todoIf(isWindows)("Bun.Terminal", () => {
+describe("Bun.Terminal", () => {
   describe("constructor", () => {
     test("creates a PTY with default options", async () => {
       await using terminal = new Bun.Terminal({});
@@ -92,6 +91,28 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
     test("throws when options is undefined", () => {
       expect(() => new Bun.Terminal(undefined as any)).toThrow();
+    });
+
+    test("throws when options is not an object", () => {
+      expect(() => new Bun.Terminal(8 as any)).toThrow();
+      expect(() => new Bun.Terminal("hello" as any)).toThrow();
+      expect(() => new Bun.Terminal(true as any)).toThrow();
+      expect(() => new Bun.Terminal(1n as any)).toThrow();
+      expect(() => new Bun.Terminal(Symbol() as any)).toThrow();
+    });
+
+    test("throws ERR_INVALID_ARG_TYPE with 'property' wording when name is not a string", () => {
+      let caught: any;
+      try {
+        new Bun.Terminal({ name: 12345 as any });
+      } catch (e) {
+        caught = e;
+      }
+      expect({ code: caught?.code, name: caught?.name, message: caught?.message }).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        name: "TypeError",
+        message: 'The "name" property must be of type string, got number',
+      });
     });
   });
 
@@ -271,6 +292,30 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
       expect(() => terminal.setRawMode(true)).toThrow("Terminal is closed");
     });
+
+    // The mode and the saved termios used to be one process-wide pair, so once
+    // any terminal was raw, setRawMode(true) on a second one returned success
+    // without ever touching that terminal's own PTY.
+    test.skipIf(isWindows)("each terminal keeps its own raw mode", async () => {
+      const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+      const ECHO = 0x8;
+      const isRaw = (terminal: Bun.Terminal) => (terminal.localFlags & (ICANON | ECHO)) === 0;
+
+      await using first = new Bun.Terminal({});
+      await using second = new Bun.Terminal({});
+
+      first.setRawMode(true);
+      second.setRawMode(true);
+      const bothRaw = { first: isRaw(first), second: isRaw(second) };
+
+      second.setRawMode(false);
+      const afterSecondRestored = { first: isRaw(first), second: isRaw(second) };
+
+      expect({ bothRaw, afterSecondRestored }).toEqual({
+        bothRaw: { first: true, second: true },
+        afterSecondRestored: { first: true, second: false },
+      });
+    });
   });
 
   describe("termios flags", () => {
@@ -360,6 +405,23 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       // Still 0
       expect(terminal.inputFlags).toBe(0);
     });
+
+    test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
+      // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
+      // matching the reference `@max(0, @min(num, max))` semantics. The kernel
+      // may mask some bits per field, so compare NaN against Infinity rather
+      // than a hard-coded constant.
+      await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
+
+      for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {
+        terminal[prop] = Infinity;
+        const fromInfinity = terminal[prop];
+        terminal[prop] = NaN;
+        const fromNaN = terminal[prop];
+        expect({ prop, fromNaN }).toEqual({ prop, fromNaN: fromInfinity });
+        expect(fromNaN).toBeGreaterThan(0);
+      }
+    });
   });
 
   describe("close", () => {
@@ -431,7 +493,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
     });
   });
 
-  describe("data callback", () => {
+  // ConPTY has no line discipline echo without a child process, so termios-echo
+  // tests are POSIX-only.
+  describe.concurrent.todoIf(isWindows)("data callback", () => {
     test("receives echoed output", async () => {
       const received: Uint8Array[] = [];
 
@@ -553,38 +617,36 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
   describe("exit callback", () => {
     test("exit callback is called on close", async () => {
-      let exitCalled = false;
       let exitCode: number | null = null;
+      const { promise, resolve } = Promise.withResolvers<void>();
 
       const terminal = new Bun.Terminal({
         exit(term, code, signal) {
-          exitCalled = true;
           exitCode = code;
+          resolve();
         },
       });
 
       terminal.close();
+      await promise;
 
-      // Give time for callback to be called
-      await Bun.sleep(50);
-
-      expect(exitCalled).toBe(true);
       expect(exitCode).toBe(0);
     });
 
     test("exit callback receives terminal as first argument", async () => {
       let receivedTerminal: any = null;
+      const { promise, resolve } = Promise.withResolvers<void>();
 
       const terminal = new Bun.Terminal({
         exit(term, code, signal) {
           receivedTerminal = term;
+          resolve();
         },
       });
 
       terminal.close();
-      await Bun.sleep(50);
+      await promise;
 
-      // The terminal is closed but the callback should have received a valid reference
       expect(receivedTerminal).toBeDefined();
       expect(receivedTerminal.close).toBeFunction();
     });
@@ -592,31 +654,53 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
   describe("drain callback", () => {
     test("drain callback is invoked when writer is ready", async () => {
-      const { promise, resolve } = Promise.withResolvers<boolean>();
+      const { promise, resolve } = Promise.withResolvers<void>();
       let drainCalled = false;
 
       const terminal = new Bun.Terminal({
         drain(term) {
           drainCalled = true;
-          resolve(true);
+          resolve();
         },
       });
 
-      // Write some data to trigger drain callback when buffer is flushed
       terminal.write("hello");
-
-      // Wait for drain with timeout - drain may be called immediately or after flush
-      const result = await Promise.race([promise, Bun.sleep(100).then(() => false)]);
-
+      await promise;
       terminal.close();
 
-      // Drain callback should have been called (or will be called on close)
-      // The key is that the callback mechanism works without throwing
-      expect(typeof drainCalled).toBe("boolean");
+      expect(drainCalled).toBe(true);
+    });
+
+    // Reaching the `had_buffered && !has_pending` branch needs a second write
+    // whose combined size both exceeds CHUNK_SIZE (so should_buffer is false)
+    // and fits in the kernel PTY input queue (so the sync flush completes).
+    // On Linux the queue is ~12K so 5005 bytes works; on macOS it is smaller
+    // than 5005 with no slave reader, and on Apple Silicon CHUNK_SIZE is 16K,
+    // so neither constraint is satisfiable there. The branch under test has no
+    // target-specific code, so Linux is the regression guard.
+    test.skipIf(!isLinux)("drain fires when a second write flushes what the first buffered", async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let drainCount = 0;
+
+      const terminal = new Bun.Terminal({
+        drain() {
+          drainCount++;
+          resolve();
+        },
+      });
+      terminal.setRawMode(true);
+
+      expect(terminal.write("hello")).toBe(5);
+      expect(terminal.write(Buffer.alloc(5000, 66))).toBe(5000);
+
+      await promise;
+      terminal.close();
+
+      expect(drainCount).toBeGreaterThan(0);
     });
   });
 
-  describe("subprocess interaction", () => {
+  describe.concurrent("subprocess interaction", () => {
     test("spawns subprocess with PTY", async () => {
       await using terminal = new Bun.Terminal({
         cols: 80,
@@ -625,7 +709,8 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
       // Spawn a simple command that outputs to the PTY
       const proc = Bun.spawn({
-        cmd: ["echo", "hello from pty"],
+        cmd: [bunExe(), "-e", "console.log('hello from pty')"],
+        env: bunEnv,
         terminal,
       });
 
@@ -657,36 +742,38 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
     });
 
     test("subprocess can read from terminal", async () => {
-      const received: Uint8Array[] = [];
+      let received = "";
+      const { promise: gotData, resolve } = Promise.withResolvers<void>();
 
       await using terminal = new Bun.Terminal({
         data(term, data) {
-          received.push(new Uint8Array(data));
+          received += Buffer.from(data).toString("latin1");
+          if (received.includes("hello from test")) resolve();
         },
       });
 
-      // Spawn cat which will echo input back
+      // Spawn a stdin->stdout passthrough which will echo input back
       const proc = Bun.spawn({
-        cmd: ["cat"],
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        env: bunEnv,
         terminal,
       });
 
-      // Write to the terminal
       terminal.write("hello from test\n");
+      await gotData;
 
-      // Wait a bit for processing
-      await Bun.sleep(100);
-
-      // Send EOF to cat
       proc.kill("SIGTERM");
       await proc.exited;
+
+      expect(received).toContain("hello from test");
     });
 
     test("multiple subprocesses can use same terminal sequentially", async () => {
       await using terminal = new Bun.Terminal({});
 
       const proc1 = Bun.spawn({
-        cmd: ["echo", "first"],
+        cmd: [bunExe(), "-e", "console.log('first')"],
+        env: bunEnv,
         terminal,
       });
       await proc1.exited;
@@ -696,7 +783,8 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       expect(terminal.closed).toBe(false);
 
       const proc2 = Bun.spawn({
-        cmd: ["echo", "second"],
+        cmd: [bunExe(), "-e", "console.log('second')"],
+        env: bunEnv,
         terminal,
       });
       await proc2.exited;
@@ -711,7 +799,8 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
       // Spawn a process that will receive SIGWINCH
       const proc = Bun.spawn({
-        cmd: ["sleep", "1"],
+        cmd: [bunExe(), "-e", "await Bun.sleep(1000)"],
+        env: bunEnv,
         terminal,
       });
 
@@ -725,7 +814,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   });
 
   describe("ANSI escape sequences", () => {
-    test("can write ANSI color codes", async () => {
+    test.todoIf(isWindows)("can write ANSI color codes", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -778,7 +867,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       expect(written).toBe(6);
     });
 
-    test("can receive binary data in callback", async () => {
+    test.todoIf(isWindows)("can receive binary data in callback", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -894,7 +983,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   });
 
   describe("edge cases", () => {
-    test("handles Unicode characters", async () => {
+    test.todoIf(isWindows)("handles Unicode characters", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -954,17 +1043,19 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   });
 });
 
-// Terminal (PTY) is only supported on POSIX platforms
-describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
+describe.concurrent("Bun.spawn with terminal option", () => {
   test("creates subprocess with terminal attached", async () => {
     const dataChunks: Uint8Array[] = [];
+    const gotMarker = Promise.withResolvers<void>();
 
-    const proc = Bun.spawn(["echo", "hello from terminal"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
+      env: bunEnv,
       terminal: {
         cols: 80,
         rows: 24,
         data: (terminal: Bun.Terminal, data: Uint8Array) => {
           dataChunks.push(data);
+          if (Buffer.concat(dataChunks).toString().includes("hello from terminal")) gotMarker.resolve();
         },
       },
     });
@@ -972,6 +1063,7 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     expect(proc.terminal).toBeDefined();
     expect(proc.terminal).toBeInstanceOf(Object);
 
+    await gotMarker.promise;
     await proc.exited;
 
     // Should have received data through the terminal
@@ -987,6 +1079,7 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   test("terminal option creates proper PTY for interactive programs", async () => {
     const dataChunks: Uint8Array[] = [];
     let terminalFromCallback: Bun.Terminal | undefined;
+    const gotMarker = Promise.withResolvers<void>();
 
     // Note: TERM env var needs to be set manually - it's not set automatically from terminal.name
     const proc = Bun.spawn([bunExe(), "-e", "console.log('TERM=' + process.env.TERM, 'TTY=' + process.stdout.isTTY)"], {
@@ -998,10 +1091,12 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
         data: (terminal: Bun.Terminal, data: Uint8Array) => {
           terminalFromCallback = terminal;
           dataChunks.push(data);
+          if (Buffer.concat(dataChunks).toString().includes("TTY=true")) gotMarker.resolve();
         },
       },
     });
 
+    await gotMarker.promise;
     await proc.exited;
 
     // The terminal from callback should be the same as proc.terminal
@@ -1016,38 +1111,43 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   });
 
   test("terminal.write sends data to subprocess stdin", async () => {
-    const dataChunks: Uint8Array[] = [];
+    let combinedOutput = "";
+    const ready = Promise.withResolvers<void>();
+    const echoed = Promise.withResolvers<void>();
 
-    // Use cat which reads from stdin and writes to stdout
-    const proc = Bun.spawn(["cat"], {
-      terminal: {
-        data: (_terminal: Bun.Terminal, data: Uint8Array) => {
-          dataChunks.push(data);
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        "process.stdout.write('READY\\n'); process.stdin.setEncoding('utf8'); process.stdin.on('data', d => process.stdout.write(d));",
+      ],
+      {
+        env: bunEnv,
+        terminal: {
+          data: (_terminal: Bun.Terminal, data: Uint8Array) => {
+            combinedOutput += Buffer.from(data).toString();
+            if (combinedOutput.includes("READY")) ready.resolve();
+            if (combinedOutput.includes("hello from parent")) echoed.resolve();
+          },
         },
       },
-    });
+    );
 
-    // Wait a bit for the subprocess to be ready
-    await Bun.sleep(100);
-
-    // Write to the terminal - cat will echo it back via stdout
+    // Wait for the child to signal it's listening, then write
+    await ready.promise;
     proc.terminal!.write("hello from parent\n");
+    await echoed.promise;
 
-    // Wait for response
-    await Bun.sleep(200);
-
-    // Close terminal to send EOF and let cat exit
+    proc.kill();
+    await proc.exited;
     proc.terminal!.close();
 
-    await proc.exited;
-
-    // cat reads stdin and writes to stdout, so we should see our message
-    const combinedOutput = Buffer.concat(dataChunks).toString();
     expect(combinedOutput).toContain("hello from parent");
   });
 
   test("terminal getter returns same object each time", async () => {
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {},
     });
 
@@ -1061,14 +1161,15 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   });
 
   test("terminal is undefined when not using terminal option", async () => {
-    const proc = Bun.spawn(["echo", "test"], {});
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], { env: bunEnv });
 
     expect(proc.terminal).toBeUndefined();
     await proc.exited;
   });
 
   test("stdin/stdout/stderr return null when terminal is used", async () => {
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {},
     });
 
@@ -1105,7 +1206,8 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     let exitTerminal: Bun.Terminal | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();
 
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {
         exit: (terminal: Bun.Terminal) => {
           exitCalled = true;
@@ -1116,9 +1218,7 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     });
 
     await proc.exited;
-
-    // Wait for the exit callback with timeout
-    await Promise.race([promise, Bun.sleep(500)]);
+    await promise;
 
     // The exit callback should be called when EOF is received on the PTY
     expect(exitCalled).toBe(true);
@@ -1132,12 +1232,13 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     terminal.close();
 
     expect(() => {
-      Bun.spawn(["echo", "test"], { terminal });
+      Bun.spawn([bunExe(), "-e", ""], { terminal });
     }).toThrow("terminal is closed");
   });
 
   test("subprocess stdin/stdout/stderr are null when using terminal", async () => {
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {},
     });
 
@@ -1152,12 +1253,16 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
 
   test("existing terminal works with subprocess", async () => {
     const dataChunks: Uint8Array[] = [];
+    const { promise: gotData, resolve: gotDataResolve } = Promise.withResolvers<void>();
 
     await using terminal = new Bun.Terminal({
-      data: (_t, data) => dataChunks.push(data),
+      data: (_t, data) => {
+        dataChunks.push(data);
+        if (Buffer.concat(dataChunks).includes("hello")) gotDataResolve();
+      },
     });
 
-    const proc = Bun.spawn(["echo", "hello"], { terminal });
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('hello')"], { env: bunEnv, terminal });
 
     // subprocess.terminal should reference the same terminal
     expect(proc.terminal).toBe(terminal);
@@ -1165,8 +1270,147 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     await proc.exited;
     expect(proc.exitCode).toBe(0);
 
-    // Data should have been received
+    // PTY data is delivered asynchronously and may arrive after the child exits;
+    // wait for the data callback rather than assuming it already fired.
+    await gotData;
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
+  });
+
+  // An inline terminal must not keep the event loop alive after its subprocess
+  // exits: on POSIX on_process_exit drives the reader to EOF and unrefs both
+  // polls (drain_and_close_slave_fd); on Windows it unrefs only the writer
+  // (unref_after_inline_child_exit) and the reader stays ref'd until conhost
+  // self-exits and delivers EOF, so a script that never calls terminal.close()
+  // still exits. Regression for #33882 which deferred the reader's EOF to a
+  // later poll tick. POSIX-only assertions: on Windows EOF arrives
+  // asynchronously once conhost self-exits, so the exit callback may not have
+  // fired by the time child.exited resolves.
+  test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let out = "";
+          let exitCount = 0;
+          const child = Bun.spawn([process.execPath, "-e", "console.log('hi from pty')"], {
+            env: process.env,
+            terminal: {
+              data: (_t, d) => { out += Buffer.from(d).toString(); },
+              exit: () => { exitCount++; },
+            },
+          });
+          await child.exited;
+          const exitedSync = exitCount === 1;
+          // One macrotask barrier so the reader's still-armed one-shot poll
+          // fires its second EIO; the exit callback must stay at one.
+          await Bun.sleep(0);
+          process.stdout.write(JSON.stringify({
+            gotOutput: out.includes("hi from pty"),
+            exitedSync,
+            exitCount,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // On main this times out: the reader/writer polls kept loop.active > 0 and
+    // nothing triggered the GC that would finalize the Terminal.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ gotOutput: true, exitedSync: true, exitCount: 1 }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // On Windows, Subprocess::on_process_exit used to fire ClosePseudoConsole
+  // immediately; that routes teardown through conhost's PtySignalInputThread,
+  // which on Server 2019 races the ConsoleIoThread still processing the
+  // child's last WriteConsole and can drop the final render. The inline
+  // pseudoconsole now releases its ConDrv \Reference handle at spawn time so
+  // conhost exits via its IoThread (sequentially after the last write) and the
+  // reader sees every byte before EOF.
+  test("inline terminal: fast-exiting child's output is delivered before exit callback", async () => {
+    let output = "";
+    let outputAtExit = "";
+    const eof = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('LAST-FRAME', () => process.exit(0))"],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          outputAtExit = output;
+          eof.resolve();
+        },
+      },
+    });
+    try {
+      await proc.exited;
+      await eof.promise;
+      // The exit callback fires on reader EOF: on Windows that is conhost closing
+      // the output pipe from its IoThread; on POSIX it is drain_and_close_slave_fd.
+      expect(outputAtExit).toContain("LAST-FRAME");
+      // After EOF conhost has exited; resize() must keep its no-throw contract
+      // (ResizePseudoConsole would fail on the broken signal pipe).
+      expect(() => proc.terminal!.resize(100, 40)).not.toThrow();
+    } finally {
+      proc.terminal?.close();
+    }
+  });
+
+  // Cross-platform loop-exit check: after an inline terminal's child exits,
+  // nothing else in the inner script refs the event loop. POSIX drains to EOF
+  // synchronously; on Windows the reader stays ref'd only until conhost
+  // self-exits and delivers EOF. Either way the inner process must not hang.
+  test("process exits after inline-terminal child exits without terminal.close()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `await Bun.spawn([process.execPath, "-e", "process.stdout.write('ok')"], {
+           env: process.env,
+           terminal: { data() {}, exit() {} },
+         }).exited;`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+  });
+
+  // https://github.com/oven-sh/bun/issues/33187
+  // Not `test.concurrent`: spawns run concurrently inside the body; the serial
+  // `Bun.spawn` loop must be the only contention to reproduce the race.
+  test("many fast-exiting subprocesses all deliver pty output", async () => {
+    const N = isWindows ? 8 : 20;
+    const outcomes: string[] = [];
+    const one = async () => {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let got = "";
+      const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
+        env: bunEnv,
+        terminal: {
+          data: (_t, d) => {
+            got += Buffer.from(d).toString();
+            if (got.includes("hello from terminal")) resolve("data");
+          },
+          exit: () => resolve(got.includes("hello from terminal") ? "data" : "exit-no-data"),
+        },
+      });
+      outcomes.push(await promise);
+      proc.terminal?.close();
+      await proc.exited;
+    };
+    await Promise.all(Array.from({ length: N }, one));
+    expect(outcomes).toEqual(Array.from({ length: N }, () => "data"));
   });
 });

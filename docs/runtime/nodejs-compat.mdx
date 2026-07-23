@@ -3,11 +3,11 @@ title: "Node.js Compatibility"
 description: "Bun's compatibility status with Node.js APIs, modules, and globals"
 ---
 
-Every day, Bun gets closer to 100% Node.js API compatibility. Today, popular frameworks like Next.js, Express, and millions of `npm` packages intended for Node work with Bun. To ensure compatibility, we run thousands of tests from Node.js' test suite before every release of Bun.
+Every day, Bun gets closer to 100% Node.js API compatibility. Popular frameworks like Next.js, Express, and millions of `npm` packages intended for Node.js work with Bun. To ensure compatibility, we run thousands of tests from Node.js' test suite before every release of Bun.
 
-**If a package works in Node.js but doesn't work in Bun, we consider it a bug in Bun.** Please [open an issue](https://bun.com/issues) and we'll fix it.
+**If a package works in Node.js but doesn't work in Bun, we consider it a bug in Bun.** [Open an issue](https://bun.com/issues) and we'll fix it.
 
-This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v23_.
+This page is updated regularly and reflects the latest version of Bun's compatibility with _Node.js v23_.
 
 ## Built-in Node.js modules
 
@@ -45,11 +45,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
+🟢 Fully implemented. The outgoing client request body is buffered instead of streamed.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟢 APIs are implemented, but `Agent` is not always used yet.
+🟢 APIs are implemented, but `Agent` is not always used.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -81,7 +81,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
-🟢 Recommended to use global `setTimeout`, et. al. instead.
+🟢 Use the global `setTimeout` and related functions instead.
 
 ### [`node:tty`](https://nodejs.org/api/tty.html)
 
@@ -97,7 +97,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 `AsyncLocalStorage`, and `AsyncResource` are implemented. v8 promise hooks are not called, and its usage is [strongly discouraged](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks).
+🟡 `AsyncLocalStorage` and `AsyncResource` are implemented. v8 promise hooks are not called, and its usage is [strongly discouraged](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks).
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
@@ -105,7 +105,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
-🟡 Handles and file descriptors cannot be passed between workers, which means load-balancing HTTP requests across processes is only supported on Linux at this time (via `SO_REUSEPORT`). Otherwise, implemented but not battle-tested.
+🟡 Handles and file descriptors cannot be passed between workers, so load-balancing HTTP requests across processes is only supported on Linux (through `SO_REUSEPORT`). Otherwise, implemented but not battle-tested.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
@@ -117,11 +117,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
-🟡 Client & server are implemented (95.25% of gRPC's test suite passes). Missing `options.allowHTTP1`, `options.enableConnectProtocol`, ALTSVC extension, and `http2stream.pushStream`.
+🟡 Client & server are implemented (95.25% of gRPC's test suite passes).
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented and we recommend using a [`Bun.plugin`](/runtime/plugins) in the meantime.
+🟡 Missing `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented; we recommend [`Bun.plugin`](/runtime/plugins) instead.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
@@ -129,7 +129,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 APIs are implemented, but Node.js test suite does not pass yet for this module.
+🟡 APIs are implemented, but the Node.js test suite for this module does not pass.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
@@ -153,7 +153,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
-🟡 Core functionality and ES modules are implemented, including `vm.Script`, `vm.createContext`, `vm.runInContext`, `vm.runInNewContext`, `vm.runInThisContext`, `vm.compileFunction`, `vm.isContext`, `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`, and `importModuleDynamically` support. Options like `timeout` and `breakOnSigint` are fully supported. Missing `vm.measureMemory` and some `cachedData` functionality.
+🟡 Core functionality and ES modules are implemented, including `vm.Script`, `vm.createContext`, `vm.runInContext`, `vm.runInNewContext`, `vm.runInThisContext`, `vm.compileFunction`, `vm.isContext`, `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`, and `importModuleDynamically` support. Options like `timeout` and `breakOnSigint` are fully supported.
 
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 
@@ -165,7 +165,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
-🟡 Partially implemented. `Profiler` API is supported (`Profiler.enable`, `Profiler.disable`, `Profiler.start`, `Profiler.stop`, `Profiler.setSamplingInterval`). Other inspector APIs are not yet implemented.
+🟡 Partially implemented. The `Profiler` API is supported (`Profiler.enable`, `Profiler.disable`, `Profiler.start`, `Profiler.stop`, `Profiler.setSamplingInterval`). Other inspector APIs are not implemented.
 
 ### [`node:repl`](https://nodejs.org/api/repl.html)
 
@@ -173,19 +173,19 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:sqlite`](https://nodejs.org/api/sqlite.html)
 
-🔴 Not implemented.
+🟢 Fully implemented. `backup()` runs synchronously and blocks the event loop for the duration of the copy (Node runs it on a worker thread). A `Buffer`/`Uint8Array` database path must be valid UTF-8 (Node passes the raw bytes through; Bun rejects non-UTF-8 with `ERR_INVALID_ARG_VALUE`). On macOS, Bun uses the system `libsqlite3.dylib`; `loadExtension()` (and, on older macOS releases, `createSession()`/`applyChangeset()`) require a full SQLite build — call `require("bun:sqlite").Database.setCustomSQLite(path)` before opening a database.
 
 ### [`node:test`](https://nodejs.org/api/test.html)
 
-🟡 Partly implemented. Missing mocks, snapshots, timers. Use [`bun:test`](/test) instead.
+🟡 Partially implemented. The in-process API works when test files run under `bun test`: tests, suites, subtests, hooks, `t.plan()`, `t.assert`, `assert.register()`, `t.waitFor()`, `getTestContext()`, and `t.mock` (function/method/getter/setter/property mocks and mock timers). Missing `run()`, `node:test/reporters`, snapshot testing, `mock.module()`, code coverage, `--test-only`, test-level `signal`/`t.signal` abort, and Node's `--test` CLI runner mode. `test.only()` / `{only: true}` are accepted but do not filter. `concurrency` is validated but subtests always run serially. Use [`bun:test`](/test) instead.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ## Node.js globals
 
-The table below lists all globals implemented by Node.js and Bun's current compatibility status.
+The following list covers every global implemented by Node.js and Bun's compatibility status for each.
 
 ### [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController)
 
@@ -297,7 +297,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`global`](https://nodejs.org/api/globals.html#global)
 
-🟢 Implemented. This is an object containing all objects in the global namespace. It's rarely referenced directly, as its contents are available without an additional prefix, e.g. `__dirname` instead of `global.__dirname`.
+🟢 Implemented. `global` is an object containing all objects in the global namespace. It's rarely referenced directly, as its contents are available without a prefix, for example `__dirname` instead of `global.__dirname`.
 
 ### [`globalThis`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis)
 
@@ -353,7 +353,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented. `process.title` is currently a no-op on macOS & Linux. `getActiveResourcesInfo` `setActiveResourcesInfo`, `getActiveResources` and `setSourceMapsEnabled` are stubs. Newer APIs like `process.loadEnvFile` and `process.getBuiltinModule` are not implemented yet.
+🟡 Mostly implemented. `process.binding` (internal Node.js bindings some packages rely on) is partially implemented. `process.title` is a no-op on macOS & Linux. `getActiveResourcesInfo` `setActiveResourcesInfo`, `getActiveResources` and `setSourceMapsEnabled` are stubs. Newer APIs like `process.loadEnvFile` are not implemented.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 

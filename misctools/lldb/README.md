@@ -5,7 +5,6 @@ This directory contains LLDB pretty printers for various Bun data structures to 
 ## Files
 
 - `bun_pretty_printer.py` - Pretty printers for Bun-specific types (bun.String, WTFStringImpl, ZigString, BabyList, etc.)
-- `lldb_pretty_printers.py` - Pretty printers for Zig language types from the Zig project
 - `lldb_webkit.py` - Pretty printers for WebKit/JavaScriptCore types
 - `init.lldb` - LLDB initialization commands
 
@@ -14,7 +13,7 @@ This directory contains LLDB pretty printers for various Bun data structures to 
 ### bun.String Types
 - `bun.String` (or just `String`) - The main Bun string type
 - `WTFStringImpl` - WebKit string implementation (Latin1/UTF16)
-- `ZigString` - Zig string type (UTF8/Latin1/UTF16 with pointer tagging)
+- `ZigString` - Tagged string type used at the FFI boundary (UTF8/Latin1/UTF16 with pointer tagging)
 
 ### Display Format
 
@@ -70,8 +69,8 @@ bun bd
 ```bash
 lldb ./build/debug/bun-debug
 (lldb) command script import misctools/lldb/bun_pretty_printer.py
-(lldb) breakpoint set --file your_test.zig --line <line_number>
-(lldb) run your_test.zig
+(lldb) breakpoint set --file your_file.rs --line <line_number>
+(lldb) run your_test.ts
 (lldb) frame variable
 ```
 
@@ -93,7 +92,7 @@ WTFStringImpl uses flags in `m_hashAndFlags`:
 bun.String is a tagged union with these variants:
 - Dead (0): Invalid/freed string
 - WTFStringImpl (1): WebKit string
-- ZigString (2): Regular Zig string
+- ZigString (2): Regular ZigString
 - StaticZigString (3): Static/immortal string
 - Empty (4): Empty string ""
 

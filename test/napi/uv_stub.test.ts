@@ -1,11 +1,19 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/bun.js/bindings/libuv/generate_uv_posix_stubs_constants";
+import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
 import source from "./uv-stub-stuff/plugin.c";
 
-const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
+const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
+// Each per-symbol test spawns a fresh bun subprocess that aborts in the stub.
+// Under asan, process startup is ~2.3s and the CI agent exposes 2 vCPUs, so
+// the full ~294-symbol set is ~11 minutes of CPU-bound work regardless of
+// concurrency and overruns the file timeout. All stubs route through the
+// same CrashHandler__unsupportedUVFunction formatter, so a strided sample
+// exercises the mechanism on asan while every non-asan lane still runs the
+// full set.
+const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
 
 // We use libuv on Windows
 describe.if(!isWindows)("uv stubs", () => {
@@ -64,18 +72,20 @@ describe.if(!isWindows)("uv stubs", () => {
 
     process.chdir(tempdir);
 
-    const libuvDir = path.join(__dirname, "../../src/bun.js/bindings/libuv");
+    const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
     console.log("tempdir:", tempdir);
   });
 
-  afterEach(async () => {
+  afterAll(() => {
     process.chdir(cwd);
   });
 
+  // The bodies share no mutable state (tempdir is read-only after
+  // beforeAll), so run them concurrently.
   for (const symbol of symbols_to_test) {
-    test(`unsupported: ${symbol}`, async () => {
+    test.concurrent(`unsupported: ${symbol}`, async () => {
       const { stderr } = await Bun.$`BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB=1 ${bunExe()} run index.ts ${symbol}`
         .cwd(tempdir)
         .throws(false)

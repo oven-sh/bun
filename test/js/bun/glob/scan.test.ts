@@ -22,8 +22,9 @@
 
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { execSync } from "child_process";
 import fg from "fast-glob";
-import { tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -64,8 +65,10 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/node_modules/**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         // console.error(filepaths);
         expect(filepaths.length).toEqual(fgFilepths.length);
@@ -84,8 +87,10 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
 
@@ -103,8 +108,10 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/*.ts";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
 
@@ -171,6 +178,29 @@ describe("glob.match", async () => {
     expect(returnError(() => glob.scan({ cwd: true }))).toBeDefined();
     // @ts-expect-error
     expect(returnError(() => glob.scan({ cwd: 123123 }))).toBeDefined();
+
+    function returnError(cb: () => any): Error | undefined {
+      try {
+        cb();
+      } catch (err) {
+        // @ts-expect-error
+        return err;
+      }
+      return undefined;
+    }
+  });
+
+  test("oversized cwd throws instead of crashing", async () => {
+    const glob = new Glob("*.ts");
+    const tooLong = Buffer.alloc(100_000, "x").toString();
+    // relative cwd
+    expect(returnError(() => [...glob.scanSync({ cwd: tooLong })])).toBeDefined();
+    expect(returnError(() => glob.scan({ cwd: tooLong }))).toBeDefined();
+    // relative cwd that would be resolved against process.cwd()
+    expect(returnError(() => [...glob.scanSync({ cwd: tooLong, absolute: true })])).toBeDefined();
+    // absolute cwd
+    expect(returnError(() => [...glob.scanSync({ cwd: "/" + tooLong })])).toBeDefined();
+    expect(returnError(() => glob.scan({ cwd: "/" + tooLong }))).toBeDefined();
 
     function returnError(cb: () => any): Error | undefined {
       try {
@@ -846,4 +876,307 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
       .join("/") +
     "/*.txt";
   expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })].length).toBe(1);
+});
+
+// scan() keeps the cwd string it is given verbatim, but child paths pushed for
+// symlink work items are joined and normalized. The entry-name offset stored on
+// those work items must be derived from the normalized joined path, not from the
+// raw cwd, otherwise a cwd with redundant trailing separators plus a short-named
+// symlink makes the offset exceed the path length.
+test("scan handles a cwd with redundant trailing separators when following symlinks", async () => {
+  using dir = tempDir("glob-scan-symlink-raw-cwd", {
+    "haystack/regular.txt": "regular",
+    "haystack/target/inner.txt": "inner",
+  });
+
+  // Short-named symlink to a directory: after normalization the joined child
+  // path is shorter than the raw cwd string passed to scan() below.
+  try {
+    fs.symlinkSync("target", path.join(String(dir), "haystack", "L"), "dir");
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return;
+    throw err;
+  }
+
+  // cwd with redundant trailing separators, passed through to scan() as-is.
+  const rawCwd = path.join(String(dir), "haystack") + path.sep.repeat(4);
+
+  const script = `
+    const opts = {
+      cwd: process.env.GLOB_RAW_CWD,
+      absolute: true,
+      followSymlinks: true,
+      onlyFiles: false,
+    };
+    const shallow = await Array.fromAsync(new Bun.Glob("*").scan(opts));
+    const deep = await Array.fromAsync(new Bun.Glob("**/*").scan(opts));
+    console.log(JSON.stringify({ shallow, deep }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, GLOB_RAW_CWD: rawCwd },
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const norm = (s: string) => s.replaceAll("\\", "/");
+  const root = norm(path.join(String(dir), "haystack"));
+
+  expect(stdout.trim()).not.toBe("");
+  const result = JSON.parse(stdout.trim());
+  const shallow = result.shallow.map(norm).sort();
+  const deep = result.deep.map(norm).sort();
+
+  // Only real entries under the scanned directory are reported, and the
+  // symlinked directory is still traversed.
+  expect(shallow).toEqual([`${root}/L`, `${root}/regular.txt`, `${root}/target`].sort());
+  expect(deep).toEqual(
+    [`${root}/L`, `${root}/L/inner.txt`, `${root}/regular.txt`, `${root}/target`, `${root}/target/inner.txt`].sort(),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// A pattern segment that spells out a leading `.` is an explicit request for
+// that dotfile/dot-directory, so the `dot: false` default must not hide it.
+// This matches bash, picomatch, minimatch and fast-glob.
+describe("explicit dotfile segments match without dot:true", () => {
+  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
+  const files = {
+    ".dotdir/inner.txt": "x",
+    ".dotdir/.hidden.txt": "x",
+    ".dotdir/foo/.dotdir/inner.txt": "x",
+    ".env": "x",
+    "sub/.dotdir/inner.txt": "x",
+    "sub/visible.txt": "x",
+    "visible.txt": "x",
+  };
+
+  test.each([
+    [".dotdir/inner.txt", [".dotdir/inner.txt"]],
+    [".dotdir/*.txt", [".dotdir/inner.txt"]],
+    [".*/inner.txt", [".dotdir/inner.txt"]],
+    [".env", [".env"]],
+    [".*", [".env"]],
+    // `**` may advance to an explicit `.dotdir` segment but must not itself
+    // recurse through a hidden dir: `.dotdir/foo/.dotdir/inner.txt` must not
+    // match since the only decomposition needs `**` to consume `.dotdir/foo`.
+    ["**/.dotdir/inner.txt", [".dotdir/inner.txt", "sub/.dotdir/inner.txt"]],
+    ["sub/.dotdir/*.txt", ["sub/.dotdir/inner.txt"]],
+  ])("pattern %j finds explicitly-named dotfiles", (pattern, expected) => {
+    using dir = tempDir("glob-scan-explicit-dot", files);
+    const result = Array.from(new Glob(pattern).scanSync({ cwd: String(dir) }));
+    expect(norm(result)).toEqual(expected.sort());
+  });
+
+  test.each([
+    ["*", ["visible.txt"]],
+    ["*.txt", ["visible.txt"]],
+    ["*/inner.txt", []],
+    ["**/inner.txt", []],
+    ["**/*.txt", ["visible.txt", "sub/visible.txt"]],
+  ])("wildcard pattern %j still hides dotfiles by default", (pattern, expected) => {
+    using dir = tempDir("glob-scan-wildcard-dot", files);
+    const result = Array.from(new Glob(pattern).scanSync({ cwd: String(dir) }));
+    expect(norm(result)).toEqual(expected.sort());
+  });
+
+  test("async scan finds explicitly-named dotfiles", async () => {
+    using dir = tempDir("glob-scan-explicit-dot-async", files);
+    const result = await Array.fromAsync(new Glob(".dotdir/inner.txt").scan({ cwd: String(dir) }));
+    expect(norm(result)).toEqual([".dotdir/inner.txt"]);
+  });
+});
+
+// `followSymlinks` controls whether wildcard traversal descends through
+// symlinked directories. A segment that names the symlink literally is an
+// explicit path the user wrote; it should resolve regardless, matching
+// fast-glob and bash.
+const canCreateDirSymlink = (() => {
+  using probe = tempDir("glob-scan-symlink-probe", { "target/x": "" });
+  try {
+    fs.symlinkSync("target", path.join(String(probe), "link"), "dir");
+    return true;
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return false;
+    throw err;
+  }
+})();
+
+describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked directory", () => {
+  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
+
+  function makeTree(prefix: string) {
+    const dir = tempDir(prefix, {
+      "realdir/file.txt": "x",
+      "realdir/nested/deep.txt": "x",
+      "plain/file.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(dir), "linkdir"), "dir");
+    return dir;
+  }
+
+  test("literal segment resolves through a symlink with followSymlinks:false", () => {
+    using dir = makeTree("glob-scan-symlink-literal");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
+
+    expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
+    expect(scan("linkdir/*.txt")).toEqual(["linkdir/file.txt"]);
+    expect(scan("linkdir/nested/deep.txt")).toEqual(["linkdir/nested/deep.txt"]);
+    expect(scan("linkdir/**/*.txt")).toEqual(["linkdir/file.txt", "linkdir/nested/deep.txt"]);
+  });
+
+  test("wildcard segment still respects followSymlinks:false", () => {
+    using dir = makeTree("glob-scan-symlink-wildcard");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
+
+    expect(scan("*/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
+    expect(scan("**/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
+    expect(scan("link*/file.txt")).toEqual([]);
+  });
+
+  test("followSymlinks:true still traverses via wildcards", () => {
+    using dir = makeTree("glob-scan-symlink-follow");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: true })));
+
+    expect(scan("*/file.txt")).toEqual(["linkdir/file.txt", "plain/file.txt", "realdir/file.txt"]);
+    expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
+  });
+
+  // The SymLink (and DT_UNKNOWN) readdir arms pre-filter entries through
+  // eval_impl before eval_dir runs. eval_impl must therefore admit the same
+  // `**/.X` peek that eval_dir does, or a symlinked `.dotdir` (and a real
+  // `.dotdir` reported as DT_UNKNOWN on NFS/overlayfs/FUSE) would be dropped
+  // before the explicit-dot logic ever sees it.
+  test("**/.dotdir peek works when .dotdir is a symlink", () => {
+    using dir = tempDir("glob-scan-symlink-dotdir", {
+      "realdir/inner.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(dir), ".dotdir"), "dir");
+    const cwd = String(dir);
+    const scan = (p: string, opts: GlobScanOptions) => norm(Array.from(new Glob(p).scanSync({ cwd, ...opts })));
+
+    expect(scan("**/.dotdir/inner.txt", { followSymlinks: true })).toEqual([".dotdir/inner.txt"]);
+    expect(scan(".dotdir/inner.txt", { followSymlinks: true })).toEqual([".dotdir/inner.txt"]);
+    expect(scan(".dotdir/inner.txt", { followSymlinks: false })).toEqual([".dotdir/inner.txt"]);
+  });
+
+  test("symlink cycles do not loop when reached via a literal segment", () => {
+    using dir = tempDir("glob-scan-symlink-cycle", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    // `top` is reached literally; the `loop -> .` symlink inside is only ever
+    // reached via `**`, which must not follow it with followSymlinks:false.
+    const result = norm(Array.from(new Glob("top/**/*.txt").scanSync({ cwd: String(dir), followSymlinks: false })));
+    expect(result).toEqual(["top/file.txt"]);
+  });
+
+  test("** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true })));
+    expect(result).toEqual(["file.txt", "loop/file.txt"]);
+
+    using shared = tempDir("glob-scan-symlink-shared-target", {
+      "realdir/file.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(shared), "linkA"), "dir");
+    fs.symlinkSync("realdir", path.join(String(shared), "linkB"), "dir");
+    const dag = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(shared), followSymlinks: true })));
+    expect(dag).toEqual(["linkA/file.txt", "linkB/file.txt", "realdir/file.txt"]);
+  });
+
+  // Symlinks to the same target in *different* subtrees are not a cycle: a
+  // followed link recorded in one subtree must not suppress its cousin.
+  test("** with followSymlinks descends cousin symlinks that share a target", () => {
+    using dir = tempDir("glob-scan-symlink-cousins", {
+      "shared/file.txt": "x",
+      "a/keep.txt": "x",
+      "b/keep.txt": "x",
+    });
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "a", "link"), "dir");
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "b", "link"), "dir");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(dir), followSymlinks: true })));
+    expect(result).toEqual(["a/keep.txt", "a/link/file.txt", "b/keep.txt", "b/link/file.txt", "shared/file.txt"]);
+  });
+
+  test("async ** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", async () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle-async", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = await Array.fromAsync(new Glob("**/*.txt").scan({ cwd, followSymlinks: true }));
+    expect(norm(result)).toEqual(["file.txt", "loop/file.txt"]);
+  });
+
+  test("async scan resolves a literal path through a symlink", async () => {
+    using dir = makeTree("glob-scan-symlink-literal-async");
+    const result = await Array.fromAsync(
+      new Glob("linkdir/file.txt").scan({ cwd: String(dir), followSymlinks: false }),
+    );
+    expect(norm(result)).toEqual(["linkdir/file.txt"]);
+  });
+});
+
+// A directory the user can read but not write (RX-only grant) must still be
+// descended by the scanner: directory opens used to request FILE_ADD_FILE and
+// fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition
+// is probed and the test skips visibly then.
+let roDirRoot = "";
+let roDirA = "";
+let roDirEnforced = false;
+if (isWindows) {
+  try {
+    roDirRoot = tempDirWithFiles("glob-scan-readonly-dir", {
+      "a/b/file.txt": "under a read-only directory",
+    });
+    roDirA = path.join(roDirRoot, "a");
+    execSync(`icacls "${roDirA}" /inheritance:r /grant:r "${process.env.USERNAME}:(OI)(CI)(RX)" /Q`);
+    try {
+      fs.mkdirSync(path.join(roDirA, "probe"));
+      // Creation succeeded: ACL not enforced under this token — restore and skip.
+      execSync(`icacls "${roDirA}" /reset /T /Q`);
+    } catch {
+      roDirEnforced = true;
+    }
+  } catch {}
+}
+
+afterAll(() => {
+  if (!roDirA) return;
+  try {
+    execSync(`icacls "${roDirA}" /reset /T /Q`);
+  } catch {}
+  try {
+    fs.rmSync(roDirRoot, { recursive: true, force: true });
+  } catch {}
+});
+
+describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
+  test.skipIf(!roDirEnforced)(
+    `RX-only directory is descended, creates still fail${roDirEnforced ? "" : " (skipped: ACL not enforced under this token)"}`,
+    () => {
+      const entries = Array.from(new Glob("**/*.txt").scanSync({ cwd: roDirRoot }))
+        .map(p => p.replaceAll("\\", "/"))
+        .sort();
+      expect(entries).toEqual(["a/b/file.txt"]);
+
+      let err: any;
+      try {
+        fs.mkdirSync(path.join(roDirA, "x"));
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("EPERM");
+    },
+  );
 });

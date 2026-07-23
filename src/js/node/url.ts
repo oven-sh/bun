@@ -29,6 +29,7 @@ const { URL, URLSearchParams } = globalThis;
 const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 function Url() {
   this.protocol = null;
@@ -76,16 +77,19 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that never have a hostname.
   hostlessProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that always contain a // bit.
   slashedProtocol = {
+    __proto__: null,
     http: true,
     https: true,
     ftp: true,
@@ -200,7 +204,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
       if (simplePath[2]) {
         this.search = simplePath[2];
         if (parseQueryString) {
-          this.query = new URLSearchParams(this.search.slice(1)).toJSON();
+          this.query = ObjectSetPrototypeOf(new URLSearchParams(this.search.slice(1)).toJSON(), null);
         } else {
           this.query = this.search.slice(1);
         }
@@ -229,13 +233,13 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   let slashes;
   if (slashesDenoteHost || proto || rest.match(/^\/\/[^@/]+@[^@/]+/)) {
     slashes = rest.substring(0, 2) === "//";
-    if (slashes && !(proto && hostlessProtocol[proto])) {
+    if (slashes && !(proto && hostlessProtocol[lowerProto])) {
       rest = rest.substring(2);
       this.slashes = true;
     }
   }
 
-  if (!hostlessProtocol[proto] && (slashes || (proto && !slashedProtocol[proto]))) {
+  if (!hostlessProtocol[lowerProto] && (slashes || (lowerProto && !slashedProtocol[lowerProto]))) {
     /*
      * there's a hostname.
      * the first instance of /, ?, ;, or # ends the host.
@@ -399,13 +403,13 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     this.query = rest.substring(qm + 1);
     if (parseQueryString) {
       const query = this.query;
-      this.query = new URLSearchParams(query).toJSON();
+      this.query = ObjectSetPrototypeOf(new URLSearchParams(query).toJSON(), null);
     }
     rest = rest.slice(0, qm);
   } else if (parseQueryString) {
     // no query string, but parseQueryString still requested
     this.search = null;
-    this.query = {};
+    this.query = Object.create(null);
   }
   if (rest) {
     this.pathname = rest;
@@ -415,10 +419,10 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   }
 
   // to support http.request
-  if (this.pathname || this.search) {
-    var p = this.pathname || "";
-    var s = this.search || "";
-    this.path = p + s;
+  const pathname = this.pathname;
+  let search;
+  if (pathname || (search = this.search)) {
+    this.path = (pathname || "") + ((search ?? this.search) || "");
   }
 
   // finally, reconstruct the href based on what has been validated.
@@ -496,17 +500,21 @@ Url.prototype.format = function format() {
     host = "",
     query = "";
 
-  if (this.host) {
-    host = auth + this.host;
-  } else if (this.hostname) {
-    host = auth + (this.hostname.indexOf(":") === -1 ? this.hostname : "[" + this.hostname + "]");
-    if (this.port) {
-      host += ":" + this.port;
+  const thisHost = this.host;
+  let thisHostname;
+  if (thisHost) {
+    host = auth + thisHost;
+  } else if ((thisHostname = this.hostname)) {
+    host = auth + (thisHostname.indexOf(":") === -1 ? thisHostname : "[" + thisHostname + "]");
+    const thisPort = this.port;
+    if (thisPort) {
+      host += ":" + thisPort;
     }
   }
 
-  if (this.query && typeof this.query === "object" && Object.keys(this.query).length) {
-    query = new URLSearchParams(this.query).toString();
+  const thisQuery = this.query;
+  if (thisQuery && typeof thisQuery === "object" && Object.keys(thisQuery).length) {
+    query = new URLSearchParams(thisQuery).toString();
   }
 
   var search = this.search || (query && "?" + query) || "";
@@ -538,7 +546,7 @@ Url.prototype.format = function format() {
   pathname = pathname.replace(/[?#]/g, function (match) {
     return encodeURIComponent(match);
   });
-  search = search.replace("#", "%23");
+  search = search.replace(/#/g, "%23");
 
   return protocol + host + pathname + search + hash;
 };
@@ -605,7 +613,8 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     return result;
   }
 
-  if (relative.protocol && relative.protocol !== result.protocol) {
+  const relativeProtocol = relative.protocol;
+  if (relativeProtocol && relativeProtocol !== result.protocol) {
     /*
      * if it's a known url protocol, then changing
      * the protocol does weird things
@@ -616,7 +625,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
      * because that's known to be hostless.
      * anything else is assumed to be absolute.
      */
-    if (!slashedProtocol[relative.protocol]) {
+    if (!slashedProtocol[relativeProtocol]) {
       var keys = Object.keys(relative);
       for (var v = 0; v < keys.length; v++) {
         var k = keys[v];
@@ -626,11 +635,11 @@ Url.prototype.resolveObject = function resolveObject(relative) {
       return result;
     }
 
-    result.protocol = relative.protocol;
+    result.protocol = relativeProtocol;
     if (
       !relative.host &&
-      !(relative.protocol === "file" || relative.protocol === "file:") &&
-      !hostlessProtocol[relative.protocol]
+      !(relativeProtocol === "file" || relativeProtocol === "file:") &&
+      !hostlessProtocol[relativeProtocol]
     ) {
       let relPath = (relative.pathname || "").split("/");
       while (relPath.length && !(relative.host = relPath.shift())) {}
@@ -650,10 +659,10 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     result.hostname = relative.hostname || relative.host;
     result.port = relative.port;
     // to support http.request
-    if (result.pathname || result.search) {
-      var p = result.pathname || "";
-      var s = result.search || "";
-      result.path = p + s;
+    const resultPathname = result.pathname;
+    let resultSearch;
+    if (resultPathname || (resultSearch = result.search)) {
+      result.path = (resultPathname || "") + ((resultSearch ?? result.search) || "");
     }
     result.slashes = result.slashes || relative.slashes;
     result.href = result.format();
@@ -678,20 +687,22 @@ Url.prototype.resolveObject = function resolveObject(relative) {
   if (psychotic) {
     result.hostname = "";
     result.port = null;
-    if (result.host) {
-      if (srcPath[0] === "") srcPath[0] = result.host;
-      else srcPath.unshift(result.host);
+    const resultHost = result.host;
+    if (resultHost) {
+      if (srcPath[0] === "") srcPath[0] = resultHost;
+      else srcPath.unshift(resultHost);
     }
     result.host = "";
     if (relative.protocol) {
       relative.hostname = null;
       relative.port = null;
       result.auth = null;
-      if (relative.host) {
+      const relativeHost = relative.host;
+      if (relativeHost) {
         if (relPath[0] === "") {
-          relPath[0] = relative.host;
+          relPath[0] = relativeHost;
         } else {
-          relPath.unshift(relative.host);
+          relPath.unshift(relativeHost);
         }
       }
       relative.host = null;
@@ -701,14 +712,16 @@ Url.prototype.resolveObject = function resolveObject(relative) {
 
   if (isRelAbs) {
     // it's absolute.
-    if (relative.host || relative.host === "") {
-      if (result.host !== relative.host) result.auth = null;
-      result.host = relative.host;
+    const relativeHost = relative.host;
+    if (relativeHost || relativeHost === "") {
+      if (result.host !== relativeHost) result.auth = null;
+      result.host = relativeHost;
       result.port = relative.port;
     }
-    if (relative.hostname || relative.hostname === "") {
-      if (result.hostname !== relative.hostname) result.auth = null;
-      result.hostname = relative.hostname;
+    const relativeHostname = relative.hostname;
+    if (relativeHostname || relativeHostname === "") {
+      if (result.hostname !== relativeHostname) result.auth = null;
+      result.hostname = relativeHostname;
     }
     result.search = relative.search;
     result.query = relative.query;
@@ -724,35 +737,40 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     srcPath = srcPath.concat(relPath);
     result.search = relative.search;
     result.query = relative.query;
-  } else if (relative.search != null && relative.search !== undefined) {
-    /*
-     * just pull out the search.
-     * like href='?foo'.
-     * Put this after the other two cases because it simplifies the booleans
-     */
-    if (psychotic) {
-      result.hostname = result.host = srcPath.shift();
+  } else {
+    const relativeSearch = relative.search;
+    if (relativeSearch != null && relativeSearch !== undefined) {
       /*
-       * occationaly the auth can get stuck only in host
-       * this especially happens in cases like
-       * url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+       * just pull out the search.
+       * like href='?foo'.
+       * Put this after the other two cases because it simplifies the booleans
        */
-      var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
-      if (authInHost) {
-        result.auth = authInHost.shift();
-        result.hostname = result.host = authInHost.shift();
+      if (psychotic) {
+        result.hostname = result.host = srcPath.shift();
+        /*
+         * occationaly the auth can get stuck only in host
+         * this especially happens in cases like
+         * url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+         */
+        var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
+        if (authInHost) {
+          result.auth = authInHost.shift();
+          result.hostname = result.host = authInHost.shift();
+        }
       }
+      result.search = relativeSearch;
+      result.query = relative.query;
+      // to support http.request
+      const resultPathname = result.pathname;
+      const resultSearch = result.search;
+      if (resultPathname !== null || resultSearch !== null) {
+        result.path =
+          (resultPathname ? resultPathname : "") + // force line break
+          (resultSearch ? resultSearch : "");
+      }
+      result.href = result.format();
+      return result;
     }
-    result.search = relative.search;
-    result.query = relative.query;
-    // to support http.request
-    if (result.pathname !== null || result.search !== null) {
-      result.path =
-        (result.pathname ? result.pathname : "") + // force line break
-        (result.search ? result.search : "");
-    }
-    result.href = result.format();
-    return result;
   }
 
   if (!srcPath.length) {
@@ -762,8 +780,9 @@ Url.prototype.resolveObject = function resolveObject(relative) {
      */
     result.pathname = null;
     // to support http.request
-    if (result.search) {
-      result.path = "/" + result.search;
+    const resultSearch = result.search;
+    if (resultSearch) {
+      result.path = "/" + resultSearch;
     } else {
       result.path = null;
     }
@@ -847,10 +866,13 @@ Url.prototype.resolveObject = function resolveObject(relative) {
   }
 
   // to support request.http
-  if (result.pathname !== null || result.search !== null) {
+  const resultPathname = result.pathname;
+  let resultSearch;
+  if (resultPathname !== null || (resultSearch = result.search) !== null) {
+    resultSearch ??= result.search;
     // prettier-ignore
-    result.path = (result.pathname ? result.pathname : "") +
-                  (result.search   ? result.search   : "");
+    result.path = (resultPathname ? resultPathname : "") +
+                  (resultSearch   ? resultSearch   : "");
   }
   result.auth = relative.auth || result.auth;
   result.slashes = result.slashes || relative.slashes;
@@ -920,6 +942,83 @@ const enum Char {
   ZERO_WIDTH_NOBREAK_SPACE = 65279, // \uFEFF
 }
 
+// Port of Node.js fileURLToPathBuffer
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/url.js#L1638).
+// Unlike fileURLToPath it never interprets percent-encodings as UTF-8: the
+// pathname's bytes are decoded literally into a Buffer, so paths holding
+// non-Unicode encodings (e.g. Shift-JIS) survive the round trip.
+function percentDecodeIntoBuffer(pathname: string): Buffer {
+  const input = Buffer.from(pathname, "utf8");
+  const length = input.length;
+  const output = Buffer.allocUnsafe(length);
+  let j = 0;
+  for (let i = 0; i < length; ++i) {
+    const byte = input[i];
+    if (byte !== Char.PERCENT) {
+      output[j++] = byte;
+      continue;
+    }
+    const hi = hexByteToNumber(input[i + 1]);
+    const lo = hexByteToNumber(input[i + 2]);
+    if (hi === -1 || lo === -1) {
+      // Invalid escapes pass through literally, as in the WHATWG percent-decode.
+      output[j++] = Char.PERCENT;
+      continue;
+    }
+    output[j++] = (hi << 4) | lo;
+    i += 2;
+  }
+  return output.subarray(0, j);
+}
+
+function hexByteToNumber(byte: number): number {
+  if (byte >= 0x30 && byte <= 0x39) return byte - 0x30; // 0-9
+  if (byte >= 0x41 && byte <= 0x46) return byte - 0x41 + 10; // A-F
+  if (byte >= 0x61 && byte <= 0x66) return byte - 0x61 + 10; // a-f
+  return -1;
+}
+
+// Node's isURL (lib/internal/url.js): a duck-type check rather than
+// `instanceof`, so cross-realm URLs and compatible foreign implementations
+// are accepted; `auth`/`path` must be absent to exclude legacy `url.parse`
+// objects, which carry both.
+function isURL(self: any): boolean {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
+function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Buffer {
+  const windows = options?.windows;
+  if (typeof path === "string") {
+    path = new URL(path);
+  } else if (!isURL(path)) {
+    throw $ERR_INVALID_ARG_TYPE("path", ["string", "URL"], path);
+  }
+  const url = path as URL;
+  if (url.protocol !== "file:") {
+    throw $ERR_INVALID_URL_SCHEME("The URL must be of scheme file");
+  }
+  if (windows ?? process.platform === "win32") {
+    let pathname = url.pathname.replaceAll("/", "\\");
+    const decoded = percentDecodeIntoBuffer(pathname);
+    const hostname = url.hostname;
+    if (hostname !== "") {
+      // UNC path: \\hostname\...; the URL parser already percent-decoded the
+      // hostname, domainToUnicode only unwraps punycode IDNs.
+      return Buffer.concat([Buffer.from("\\\\", "ascii"), Buffer.from(domainToUnicode(hostname), "utf8"), decoded]);
+    }
+    const letter = decoded[1] | 0x20;
+    const sep = decoded[2];
+    if (letter < 0x61 || letter > 0x7a || sep !== Char.COLON) {
+      throw $ERR_INVALID_FILE_URL_PATH("File URL path must be absolute");
+    }
+    return decoded.subarray(1);
+  }
+  if (url.hostname !== "") {
+    throw $ERR_INVALID_FILE_URL_HOST(`File URL host must be "localhost" or empty on ${process.platform}`);
+  }
+  return percentDecodeIntoBuffer(url.pathname);
+}
+
 export default {
   parse: urlParse,
   resolve: urlResolve,
@@ -930,6 +1029,7 @@ export default {
   URL,
   pathToFileURL: Bun.pathToFileURL,
   fileURLToPath: Bun.fileURLToPath,
+  fileURLToPathBuffer,
   urlToHttpOptions,
   domainToASCII,
   domainToUnicode,

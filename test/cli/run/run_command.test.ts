@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 
 let cwd: string;
 
@@ -10,6 +10,26 @@ describe("bun", () => {
     const { exitCode, stdout, stderr } = spawnSync({
       cwd,
       cmd: [bunExe(), "run", "dev"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    expect(stderr.toString()).toMatch(/Script not found/);
+    expect(exitCode).toBe(1);
+  });
+
+  test("an empty-string script value is not a runnable script", () => {
+    using dir = tempDir("empty-script", {
+      "package.json": JSON.stringify({ scripts: { build: "" } }),
+    });
+    // Zig `asPropertyStringMap` drops empty-valued script entries; an empty
+    // `build` must report "Script not found" and exit 1, not run an empty
+    // `$ ` command and exit 0. (npm runs empty scripts and exits 0 — Bun
+    // intentionally diverges here to match its own prior/Zig behavior.)
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "build"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

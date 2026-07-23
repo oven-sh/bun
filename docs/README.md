@@ -21,8 +21,8 @@ Run the development server:
 mint dev
 ```
 
-The site will be available at `http://localhost:3000`.
+The site is served at `http://localhost:3000`.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request.
+Contributions are welcome. Open an issue or submit a pull request.

@@ -212,11 +212,15 @@ it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () =
 // On a machine with no ~/.gitconfig (fresh CI agent, new dev box) `git commit`
 // prints the multi-line "Please tell me who you are" banner and exits 128,
 // leaving the new repo with no initial commit. `bun create` now probes
-// `git var GIT_COMMITTER_IDENT` and supplies a placeholder identity when that
-// probe fails.
+// `git var GIT_{AUTHOR,COMMITTER}_IDENT` after `git init` and supplies a
+// placeholder identity when either probe fails.
 it("creates the initial git commit even when git has no user identity configured", async () => {
   using dir = tempDir("create-no-git-identity", {
-    "home/.keep": "",
+    // `useConfigOnly` disables git's auto-detection (GECOS + hostname /
+    // `/etc/mailname`), so the identity probe fails deterministically on every
+    // host: macOS `*.local` hostnames and Debian's mailname would otherwise let
+    // git synthesize an email and skip the fallback path under test.
+    "home/.gitconfig": "[user]\n\tuseConfigOnly = true\n",
     "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0" }),
     "bun-create/tmpl/index.js": "// hi\n",
   });
@@ -242,9 +246,10 @@ it("creates the initial git commit even when git has no user identity configured
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(err).not.toContain("Please tell me who you are");
-  expect(err).not.toContain("unable to auto-detect email address");
+  expect(err).not.toContain("auto-detect");
   expect(err).not.toContain("fatal:");
   expect(out).toContain("Created tmpl project successfully");
+  expect(out).toContain("A local git repository was created for you");
   expect(exitCode).toBe(0);
 
   const log = spawnSync({

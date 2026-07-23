@@ -1449,13 +1449,11 @@ impl CreateCommand {
             if !create_options.skip_install {
                 GitHandler::spawn(destination, path_env, create_options.verbose);
             } else {
-                if create_options.verbose {
-                    create_options.skip_git =
-                        GitHandler::run::<true>(destination, path_env).unwrap_or(false);
+                create_options.skip_git = !if create_options.verbose {
+                    GitHandler::run::<true>(destination, path_env).unwrap_or(false)
                 } else {
-                    create_options.skip_git =
-                        GitHandler::run::<false>(destination, path_env).unwrap_or(false);
-                }
+                    GitHandler::run::<false>(destination, path_env).unwrap_or(false)
+                };
             }
         }
 
@@ -2865,46 +2863,44 @@ impl GitHandler {
                     Ok(matches!(result, Ok(r) if r.is_ok()))
                 };
 
-            // `git commit` refuses to run without a resolvable committer identity
-            // and prints a multi-line "Please tell me who you are" banner to
-            // stderr. Probe for it and supply a placeholder when missing so a
-            // fresh machine without `~/.gitconfig` still gets a clean initial
-            // commit instead of that banner.
-            let has_identity = spawn_git(
-                &[git, b"var", b"GIT_COMMITTER_IDENT"],
-                spawn_sync::SyncStdio::Ignore,
-            )?;
+            let inherit = spawn_sync::SyncStdio::Inherit;
+            let ignore = spawn_sync::SyncStdio::Ignore;
 
-            let mut commit: Vec<&[u8]> = Vec::with_capacity(10);
-            commit.push(git);
-            if !has_identity {
-                commit.extend_from_slice(&[
-                    b"-c",
-                    b"user.name=bun",
-                    b"-c",
-                    b"user.email=bun-create@localhost",
-                ]);
-            }
-            commit.extend_from_slice(&[
-                b"commit",
-                b"-am",
-                b"Initial commit (via bun create)",
-                b"--quiet",
-            ]);
-
-            let git_commands: [&[&[u8]]; 3] = [
-                &[git, b"init", b"--quiet"],
-                &[git, b"add", destination, b"--ignore-errors"],
-                &commit,
-            ];
-
-            let mut ok = true;
-            for command in git_commands {
-                if !spawn_git(command, spawn_sync::SyncStdio::Inherit)? {
-                    ok = false;
-                    break;
+            let ok = 'git: {
+                if !spawn_git(&[git, b"init", b"--quiet"], inherit)? {
+                    break 'git false;
                 }
-            }
+
+                // `git commit` refuses to run without a resolvable author and
+                // committer identity and prints a multi-line "Please tell me who
+                // you are" banner to stderr. Probe after `git init` (so the check
+                // sees the same repo the commit will use, not a parent repo's
+                // local config) and supply a placeholder when either is missing.
+                let has_identity = spawn_git(&[git, b"var", b"GIT_AUTHOR_IDENT"], ignore)?
+                    && spawn_git(&[git, b"var", b"GIT_COMMITTER_IDENT"], ignore)?;
+
+                // `--ignore-errors` keeps staging past per-file index errors but
+                // still exits non-zero, so don't treat its exit code as fatal.
+                let _ = spawn_git(&[git, b"add", destination, b"--ignore-errors"], inherit)?;
+
+                let mut commit: Vec<&[u8]> = Vec::with_capacity(10);
+                commit.push(git);
+                if !has_identity {
+                    commit.extend_from_slice(&[
+                        b"-c",
+                        b"user.name=bun",
+                        b"-c",
+                        b"user.email=bun-create@localhost",
+                    ]);
+                }
+                commit.extend_from_slice(&[
+                    b"commit",
+                    b"-am",
+                    b"Initial commit (via bun create)",
+                    b"--quiet",
+                ]);
+                spawn_git(&commit, inherit)?
+            };
 
             bun_core::pretty_error!("\n");
             Output::print_start_end(git_start, bun_core::time::nano_timestamp());

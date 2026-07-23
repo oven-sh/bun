@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/32492
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 test("concurrent bun build does not stall on worker-pool shutdown", async () => {
   const N_MODULES = 40;
@@ -24,41 +24,42 @@ test("concurrent bun build does not stall on worker-pool shutdown", async () => 
   const root = String(dir);
 
   const CONCURRENCY = 24;
-  const ROUNDS = 16;
-  // The regression is a fixed 10s idle-futex timeout, so a stalled build always
-  // exceeds 10s regardless of machine speed. A healthy build is well under a
-  // second; keep the threshold high so 24-way oversubscription on a slow ASAN
-  // shard can't trip it, while staying comfortably below the 10s floor.
+  // #32492 was a ~10s stall at pool shutdown when the idle-futex timeout was
+  // 10s. #34009 lowered that timeout to 100ms, so a skipped shutdown wake now
+  // costs at most ~100ms and is indistinguishable from 24-way scheduling noise.
+  // This test therefore acts as a coarse guard (no multi-second shutdown stall)
+  // plus a concurrent-build smoke test. 4 rounds x 24 builds is enough for that
+  // on debug/ASAN; release keeps 16 because it's cheap.
+  const ROUNDS = isASAN || isDebug ? 4 : 16;
   const STALL_MS = 9000;
 
-  const buildOnce = async (round: number, i: number) => {
+  const buildOnce = async (i: number) => {
     const entry = entries[i % entries.length];
     const started = Date.now();
+    // Bundle to stdout (no --outdir) so we can assert on the bundle contents
+    // and skip per-build output directories. The regression is in thread pool
+    // shutdown, which runs identically regardless of the output sink.
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--target=browser",
-        "--sourcemap=external",
-        "--packages=external",
-        "--outdir",
-        `${root}/out/d${round}_${i}`,
-        `./src/${entry}-entry.ts`,
-      ],
+      cmd: [bunExe(), "build", "--target=browser", "--packages=external", `./src/${entry}-entry.ts`],
       env: bunEnv,
       cwd: root,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { ms: Date.now() - started, exitCode, stdout, stderr };
+    return { entry, ms: Date.now() - started, exitCode, stdout, stderr };
   };
 
   for (let round = 0; round < ROUNDS; round++) {
-    const results = await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => buildOnce(round, i)));
-    const failed = results.find(r => r.exitCode !== 0);
-    if (failed) {
-      throw new Error(`bun build exited with ${failed.exitCode}\nstdout:\n${failed.stdout}\nstderr:\n${failed.stderr}`);
+    const results = await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => buildOnce(i)));
+    for (const r of results) {
+      // Assert the bundle actually walked the 40-module chain before checking
+      // the exit code so a failure surfaces the build output.
+      expect(r.stderr).toBe("");
+      expect(r.stdout).toContain(`var v${N_MODULES} = ${N_MODULES};`);
+      expect(r.stdout).toContain("var v1 = 1 + v2;");
+      expect(r.stdout).toContain(`console.log("${r.entry}", v1, f1());`);
+      expect(r.exitCode).toBe(0);
     }
     const slowestMs = Math.max(...results.map(r => r.ms));
     expect(slowestMs).toBeLessThan(STALL_MS);

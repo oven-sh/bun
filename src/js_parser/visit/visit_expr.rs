@@ -1381,6 +1381,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `--env inline` / `--env PREFIX_*` derived `process.env.X` defines.
+        // Checked after `dots` so an explicit `--define process.env.X=...`
+        // (which lives in `dots`) wins. On Windows `env_dots` is keyed
+        // case-insensitively so `process.env.PATH` matches the OS's `Path`.
+        if !defines.env_dots.is_empty() && e_.optional_chain.is_none() {
+            const PROCESS_ENV: &[&[u8]; 2] = &[b"process", b"env"];
+            if p.is_dot_define_match(e_.target, PROCESS_ENV) {
+                if let Some(data) = defines.env_dots.get(e_.name.slice()) {
+                    if in_.assign_target == js_ast::AssignTarget::None {
+                        if !data.valueless() {
+                            *e = p.value_for_define(
+                                expr.loc,
+                                in_.assign_target,
+                                is_delete_target,
+                                data,
+                            );
+                            return;
+                        }
+                    }
+                    if data.can_be_removed_if_unused() {
+                        e_.can_be_removed_if_unused = true;
+                    }
+                    if data.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
+                        && !p.options.ignore_dce_annotations
+                    {
+                        e_.call_can_be_unwrapped_if_unused = data.call_can_be_unwrapped_if_unused();
+                    }
+                }
+            }
+        }
+
         // Track ".then().catch()" chains
         if is_call_target
             && matches!(p.then_catch_chain.next_target, Data::EDot(nt) if core::ptr::eq(&raw const *e_, &raw const *nt))

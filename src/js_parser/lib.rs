@@ -494,10 +494,20 @@ pub mod defines {
         }
     }
 
+    /// `process.env.X` defines emitted by `--env inline` / `--env PREFIX_*`.
+    /// Keyed by the env-var name (last segment). On Windows `process.env`
+    /// reads are case-insensitive at runtime, so the bundle-time lookup must
+    /// be too; on other platforms it stays case-sensitive.
+    #[cfg(windows)]
+    pub type EnvDotsMap = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<DefineData>;
+    #[cfg(not(windows))]
+    pub type EnvDotsMap = StringArrayHashMap<DefineData>;
+
     #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
+        pub env_dots: EnvDotsMap,
         pub drop_debugger: bool,
     }
 

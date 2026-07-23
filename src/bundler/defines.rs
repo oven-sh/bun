@@ -21,8 +21,8 @@ use crate::defines_table::{
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
-    UserDefinesArray, are_parts_equal,
+    Define, DefineData, DotDefine, EnvDotsMap, Flags, IdentifierDefine, Options, RawDefines,
+    UserDefines, UserDefinesArray, are_parts_equal,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
@@ -113,15 +113,20 @@ pub fn copy_env_for_define(
             debug_assert!(!prefix.is_empty());
         }
 
+        // Windows env-var names are case-insensitive; match the prefix the same way.
+        let has_prefix = |k: &[u8]| -> bool {
+            if cfg!(windows) {
+                bun_core::strings::starts_with_case_insensitive_ascii(k, prefix)
+            } else {
+                bun_core::strings::starts_with(k, prefix)
+            }
+        };
+
         // When `behavior == .prefix` and NO env key starts
         // with `prefix`, the entire second walk (including the framework-hash `else` arm)
         // must be skipped. Pre-scan for a prefix match before emitting.
         let any_prefix_match = if behavior == DotEnvBehavior::Prefix {
-            env.map
-                .map
-                .keys()
-                .iter()
-                .any(|k| bun_core::strings::starts_with(k, prefix))
+            env.map.map.keys().iter().any(|k| has_prefix(k))
         } else {
             true
         };
@@ -139,7 +144,7 @@ pub fn copy_env_for_define(
                 let value: &[u8] = &v.value;
 
                 if behavior == DotEnvBehavior::Prefix {
-                    if bun_core::strings::starts_with(k, prefix) {
+                    if has_prefix(k) {
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);
@@ -235,6 +240,7 @@ impl DefineExt for Define {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
+            env_dots: EnvDotsMap::default(),
             drop_debugger,
         });
         define.dots.reserve(124);
@@ -277,13 +283,24 @@ impl DefineExt for Define {
         // Step 4. Load environment data into hash tables.
         // These are only strings. We do not parse them as JSON.
         if let Some(string_defines_) = &string_defines {
-            define.insert_from_iterator(
-                string_defines_
-                    .keys()
-                    .iter()
-                    .zip(string_defines_.values().iter())
-                    .map(|(k, v)| (k.as_ref(), v)),
-            )?;
+            const PROCESS_ENV: &[u8] = b"process.env.";
+            define.env_dots.reserve(string_defines_.len());
+            for (k, v) in string_defines_
+                .keys()
+                .iter()
+                .zip(string_defines_.values().iter())
+            {
+                let k: &[u8] = k.as_ref();
+                // Env-derived `process.env.X` entries go into `env_dots` keyed
+                // by `X` so the Windows lookup can be case-insensitive (matching
+                // runtime `process.env` semantics). Everything else stays on the
+                // regular `dots`/`identifiers` path.
+                if k.len() > PROCESS_ENV.len() && &k[..PROCESS_ENV.len()] == PROCESS_ENV {
+                    define.env_dots.put(&k[PROCESS_ENV.len()..], v.clone())?;
+                } else {
+                    define.insert(k, v.clone())?;
+                }
+            }
         }
 
         Ok(define)

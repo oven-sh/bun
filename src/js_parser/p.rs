@@ -6329,10 +6329,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr { data: value, loc }
     }
 
-    // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
-    // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
-    // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
-    pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
+    // Generic over `AsRef<[u8]>` so callers can pass either the owned
+    // `DotDefine.parts: Vec<Box<[u8]>>` or a const `&[&[u8]]` (e.g. the
+    // `["process","env"]` prefix for env-inline lookups).
+    pub fn is_dot_define_match<S: AsRef<[u8]>>(&mut self, expr: Expr, parts: &[S]) -> bool {
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
@@ -6341,12 +6341,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     // Intermediates must be dot expressions
                     let last = parts.len() - 1;
-                    let is_tail_match = strings::eql(&parts[last], &ex.name);
+                    let is_tail_match = strings::eql(parts[last].as_ref(), &ex.name);
                     return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
                 }
             }
             js_ast::ExprData::EImportMeta(_) => {
-                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
+                return parts.len() == 2
+                    && parts[0].as_ref() == b"import"
+                    && parts[1].as_ref() == b"meta";
             }
             // Note: this behavior differs from esbuild
             // esbuild does not try to match index accessors
@@ -6360,7 +6362,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return false;
                             }
                             let last = parts.len() - 1;
-                            let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
+                            let is_tail_match =
+                                strings::eql(parts[last].as_ref(), s.slice(self.arena));
                             return is_tail_match
                                 && self.is_dot_define_match(index.target, &parts[..last]);
                         }
@@ -6371,7 +6374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // The last expression must be an identifier
                 if parts.len() == 1 {
                     let name = self.load_name_from_ref(ex.ref_);
-                    if !strings::eql(name, &parts[0]) {
+                    if !strings::eql(name, parts[0].as_ref()) {
                         return false;
                     }
 

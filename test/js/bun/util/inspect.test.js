@@ -554,11 +554,11 @@ it("console.log of Date with throwing toJSON does not throw", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.replaceAll("\r\n", "\n")).toBe(
-    `1970-01-01T00:00:00.000Z\n[ "before", 1970-01-01T00:00:00.000Z, "after" ]\nDONE\n`,
-  );
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+    stdout: `1970-01-01T00:00:00.000Z\n[ "before", 1970-01-01T00:00:00.000Z, "after" ]\nDONE\n`,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("Bun.inspect.custom exists", () => {

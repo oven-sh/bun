@@ -10,7 +10,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const LSHPACK_COMMIT = "8905c024b6d052f083a3d11d0a169b3c2735c8a1";
+const LSHPACK_COMMIT = "cf0f70dd10b352194c97448eb5d00b4aa484f531";
 
 export const lshpack: Dependency = {
   name: "lshpack",

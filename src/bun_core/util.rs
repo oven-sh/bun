@@ -4504,7 +4504,12 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         if may_return {
             return;
         }
-        exit_thread();
+        // Park (not pthread_exit): the loser may be the JS main thread, and
+        // running its TLS destructors concurrently with the winner's execve
+        // preparation is the same hazard class the swap exists to avoid.
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
     }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 

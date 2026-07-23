@@ -79,22 +79,35 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, bool baseHas
 
     StringView view { urlString };
 
-    // Locate the start of an explicit authority: "scheme://" or a
-    // scheme-relative "//". Non-special-scheme URLs have opaque hosts and
-    // never run IDNA (their host is UTF-8 percent-encoded verbatim), so only
-    // the six special schemes are eligible. A scheme-relative "//" inherits
-    // the base's scheme, which the caller gates.
+    // The URL parser strips tab/CR/LF/leading-C0 before locating anything.
+    size_t scan = 0;
+    while (scan < view.length() && (view[scan] <= 0x20))
+        scan++;
+
+    // Non-special-scheme URLs have opaque hosts and never run IDNA (the host
+    // is UTF-8 percent-encoded verbatim), so only the six special schemes are
+    // eligible. For those, the WHATWG parser's special-authority-ignore-slashes
+    // state consumes any run of '/' and '\\' (including zero) after the colon
+    // and parses whatever follows as the host, so `http:host`, `http:/host`
+    // and `http:\\\\host` all reach IDNA. A scheme-relative "//" inherits the
+    // base's scheme, which the caller gates.
+    auto isSlash = [](char16_t ch) { return ch == '/' || ch == '\\'; };
     size_t authorityStart = notFound;
-    if (baseHasSpecialScheme && view.length() >= 2 && view[0] == '/' && view[1] == '/')
-        authorityStart = 2;
-    else {
-        size_t colon = view.find(':');
-        if (colon != notFound && view.length() >= colon + 3 && view[colon + 1] == '/' && view[colon + 2] == '/') {
-            auto scheme = view.left(colon);
+    if (baseHasSpecialScheme && scan + 1 < view.length() && isSlash(view[scan]) && isSlash(view[scan + 1])) {
+        authorityStart = scan + 2;
+        while (authorityStart < view.length() && isSlash(view[authorityStart]))
+            authorityStart++;
+    } else {
+        size_t colon = view.find(':', scan);
+        if (colon != notFound) {
+            auto scheme = view.substring(scan, colon - scan);
             if (equalLettersIgnoringASCIICase(scheme, "http"_s) || equalLettersIgnoringASCIICase(scheme, "https"_s)
                 || equalLettersIgnoringASCIICase(scheme, "ws"_s) || equalLettersIgnoringASCIICase(scheme, "wss"_s)
-                || equalLettersIgnoringASCIICase(scheme, "ftp"_s) || equalLettersIgnoringASCIICase(scheme, "file"_s))
-                authorityStart = colon + 3;
+                || equalLettersIgnoringASCIICase(scheme, "ftp"_s) || equalLettersIgnoringASCIICase(scheme, "file"_s)) {
+                authorityStart = colon + 1;
+                while (authorityStart < view.length() && isSlash(view[authorityStart]))
+                    authorityStart++;
+            }
         }
     }
     if (authorityStart == notFound)

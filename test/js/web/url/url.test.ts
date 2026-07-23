@@ -85,6 +85,10 @@ describe("url", () => {
     expect(new URL("foo://a\u180Eb/").href).toBe("foo://a%E1%A0%8Eb/");
     // special scheme: delta applies, host is IDNA-processed.
     expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // Non-canonical special-scheme authority forms reach IDNA too.
+    expect(new URL("http:/\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\\\\\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("\t//\u1E9E.com", "http://x/").href).toBe("http://xn--zca.com/");
     // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";

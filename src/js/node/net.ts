@@ -2461,6 +2461,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
       this._handle = result;
+      this.emit(kUpgradeAttached);
       return;
     }
     // Bytes that already arrived before the wrap were pulled off the fd into

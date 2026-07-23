@@ -88,7 +88,7 @@ const EXCLUDE_FN =
 // reduction and masks whatever lies behind it. Bun.write on Windows:
 // (1) self-alias Bun.write(f,f) CopyFileWindows aliasing; (2) any missing/
 // unopenable source -> on_copy_file ENOENT retry loop. Both reported.
-const KNOWN_BROKEN_FN = /^(write)$/;
+const KNOWN_BROKEN_FN = process.env.WSF_ALLOW_BROKEN ? /^$/ : /^(write)$/;
 // node module callables ("node:fs" containers): fs.readFileSync(...),
 // child_process.spawn(...). Names that block the process (readline
 // prompts, tty raw mode) or reach the network are excluded by name.
@@ -132,6 +132,27 @@ const BUILTIN_PRODUCERS: Record<string, string[]> = {
   Transpiler: [`new Bun.Transpiler({ loader: "ts" })`, `new Bun.Transpiler({ loader: "jsx" })`],
   ArrayBufferSink: [`new Bun.ArrayBufferSink()`],
   Archive: [],
+  // bun:sqlite - historically use-after-close / finalize crashes
+  Database: [
+    `(() => { const { Database } = require("bun:sqlite"); return new Database(":memory:"); })()`,
+    `(() => { const { Database } = require("bun:sqlite"); const d = new Database(P("db-" + $i() + ".sqlite")); d.run("CREATE TABLE t (a INTEGER, b TEXT)"); return d; })()`,
+  ],
+  Statement: [
+    `(() => { const d = $pool("Database"); if (!d) throw new Error("pool-empty"); try { d.run("CREATE TABLE IF NOT EXISTS t (a INTEGER, b TEXT)"); } catch {} return d.query("SELECT * FROM t WHERE a = ?"); })()`,
+    `(() => { const d = $pool("Database"); if (!d) throw new Error("pool-empty"); return d.prepare("INSERT INTO t (a, b) VALUES ($a, $b)"); })()`,
+  ],
+  // Worker - termination races are a top crash source
+  Worker: [
+    `new Worker(new URL("data:text/javascript,setInterval(()=>{},1); postMessage('up'); onmessage = e => postMessage(e.data)"), { name: "w" + $i() })`,
+    `new Worker(new URL("data:text/javascript,while(false){} postMessage(1)"))`,
+    `new Worker(new URL("data:text/javascript,throw new Error('boom-in-worker')"))`,
+  ],
+  Script: [
+    `(() => { const vm = require("node:vm"); return new vm.Script("globalThis.x = (globalThis.x||0)+1; ({a:1})"); })()`,
+  ],
+  Context: [
+    `(() => { const vm = require("node:vm"); return vm.createContext({ sandbox: 1 }); })()`,
+  ],
   // Network kinds against targets we OWN: a second in-process server and a
   // TCP listener; sockets connect only to them (never the outside world).
   Server: [
@@ -151,11 +172,58 @@ const BUILTIN_PRODUCERS: Record<string, string[]> = {
 for (const k of Object.keys(BUILTIN_PRODUCERS)) if (!BUILTIN_PRODUCERS[k].length) delete BUILTIN_PRODUCERS[k];
 // Kinds with a LIVE creator (a producer function or a built-in expression)
 // and at least one method to call: the only kinds we draw methods on.
+
+// Operations on kinds outside the .d.ts spec: lifecycle-heavy sequences
+// (use-after-close, double-finalize, terminate mid-work) where bindings
+// historically crash. `o` is the pooled receiver.
+const EXTRA_OPS: Record<string, string[]> = {
+  Database: [
+    'o.run("INSERT INTO t (a, b) VALUES (?, ?)", [1, "x"])',
+    'o.query("SELECT * FROM t").all()',
+    'o.exec("PRAGMA integrity_check")',
+    "o.serialize()",
+    "o.close()",
+    "o.close(true)",
+    'o.transaction(() => { o.run("INSERT INTO t (a) VALUES (1)"); o.close(); })()',
+    'o.query("SELECT ?").get(new Proxy({}, { get() { o.close(); return 1; } }))',
+  ],
+  Statement: [
+    "o.all()",
+    "o.get(1)",
+    'o.run(1, "b")',
+    "o.finalize()",
+    "[...o.iterate(1)]",
+    "o.values(1)",
+    "o.toString()",
+    "(o.finalize(), o.get(1))",
+    'o.all({ toString() { o.finalize(); return "a"; } })',
+  ],
+  Worker: [
+    "o.terminate()",
+    "o.postMessage({ hostile: new Uint8Array(1e6) })",
+    "o.postMessage(new SharedArrayBuffer(64))",
+    '(o.postMessage("x"), o.terminate(), o.postMessage("y"))',
+    "o.ref()",
+    "o.unref()",
+    'new Promise(r => { o.onmessage = () => { o.terminate(); r(1); }' + '; o.postMessage("go"); setTimeout(() => r(0), 500); })',
+  ],
+  Script: [
+    "o.runInThisContext({ timeout: 5 })",
+    "o.runInNewContext({ o }, { timeout: 5 })",
+    'o.runInContext($pool("Context") ?? require("node:vm").createContext({}), { timeout: 5, breakOnSigint: true })',
+    "o.createCachedData()",
+  ],
+  Context: [
+    'require("node:vm").runInContext("x = 1; (() => x)()", o, { timeout: 5 })',
+    'require("node:vm").runInContext("this", o)',
+  ],
+};
+
 const producibleKinds = new Set<string>([
   ...producers.map(p => kindOf(p.returns)!),
   ...Object.keys(BUILTIN_PRODUCERS),
 ]);
-const usableKinds = [...producibleKinds].filter(k => methodsByKind.has(k) && !EXCLUDE_CONTAINER.test(k));
+const usableKinds = [...producibleKinds].filter(k => (methodsByKind.has(k) || EXTRA_OPS[k]) && !EXCLUDE_CONTAINER.test(k));
 
 // --- value generation -------------------------------------------------------
 // Emitted programs reference these helper bindings (defined in the preamble).
@@ -407,6 +475,8 @@ function valueFor(tRaw: string, name: string, depth = 0): string {
   return V.any();
 }
 
+
+
 // --- program emission -----------------------------------------------------------
 const L: string[] = [];
 const emit = (s: string) => L.push(s);
@@ -487,9 +557,59 @@ function genCreate() {
 function genMethod() {
   if (!usableKinds.length) return genCall();
   const kind = pickRareKind(usableKinds);
-  const m = pick(methodsByKind.get(kind)!);
   const await_ = chance(0.7) ? "await " : "";
+  if (EXTRA_OPS[kind] && (!methodsByKind.has(kind) || chance(0.5))) {
+    const op = pick(EXTRA_OPS[kind]);
+    emit(`${await_}$step(${JSON.stringify(kind + ".extra")}, () => { const o = $pool(${JSON.stringify(kind)}); if (o == null) throw new Error("pool-empty"); return ${op}; });`);
+    stats.method++;
+    return;
+  }
+  const m = pick(methodsByKind.get(kind)!);
   emit(`${await_}$step(${JSON.stringify(m.path)}, () => { const o = $pool(${JSON.stringify(kind)}); if (o == null) throw new Error("pool-empty"); return o.${m.name}(${argList(m)}); });`);
+  stats.method++;
+}
+// WRONG-THIS: invoke a native prototype method with a receiver of a
+// different native kind (or a plain object). Bindings that trust `this`
+// crash instantly - one of the fastest historical classes.
+function genWrongThis() {
+  const kindsWithProto = usableKinds.filter(k => methodsByKind.has(k));
+  if (!kindsWithProto.length) return genMethod();
+  const kind = pick(kindsWithProto);
+  const m = pick(methodsByKind.get(kind)!);
+  const recv = pick([
+    ...usableKinds.filter(k => k !== kind).map(k => `$pool(${JSON.stringify(k)})`),
+    `{}`,
+    `[]`,
+    `Object.create(null)`,
+    `new Proxy({}, {})`,
+    `1`,
+    `"str"`,
+    `null`,
+    `globalThis`,
+  ]);
+  const ctor = `(globalThis[${JSON.stringify(kind)}] ?? Bun[${JSON.stringify(kind)}])`;
+  emit(`await $step(${JSON.stringify("wrong-this " + m.path)}, () => { const f = ${ctor}?.prototype?.${m.name}; if (typeof f !== "function") throw new Error("no-method"); return f.call(${recv}, ${argList(m)}); });`);
+  stats.method++;
+}
+// RECEIVER RE-ENTRANCY: a coercion hook on an argument closes/frees the
+// very object being called, mid-call.
+function genReenterReceiver() {
+  const kindsWithProto = usableKinds.filter(k => methodsByKind.has(k));
+  if (!kindsWithProto.length) return genMethod();
+  const kind = pick(kindsWithProto);
+  const withArgs = methodsByKind.get(kind)!.filter(m => m.params.length > 0);
+  if (!withArgs.length) return genMethod();
+  const m = pick(withArgs);
+  const effect = `try { o.close?.(); o.end?.(); o.stop?.(true); o.kill?.(); o.cancel?.(); o.destroy?.(); o.finalize?.(); o.terminate?.(); o.abort?.(); } catch {}`;
+  const hostile = pick([
+    `{ toString() { ${effect} return "reenter"; } }`,
+    `{ valueOf() { ${effect} return 3; } }`,
+    `{ [Symbol.toPrimitive]() { ${effect} return "p"; } }`,
+    `{ get length() { ${effect} return 8; }, get 0() { ${effect} return 1; } }`,
+    `new Proxy([1, 2], { get(t, k) { ${effect} return Reflect.get(t, k); } })`,
+  ]);
+  const others = m.params.slice(1).map(p => valueFor(p.type, p.name));
+  emit(`await $step(${JSON.stringify("reenter-recv " + m.path)}, () => { const o = $pool(${JSON.stringify(kind)}); if (o == null) throw new Error("pool-empty"); return o.${m.name}(${["("+hostile+")"].concat(others).join(", ")}); });`);
   stats.method++;
 }
 function genCall() {
@@ -503,6 +623,7 @@ function genCall() {
 function genLifecycle() {
   if (!usableKinds.length) return genMethod();
   const kind = pick(usableKinds);
+  if (!methodsByKind.has(kind)) return genMethod();
   const ms = methodsByKind.get(kind)!;
   const closers = ms.filter(m => /^(close|end|kill|stop|abort|destroy|flush|unref|ref|cancel|delete)$/.test(m.name));
   if (!closers.length) return genMethod();
@@ -519,10 +640,12 @@ emit(`// --- generated statements ----------------------------------------------
 for (let i = 0; i < Math.min(6, Math.max(3, Math.floor(nStatements / 8))); i++) genCreate();
 for (let i = 0; i < nStatements; i++) {
   const r = rnd();
-  if (r < 0.22) genCreate();
-  else if (r < 0.62) genMethod();
-  else if (r < 0.78) genLifecycle();
-  else if (r < 0.9) genCall();
+  if (r < 0.18) genCreate();
+  else if (r < 0.44) genMethod();
+  else if (r < 0.56) genLifecycle();
+  else if (r < 0.66) genCall();
+  else if (r < 0.78) genWrongThis();
+  else if (r < 0.9) genReenterReceiver();
   else {
     // concurrency: fire several unawaited method calls on one object at once
     const kind = pick(usableKinds.length ? usableKinds : ["Blob"]);

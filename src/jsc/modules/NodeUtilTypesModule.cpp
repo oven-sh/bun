@@ -1,4 +1,5 @@
 #include "BunClientData.h"
+#include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"
@@ -107,6 +108,159 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSymbolObject,
     GET_FIRST_CELL
     return JSValue::encode(jsBoolean(cell->inherits<JSC::SymbolObject>()));
 }
+// Brand check for WHATWG URL instances backed by the wrapper class —
+// immune to prototype/Symbol.hasInstance tampering (assert internals).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsURL,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    GET_FIRST_CELL
+    return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSDOMURL>()));
+}
+
+// assert.partialDeepStrictEqual typed-array/ArrayBuffer branch: expected's
+// elements must appear in actual's elements in order, allowing gaps (node's
+// kPartial mode). Element equality follows Object.is at storage width — all
+// NaNs equal, +0 and -0 distinct. The JS caller has already matched the two
+// values' tags, so both sides are the same kind.
+template<typename T, typename EqualFn>
+static bool partialSequenceContains(std::span<const T> actual, std::span<const T> expected, EqualFn equal)
+{
+    if (expected.size() > actual.size())
+        return false;
+    size_t pos = 0;
+    for (size_t i = 0; i < expected.size(); i++) {
+        const size_t lastCandidate = actual.size() - expected.size() + i;
+        while (pos <= lastCandidate && !equal(actual[pos], expected[i]))
+            pos++;
+        if (pos > lastCandidate)
+            return false;
+        pos++;
+    }
+    return true;
+}
+
+template<typename T>
+static bool partialIntSequenceContains(std::span<const uint8_t> actual, std::span<const uint8_t> expected)
+{
+    return partialSequenceContains<T>(
+        { reinterpret_cast<const T*>(actual.data()), actual.size() / sizeof(T) },
+        { reinterpret_cast<const T*>(expected.data()), expected.size() / sizeof(T) },
+        [](T a, T b) { return a == b; });
+}
+
+template<typename FloatT, typename BitsT>
+static bool partialFloatSequenceContains(std::span<const uint8_t> actual, std::span<const uint8_t> expected)
+{
+    return partialSequenceContains<FloatT>(
+        { reinterpret_cast<const FloatT*>(actual.data()), actual.size() / sizeof(FloatT) },
+        { reinterpret_cast<const FloatT*>(expected.data()), expected.size() / sizeof(FloatT) },
+        [](FloatT a, FloatT b) {
+            if (std::isnan(a) || std::isnan(b))
+                return std::isnan(a) && std::isnan(b);
+            return std::bit_cast<BitsT>(a) == std::bit_cast<BitsT>(b);
+        });
+}
+
+// Float16 handled at the bit level: NaN = exponent all-ones with a non-zero
+// mantissa; everything else compares by exact bits (Object.is semantics).
+static bool partialFloat16SequenceContains(std::span<const uint8_t> actual, std::span<const uint8_t> expected)
+{
+    auto isNaN16 = [](uint16_t bits) { return (bits & 0x7C00) == 0x7C00 && (bits & 0x03FF); };
+    return partialSequenceContains<uint16_t>(
+        { reinterpret_cast<const uint16_t*>(actual.data()), actual.size() / 2 },
+        { reinterpret_cast<const uint16_t*>(expected.data()), expected.size() / 2 },
+        [isNaN16](uint16_t a, uint16_t b) {
+            if (isNaN16(a) || isNaN16(b))
+                return isNaN16(a) && isNaN16(b);
+            return a == b;
+        });
+}
+
+enum class ByteSpanResult { Ok, NotABufferLike, Detached };
+
+static ByteSpanResult byteSpanOf(JSC::JSValue value, std::span<const uint8_t>& out, JSC::TypedArrayType& type)
+{
+    JSCell* cell = value.isCell() ? value.asCell() : nullptr;
+    if (!cell)
+        return ByteSpanResult::NotABufferLike;
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(cell)) {
+        if (view->isDetached())
+            return ByteSpanResult::Detached;
+        out = { static_cast<const uint8_t*>(view->vector()), view->byteLength() };
+        type = JSC::typedArrayType(cell->type());
+        return ByteSpanResult::Ok;
+    }
+    if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(cell)) {
+        auto* impl = buffer->impl();
+        if (!impl || impl->isDetached())
+            return ByteSpanResult::Detached;
+        out = { static_cast<const uint8_t*>(impl->data()), impl->byteLength() };
+        type = JSC::TypedArrayType::NotTypedArray;
+        return ByteSpanResult::Ok;
+    }
+    return ByteSpanResult::NotABufferLike;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialTypedArrayEquiv,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    std::span<const uint8_t> actual, expected;
+    JSC::TypedArrayType actualType = JSC::TypedArrayType::NotTypedArray;
+    JSC::TypedArrayType expectedType = JSC::TypedArrayType::NotTypedArray;
+    auto actualResult = byteSpanOf(callframe->argument(0), actual, actualType);
+    auto expectedResult = byteSpanOf(callframe->argument(1), expected, expectedType);
+    if (actualResult == ByteSpanResult::Detached || expectedResult == ByteSpanResult::Detached) {
+        // node reaches this branch via `new Uint8Array(detached)`, which
+        // throws; keep the exact error contract.
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        throwTypeError(globalObject, scope, "Cannot perform Construct on a detached ArrayBuffer"_s);
+        return {};
+    }
+    if (actualResult != ByteSpanResult::Ok || expectedResult != ByteSpanResult::Ok || actualType != expectedType)
+        return JSValue::encode(jsBoolean(false));
+
+    bool result;
+    switch (actualType) {
+    case JSC::TypeInt8:
+        result = partialIntSequenceContains<int8_t>(actual, expected);
+        break;
+    case JSC::TypeInt16:
+        result = partialIntSequenceContains<int16_t>(actual, expected);
+        break;
+    case JSC::TypeInt32:
+        result = partialIntSequenceContains<int32_t>(actual, expected);
+        break;
+    case JSC::TypeUint16:
+        result = partialIntSequenceContains<uint16_t>(actual, expected);
+        break;
+    case JSC::TypeUint32:
+        result = partialIntSequenceContains<uint32_t>(actual, expected);
+        break;
+    case JSC::TypeBigInt64:
+        result = partialIntSequenceContains<int64_t>(actual, expected);
+        break;
+    case JSC::TypeBigUint64:
+        result = partialIntSequenceContains<uint64_t>(actual, expected);
+        break;
+    case JSC::TypeFloat16:
+        result = partialFloat16SequenceContains(actual, expected);
+        break;
+    case JSC::TypeFloat32:
+        result = partialFloatSequenceContains<float, uint32_t>(actual, expected);
+        break;
+    case JSC::TypeFloat64:
+        result = partialFloatSequenceContains<double, uint64_t>(actual, expected);
+        break;
+    default:
+        // Uint8, Uint8Clamped, DataView, and raw ArrayBuffers: byte-wise.
+        result = partialIntSequenceContains<uint8_t>(actual, expected);
+        break;
+    }
+    return JSValue::encode(jsBoolean(result));
+}
+
 extern "C" bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 
 // util.isDeepStrictEqual / assert.deepStrictEqual: node semantics, including

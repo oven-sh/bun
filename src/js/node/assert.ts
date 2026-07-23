@@ -43,18 +43,13 @@ const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayBufferIsView = ArrayBuffer.isView;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-// Brand check backed by the URL internal slot: the captured `href` getter
-// throws for non-URLs and ignores `Symbol.hasInstance`/prototype tampering.
+// Native brand check (inherits<JSDOMURL>) — immune to prototype and
+// Symbol.hasInstance tampering. The captured href getter reads the value.
+const isURL = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsURL", 1);
+// Ordered-with-gaps element containment for same-tag typed arrays,
+// DataViews, and ArrayBuffers (node kPartial), in native code.
+const partialTypedArrayEquiv = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionPartialTypedArrayEquiv", 2);
 const URLPrototypeHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href").get;
-function isURLBrand(value) {
-  if (typeof value !== "object" || value === null) return false;
-  try {
-    URLPrototypeHrefGetter.$call(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
 const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -514,17 +509,14 @@ function compareBranch(actual, expected, comparedObjects?) {
       return false;
     }
     if (tag === undefined) {
-      // DataViews have no indexed elements; compare raw bytes, then any own
-      // enumerable properties on the views themselves.
+      // DataViews have no indexed elements; compare raw bytes natively, then
+      // any own enumerable properties on the views themselves.
       return (
-        compareBranchArray(
-          new Uint8Array(actual.buffer, actual.byteOffset, actual.byteLength),
-          new Uint8Array(expected.buffer, expected.byteOffset, expected.byteLength),
-          comparedObjects,
-        ) && withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
+        partialTypedArrayEquiv(actual, expected) &&
+        withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
       );
     }
-    return compareBranchArray(actual, expected, comparedObjects);
+    return partialTypedArrayEquiv(actual, expected);
   }
   const actualIsBuffer = isAnyArrayBuffer(actual);
   const expectedIsBuffer = isAnyArrayBuffer(expected);
@@ -535,9 +527,9 @@ function compareBranch(actual, expected, comparedObjects?) {
     ) {
       return false;
     }
-    // Compare contents, then any own enumerable properties on the buffers.
+    // Compare contents natively, then any own enumerable properties.
     return (
-      compareBranchArray(new Uint8Array(actual), new Uint8Array(expected), comparedObjects) &&
+      partialTypedArrayEquiv(actual, expected) &&
       withCycleGuard(actual, expected, comparedObjects, compareBranchObject)
     );
   }
@@ -547,10 +539,10 @@ function compareBranch(actual, expected, comparedObjects?) {
   }
 
   // URLs must both be URLs with the same href.
-  if (isURLBrand(actual) || isURLBrand(expected)) {
+  if (isURL(actual) || isURL(expected)) {
     if (
-      !isURLBrand(actual) ||
-      !isURLBrand(expected) ||
+      !isURL(actual) ||
+      !isURL(expected) ||
       URLPrototypeHrefGetter.$call(actual) !== URLPrototypeHrefGetter.$call(expected)
     ) {
       return false;

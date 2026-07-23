@@ -14,8 +14,8 @@ use core::mem;
 use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::blob::ReadBytesResult;
 use crate::webcore::blob::store as blob_store;
-use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
@@ -1234,7 +1234,7 @@ impl Image {
 /// Promise-of-promise flattens, so the caller sees one `await` for
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
-struct BlobReadChain<'a> {
+pub struct BlobReadChain<'a> {
     image: *const Image,
     global: &'a JSGlobalObject,
     kind: Kind,
@@ -1281,14 +1281,15 @@ impl<'a> BlobReadChain<'a> {
             outer: jsc::JSPromiseStrong::init(global),
         });
         let promise = chain.outer.value();
-        // `read_bytes_to_handler` stores the handler pointer and calls
-        // `on_read_bytes` on the JS thread (sync for in-memory, async for
-        // file/S3). Ownership of the chain transfers there; the trait impl
-        // below reconstructs the Box and frees it.
-        let raw = bun_core::heap::into_raw(chain);
+        // `read_bytes_to_handler` stores the pointer and calls `on_read_bytes`
+        // on the JS thread (sync for in-memory, async for file/S3). Ownership
+        // of the chain transfers there; `on_read_bytes` below reconstructs the
+        // Box and frees it. The `'a` borrow of `global` is a JSC_BORROW
+        // (process-lifetime) so the `'static` erasure is sound.
+        let raw = bun_core::heap::into_raw(chain).cast::<BlobReadChain<'static>>();
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
-        // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
+        // dispatch; reclaimed in `BlobReadChain::on_read_bytes`.
+        unsafe { blob.read_bytes_to_handler(raw, global) }.map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
@@ -1360,8 +1361,8 @@ impl<'a> BlobReadChain<'a> {
     }
 }
 
-impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    fn on_read_bytes(&mut self, result: ReadBytesResult) {
+impl<'a> BlobReadChain<'a> {
+    pub(crate) fn on_read_bytes(&mut self, result: ReadBytesResult) {
         // SAFETY: `self` is the `&mut *heap::alloc(chain)` handed to
         // `read_bytes_to_handler` in `start()`; we are the sole consumer on
         // the JS thread. Reconstruct the Box so the body can move fields out

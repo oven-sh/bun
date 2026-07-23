@@ -33,6 +33,7 @@ use bun_s3_signing::credentials::encode_uri_component;
 
 pub use crate::webcore::s3::list_objects::S3ListObjectsOptions;
 pub use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
+pub use crate::webcore::s3::simple_request::Callback;
 pub use crate::webcore::s3::simple_request::S3DeleteResult;
 pub use crate::webcore::s3::simple_request::S3DownloadResult;
 pub use crate::webcore::s3::simple_request::S3HttpSimpleTask;
@@ -64,11 +65,11 @@ type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 pub(crate) fn stat(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>,
-    callback_context: *mut c_void,
+    callback: Callback,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsTerminatedResult<()> {
+    debug_assert!(matches!(callback.kind(), s3_simple_request::Kind::Stat));
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -79,19 +80,18 @@ pub(crate) fn stat(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Stat(callback),
-        callback_context,
+        callback,
     )
 }
 
 pub(crate) fn download(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DownloadResult, *mut c_void) -> JsTerminatedResult<()>,
-    callback_context: *mut c_void,
+    callback: Callback,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsTerminatedResult<()> {
+    debug_assert!(matches!(callback.kind(), s3_simple_request::Kind::Download));
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -102,8 +102,7 @@ pub(crate) fn download(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Download(callback),
-        callback_context,
+        callback,
     )
 }
 
@@ -112,11 +111,11 @@ pub(crate) fn download_slice(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    callback: fn(S3DownloadResult, *mut c_void) -> JsTerminatedResult<()>,
-    callback_context: *mut c_void,
+    callback: Callback,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsTerminatedResult<()> {
+    debug_assert!(matches!(callback.kind(), s3_simple_request::Kind::Download));
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -146,19 +145,18 @@ pub(crate) fn download_slice(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Download(callback),
-        callback_context,
+        callback,
     )
 }
 
 pub(crate) fn delete(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DeleteResult, *mut c_void) -> JsTerminatedResult<()>,
-    callback_context: *mut c_void,
+    callback: Callback,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsTerminatedResult<()> {
+    debug_assert!(matches!(callback.kind(), s3_simple_request::Kind::Delete));
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -169,8 +167,7 @@ pub(crate) fn delete(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Delete(callback),
-        callback_context,
+        callback,
     )
 }
 
@@ -179,12 +176,15 @@ pub(crate) fn list_objects(
     // The struct owns `Utf8Slice`s and is not
     // `Clone`, but this fn only reads fields synchronously to build the
     // search-params string — borrow so the caller (Store::S3::
-    // list_objects) can retain ownership in its async Wrapper for `Drop`.
+    // list_objects) can retain ownership in its async task for `Drop`.
     list_options: &S3ListObjectsOptions,
-    callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
-    callback_context: *mut c_void,
+    callback: Callback,
     proxy_url: Option<&[u8]>,
 ) -> JsTerminatedResult<()> {
+    debug_assert!(matches!(
+        callback.kind(),
+        s3_simple_request::Kind::ListObjects
+    ));
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -279,13 +279,7 @@ pub(crate) fn list_objects(
             drop(search_params);
 
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            callback(
-                S3ListObjectsResult::Failure(Error::S3Error {
-                    code: error_code_and_message.code,
-                    message: error_code_and_message.message,
-                }),
-                callback_context,
-            )?;
+            callback.fail(error_code_and_message.code, error_code_and_message.message)?;
 
             return Ok(());
         }
@@ -300,8 +294,7 @@ pub(crate) fn list_objects(
         http: core::mem::MaybeUninit::uninit(),
         range: None,
         sign_result: result,
-        callback_context,
-        callback: s3_simple_request::Callback::ListObjects(callback),
+        callback,
         headers,
         vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
         response_buffer: MutableString::default(),
@@ -390,9 +383,9 @@ pub fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
-    callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
-    callback_context: *mut c_void,
+    callback: Callback,
 ) -> JsTerminatedResult<()> {
+    debug_assert!(matches!(callback.kind(), s3_simple_request::Kind::Upload));
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -408,8 +401,7 @@ pub fn upload(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Upload(callback),
-        callback_context,
+        callback,
     )
 }
 

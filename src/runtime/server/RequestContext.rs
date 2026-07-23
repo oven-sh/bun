@@ -2417,16 +2417,6 @@ where
         // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>`.
-    fn on_s3_size_resolved_thunk(
-        result: S3::simple_request::S3StatResult<'_>,
-        this: *mut c_void,
-    ) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: this is the *mut Self registered with stat().
-        Self::on_s3_size_resolved(result, unsafe { bun_ptr::callback_ctx::<Self>(this) });
-        Ok(())
-    }
-
     pub fn on_s3_size_resolved(result: S3::simple_request::S3StatResult<'_>, this: &mut Self) {
         if let Some(resp) = this.resp {
             let size = match result {
@@ -2576,8 +2566,9 @@ where
                     let _ = S3::client::stat(
                         credentials,
                         path,
-                        Self::on_s3_size_resolved_thunk,
-                        std::ptr::from_mut::<Self>(this).cast::<c_void>(),
+                        S3::client::Callback::HeadResponseSize(AnyRequestContext::init(
+                            std::ptr::from_mut::<Self>(this),
+                        )),
                         proxy_url,
                         s3.request_payer,
                     ); // TODO: properly propagate exception upwards

@@ -86,17 +86,11 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
-/// Result delivered to `ReadBytesHandler::on_read_bytes`.
+/// Result delivered to `BlobReadChain::on_read_bytes`.
 pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
     Ok(Vec<u8>),
     Err(Box<bun_jsc::SystemError>),
-}
-
-/// Handler trait for `read_bytes_to_handler` — the body only requires
-/// `on_read_bytes`.
-pub trait ReadBytesHandler {
-    fn on_read_bytes(&mut self, result: ReadBytesResult);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -146,11 +140,11 @@ pub trait BlobExt {
     ) -> JsTerminatedResult<JSValue>;
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
     /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked (synchronously or via the async task).
-    unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
+    /// `ctx` must be a valid, exclusively-accessible heap pointer that stays alive
+    /// until `BlobReadChain::on_read_bytes` is invoked (synchronously or via the async task).
+    unsafe fn read_bytes_to_handler(
         &self,
-        ctx: *mut H,
+        ctx: *mut crate::image::BlobReadChain<'static>,
         global: &JSGlobalObject,
     ) -> JsTerminatedResult<()>;
     fn do_image(_this: &Self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue>
@@ -517,87 +511,36 @@ impl BlobExt for Blob {
     /// only call this when it's empty.
     ///
     /// # Safety
-    /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked.
-    unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
+    /// `ctx` must be a valid, exclusively-accessible heap pointer that stays alive
+    /// until `BlobReadChain::on_read_bytes` is invoked.
+    unsafe fn read_bytes_to_handler(
         &self,
-        ctx: *mut H,
+        ctx: *mut crate::image::BlobReadChain<'static>,
         global: &JSGlobalObject,
     ) -> JsTerminatedResult<()> {
+        use crate::image::BlobReadChain;
         if self.needs_to_read_file() {
-            struct Adapter<H>(core::marker::PhantomData<H>);
-            impl<H: ReadBytesHandler> InternalReadFileFn<H> for Adapter<H> {
-                fn call(c: *mut H, r: read_file::ReadFileResultType) {
-                    // SAFETY: `c` is the `*mut H` passed by the caller and kept
+            struct Adapter;
+            impl InternalReadFileFn<BlobReadChain<'static>> for Adapter {
+                fn call(c: *mut BlobReadChain<'static>, r: read_file::ReadFileResultType) {
+                    // SAFETY: `c` is the pointer passed by the caller and kept
                     // alive across the async read by contract.
                     let c = unsafe { &mut *c };
-                    H::on_read_bytes(
-                        c,
-                        match r {
+                    c.on_read_bytes(match r {
+                        read_file::ReadFileResultType::Result(b) => {
                             // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the
                             // ReadFile finisher; reclaim ownership here.
-                            read_file::ReadFileResultType::Result(b) => ReadBytesResult::Ok(
-                                unsafe { bun_core::heap::take(b.buf) }.into_vec(),
-                            ),
-                            read_file::ReadFileResultType::Err(e) => {
-                                ReadBytesResult::Err(Box::new(e))
-                            }
-                        },
-                    );
+                            ReadBytesResult::Ok(unsafe { bun_core::heap::take(b.buf) }.into_vec())
+                        }
+                        read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(Box::new(e)),
+                    });
                 }
             }
-            self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
+            self.do_read_file_internal::<BlobReadChain<'static>, Adapter>(ctx, global);
             return Ok(());
         }
         if self.is_s3() {
-            struct Task<H> {
-                ctx: *mut H,
-                blob: Blob, // dupe for store ref + offset/size
-                poll: bun_io::KeepAlive,
-            }
-            impl<H: ReadBytesHandler> Task<H> {
-                fn done(mut self: Box<Self>, r: ReadBytesResult) {
-                    self.poll.unref(bun_io::js_vm_ctx());
-                    self.blob.deinit();
-                    // SAFETY: caller-owned ctx, kept alive by contract.
-                    let c = unsafe { &mut *self.ctx };
-                    drop(self);
-                    H::on_read_bytes(c, r);
-                }
-                fn cb(
-                    result: crate::webcore::__s3_client::S3DownloadResult,
-                    opaque_self: *mut c_void,
-                ) -> JsTerminatedResult<()> {
-                    // SAFETY: `opaque_self` was heap-allocated below.
-                    let t = unsafe { bun_core::heap::take(opaque_self.cast::<Task<H>>()) };
-                    match result {
-                        // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
-                        crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
-                            t.done(ReadBytesResult::Ok(response.body.list));
-                        }
-                        // S3Error has its own JS-error builder; flatten to a
-                        // SystemError so the callback has one shape to handle.
-                        crate::webcore::__s3_client::S3DownloadResult::NotFound(e)
-                        | crate::webcore::__s3_client::S3DownloadResult::Failure(e) => {
-                            // reshaped for borrowck — `t.done` moves
-                            // `t`, so build the SystemError (cloning the path
-                            // out of `t.blob.store`) before the call.
-                            let err = bun_jsc::SystemError {
-                                code: BunString::clone_utf8(e.code),
-                                message: BunString::clone_utf8(e.message),
-                                path: BunString::clone_utf8(
-                                    t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
-                                ),
-                                syscall: BunString::static_("fetch"),
-                                ..Default::default()
-                            };
-                            t.done(ReadBytesResult::Err(Box::new(err)));
-                        }
-                    }
-                    Ok(())
-                }
-            }
-            let mut t = Box::new(Task::<H> {
+            let mut t = Box::new(S3ReadBytesTask {
                 ctx,
                 blob: self.dupe(),
                 poll: bun_io::KeepAlive::default(),
@@ -621,9 +564,9 @@ impl BlobExt for Blob {
                 payer = s3.request_payer;
             }
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
-            // it stays valid until `Task::done` deinits the blob in the callback.
+            // it stays valid until `S3ReadBytesTask::on_download` deinits the blob.
             let path = unsafe { &*path };
-            let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
+            let t_ptr = bun_core::heap::into_raw(t);
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {
                     Some(self.size.get() as usize)
@@ -635,8 +578,7 @@ impl BlobExt for Blob {
                     path,
                     self.offset.get() as usize,
                     len,
-                    Task::<H>::cb,
-                    t_ptr,
+                    crate::webcore::__s3_client::Callback::BlobReadBytes(t_ptr),
                     proxy.as_deref(),
                     payer,
                 )?;
@@ -644,8 +586,7 @@ impl BlobExt for Blob {
                 crate::webcore::__s3_client::download(
                     &cred,
                     path,
-                    Task::<H>::cb,
-                    t_ptr,
+                    crate::webcore::__s3_client::Callback::BlobReadBytes(t_ptr),
                     proxy.as_deref(),
                     payer,
                 )?;
@@ -656,7 +597,7 @@ impl BlobExt for Blob {
         let view = self.shared_view();
         let owned = view.to_vec();
         // SAFETY: caller-owned ctx.
-        H::on_read_bytes(unsafe { &mut *ctx }, ReadBytesResult::Ok(owned));
+        unsafe { &mut *ctx }.on_read_bytes(ReadBytesResult::Ok(owned));
         Ok(())
     }
 
@@ -4603,41 +4544,16 @@ fn write_file_with_empty_source_to_destination(
                 }
             };
 
-            struct Wrapper {
-                promise: jsc::JSPromiseStrong,
-                store: StoreRef,
-                global: bun_ptr::BackRef<JSGlobalObject>,
-            }
-            impl Wrapper {
-                fn resolve(
-                    result: S3UploadResult,
-                    opaque_this: *mut c_void,
-                ) -> jsc::JsTerminatedResult<()> {
-                    // SAFETY: opaque_this was heap-allocated in the caller below.
-                    let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
-                    let global = this.global.get();
-                    match result {
-                        S3UploadResult::Success => {
-                            this.promise.resolve(global, JSValue::js_number(0.0))?
-                        }
-                        S3UploadResult::Failure(err) => {
-                            let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                &err,
-                                global,
-                                this.store.get_path(),
-                                this.promise.get(),
-                            );
-                            this.promise.reject(global, Ok(err_js))?;
-                        }
-                    }
-                    Ok(())
-                }
-            }
-
             let promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
             let proxy_owned = http_proxy_href(ctx);
             let proxy_url = proxy_owned.as_deref();
+            let wrapper = bun_core::heap::into_raw(Box::new(S3BlobUploadTask {
+                promise,
+                store: destination_store.clone(),
+                global: bun_ptr::BackRef::new(ctx),
+                resolved_size: 0.0,
+            }));
             s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),
@@ -4651,13 +4567,7 @@ fn write_file_with_empty_source_to_destination(
                 proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
-                Wrapper::resolve,
-                bun_core::heap::into_raw(Box::new(Wrapper {
-                    promise,
-                    store: destination_store.clone(),
-                    global: bun_ptr::BackRef::new(ctx),
-                }))
-                .cast::<c_void>(),
+                s3_client::Callback::BlobUpload(wrapper),
             )?;
             return Ok(promise_value);
         }
@@ -4880,43 +4790,14 @@ pub fn write_file_with_source_destination(
                         ));
                     }
                 } else {
-                    struct Wrapper {
-                        store: StoreRef,
-                        promise: jsc::JSPromiseStrong,
-                        global: bun_ptr::BackRef<JSGlobalObject>,
-                    }
-                    impl Wrapper {
-                        fn resolve(
-                            result: S3UploadResult,
-                            opaque_self: *mut c_void,
-                        ) -> jsc::JsTerminatedResult<()> {
-                            // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
-                            let mut this =
-                                unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                            let global = this.global.get();
-                            match result {
-                                S3UploadResult::Success => {
-                                    this.promise.resolve(
-                                        global,
-                                        JSValue::js_number(this.store.data.as_bytes().len() as f64),
-                                    )?;
-                                }
-                                S3UploadResult::Failure(err) => {
-                                    let err_js =
-                                        s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                            &err,
-                                            global,
-                                            this.store.get_path(),
-                                            this.promise.get(),
-                                        );
-                                    this.promise.reject(global, Ok(err_js))?;
-                                }
-                            }
-                            Ok(())
-                        }
-                    }
                     let promise = jsc::JSPromiseStrong::init(ctx);
                     let promise_value = promise.value();
+                    let wrapper = bun_core::heap::into_raw(Box::new(S3BlobUploadTask {
+                        store: source_store.clone(),
+                        promise,
+                        global: bun_ptr::BackRef::new(ctx),
+                        resolved_size: bytes.len() as f64,
+                    }));
                     s3_client::upload(
                         &aws_options.credentials,
                         s3.path(),
@@ -4930,13 +4811,7 @@ pub fn write_file_with_source_destination(
                         proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
-                        Wrapper::resolve,
-                        bun_core::heap::into_raw(Box::new(Wrapper {
-                            store: source_store.clone(),
-                            promise,
-                            global: bun_ptr::BackRef::new(ctx),
-                        }))
-                        .cast::<c_void>(),
+                        s3_client::Callback::BlobUpload(wrapper),
                     )?;
                     return Ok(promise_value);
                 }
@@ -5764,6 +5639,82 @@ pub fn construct_bun_file(
 // no dedicated wrap helper is needed at each call site.
 
 // ──────────────────────────────────────────────────────────────────────────
+// S3ReadBytesTask — S3 arm of `read_bytes_to_handler`.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub struct S3ReadBytesTask {
+    ctx: *mut crate::image::BlobReadChain<'static>,
+    blob: Blob, // dupe for store ref + offset/size
+    poll: bun_io::KeepAlive,
+}
+
+impl S3ReadBytesTask {
+    pub(crate) fn on_download(
+        result: crate::webcore::__s3_client::S3DownloadResult,
+        this: *mut Self,
+    ) -> JsTerminatedResult<()> {
+        // SAFETY: `this` was heap-allocated in `read_bytes_to_handler`.
+        let mut t = unsafe { bun_core::heap::take(this) };
+        let r = match result {
+            crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
+                ReadBytesResult::Ok(response.body.list)
+            }
+            crate::webcore::__s3_client::S3DownloadResult::NotFound(e)
+            | crate::webcore::__s3_client::S3DownloadResult::Failure(e) => {
+                ReadBytesResult::Err(Box::new(bun_jsc::SystemError {
+                    code: BunString::clone_utf8(e.code),
+                    message: BunString::clone_utf8(e.message),
+                    path: BunString::clone_utf8(
+                        t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
+                    ),
+                    syscall: BunString::static_("fetch"),
+                    ..Default::default()
+                }))
+            }
+        };
+        t.poll.unref(bun_io::js_vm_ctx());
+        t.blob.deinit();
+        // SAFETY: caller-owned ctx, kept alive by contract.
+        let c = unsafe { &mut *t.ctx };
+        drop(t);
+        c.on_read_bytes(r);
+        Ok(())
+    }
+}
+
+/// Bun.write(s3file, …) single-PUT paths (empty and bytes sources).
+pub struct S3BlobUploadTask {
+    promise: jsc::JSPromiseStrong,
+    store: StoreRef,
+    global: bun_ptr::BackRef<JSGlobalObject>,
+    resolved_size: f64,
+}
+
+impl S3BlobUploadTask {
+    pub(crate) fn resolve(result: S3UploadResult, this: *mut Self) -> jsc::JsTerminatedResult<()> {
+        // SAFETY: `this` was heap-allocated at the `s3_client::upload` call site.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        let global = this.global.get();
+        match result {
+            S3UploadResult::Success => {
+                this.promise
+                    .resolve(global, JSValue::js_number(this.resolved_size))?;
+            }
+            S3UploadResult::Failure(err) => {
+                let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                    &err,
+                    global,
+                    this.store.get_path(),
+                    this.promise.get(),
+                );
+                this.promise.reject(global, Ok(err_js))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // S3BlobDownloadTask
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -5787,10 +5738,7 @@ impl S3BlobDownloadTask {
     /// # Safety
     /// `this` must be the heap-allocated task produced by [`S3BlobDownloadTask::init`];
     /// ownership is consumed (the box is reclaimed and dropped) by this call.
-    // S3 callback ABI hands us a raw `*mut Self`; ownership is reclaimed below via
-    // `heap::take`, so the param stays a raw pointer rather than `&mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_s3_download_resolved(
+    pub(crate) fn on_s3_download_resolved(
         result: crate::webcore::__s3_client::S3DownloadResult,
         this: *mut S3BlobDownloadTask,
     ) -> Result<(), jsc::JsTerminated> {
@@ -5869,15 +5817,6 @@ impl S3BlobDownloadTask {
         let proxy_owned = http_proxy_href(global_this);
         let proxy = proxy_owned.as_deref();
 
-        // Adapter: S3 download callback ABI takes `*mut c_void` context — cast
-        // back to the boxed task.
-        fn s3_cb(
-            result: crate::webcore::__s3_client::S3DownloadResult<'_>,
-            ctx: *mut c_void,
-        ) -> Result<(), jsc::JsTerminated> {
-            S3BlobDownloadTask::on_s3_download_resolved(result, ctx.cast::<S3BlobDownloadTask>())
-        }
-
         if blob.offset.get() > 0 {
             let len: Option<usize> = if blob.size.get() != MAX_SIZE {
                 Some(usize::try_from(blob.size.get()).expect("int cast"))
@@ -5890,8 +5829,7 @@ impl S3BlobDownloadTask {
                 path,
                 offset,
                 len,
-                s3_cb,
-                this.cast::<c_void>(),
+                crate::webcore::__s3_client::Callback::BlobDownload(this),
                 proxy,
                 s3_store.request_payer,
             )?;
@@ -5899,8 +5837,7 @@ impl S3BlobDownloadTask {
             crate::webcore::__s3_client::download(
                 credentials,
                 path,
-                s3_cb,
-                this.cast::<c_void>(),
+                crate::webcore::__s3_client::Callback::BlobDownload(this),
                 proxy,
                 s3_store.request_payer,
             )?;
@@ -5912,8 +5849,7 @@ impl S3BlobDownloadTask {
                 path,
                 offset,
                 Some(len),
-                s3_cb,
-                this.cast::<c_void>(),
+                crate::webcore::__s3_client::Callback::BlobDownload(this),
                 proxy,
                 s3_store.request_payer,
             )?;

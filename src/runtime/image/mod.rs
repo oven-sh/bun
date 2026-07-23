@@ -57,6 +57,7 @@ pub mod thumbhash;
 
 #[path = "Image.rs"]
 pub mod image_body;
+pub use image_body::BlobReadChain;
 pub use image_body::{
     AsyncImageTask, Deliver, Fit, Image, Input, Kind, Modulate, Pipeline, PipelineTask, Resize,
     Source, TaskResult,

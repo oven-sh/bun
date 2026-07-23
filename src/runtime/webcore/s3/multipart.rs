@@ -247,9 +247,8 @@ impl UploadPart {
 
     pub(crate) fn on_part_response(
         result: S3PartResult,
-        this: *mut c_void,
+        this: *mut Self,
     ) -> JsTerminatedResult<()> {
-        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { &mut *this };
         // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
@@ -348,7 +347,8 @@ impl UploadPart {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+        let callback =
+            s3_simple_request::S3Callback::MultipartPart(std::ptr::from_mut::<Self>(self));
         execute_simple_s3_request(
             &*ctx.credentials,
             s3_simple_request::S3RequestOptions {
@@ -360,8 +360,7 @@ impl UploadPart {
                 request_payer: ctx.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Part(Self::on_part_response),
-            callback_context,
+            callback,
         )
     }
 
@@ -410,11 +409,10 @@ impl Drop for MultiPartUpload {
 }
 
 impl MultiPartUpload {
-    pub fn single_send_upload_response(
+    pub(crate) fn single_send_upload_response(
         result: S3UploadResult,
-        this: *mut c_void,
+        this: *mut Self,
     ) -> JsTerminatedResult<()> {
-        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
         let this = unsafe { &mut *this };
         if this.state == State::Finished {
@@ -429,8 +427,12 @@ impl MultiPartUpload {
                         this.options.retry
                     );
                     this.options.retry -= 1;
-                    let callback_context: *mut c_void =
-                        std::ptr::from_mut::<Self>(this).cast::<c_void>();
+                    let callback =
+                        s3_simple_request::S3Callback::MultipartSingleSend(std::ptr::from_mut::<
+                            Self,
+                        >(
+                            this
+                        ));
                     execute_simple_s3_request(
                         &*this.credentials,
                         s3_simple_request::S3RequestOptions {
@@ -446,8 +448,7 @@ impl MultiPartUpload {
                             request_payer: this.request_payer,
                             ..Default::default()
                         },
-                        s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
-                        callback_context,
+                        callback,
                     )?;
 
                     Ok(())
@@ -654,11 +655,10 @@ impl MultiPartUpload {
     }
 
     /// Result of the Multipart request, after this we can start draining the parts
-    pub fn start_multi_part_request_result(
+    pub(crate) fn start_multi_part_request_result(
         result: S3DownloadResult,
-        this: *mut c_void,
+        this: *mut Self,
     ) -> JsTerminatedResult<()> {
-        let this = this.cast::<Self>();
         // `adopt` consumes the prior +1 on Drop.
         // SAFETY: callback context — a ref was taken before the request was queued.
         let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
@@ -728,11 +728,10 @@ impl MultiPartUpload {
     }
 
     /// We do a best effort to commit the multipart upload, if it fails we will retry, if it still fails we will fail the upload
-    pub fn on_commit_multi_part_request(
+    pub(crate) fn on_commit_multi_part_request(
         result: S3CommitResult,
-        this: *mut c_void,
+        this: *mut Self,
     ) -> JsTerminatedResult<()> {
-        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live (final-step ref)
         let this_ref = unsafe { &mut *this };
         scoped_log!(
@@ -769,11 +768,10 @@ impl MultiPartUpload {
     }
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
-    pub fn on_rollback_multi_part_request(
+    pub(crate) fn on_rollback_multi_part_request(
         result: S3UploadResult,
-        this: *mut c_void,
+        this: *mut Self,
     ) -> JsTerminatedResult<()> {
-        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live (final-step ref)
         let this_ref = unsafe { &mut *this };
         scoped_log!(
@@ -815,7 +813,8 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
-        let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+        let callback =
+            s3_simple_request::S3Callback::MultipartCommit(std::ptr::from_mut::<Self>(self));
         execute_simple_s3_request(
             &*self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -827,8 +826,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
-            callback_context,
+            callback,
         )
     }
 
@@ -846,7 +844,8 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
-        let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+        let callback =
+            s3_simple_request::S3Callback::MultipartRollback(std::ptr::from_mut::<Self>(self));
         execute_simple_s3_request(
             &*self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -858,8 +857,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
-            callback_context,
+            callback,
         )
     }
 
@@ -877,7 +875,8 @@ impl MultiPartUpload {
             // will auto start later
             self.state = State::MultipartStarted;
             self.ref_();
-            let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+            let callback =
+                s3_simple_request::S3Callback::MultipartStart(std::ptr::from_mut::<Self>(self));
             execute_simple_s3_request(
                 &*self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -894,8 +893,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
-                callback_context,
+                callback,
             )?;
         } else if self.state == State::MultipartCompleted {
             // SAFETY: part points into self.queue which is live; reborrow disjoint from self fields used above
@@ -1020,7 +1018,9 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
-            let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+            let callback = s3_simple_request::S3Callback::MultipartSingleSend(
+                std::ptr::from_mut::<Self>(self),
+            );
             let _ = execute_simple_s3_request(
                 &*self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -1036,8 +1036,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
-                s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
-                callback_context,
+                callback,
             ); // TODO: properly propagate exception upwards
         } else {
             // we need to split

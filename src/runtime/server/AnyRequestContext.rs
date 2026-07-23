@@ -225,4 +225,11 @@ impl AnyRequestContext {
     pub fn deref(self) {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
+
+    pub(crate) fn on_s3_stat_resolved(
+        self,
+        result: crate::webcore::s3::simple_request::S3StatResult<'_>,
+    ) {
+        dispatch!(self, (), |T, ctx| T::on_s3_size_resolved(result, ctx))
+    }
 }

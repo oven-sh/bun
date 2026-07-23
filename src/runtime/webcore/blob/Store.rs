@@ -5,7 +5,6 @@
 //! this module re-exports them and layers the `bun_runtime`-tier behaviour
 //! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::node::fs as node_fs;
@@ -257,6 +256,78 @@ impl FileExt for File {
     }
 }
 
+pub struct S3BlobDeleteTask {
+    promise: bun_jsc::JSPromiseStrong,
+    store: StoreRef,
+    // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
+    // wrapper can outlive the constructing frame while reads stay safe.
+    global: bun_ptr::BackRef<JSGlobalObject>,
+}
+
+impl S3BlobDeleteTask {
+    pub(crate) fn resolve(
+        result: S3DeleteResult<'_>,
+        this: *mut Self,
+    ) -> Result<(), bun_jsc::JsTerminated> {
+        // SAFETY: `this` was created via heap::into_raw in `S3::unlink`.
+        let mut self_ = unsafe { bun_core::heap::take(this) };
+        let global_object = self_.global.get();
+        match result {
+            S3DeleteResult::Success => {
+                self_.promise.resolve(global_object, JSValue::TRUE)?;
+            }
+            S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
+                let err_val = err.to_js_with_async_stack(
+                    global_object,
+                    self_.store.get_path(),
+                    self_.promise.get(),
+                );
+                self_.promise.reject(global_object, err_val)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub struct S3BlobListObjectsTask {
+    promise: bun_jsc::JSPromiseStrong,
+    store: StoreRef,
+    resolved_list_options: S3ListObjectsOptions,
+    // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
+    global: bun_ptr::BackRef<JSGlobalObject>,
+}
+
+impl S3BlobListObjectsTask {
+    pub(crate) fn resolve(
+        result: S3ListObjectsResult<'_>,
+        this: *mut Self,
+    ) -> Result<(), bun_jsc::JsTerminated> {
+        // SAFETY: `this` was created via heap::into_raw in `S3::list_objects`.
+        let mut self_ = unsafe { bun_core::heap::take(this) };
+        let global_object = self_.global.get();
+        match result {
+            S3ListObjectsResult::Success(list_result) => {
+                let list_result_js = match list_result.to_js(global_object) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return self_.promise.reject(global_object, Err(e));
+                    }
+                };
+                self_.promise.resolve(global_object, list_result_js)?;
+            }
+            S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
+                let err_val = err.to_js_with_async_stack(
+                    global_object,
+                    self_.store.get_path(),
+                    self_.promise.get(),
+                );
+                self_.promise.reject(global_object, err_val)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl S3Ext for S3 {
     fn get_credentials_with_options(
         &self,
@@ -285,51 +356,6 @@ impl S3Ext for S3 {
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: StoreRef,
-            // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
-            // wrapper can outlive the constructing frame while reads stay safe.
-            global: bun_ptr::BackRef<JSGlobalObject>,
-        }
-
-        impl Wrapper {
-            #[inline]
-            fn new(init: Wrapper) -> Box<Wrapper> {
-                Box::new(init)
-            }
-
-            fn resolve(
-                result: S3DeleteResult<'_>,
-                opaque_self: *mut c_void,
-            ) -> Result<(), bun_jsc::JsTerminated> {
-                // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-                match result {
-                    S3DeleteResult::Success => {
-                        self_.promise.resolve(global_object, JSValue::TRUE)?;
-                    }
-                    S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        // Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
-        // promise.deinit() handled by JSPromiseStrong::drop, bun.destroy(wrap) handled by
-        // heap::take + drop in resolve().
-
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -344,18 +370,17 @@ impl S3Ext for S3 {
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
+        let wrapper = bun_core::heap::into_raw(Box::new(S3BlobDeleteTask {
+            promise,
+            // SAFETY: `store` is a live heap `Store`; `retained` bumps the
+            // intrusive refcount.
+            store: unsafe { StoreRef::retained(NonNull::from(store)) },
+            global: bun_ptr::BackRef::new(global_this),
+        }));
         s3_client::delete(
             &aws_options.credentials,
             self.path(),
-            Wrapper::resolve,
-            bun_core::heap::into_raw(Wrapper::new(Wrapper {
-                promise,
-                // SAFETY: `store` is a live heap `Store`; `retained` bumps the
-                // intrusive refcount.
-                store: unsafe { StoreRef::retained(NonNull::from(store)) },
-                global: bun_ptr::BackRef::new(global_this),
-            }))
-            .cast::<c_void>(),
+            s3_client::Callback::BlobDelete(wrapper),
             proxy,
             aws_options.request_payer,
         )?;
@@ -375,55 +400,6 @@ impl S3Ext for S3 {
                 "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument"
             )));
         }
-
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: StoreRef,
-            resolved_list_options: S3ListObjectsOptions,
-            // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
-            global: bun_ptr::BackRef<JSGlobalObject>,
-        }
-
-        impl Wrapper {
-            fn resolve(
-                result: S3ListObjectsResult<'_>,
-                opaque_self: *mut c_void,
-            ) -> Result<(), bun_jsc::JsTerminated> {
-                // SAFETY: opaque_self was created via heap::alloc below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-
-                match result {
-                    S3ListObjectsResult::Success(list_result) => {
-                        // `defer list_result.deinit()` → Drop handles it.
-                        let list_result_js = match list_result.to_js(global_object) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                return self_.promise.reject(global_object, Err(e));
-                            }
-                        };
-                        self_.promise.resolve(global_object, list_result_js)?;
-                    }
-
-                    S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        // Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,
-        // promise.deinit() via JSPromiseStrong::drop, resolvedlistOptions.deinit() via
-        // S3ListObjectsOptions::drop, bun.destroy(self) via heap::take + drop.
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
@@ -446,7 +422,7 @@ impl S3Ext for S3 {
         // borrow to `list_objects` (which only reads them synchronously to
         // build the search-params string). The wrapper retains ownership for
         // `Drop` after the async callback.
-        let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
+        let wrapper = bun_core::heap::into_raw(Box::new(S3BlobListObjectsTask {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
             // intrusive refcount.
@@ -460,8 +436,7 @@ impl S3Ext for S3 {
             // SAFETY: `wrapper` is freshly leaked and untouched until the
             // callback; this borrow ends before any other access.
             unsafe { &(*wrapper).resolved_list_options },
-            Wrapper::resolve,
-            wrapper.cast::<c_void>(),
+            s3_client::Callback::BlobListObjects(wrapper),
             proxy,
         )?;
 

@@ -468,7 +468,7 @@ fn construct_s3_file_internal(
     )?))
 }
 
-pub(crate) struct S3BlobStatTask {
+pub struct S3BlobStatTask {
     promise: bun_jsc::JSPromiseStrong,
     // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
     // can outlive the constructing frame while reads stay safe.
@@ -483,10 +483,10 @@ impl S3BlobStatTask {
 
     pub(crate) fn on_s3_exists_resolved(
         result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
+        this: *mut S3BlobStatTask,
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
+        let mut this = unsafe { bun_core::heap::take(this) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
         let global = global_ref.get();
@@ -517,10 +517,10 @@ impl S3BlobStatTask {
 
     pub(crate) fn on_s3_size_resolved(
         result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
+        this: *mut S3BlobStatTask,
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
+        let mut this = unsafe { bun_core::heap::take(this) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
         let global = global_ref.get();
@@ -545,10 +545,10 @@ impl S3BlobStatTask {
 
     pub(crate) fn on_s3_stat_resolved(
         result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
+        this: *mut S3BlobStatTask,
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
+        let mut this = unsafe { bun_core::heap::take(this) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
         let global = global_ref.get();
@@ -600,8 +600,7 @@ impl S3BlobStatTask {
         s3::stat(
             credentials,
             path,
-            S3BlobStatTask::on_s3_exists_resolved,
-            this.cast::<core::ffi::c_void>(),
+            s3::Callback::BlobExists(this),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
@@ -627,8 +626,7 @@ impl S3BlobStatTask {
         s3::stat(
             credentials,
             path,
-            S3BlobStatTask::on_s3_stat_resolved,
-            this.cast::<core::ffi::c_void>(),
+            s3::Callback::BlobStat(this),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
@@ -654,8 +652,7 @@ impl S3BlobStatTask {
         s3::stat(
             credentials,
             path,
-            S3BlobStatTask::on_s3_size_resolved,
-            this.cast::<core::ffi::c_void>(),
+            s3::Callback::BlobSize(this),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;

@@ -9384,22 +9384,6 @@ pub fn write_file_with_path_buffer(
     r.map(|_| buffer.len())
 }
 
-/// `bun.fetchCacheDirectoryPath` — resolve `$BUN_INSTALL_CACHE_DIR` /
-/// `$XDG_CACHE_HOME/.bun/install/cache` / `$HOME/.bun/install/cache`.
-/// full env-override chain lives in `bun_install`; this is the
-/// fallback so the symbol resolves at T1. Returns an owned path (caller frees).
-pub fn fetch_cache_directory_path() -> Vec<u8> {
-    if let Some(v) = bun_core::getenv_z(bun_core::zstr!("BUN_INSTALL_CACHE_DIR")) {
-        return v.to_vec();
-    }
-    if let Some(home) = bun_core::getenv_z(bun_core::zstr!("HOME")) {
-        let mut p = home.to_vec();
-        p.extend_from_slice(b"/.bun/install/cache");
-        return p;
-    }
-    b".bun-cache".to_vec()
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────

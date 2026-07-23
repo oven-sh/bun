@@ -1657,21 +1657,24 @@ pub(crate) fn download_to_path(
                     } else {
                         bun_core::zstr!("bun")
                     };
-                    let mv = bun_sys::move_file_z(tmpdir.fd(), src_name, Fd::INVALID, dest_z);
-                    if mv.is_err() {
+                    if let Err(mv_err) =
+                        bun_sys::move_file_z(tmpdir.fd(), src_name, Fd::INVALID, dest_z)
+                    {
                         if !did_retry {
                             did_retry = true;
                             let dirname = path::dirname_simple(dest_z.as_bytes());
                             if !dirname.is_empty() {
-                                let _ = bun_sys::Dir::cwd().make_path(dirname);
+                                if let Err(mk_err) = bun_sys::Dir::cwd().make_path(dirname) {
+                                    refresher.root.end();
+                                    return Err(crate::Error::CacheWriteFailed(mk_err.into()));
+                                }
                                 continue;
                             }
 
                             // fallthrough, failed for another reason
                         }
                         refresher.root.end();
-                        // Return error without printing - let caller handle the messaging
-                        return Err(crate::Error::ExtractionFailed);
+                        return Err(crate::Error::CacheWriteFailed(mv_err.into()));
                     }
                     break;
                 }
@@ -1762,6 +1765,12 @@ pub fn to_executable(
                     crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
                         target
+                    )),
+                    crate::Error::CacheWriteFailed(errno) => CompileResult::fail_fmt(format_args!(
+                        "Failed to write cached executable for '{}' to {}: {}",
+                        target,
+                        bun_core::fmt::quote(dest_z.as_bytes()),
+                        <&'static str>::from(errno),
                     )),
                     crate::Error::UnsupportedTarget => CompileResult::fail_fmt(format_args!(
                         "Target '{}' is not supported",

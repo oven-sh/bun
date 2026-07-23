@@ -1440,7 +1440,8 @@ function Server(options, secureConnectionListener): void {
     // Skip only sockets this server's own native accept path already wrapped
     // (those arrive as an encrypted TLSSocket with .server preassigned).
     // Anything else - plain or TLS from another server - gets a server-side
-    // TLS layer, like Node's tls.Server wraps any injected duplex.
+    // TLS layer, like Node's tls.Server wraps any injected duplex
+    // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
     if (!socket || (socket.encrypted && socket.server === this)) return;
     let secureContext = this._sharedCreds;
     if (!secureContext) {

@@ -225,6 +225,16 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
+// Shared-fd TLS pair teardown: mirrors node's close ordering, where the
+// close-callbacks phase runs after the check phase (lib/net.js close path in
+// node v26.3.0), so destroy()-time setImmediates still see the pair alive.
+function closeAdoptedTLSRawNT(handle, self, isException) {
+  setImmediate(closeAdoptedTLSRawNowNT, handle, self, isException);
+}
+function closeAdoptedTLSRawNowNT(handle, self, isException) {
+  handle.close(onSocketHandleClosed);
+  setImmediate(emitCloseNT, self, isException);
+}
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
@@ -929,8 +939,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       self.emit("secureConnect", verifyError);
     } catch (err) {
       // A throwing listener is a programmer error, not a TLS failure: Node
-      // crashes with an uncaught exception instead of feeding the socket
-      // error path (test-tls-handshake-exception).
+      // crashes with an uncaught exception instead of feeding the socket error
+      // path (node v26.3.0 lib/_tls_wrap.js; test-tls-handshake-exception).
       process.nextTick(rethrowUncaught, err);
     } finally {
       // Keep the socket flowing even when the throw is absorbed by an
@@ -2140,18 +2150,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // accessible when an `error` event is handled in the `next tick queue`.
       queueMicrotask(() => closeSocketHandle(this, isException, true));
     } else if (currentHandle[kAdoptedTLSRaw]) {
-      // Shared-fd TLS pair: node's close-callbacks phase runs after the check
-      // phase, so setImmediates registered at destroy() time must still see
-      // the pair alive (test-tls-socket-close). Defer close past them.
-      const handle = currentHandle;
-      const self = this;
-      handle.pause?.();
-      setImmediate(() => {
-        setImmediate(() => {
-          handle.close(onSocketHandleClosed);
-          setImmediate(() => self.emit("close", isException));
-        });
-      });
+      // Shared-fd TLS pair: defer the close two check-phase turns
+      // (test-tls-socket-close); see closeAdoptedTLSRawNT.
+      currentHandle.pause?.();
+      setImmediate(closeAdoptedTLSRawNT, currentHandle, this, isException);
     } else {
       closeSocketHandle(this, isException);
     }

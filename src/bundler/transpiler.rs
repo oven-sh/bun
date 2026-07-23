@@ -597,6 +597,12 @@ impl<'a> Transpiler<'a> {
         } else if is_production {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
+            // Mirror the development branch: force the production environment so
+            // the bundler's per-file JSX dev/prod selection (which keys off
+            // `force_node_env`) picks the production runtime even when a
+            // tsconfig set `jsx: "react-jsx"` (automatic runtime). See #23959.
+            self.options.force_node_env = options::ForceNodeEnv::Production;
+            self.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
         }
         Ok(())
     }

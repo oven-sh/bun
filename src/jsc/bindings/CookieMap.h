@@ -38,6 +38,13 @@ public:
 
     void set(Ref<Cookie>);
 
+    // Set by Bun.serve once the response head has been written (or the
+    // request has finished). Further set()/delete() calls on this map can
+    // never reach the wire, so the JS bindings throw ERR_HTTP_HEADERS_SENT.
+    // Standalone CookieMap instances never have this flag set.
+    bool headersWritten() const { return m_headersWritten; }
+    void setHeadersWritten() { m_headersWritten = true; }
+
     Ref<CookieMap> clone();
 
     ExceptionOr<void> remove(const CookieStoreDeleteOptions& options);
@@ -69,6 +76,7 @@ private:
 
     Vector<KeyValuePair<String, String>> m_originalCookies;
     Vector<Ref<Cookie>> m_modifiedCookies;
+    bool m_headersWritten { false };
 };
 
 } // namespace WebCore

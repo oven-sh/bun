@@ -23,6 +23,8 @@ unsafe extern "C" {
     safe fn CookieMap__deref(cookie_map: &CookieMap);
 
     safe fn CookieMap__ref(cookie_map: &CookieMap);
+
+    safe fn CookieMap__setHeadersWritten(cookie_map: &CookieMap);
 }
 
 impl CookieMap {
@@ -36,6 +38,15 @@ impl CookieMap {
         bun_jsc::from_js_host_call_generic(global_this, || {
             CookieMap__write(self, global_this, kind, uws_http_response)
         })
+    }
+
+    /// Marks this map as having had its Set-Cookie headers committed to the
+    /// wire (or its owning request finished). Further JS-level `set()` /
+    /// `delete()` calls throw `ERR_HTTP_HEADERS_SENT` instead of silently
+    /// mutating a map that can never be sent.
+    #[inline]
+    pub fn set_headers_written(&self) {
+        CookieMap__setHeadersWritten(self)
     }
 
     // NOTE: no inherent `ref`/`deref` on `CookieMap` — `CookieMapRef` is the

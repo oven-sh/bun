@@ -378,6 +378,15 @@ impl Request {
 
     #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
     pub fn ffi_set_cookies_on_request_context(&self, cookie_map: Option<&CookieMap>) {
+        if self.request_context.is_null() {
+            // Request already detached (response finished or aborted). This
+            // map's changes can never be sent; mark it so JS set()/delete()
+            // throw ERR_HTTP_HEADERS_SENT.
+            if let Some(m) = cookie_map {
+                m.set_headers_written();
+            }
+            return;
+        }
         self.request_context
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }

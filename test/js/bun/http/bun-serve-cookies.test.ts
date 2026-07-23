@@ -1,5 +1,5 @@
 import type { Server } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 
 describe("request cookies", () => {
   let server: Server;
@@ -590,5 +590,170 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     const parsed = JSON.parse(jsonString);
     expect(parsed.name).toBe("name");
     expect(parsed.value).toBe("value");
+  });
+});
+
+describe("req.cookies after headers sent", () => {
+  async function collect(server: Server, path: string, init?: RequestInit) {
+    const res = await fetch(new URL(path, server.url), init);
+    const setCookie = res.headers.getSetCookie();
+    const body = await res.text();
+    return { setCookie, body, status: res.status };
+  }
+
+  test("set()/delete() throw ERR_HTTP_HEADERS_SENT once the response head is committed", async () => {
+    type Outcome = { code?: string; value?: unknown };
+    const setTryCatch = (cookies: Bun.CookieMap, name: string): Outcome => {
+      try {
+        cookies.set(name, "1");
+        return { value: cookies.get(name) };
+      } catch (e) {
+        return { code: (e as any)?.code };
+      }
+    };
+    const deleteTryCatch = (cookies: Bun.CookieMap, name: string): Outcome => {
+      try {
+        cookies.delete(name);
+        return { value: cookies.has(name) };
+      } catch (e) {
+        return { code: (e as any)?.code };
+      }
+    };
+
+    let capturedOutcome: { late: Outcome; del: Outcome; read: string | null } | undefined;
+    let lazyOutcome: Outcome | undefined;
+    let streamOutcome: Outcome | undefined;
+    let savedMap: Bun.CookieMap | undefined;
+
+    const capturedDone = Promise.withResolvers<void>();
+    const lazyDone = Promise.withResolvers<void>();
+    const streamHeadWritten = Promise.withResolvers<void>();
+    const streamProceed = Promise.withResolvers<void>();
+
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        // req.cookies captured before returning; mutated after the head is flushed.
+        "/captured": req => {
+          const cookies = req.cookies;
+          cookies.set("before", "1");
+          setImmediate(() => {
+            capturedOutcome = {
+              late: setTryCatch(cookies, "late"),
+              del: deleteTryCatch(cookies, "foo"),
+              // Reads must continue to work.
+              read: cookies.get("foo"),
+            };
+            capturedDone.resolve();
+          });
+          return new Response("ok");
+        },
+        // First access of req.cookies happens after the response is already sent.
+        "/lazy": req => {
+          setImmediate(() => {
+            lazyOutcome = setTryCatch(req.cookies, "late");
+            lazyDone.resolve();
+          });
+          return new Response("ok");
+        },
+        // Mutating from inside the streaming body once the head is out.
+        "/stream": req => {
+          const cookies = req.cookies;
+          cookies.set("before", "1");
+          return new Response(
+            new ReadableStream({
+              async pull(ctrl) {
+                ctrl.enqueue("hello");
+                streamHeadWritten.resolve();
+                await streamProceed.promise;
+                streamOutcome = setTryCatch(cookies, "inside");
+                ctrl.close();
+              },
+            }),
+          );
+        },
+        // Save a stale request's map to mutate after that request has fully finished.
+        "/save": req => {
+          savedMap = req.cookies;
+          return new Response("ok");
+        },
+      },
+    });
+
+    const captured = await collect(server, "/captured", { headers: { Cookie: "foo=bar" } });
+    await capturedDone.promise;
+    expect(captured.body).toBe("ok");
+    expect(captured.setCookie).toEqual(["before=1; Path=/; SameSite=Lax"]);
+    expect(capturedOutcome).toEqual({
+      late: { code: "ERR_HTTP_HEADERS_SENT" },
+      del: { code: "ERR_HTTP_HEADERS_SENT" },
+      read: "bar",
+    });
+
+    const lazy = await collect(server, "/lazy");
+    await lazyDone.promise;
+    expect(lazy.body).toBe("ok");
+    expect(lazy.setCookie).toEqual([]);
+    expect(lazyOutcome).toEqual({ code: "ERR_HTTP_HEADERS_SENT" });
+
+    const streamRes = await fetch(new URL("/stream", server.url));
+    expect(streamRes.headers.getSetCookie()).toEqual(["before=1; Path=/; SameSite=Lax"]);
+    await streamHeadWritten.promise;
+    streamProceed.resolve();
+    expect(await streamRes.text()).toBe("hello");
+    expect(streamOutcome).toEqual({ code: "ERR_HTTP_HEADERS_SENT" });
+
+    const saved = await collect(server, "/save");
+    expect(saved.body).toBe("ok");
+    expect(savedMap).toBeDefined();
+    expect(setTryCatch(savedMap!, "stale")).toEqual({ code: "ERR_HTTP_HEADERS_SENT" });
+  });
+
+  test("set() before the handler returns still emits Set-Cookie", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => {
+          req.cookies.set("a", "1");
+          req.cookies.set("b", "2");
+          return new Response("ok");
+        },
+      },
+    });
+    const { setCookie, body } = await collect(server, "/");
+    expect(body).toBe("ok");
+    expect(setCookie).toEqual(["a=1; Path=/; SameSite=Lax", "b=2; Path=/; SameSite=Lax"]);
+  });
+
+  test("standalone CookieMap is never marked headers-sent", () => {
+    const map = new Bun.CookieMap();
+    map.set("a", "1");
+    map.delete("a");
+    map.set("a", "2");
+    expect(map.get("a")).toBe("2");
+  });
+
+  test("cloned request's cookies are a detached, freely mutable map", async () => {
+    let cloneSetOk = false;
+    let cloneValue: string | null = null;
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => {
+          void req.cookies.get("foo");
+          const cloned = req.clone();
+          cloned.cookies.set("x", "1");
+          cloneSetOk = true;
+          cloneValue = cloned.cookies.get("x");
+          return new Response("ok");
+        },
+      },
+    });
+    const { body, setCookie } = await collect(server, "/", { headers: { Cookie: "foo=bar" } });
+    expect(body).toBe("ok");
+    // The clone is detached; its mutations never reach the wire.
+    expect(setCookie).toEqual([]);
+    expect(cloneSetOk).toBe(true);
+    expect(cloneValue).toBe("1");
   });
 });

@@ -48,6 +48,11 @@ impl AnyRequestContext {
         tag: CtxTag::None,
         ptr: core::ptr::null_mut(),
     };
+
+    #[inline]
+    pub fn is_null(self) -> bool {
+        self.tag == CtxTag::None
+    }
 }
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so

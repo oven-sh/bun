@@ -36,6 +36,12 @@ extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* glo
         CookieMap__writeFetchHeadersToUWSResponse(cookie_map, global_this, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;
     }
+    cookie_map->setHeadersWritten();
+}
+
+extern "C" void CookieMap__setHeadersWritten(CookieMap* cookie_map)
+{
+    cookie_map->setHeadersWritten();
 }
 
 extern "C" void CookieMap__ref(CookieMap* cookie_map)

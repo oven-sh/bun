@@ -847,6 +847,16 @@ declare module "bun" {
     readonly params: {
       [Key in keyof Serve.ExtractRouteParams<T>]: Serve.ExtractRouteParams<T>[Key];
     } & {};
+    /**
+     * The cookies sent by the client, parsed from the `Cookie` request header.
+     *
+     * Calling {@link CookieMap.set} or {@link CookieMap.delete} on this map
+     * adds a `Set-Cookie` header to the response. These calls must happen
+     * before the response head is written (for synchronous and `async`
+     * handlers, before the `Response` is returned/resolved). Once the head has
+     * been written, `set()`/`delete()` throw `ERR_HTTP_HEADERS_SENT`. Reading
+     * cookies continues to work.
+     */
     readonly cookies: CookieMap;
     clone(): BunRequest<T>;
   }

@@ -268,7 +268,13 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                args.push(BunString::clone_utf8(arg));
+                // `--bun`/`-b` are Bun-launcher flags, not Node-compatible
+                // engine options. Frameworks like Next.js serialize execArgv
+                // into NODE_OPTIONS for child workers, and real node rejects
+                // `--bun` there.
+                if arg != b"--bun" && arg != b"-b" {
+                    args.push(BunString::clone_utf8(arg));
+                }
                 prev = Some(arg);
                 continue;
             }

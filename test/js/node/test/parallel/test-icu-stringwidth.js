@@ -51,7 +51,7 @@ assert.strictEqual(getStringWidth(String.fromCharCode(0x20DD)), 0);
 // these fully.
 // See https://www.unicode.org/reports/tr51/tr51-16.html#Emoji_ZWJ_Sequences
 assert.strictEqual(getStringWidth('👩‍👩‍👧‍👧'), 8);
-// TODO(BridgeAR): This should have a width of two and six. The heart contains
+// Upstream note (BridgeAR): This should have a width of two and six. The heart contains
 // the \uFE0F variation selector that indicates that it should be displayed as
 // emoji instead of as text. Emojis are all full width characters when not being
 // rendered as text.

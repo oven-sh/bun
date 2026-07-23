@@ -922,10 +922,6 @@ function validateKeyOps(keyOps, usagesSet) {
     if (keyOpsMask & opMask)
       throw lazyDOMException('Duplicate key operation', 'DataError');
     keyOpsMask |= opMask;
-
-    // TODO(@jasnell): RFC7517 section 4.3 strong recommends validating
-    // key usage combinations. Specifically, it says that unrelated key
-    // ops SHOULD NOT be used together. We're not yet validating that here.
   }
 
   if (usagesSet !== undefined) {

@@ -354,9 +354,6 @@ function handleErrorFromBinding(ctx) {
     throw err;
   }
   if (ctx.error !== undefined) {  // Errors created in C++ land.
-    // TODO(joyeecheung): currently, ctx.error are encoding errors
-    // usually caused by memory problems. We need to figure out proper error
-    // code(s) for this.
     ErrorCaptureStackTrace(ctx.error, handleErrorFromBinding);
     throw ctx.error;
   }
@@ -437,7 +434,6 @@ function nsFromTimeSpecBigInt(sec, nsec) {
   return sec * kNsPerSecBigInt + nsec;
 }
 
-// TODO(LiviaMedeiros): TemporalInstant primordial
 let TemporalInstant;
 
 function instantFromNs(nsec) {

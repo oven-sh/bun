@@ -2,7 +2,7 @@
 
 // This tests that --cpu-prof generates CPU profile when event
 // loop is drained.
-// TODO(joyeecheung): share the fixtures with v8 coverage tests
+// Upstream note (joyeecheung): share the fixtures with v8 coverage tests
 
 const common = require('../common');
 const fixtures = require('../common/fixtures');

@@ -133,8 +133,6 @@ const dictAlgorithm = [
 converters.Algorithm = createDictionaryConverter(
   'Algorithm', dictAlgorithm);
 
-// TODO(panva): Reject resizable backing stores in a semver-major with:
-// converters.BigInteger = webidl.Uint8Array;
 converters.BigInteger = (V, opts = kEmptyObject) => {
   return webidl.Uint8Array(V, {
     prefix: opts.prefix,
@@ -145,8 +143,6 @@ converters.BigInteger = (V, opts = kEmptyObject) => {
   });
 };
 
-// TODO(panva): Reject resizable backing stores in a semver-major by
-// removing this altogether.
 converters.BufferSource = (V, opts = kEmptyObject) => {
   return webidl.BufferSource(V, {
     prefix: opts.prefix,

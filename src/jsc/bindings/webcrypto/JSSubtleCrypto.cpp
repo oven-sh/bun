@@ -100,9 +100,8 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
     return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
-template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+static std::optional<SubtleCrypto::KeyFormat> parseKeyFormatFromString(const String& stringValue)
 {
-    auto stringValue = value.toWTFString(&lexicalGlobalObject);
     static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, SubtleCrypto::KeyFormat>>({
         { "jwk"_s, SubtleCrypto::KeyFormat::Jwk },
         { "pkcs8"_s, SubtleCrypto::KeyFormat::Pkcs8 },
@@ -117,6 +116,12 @@ template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto:
     return std::nullopt;
 }
 
+template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+{
+    auto stringValue = value.toWTFString(&lexicalGlobalObject);
+    return parseKeyFormatFromString(stringValue);
+}
+
 template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>()
 {
     return "\"raw\", \"spki\", \"pkcs8\", \"jwk\", \"raw-secret\", \"raw-public\", \"raw-seed\""_s;
@@ -126,10 +131,8 @@ template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>()
 
 // Node reports an invalid KeyFormat with ERR_INVALID_ARG_VALUE and the
 // stringified value, not the WebIDL enum-listing TypeError.
-static void throwInvalidKeyFormatError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue value, ASCIILiteral functionName)
+static void throwInvalidKeyFormatError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& valueString, ASCIILiteral functionName)
 {
-    String valueString = value.toWTFString(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, void());
     Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, makeString("Failed to execute '"_s, functionName, "' on 'SubtleCrypto': 1st argument '"_s, valueString, "' is not a valid enum value of type KeyFormat."_s));
 }
 
@@ -515,17 +518,31 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
     if (callFrame->argumentCount() < 5) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [&argument0](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwInvalidKeyFormatError(lexicalGlobalObject, scope, argument0.value(), "importKey"_s); });
+    // Node coerces the format argument to a string exactly once.
+    auto formatString = argument0.value().toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto parsedFormat = parseKeyFormatFromString(formatString);
+    if (!parsedFormat) [[unlikely]] {
+        throwInvalidKeyFormatError(*lexicalGlobalObject, throwScope, formatString, "importKey"_s);
+        return {};
+    }
+    auto format = *parsedFormat;
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto keyData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer, IDLDictionary<JsonWebKey>>>(*lexicalGlobalObject, argument1.value());
+    bool keyDataNotBufferLike = false;
     if (throwScope.exception()) [[unlikely]] {
         // Node picks the converter by format: JWK conversion errors (e.g. a
         // throwing getter) propagate; buffer formats report the type error.
         if (format == SubtleCrypto::KeyFormat::Jwk || !throwScope.tryClearException())
             return {};
-        return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView."_s);
+        keyDataNotBufferLike = true;
+    } else if (format != SubtleCrypto::KeyFormat::Jwk && std::holds_alternative<JsonWebKey>(keyData)) {
+        // A plain object converts into the JsonWebKey alternative without an
+        // exception; buffer formats still report node's type error for it.
+        keyDataNotBufferLike = true;
     }
+    if (keyDataNotBufferLike) [[unlikely]]
+        return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView."_s);
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -553,8 +570,15 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_exportKeyBody(
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [&argument0](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwInvalidKeyFormatError(lexicalGlobalObject, scope, argument0.value(), "exportKey"_s); });
+    // Node coerces the format argument to a string exactly once.
+    auto formatString = argument0.value().toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto parsedFormat = parseKeyFormatFromString(formatString);
+    if (!parsedFormat) [[unlikely]] {
+        throwInvalidKeyFormatError(*lexicalGlobalObject, throwScope, formatString, "exportKey"_s);
+        return {};
+    }
+    auto format = *parsedFormat;
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "exportKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -578,8 +602,15 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_wrapKeyBody(JS
     if (callFrame->argumentCount() < 4) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [&argument0](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwInvalidKeyFormatError(lexicalGlobalObject, scope, argument0.value(), "wrapKey"_s); });
+    // Node coerces the format argument to a string exactly once.
+    auto formatString = argument0.value().toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto parsedFormat = parseKeyFormatFromString(formatString);
+    if (!parsedFormat) [[unlikely]] {
+        throwInvalidKeyFormatError(*lexicalGlobalObject, throwScope, formatString, "wrapKey"_s);
+        return {};
+    }
+    auto format = *parsedFormat;
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "wrapKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -607,8 +638,15 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
     if (callFrame->argumentCount() < 7) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [&argument0](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwInvalidKeyFormatError(lexicalGlobalObject, scope, argument0.value(), "unwrapKey"_s); });
+    // Node coerces the format argument to a string exactly once.
+    auto formatString = argument0.value().toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto parsedFormat = parseKeyFormatFromString(formatString);
+    if (!parsedFormat) [[unlikely]] {
+        throwInvalidKeyFormatError(*lexicalGlobalObject, throwScope, formatString, "unwrapKey"_s);
+        return {};
+    }
+    auto format = *parsedFormat;
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto wrappedKey = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});

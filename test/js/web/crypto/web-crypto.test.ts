@@ -336,6 +336,58 @@ describe("Ed25519", () => {
 });
 
 describe("ChaCha20-Poly1305 and AKP review fixes", () => {
+  it("importKey with a plain object for a buffer format rejects with Node's ERR_INVALID_ARG_TYPE", async () => {
+    for (const format of ["raw", "raw-secret"] as const) {
+      let err: any;
+      try {
+        await crypto.subtle.importKey(format, {} as any, "AES-GCM", true, ["encrypt"]);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err.message).toBe(
+        "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView.",
+      );
+    }
+  });
+
+  it("an invalid KeyFormat coerces its argument exactly once", async () => {
+    // Node stringifies the format argument once; a second coercion is
+    // observable through an adversarial toString.
+    let calls = 0;
+    const evil = {
+      toString() {
+        calls++;
+        return "bogus";
+      },
+    };
+    let err: any;
+    try {
+      await crypto.subtle.importKey(evil as any, new Uint8Array(16), "AES-GCM", true, ["encrypt"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(calls).toBe(1);
+  });
+
+  it("toCryptoKey rejects AES-CFB with Node's NotSupportedError", async () => {
+    // Node v26.3.0 has no AES-CFB in webcrypto; Bun's subtle.importKey
+    // accepts it as an extension but the node:crypto API matches node.
+    const { createSecretKey } = await import("node:crypto");
+    const ko = createSecretKey(Buffer.alloc(16));
+    let err: any;
+    try {
+      ko.toCryptoKey("AES-CFB", true, ["encrypt"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("NotSupportedError");
+    expect(err.message).toBe("Unrecognized algorithm name");
+  });
+
   it("structuredClone of ChaCha20-Poly1305 and AKP keys throws DataCloneError", async () => {
     // Node clones these; until real clone support lands, DataCloneError
     // replaces the RELEASE_ASSERT abort the serializer used to hit.

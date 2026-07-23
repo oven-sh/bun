@@ -87,9 +87,28 @@ impl Compact {
         }
 
         let slice = self.value.slice();
+        let category = Category::from_table(self.value);
+
+        // Every `text/*` subtype is UTF-8 by default (mime-types/express/send
+        // behaviour). Without the charset parameter, browsers fall back to
+        // their default (often windows-1252) and render mojibake for served
+        // `.md`/`.csv`/`.ics`/`.yaml`/etc. The five text subtypes that already
+        // carry `;charset=utf-8` were handled above; promote the rest here.
+        if strings::has_prefix_comptime(slice, b"text/")
+            && strings::index_of_char(slice, b';').is_none()
+        {
+            let mut value = Vec::with_capacity(slice.len() + b";charset=utf-8".len());
+            value.extend_from_slice(slice);
+            value.extend_from_slice(b";charset=utf-8");
+            return MimeType {
+                value: Cow::Owned(value),
+                category,
+            };
+        }
+
         MimeType {
             value: Cow::Borrowed(slice),
-            category: Category::from_table(self.value),
+            category,
         }
     }
 }

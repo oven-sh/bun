@@ -117,7 +117,8 @@ async function minimizeProgram(text: string, dir: string): Promise<string> {
   let cur = text.split("\n");
   let n = 2;
   let iters = 0;
-  while (cur.length >= 2 && iters++ < 400) {
+  const deadline = Date.now() + 15 * 60 * 1000; // 15-minute budget: never stall the engine
+  while (cur.length >= 2 && iters++ < 400 && Date.now() < deadline) {
     const chunk = Math.ceil(cur.length / n);
     let reduced = false;
     for (let start = 0; start < cur.length; start += chunk) {

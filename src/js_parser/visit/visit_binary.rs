@@ -705,15 +705,30 @@ impl BinaryExpressionVisitor {
                     );
                 }
             }
-            Op::Code::BinNullishCoalescingAssign | Op::Code::BinLogicalOrAssign => {
+            Op::Code::BinNullishCoalescingAssign
+            | Op::Code::BinLogicalOrAssign
+            | Op::Code::BinLogicalAndAssign => {
+                // Optionally preserve the name; `x ??= <anon>` performs
+                // NamedEvaluation with the LHS name, same as plain `=`.
+                if let ExprData::EIdentifier(ident) = e_.left.data {
+                    let name = p.symbols[ident.ref_.inner_index() as usize].original_name;
+                    e_.right = p.maybe_keep_expr_symbol_name(
+                        e_.right,
+                        name.slice(),
+                        was_anonymous_named_expr,
+                    );
+                }
+
                 // Special case `{}.field ??= value` to minify to `value`
                 // This optimization is specifically to target this pattern in HMR:
                 //    `import.meta.hot.data.etc ??= init()`
-                if let Some(dot) = e_.left.data.e_dot() {
-                    if let Some(obj) = dot.target.data.e_object() {
-                        if obj.properties.len_u32() == 0 {
-                            if dot.name != b"__proto__" {
-                                return e_.right;
+                if e_.op != Op::Code::BinLogicalAndAssign {
+                    if let Some(dot) = e_.left.data.e_dot() {
+                        if let Some(obj) = dot.target.data.e_object() {
+                            if obj.properties.len_u32() == 0 {
+                                if dot.name != b"__proto__" {
+                                    return e_.right;
+                                }
                             }
                         }
                     }

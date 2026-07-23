@@ -2633,34 +2633,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let original_class_name = e_.class_name;
         let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
 
+        // Decorator lowering rewrites `properties`, so decide before lowering.
+        let has_custom_static_name = Self::class_has_custom_static_name(&e_);
+
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
             *e = p.lower_standard_decorators_expr(&mut e_, expr.loc, decorator_name_from_context);
-            return;
-        }
-
-        // Remove unused class names when minifying (only when bundling is enabled)
-        // unless --keep-names is specified
-        if p.options.features.minify_syntax
-            && p.options.bundle
-            && !p.options.features.minify_keep_names
-            // SAFETY: current_scope is a live arena ptr while the parser exists.
-            && !p.current_scope().contains_direct_eval
-            && e_.class_name.is_some()
-            && !e_.class_name.unwrap().ref_.is_empty()
-            && p.symbols[e_.class_name.unwrap().ref_.inner_index() as usize]
-                .use_count_estimate
-                == 0
-        {
-            e_.class_name = None;
+        } else {
+            // Remove unused class names when minifying (only when bundling is enabled)
+            // unless --keep-names is specified
+            if p.options.features.minify_syntax
+                && p.options.bundle
+                && !p.options.features.minify_keep_names
+                // SAFETY: current_scope is a live arena ptr while the parser exists.
+                && !p.current_scope().contains_direct_eval
+                && e_.class_name.is_some()
+                && !e_.class_name.unwrap().ref_.is_empty()
+                && p.symbols[e_.class_name.unwrap().ref_.inner_index() as usize]
+                    .use_count_estimate
+                    == 0
+            {
+                e_.class_name = None;
+            }
         }
 
         if let Some(name) = original_class_name {
-            if !name.ref_.is_empty() && !Self::class_has_custom_static_name(&e_) {
+            if !name.ref_.is_empty() && !has_custom_static_name {
                 let original_name: &[u8] = p.symbols[name.ref_.inner_index() as usize]
                     .original_name
                     .slice();
-                *e = p.keep_expr_symbol_name(expr, original_name);
+                *e = p.keep_expr_symbol_name(*e, original_name);
             }
         }
     }

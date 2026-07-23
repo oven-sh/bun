@@ -5263,7 +5263,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(self.s(
             S::SExpr {
                 value: call,
-                ..Default::default()
+                // `__name()` only mutates the (otherwise pure) identifier it tags;
+                // it must not pin the containing part.
+                does_not_affect_tree_shaking: true,
             },
             loc,
         ))

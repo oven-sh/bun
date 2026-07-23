@@ -157,6 +157,9 @@ describe("bundler", () => {
         const arrow = () => 1;
         let assigned;
         assigned = function() {};
+        let lazy; lazy ??= () => {};
+        let lazy2; lazy2 ||= () => {};
+        let lazy3 = 1; lazy3 &&= () => {};
         const NamedClassExpr = class Foo {};
         const AnonClassExpr = class {};
         class Base {}
@@ -170,6 +173,9 @@ describe("bundler", () => {
           (function named(){}).name,
           [...registry.keys()].sort().join("|"),
           assigned.name,
+          lazy.name,
+          lazy2.name,
+          lazy3.name,
           NamedClassExpr.name,
           AnonClassExpr.name,
           Base.name,
@@ -187,6 +193,9 @@ describe("bundler", () => {
         "named",
         "UserService|makeThing",
         "assigned",
+        "lazy",
+        "lazy2",
+        "lazy3",
         "Foo",
         "AnonClassExpr",
         "Base",
@@ -217,6 +226,45 @@ describe("bundler", () => {
     },
     run: {
       stdout: JSON.stringify({ a: "myFunc", b: "MyClass", c: "default", d: "default" }),
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesDecoratorSeesName", {
+    files: {
+      "/tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      "/entry.ts": /* ts */ `
+        let seen = "";
+        function register(t: any) { seen = t.name; return t; }
+        @register
+        class UserService {}
+        console.log(seen, UserService.name);
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    run: { stdout: "UserService UserService" },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesTreeShaking", {
+    files: {
+      "/entry.js": /* js */ `
+        function unusedFn() { return 42; }
+        class UnusedCls {}
+        export function usedFn() { return 1; }
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("unusedFn");
+      expect(code).not.toContain("UnusedCls");
+      expect(code).toContain('"usedFn"');
     },
     minifySyntax: true,
     minifyWhitespace: true,

@@ -149,12 +149,17 @@ test.concurrent("writableNeedDrain and 'drain' track buffered writes on an adopt
   const states: unknown[] = [];
   using ctx = await setup((req, res) => {
     res.writeHead(200, { "Content-Length": String(big.length) });
-    const accepted = res.write(big);
-    states.push(accepted, res.writableNeedDrain);
     res.on("drain", () => {
       states.push("drain", res.writableNeedDrain);
       res.end();
     });
+    const accepted = res.write(big);
+    states.push(accepted, res.writableNeedDrain);
+    // No backpressure means no 'drain' is coming: end now so the connection
+    // closes and the states assertion reports the regression instead of the
+    // test hanging. (Ending eagerly on the expected path would set `finished`
+    // and suppress the 'drain' emit this test exists to observe.)
+    if (accepted) res.end();
   });
   ctx.client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
   // Connection: close ends the socket once the response has fully flushed.

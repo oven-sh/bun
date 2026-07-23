@@ -2665,7 +2665,10 @@ function addSuite(
 
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;
-  else if (effectiveMode === "todo") register = runChildReporterEnabled ? describe : describe.todo;
+  else if (effectiveMode === "todo") {
+    suiteNode.todoFlag = true;
+    register = runChildReporterEnabled ? describe : describe.todo;
+  }
   if (effectiveMode !== undefined) reportDirectiveOnlyNode(suiteNode, effectiveMode);
 
   if (passOptions !== undefined) {

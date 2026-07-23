@@ -122,11 +122,12 @@ test.concurrent("auto 400 on a pipelined request queued behind an in-flight resp
 
 test.concurrent("malformed request emits 'clientError'", async () => {
   using ctx = await setup();
-  const clientError = new Promise<Error>(resolve => {
+  const clientError = new Promise<Error>((resolve, reject) => {
     ctx.httpServer.on("clientError", (err, socket) => {
       socket.destroy();
       resolve(err as Error);
     });
+    ctx.client.once("close", () => reject(new Error("client closed before 'clientError' fired")));
   });
   ctx.client.write("NOT A VALID REQUEST\r\n\r\n");
   const err = (await clientError) as Error & { code?: string };
@@ -176,12 +177,13 @@ test.concurrent("upgrade request with a body spanning packets hands off after th
 
 test.concurrent("CONNECT hands the adopted socket to the 'connect' listener with bodyHead", async () => {
   using ctx = await setup();
-  const connectEvent = new Promise<{ method: string | undefined; head: string }>(resolve => {
+  const connectEvent = new Promise<{ method: string | undefined; head: string }>((resolve, reject) => {
     ctx.httpServer.on("connect", (req, socket, head) => {
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       socket.on("data", d => socket.write("tun:" + d));
       resolve({ method: req.method, head: head.toString() });
     });
+    ctx.client.once("close", () => reject(new Error("client closed before 'connect' fired")));
   });
   // Tunnel bytes in the same packet as the request head must surface as bodyHead.
   ctx.client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\nearly");

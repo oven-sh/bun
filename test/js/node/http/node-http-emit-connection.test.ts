@@ -283,6 +283,22 @@ test.concurrent("Expect: 100-continue is answered before the body", async () => 
   await ctx.reader.until("got=hi");
 });
 
+test.concurrent("rejected Expect: 100-continue closes the connection", async () => {
+  // A final status without writeContinue() must advertise Connection: close
+  // and end the socket, like Node: the client may still send the request
+  // body, which would desync the parser on a kept-alive connection.
+  using ctx = await setup();
+  ctx.httpServer.on("checkContinue", (req, res) => {
+    res.writeHead(401);
+    res.end();
+  });
+  ctx.client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\nExpect: 100-continue\r\n\r\n");
+  const closed = new Promise<void>(resolve => ctx.client.on("close", () => resolve()));
+  const buf = await ctx.reader.until("401 Unauthorized");
+  expect(buf).toContain("Connection: close");
+  await closed;
+});
+
 test.concurrent("server sockets accepted natively are unaffected", async () => {
   const httpServer = http.createServer((req, res) => res.end("native:" + req.url));
   await new Promise<void>((resolve, reject) => {

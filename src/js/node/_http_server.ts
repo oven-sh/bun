@@ -4005,6 +4005,12 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   // assignSocket(writable)) write through the OutgoingMessage machinery, so
   // render the header block immediately like Node.js does.
   if (!this[kHandle] && !this._header) {
+    // Like Node: don't keep alive connections where the client expects
+    // 100 Continue but we sent a final status; they may put extra bytes on
+    // the wire (the unsent request body would desync the parser).
+    if (this._expect_continue && !this._sent100) {
+      this.shouldKeepAlive = false;
+    }
     const statusLine = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
     this._storeHeader(statusLine, this[kOutHeaders]);
   }

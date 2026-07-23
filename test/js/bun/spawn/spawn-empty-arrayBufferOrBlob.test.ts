@@ -1,6 +1,6 @@
-import { spawnSync as cpSpawnSync } from "node:child_process";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { spawnSync as cpSpawnSync } from "node:child_process";
 
 describe("spawn with empty", () => {
   for (const [stdin, label] of [

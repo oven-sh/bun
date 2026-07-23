@@ -477,6 +477,10 @@ impl VMHolder {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
         }
+        // Node runs every RunAtExit callback on self-directed fatal signals;
+        // the compile cache is one of them (env.cc AtExit(FlushCompileCache)).
+        // Idempotent: latched internally and a no-op when the cache is off.
+        crate::node_compile_cache::persist_at_exit();
     }
 }
 

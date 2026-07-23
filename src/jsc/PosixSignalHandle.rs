@@ -223,6 +223,16 @@ pub fn enable_watch_mode_signals(kill_signal: bun_core::SignalCode) {
     Bun__installWatchModeSignalHandler(libc::SIGINT);
 }
 
+/// Windows has no sigaction to install; only record the signal so the
+/// platform-agnostic pre-reload emit (`emit_watch_kill_signal_before_reload`)
+/// still runs the JS handlers before a watch restart, like unix.
+#[cfg(not(unix))]
+pub fn enable_watch_mode_signals(kill_signal: bun_core::SignalCode) {
+    const SIGTERM: i32 = 15;
+    let number = kill_signal.platform_number().unwrap_or(SIGTERM);
+    WATCH_MODE_KILL_SIGNAL.store(number as u8, Ordering::Relaxed);
+}
+
 pub fn is_emitting_watch_kill_signal() -> bool {
     IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed)
 }

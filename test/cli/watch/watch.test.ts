@@ -47,12 +47,14 @@ afterEach(() => {
   watchee?.kill();
 });
 
-it.skipIf(isWindows)("process.exit() in a watch kill-signal handler never returns to JS", async () => {
-  const cwd = tmpdirSync();
-  const path = join(cwd, "exiter.js");
-  await Bun.write(
-    path,
-    `process.on("SIGTERM", () => {
+it.skipIf(isWindows)(
+  "process.exit() in a watch kill-signal handler never returns to JS",
+  async () => {
+    const cwd = tmpdirSync();
+    const path = join(cwd, "exiter.js");
+    await Bun.write(
+      path,
+      `process.on("SIGTERM", () => {
   process.exit(0);
   require("fs").writeFileSync("should-not-write.txt", "hello");
 });
@@ -62,44 +64,46 @@ process.on("SIGTERM", () => {
 console.log("started");
 setInterval(() => {}, 1000);
 `,
-  );
-  watchee = spawn({
-    cwd,
-    cmd: [bunExe(), "--watch", "exiter.js"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-  });
-  let starts = 0;
-  let touched = false;
-  const decoder = new TextDecoder();
-  await (async () => {
-    // Output written before this reader attaches waits in the kernel pipe
-    // buffer, so no start can be missed. Lines are reassembled across chunk
-    // boundaries before matching.
-    let buffered = "";
-    for await (const chunk of watchee.stdout) {
-      buffered += decoder.decode(chunk);
-      let newline;
-      while ((newline = buffered.indexOf("\n")) !== -1) {
-        const line = buffered.slice(0, newline);
-        buffered = buffered.slice(newline + 1);
-        if (line.includes("started") && ++starts === 2) return;
-        if (starts === 1 && !touched) {
-          touched = true;
-          // First boot seen: touch the file to trigger the kill-signal reload.
-          await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
+    );
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "exiter.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    let starts = 0;
+    let touched = false;
+    const decoder = new TextDecoder();
+    await (async () => {
+      // Output written before this reader attaches waits in the kernel pipe
+      // buffer, so no start can be missed. Lines are reassembled across chunk
+      // boundaries before matching.
+      let buffered = "";
+      for await (const chunk of watchee.stdout) {
+        buffered += decoder.decode(chunk);
+        let newline;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (line.includes("started") && ++starts === 2) return;
+          if (starts === 1 && !touched) {
+            touched = true;
+            // First boot seen: touch the file to trigger the kill-signal reload.
+            await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
+          }
         }
       }
-    }
-    // The child exiting before the reload start is a failure of the watch
-    // path itself; without this the absent-file expects below pass vacuously.
-    throw new Error(`watchee stdout ended after ${starts} start(s); expected 2`);
-  })();
-  expect(await Bun.file(join(cwd, "should-not-write.txt")).exists()).toBe(false);
-  expect(await Bun.file(join(cwd, "second-listener-ran.txt")).exists()).toBe(false);
-}, 10000);
+      // The child exiting before the reload start is a failure of the watch
+      // path itself; without this the absent-file expects below pass vacuously.
+      throw new Error(`watchee stdout ended after ${starts} start(s); expected 2`);
+    })();
+    expect(await Bun.file(join(cwd, "should-not-write.txt")).exists()).toBe(false);
+    expect(await Bun.file(join(cwd, "second-listener-ran.txt")).exists()).toBe(false);
+  },
+  10000,
+);
 
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An

@@ -1378,7 +1378,7 @@ impl ServerConfig {
                     // Empty TLS array means no TLS - this is valid
                 } else {
                     while let Some(item) = value_iter.next()? {
-                        let ssl_config = match SSLConfig::from_js(vm, global, item)? {
+                        let ssl_config = match SSLConfig::from_js(vm, global, item, true)? {
                             Some(c) => c,
                             None => {
                                 if global.has_exception() {
@@ -1407,7 +1407,7 @@ impl ServerConfig {
                     }
                 }
             } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls)? {
+                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
                     args.ssl_config = Some(ssl_config);
                 }
                 if global.has_exception() {
@@ -1422,7 +1422,7 @@ impl ServerConfig {
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
         if args.ssl_config.is_none() {
-            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
+            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg, true)? {
                 args.ssl_config = Some(ssl_config);
             }
             if global.has_exception() {

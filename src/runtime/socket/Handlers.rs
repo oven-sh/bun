@@ -497,12 +497,14 @@ impl SocketConfig {
                 GeneratedTls::None => None,
                 GeneratedTls::Boolean(b) => {
                     if *b {
-                        Some(super::tls_true_defaults(vm))
+                        Some(super::tls_true_defaults(vm, mode.is_server()))
                     } else {
                         None
                     }
                 }
-                GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
+                GeneratedTls::Object(ssl) => {
+                    SSLConfig::from_generated(vm, global, ssl, mode.is_server())?
+                }
             };
             break 'blk SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),

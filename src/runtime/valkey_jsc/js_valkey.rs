@@ -2080,7 +2080,7 @@ impl Options {
             } else if tls.is_object() {
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer.
                 if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
+                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls, false)?
                 {
                     this.tls = valkey::TLS::Custom(Box::new(ssl_config));
                 } else {

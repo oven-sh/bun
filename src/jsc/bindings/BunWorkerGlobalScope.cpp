@@ -11,6 +11,13 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
 {
     if (eventType == eventNames().messageEvent) {
         auto& global = static_cast<WorkerGlobalScope&>(self);
+        auto* context = global.scriptExecutionContext();
+        // On the main thread there is no parent to receive messages from, so a
+        // global `message` listener (e.g. `globalThis.onmessage = ...`) must not
+        // keep the event loop alive — otherwise the process never exits. Worker
+        // threads still need the keepalive to receive messages from their parent.
+        if (!context || context->isMainThread())
+            return;
         switch (kind) {
         case Add:
             if (global.m_messageEventCount == 0) {

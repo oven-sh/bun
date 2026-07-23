@@ -278,6 +278,9 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
+extern "C" int bun_is_exiting();
+extern "C" int bun_exit_code();
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
@@ -285,7 +288,18 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     std::call_once(jsc_init_flag, [evalMode, oneShotStartup, envp, envc, onCrash]() {
         JSC::Config::enableRestrictedOptions();
 
-        std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+        std::set_terminate([]() {
+            // A global destructor or atexit handler (typically from a native
+            // addon) can throw while libc exit() is tearing the process down.
+            // By that point process.exit() has already committed to a code;
+            // honor it instead of reporting a crash.
+            if (bun_is_exiting()) {
+                fflush(stdout);
+                fflush(stderr);
+                ::_Exit(bun_exit_code());
+            }
+            Zig__GlobalObject__onCrash();
+        });
         WTF::initializeMainThread();
 
         // Use JSC::initialize with a callback to set Options during initialization.

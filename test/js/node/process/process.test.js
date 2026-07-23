@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -458,6 +458,34 @@ describe("process.exitCode", () => {
     expect(stdout.toString().trim()).toBe("PASS");
   });
 });
+
+// Sentry BUN-390H: a native addon's global destructor threw during libc exit()
+// after process.exit(), and the std::set_terminate handler turned that into a
+// crash report instead of honoring the requested exit code. On POSIX the atexit
+// callback registered here only runs when the process uses full libc exit(),
+// which after the fix is only the ASAN configuration; release builds skip
+// global destructors via _exit / quick_exit / ExitProcess, making this
+// assertion vacuous there.
+it.skipIf(!isASAN)(
+  "process.exit honors the requested code when std::terminate fires from an atexit handler",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:internal-for-testing").terminateAtExitForTesting();` +
+          `console.log("armed");` +
+          `process.exit(42);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "armed\n", stderr: "", exitCode: 42 });
+    expect(proc.signalCode).toBeNull();
+  },
+);
 
 it("process exitCode range (#6284)", () => {
   const { exitCode, stdout } = spawnSync({

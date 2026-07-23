@@ -1010,6 +1010,26 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Sentry BUN-390H. On macOS, Bun and native addons share the system libc++,
+  // so an exception thrown from an addon's global destructor during libc
+  // exit() reaches Bun's std::set_terminate handler. On Linux, Bun statically
+  // links its C++ runtime and an addon's throw reaches the system libstdc++
+  // instead (which aborts), so this assertion cannot hold there; the
+  // terminate-handler guard is exercised separately via bun:internal-for-testing
+  // in test/js/node/process/process.test.js.
+  it.skipIf(!isMacOS)("honors process.exit() code when a native addon's global destructor throws", async () => {
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "throwing_dtor_addon.node");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `require(${JSON.stringify(addonPath)}); console.log("loaded"); process.exit(42);`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "loaded\n", stderr: "", exitCode: 42 });
+    expect(proc.signalCode).toBeNull();
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });

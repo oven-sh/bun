@@ -122,6 +122,17 @@
             ],
         },
         {
+            "target_name": "throwing_dtor_addon",
+            "sources": ["throwing_dtor_addon.cpp"],
+            "cflags!": ["-fno-exceptions"],
+            "cflags_cc!": ["-fno-exceptions"],
+            "xcode_settings": { "GCC_ENABLE_CPP_EXCEPTIONS": "YES" },
+            "msvs_settings": { "VCCLCompilerTool": { "ExceptionHandling": "1" } },
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+        },
+        {
             "target_name": "reentrant_register_addon",
             "sources": ["reentrant_register_addon.cpp"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],

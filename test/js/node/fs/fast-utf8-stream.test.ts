@@ -10,7 +10,8 @@ import { join } from "node:path";
 // count returned by fs.write without converting to characters first. For
 // multi-byte data this drove #len to 0 while #bufs still held queued chunks, so
 // end() closed without writing them and the stream stalled instead of draining.
-// Node v26.3.0 shipped with the same bug; see nodejs/node#63964.
+// See also test/js/node/test/parallel/test-fastutf8stream-full-write-utf8.js
+// (vendored from Node, nodejs/node#63964) for the fs-override async drain case.
 describe("fs.Utf8Stream releaseWritingBuf after a full multi-byte write", () => {
   // "€" is one UTF-16 code unit but three UTF-8 bytes, so byte count and char
   // count diverge on every write.
@@ -32,44 +33,28 @@ describe("fs.Utf8Stream releaseWritingBuf after a full multi-byte write", () => 
     expect(readFileSync(dest, "utf8")).toBe(CHAR.repeat(3));
   });
 
-  test("async: drains every queued multi-byte chunk without end()", async () => {
-    const chunks: string[] = [];
-    const stream = new Utf8Stream({
-      fd: 1,
-      sync: false,
-      maxWrite: 1,
-      fs: {
-        write(_fd: number, data: string, _enc: string, cb: (err: unknown, n: number) => void) {
-          chunks.push(data);
-          process.nextTick(cb, null, Buffer.byteLength(data));
-        },
-        fsync(_fd: number, cb: (err?: unknown) => void) {
-          cb();
-        },
-        close(_fd: number, cb: (err?: unknown) => void) {
-          cb();
-        },
-      },
-    });
-    try {
-      await once(stream, "ready");
-      stream.write(CHAR);
-      stream.write(CHAR);
-      stream.write(CHAR);
-      // 'drain' is emitted once #len reaches 0. Before the fix that happened
-      // after the first write; after the fix it happens after all three.
-      await once(stream, "drain");
-      expect(chunks).toEqual([CHAR, CHAR, CHAR]);
-    } finally {
-      stream.destroy();
-    }
+  test("sync: end() flushes every queued multi-byte chunk", async () => {
+    using dir = tempDir("utf8stream-fullwrite-sync", {});
+    const dest = join(String(dir), "out.log");
+    const fd = openSync(dest, "w");
+    // minLength: 4 holds the first chunk back so the second write finds a
+    // non-empty #bufs and (with maxWrite: 5) starts a second entry; that second
+    // entry is what the pre-fix code stranded once #len hit 0.
+    const stream = new Utf8Stream({ fd, sync: true, minLength: 4, maxWrite: 5 });
+    await once(stream, "ready");
+    stream.write(CHAR.repeat(3));
+    stream.write(CHAR.repeat(3));
+    stream.write(CHAR.repeat(3));
+    stream.end();
+    await once(stream, "finish");
+    expect(readFileSync(dest, "utf8")).toBe(CHAR.repeat(9));
   });
 
   test("async: ASCII chunk queued after a multi-byte chunk is not dropped", async () => {
     using dir = tempDir("utf8stream-fullwrite-mixed", {});
     const dest = join(String(dir), "out.log");
     const fd = openSync(dest, "w");
-    const stream = new Utf8Stream({ fd, sync: false, maxWrite: 4 });
+    const stream = new Utf8Stream({ fd, sync: false });
     await once(stream, "ready");
     stream.write("ééé");
     stream.write("a");

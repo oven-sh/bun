@@ -902,19 +902,24 @@ for (const shell of ["system", "bun"]) {
 }
 
 test("setting process.env coerces the value to a string", () => {
-  // @ts-expect-error
-  process.env.SET_TO_TRUE = true;
-  let did_call = 0;
-  // @ts-expect-error
-  process.env.SET_TO_BUN = {
-    toString() {
-      did_call++;
-      return "bun!";
-    },
-  };
-  expect(process.env.SET_TO_TRUE).toBe("true");
-  expect(process.env.SET_TO_BUN).toBe("bun!");
-  expect(did_call).toBe(1);
+  try {
+    // @ts-expect-error
+    process.env.SET_TO_TRUE = true;
+    let did_call = 0;
+    // @ts-expect-error
+    process.env.SET_TO_BUN = {
+      toString() {
+        did_call++;
+        return "bun!";
+      },
+    };
+    expect(process.env.SET_TO_TRUE).toBe("true");
+    expect(process.env.SET_TO_BUN).toBe("bun!");
+    expect(did_call).toBe(1);
+  } finally {
+    delete process.env.SET_TO_TRUE;
+    delete process.env.SET_TO_BUN;
+  }
 });
 
 test("NODE_ENV=test loads .env.test even when .env.production exists", () => {

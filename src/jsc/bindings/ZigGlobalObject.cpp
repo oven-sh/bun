@@ -566,10 +566,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
-                // JSProcessEnvMap is a JSNonFinalObject: putDirectMayBeIndex for an
+                // JSProcessEnvMap is a JSNonFinalObject, so putDirectMayBeIndex for an
                 // index-like key routes through method-table defineOwnProperty, which
-                // declares a throw scope; check each iteration to keep exception-scope
-                // validation balanced (the only real throw here is OOM).
+                // declares a throw scope. The seed values are non-rope JSStrings built
+                // from HashMap<String,String> above, so defineOwnProperty's toWTFString
+                // is trivial and cannot throw; assert that for scope-validation.
                 auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 auto env = Bun::createProcessEnvMapObject(globalObject);
                 size_t i = 0;
@@ -577,10 +578,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
-                    if (scope.exception()) [[unlikely]] {
-                        scope.clearException();
-                        break;
-                    }
+                    scope.assertNoExceptionExceptTermination();
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {

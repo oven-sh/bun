@@ -636,6 +636,10 @@ mod draft {
         BusError(usize),
         /// Posix-only
         FloatingPointError(usize),
+        /// Posix-only; libc/mimalloc `abort()`, `std::terminate`, etc.
+        Abort,
+        /// Posix-only; `__builtin_trap()` / WTF `CRASH()` / `brk` on aarch64.
+        Trap(usize),
         /// Windows-only
         DatatypeMisalignment,
         /// Windows-only
@@ -660,7 +664,9 @@ mod draft {
                 CrashReason::IllegalInstruction(_) => libc::SIGILL,
                 CrashReason::BusError(_) => libc::SIGBUS,
                 CrashReason::FloatingPointError(_) => libc::SIGFPE,
-                CrashReason::Panic(_)
+                CrashReason::Trap(_) => libc::SIGTRAP,
+                CrashReason::Abort
+                | CrashReason::Panic(_)
                 | CrashReason::Unreachable
                 | CrashReason::DatatypeMisalignment
                 | CrashReason::StackOverflow
@@ -684,6 +690,10 @@ mod draft {
                 CrashReason::BusError(addr) => write!(writer, "Bus error at address 0x{:X}", addr),
                 CrashReason::FloatingPointError(addr) => {
                     write!(writer, "Floating point error at address 0x{:X}", addr)
+                }
+                CrashReason::Abort => writer.write_str("abort() called"),
+                CrashReason::Trap(addr) => {
+                    write!(writer, "Trap instruction at address 0x{:X}", addr)
                 }
                 CrashReason::DatatypeMisalignment => writer.write_str("Unaligned memory access"),
                 CrashReason::StackOverflow => writer.write_str("Stack overflow"),
@@ -1665,6 +1675,8 @@ mod draft {
                 libc::SIGILL => CrashReason::IllegalInstruction(addr),
                 libc::SIGBUS => CrashReason::BusError(addr),
                 libc::SIGFPE => CrashReason::FloatingPointError(addr),
+                libc::SIGABRT => CrashReason::Abort,
+                libc::SIGTRAP => CrashReason::Trap(addr),
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
@@ -1714,6 +1726,11 @@ mod draft {
             libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
+            // abort() (mimalloc/glibc heap corruption, std::terminate) and
+            // __builtin_trap()/WTF CRASH()/`brk` on aarch64 raise these; without
+            // handlers they bypass bun.report entirely.
+            libc::sigaction(libc::SIGABRT, act_ptr, core::ptr::null_mut());
+            libc::sigaction(libc::SIGTRAP, act_ptr, core::ptr::null_mut());
         }
         Ok(())
     }
@@ -2672,6 +2689,12 @@ mod draft {
             }
 
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
+
+            CrashReason::Abort => writer.write_byte(b'a')?,
+            CrashReason::Trap(addr) => {
+                writer.write_byte(b'b')?;
+                write_u64_as_two_vlqs(writer, addr)?;
+            }
         }
 
         if opts.action == TraceStringAction::ViewTrace {

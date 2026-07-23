@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -98,6 +98,8 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     ["panic", "SIGABRT"],
     ["outOfMemory", "SIGABRT"],
     ["segfault", "SIGSEGV"],
+    ["abort", "SIGABRT"],
+    ["trap", "SIGTRAP"],
   ] as const)("%s terminates with %s", async (approach, expectedSignal) => {
     await using proc = Bun.spawn({
       cmd: [
@@ -115,6 +117,10 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
       expect(stderr).toContain("Segmentation fault at address");
     } else if (approach === "panic") {
       expect(stderr).toContain("invoked crashByPanic() handler");
+    } else if (approach === "abort") {
+      expect(stderr).toContain("abort() called");
+    } else if (approach === "trap") {
+      expect(stderr).toContain("Trap instruction");
     }
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
@@ -159,6 +165,121 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
 
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
+});
+
+// SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
+// SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)
+// must route through the crash handler so they are not silently lost.
+describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
+  test.concurrent.each([
+    ["abort", "SIGABRT", "abort() called"],
+    ["trap", "SIGTRAP", "Trap instruction"],
+  ] as const)("%s produces a crash report", async (approach, expectedSignal, expectedMsg) => {
+    let sent = false;
+    const resolve_handler = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        expect(request.url).toEndWith("/ack");
+        sent = true;
+        resolve_handler.resolve();
+        return new Response("OK");
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        approach,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(expectedMsg);
+    expect(stderr).toContain("oh no");
+    expect(stderr).toContain(server.url.toString());
+    expect(proc.signalCode).toBe(expectedSignal);
+    expect(exitCode).not.toBe(0);
+
+    await resolve_handler.promise;
+    expect(sent).toBe(true);
+  });
+
+  // These two tests terminate via SIG_DFL (not via a test hook that calls
+  // suppress_core_dumps_if_necessary()), so on the --coredump-upload CI lane
+  // the runner would flag leaked core files as a hard failure. ulimit -c 0 in
+  // a shell wrapper is inherited by the bun child; the whole describe is
+  // isPosix-gated so /bin/sh is available.
+  const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
+  // The above goes via the internal test hook, which under ASAN calls the
+  // handler directly because ASAN owns the fault signals. This case raises the
+  // signal for real to prove the sigaction registration itself; ASAN builds
+  // never install those handlers so skip there.
+  test.skipIf(isASAN).concurrent.each(["SIGABRT", "SIGTRAP"] as const)(
+    "raised %s produces a crash report",
+    async signal => {
+      await using proc = Bun.spawn({
+        cmd: noCoreCmd([
+          bunExe(),
+          "-e",
+          `process.kill(process.pid, "${signal}")`,
+          "--debug-crash-handler-use-trace-string",
+        ]),
+        env: noReportEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("oh no");
+      expect(proc.signalCode).toBe(signal);
+    },
+  );
+
+  // process.abort() is a deliberate user action, not a Bun crash. It must still
+  // terminate with SIGABRT but must not print a crash report or upload one.
+  test.concurrent("process.abort() does not report a crash", async () => {
+    let sent = false;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        sent = true;
+        return new Response("OK");
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: noCoreCmd([bunExe(), "-e", "process.abort()"]),
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Bun has crashed");
+    expect(stderr).not.toContain(server.url.toString());
+    expect(proc.signalCode).toBe("SIGABRT");
+    expect(sent).toBe(false);
+  });
 });
 
 describe("automatic crash reporter", () => {

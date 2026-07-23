@@ -728,6 +728,10 @@ impl ServerConfig {
         // Set tcp port from env / options
         {
             let port = 'brk: {
+                if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
+                    break 'brk port;
+                }
+
                 const PORT_ENV: [&[u8]; 3] = [b"BUN_PORT", b"PORT", b"NODE_PORT"];
 
                 for port_env in PORT_ENV {
@@ -736,10 +740,6 @@ impl ServerConfig {
                             break 'brk _port;
                         }
                     }
-                }
-
-                if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
-                    break 'brk port;
                 }
 
                 match &args.address {

@@ -773,6 +773,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_ghostty_vt_sys"
+version = "0.0.0"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
 name = "bun_glob"
 version = "0.0.0"
 dependencies = [
@@ -1648,6 +1655,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_ghostty_vt_sys",
  "bun_glob",
  "bun_hash",
  "bun_highway",

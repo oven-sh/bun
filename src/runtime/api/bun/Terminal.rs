@@ -837,7 +837,7 @@ impl From<CreatePtyError> for crate::Error {
     }
 }
 
-fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
+pub(crate) fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     #[cfg(unix)]
     {
         return create_pty_posix(cols, rows);

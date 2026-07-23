@@ -25,9 +25,10 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
 - `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
 - `cargo` — invoke cargo build (lolhtml). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
+- `nested-zig` — invoke `zig build` through `zig-build-cli.ts`, which resolves a Zig toolchain (`$BUN_ZIG` → `$PATH` → a sha256-pinned download into the build cache) and pre-fetches the dep's Zig packages through our downloader so the nested build never touches the network itself (ghostty-vt).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
-The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
+The `dep` pool (depth 4) throttles concurrent nested cmake/cargo/zig sub-builds so they don't oversubscribe cores.
 
 **Self-obsoleting workarounds** — see "Adding a workaround" below.
 
@@ -204,6 +205,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                           |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                                                              |
+| `zig-build-cli.ts`             | Build-time CLI for nested-zig deps: resolve Zig, prefetch packages, run `zig build`                                     |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |

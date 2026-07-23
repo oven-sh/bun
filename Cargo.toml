@@ -37,6 +37,7 @@ members = [
   "src/dotenv",
   "src/event_loop",
   "src/exe_format",
+  "src/ghostty_vt_sys",
   "src/highway",
   "src/http_jsc",
   "src/http_types",
@@ -393,6 +394,7 @@ bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
+bun_ghostty_vt_sys = { path = "src/ghostty_vt_sys" }
 bun_highway = { path = "src/highway" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }

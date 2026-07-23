@@ -323,10 +323,10 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)"
     ),
     parse_param!(
-        "--parallel                        Run multiple scripts concurrently with Foreman-style output"
+        "--parallel                        Run multiple scripts concurrently: a pane per script on an interactive terminal (macOS and Linux), `label | line` prefixes otherwise"
     ),
     parse_param!(
-        "--sequential                      Run multiple scripts sequentially with Foreman-style output"
+        "--sequential                      Run multiple scripts sequentially: a pane per script on an interactive terminal (macOS and Linux), `label | line` prefixes otherwise"
     ),
     parse_param!(
         "--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"
@@ -338,7 +338,7 @@ pub(crate) const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Lines of script output shown per --filter or --parallel/--sequential pane (default: 10). With --filter, 0 shows all lines."
         ),
         parse_param!("-v, --version                     Print version and exit"),
         parse_param!("--revision                        Print version with revision and exit"),
@@ -356,7 +356,7 @@ pub(crate) const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Lines of script output shown per --filter or --parallel/--sequential pane (default: 10). With --filter, 0 shows all lines."
         ),
     ],
     AUTO_OR_RUN_PARAMS,

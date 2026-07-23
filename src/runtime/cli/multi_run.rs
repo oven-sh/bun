@@ -1,5 +1,7 @@
 use core::ffi::{c_char, c_void};
 use core::ptr;
+#[cfg(unix)]
+use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -25,7 +27,15 @@ use crate::api::bun::process::{
     self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
     event_loop_handle_to_ctx,
 };
+// Pty creation (openpty) and the per-task virtual terminal for the pane
+// renderer; see `Panes`.
+#[cfg(unix)]
+use crate::api::bun::terminal::create_pty;
 use bun_dotenv::Loader as DotEnvLoader;
+#[cfg(unix)]
+use bun_ghostty_vt_sys::VirtualTerminal;
+#[cfg(unix)]
+use bun_sys::FdExt as _;
 type OutputWriter = bun_core::io::Writer;
 
 /// Value type for package.json `scripts` map. Mirrors
@@ -49,7 +59,7 @@ struct ScriptConfig {
 /// so output can be routed to the correct parent stream.
 pub struct PipeReader<'a> {
     reader: BufferedReader,
-    handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
+    handle: *mut ProcessHandle<'a>, // set in ProcessHandle::start()
     is_stderr: bool,
     line_buffer: Vec<u8>,
 }
@@ -59,7 +69,7 @@ impl<'a> PipeReader<'a> {
         Self {
             // BufferedReader::init(This) — the parent type fills the vtable.
             reader: BufferedReader::init::<Self>(),
-            handle: ptr::null(),
+            handle: ptr::null_mut(),
             is_stderr,
             line_buffer: Vec::new(),
         }
@@ -117,6 +127,11 @@ pub(crate) struct ProcessHandle<'a> {
     /// Dependents across sequential groups (group N -> group N+1).
     /// These ARE started even if this handle fails when --no-exit-on-error is set.
     next_dependents: Vec<*mut ProcessHandle<'a>>,
+
+    /// Pane mode only (`State::panes` is `Some`): the virtual terminal this
+    /// task's pty output is replayed into. `None` until `start()`.
+    #[cfg(unix)]
+    vt: Option<VirtualTerminal>,
 }
 
 impl<'a> ProcessHandle<'a> {
@@ -124,6 +139,46 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: state is a backref into the `State` on `run`'s stack; lives for the whole loop.
         let state = unsafe { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
+
+        // Pane mode: give the task a pty sized to its pane so it behaves
+        // like it's on a real terminal (colors, correct width, `\r`
+        // progress bars), and a virtual terminal to replay that output
+        // into. stdin stays `/dev/null` exactly like the pipe path —
+        // --parallel never feeds children input — so a child that reads
+        // stdin sees EOF in both modes.
+        #[cfg(unix)]
+        let pty_fds: Option<(bun_sys::Fd, bun_sys::Fd)> = if let Some(panes) = &state.panes {
+            let pty = create_pty(panes.cols, panes.rows)?;
+            // The reader polls `read_fd` (the nonblocking, close-on-exec dup
+            // of the master); the other master-side dups are not needed and
+            // must not keep the pty alive past the reader.
+            pty.master.close();
+            pty.write_fd.close();
+            // The same slave fd is dup2'd onto the child's 1 and 2; the
+            // parent's copy is closed right after the spawn below.
+            self.options.stdout = spawn::Stdio::Pipe(pty.slave);
+            self.options.stderr = spawn::Stdio::Pipe(pty.slave);
+            self.vt = VirtualTerminal::new(panes.cols, panes.rows, Panes::SCROLLBACK_BYTES);
+            if self.vt.is_none() {
+                pty.read_fd.close();
+                pty.slave.close();
+                return Err(err!("VirtualTerminalInitFailed"));
+            }
+            Some((pty.read_fd, pty.slave))
+        } else {
+            None
+        };
+        // Close both fds if anything between here and the hand-off below
+        // fails, so they never outlive an error. (Every `Err` from `start`
+        // is fatal to the whole run today, but the cleanup contract should
+        // not depend on that.)
+        #[cfg(unix)]
+        let pty_guard = scopeguard::guard(pty_fds, |fds| {
+            if let Some((read_fd, slave)) = fds {
+                read_fd.close();
+                slave.close();
+            }
+        });
 
         // Null-terminated argv array, as required by spawnProcess.
         let argv: [*const c_char; 4] = [
@@ -176,8 +231,10 @@ impl<'a> ProcessHandle<'a> {
         let stderr_fd = spawned.stderr;
         let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
-        self.stdout_reader.handle = std::ptr::from_ref(self);
-        self.stderr_reader.handle = std::ptr::from_ref(self);
+        // The pane reader writes `self.vt` through this backref, so it needs
+        // write provenance: `&raw mut`, never a shared reborrow of `&mut self`.
+        self.stdout_reader.handle = &raw mut *self;
+        self.stderr_reader.handle = &raw mut *self;
         // Compute parent ptrs before calling `set_parent` to avoid
         // borrowck seeing two simultaneous &mut borrows of the same field.
         let stdout_parent = (&raw mut self.stdout_reader).cast::<c_void>();
@@ -203,8 +260,28 @@ impl<'a> ProcessHandle<'a> {
             }
         }
 
+        // The spawn succeeded, so the hand-off is now explicit: `slave` is
+        // closed unconditionally below and `read_fd` is owned by the reader
+        // (or closed on the reader's own error path). Disarm the guard so
+        // neither fd can be closed twice.
         #[cfg(unix)]
-        {
+        let pty_fds = scopeguard::ScopeGuard::into_inner(pty_guard);
+        #[cfg(unix)]
+        if let Some((read_fd, slave)) = pty_fds {
+            // Close the parent's only copy of the pty slave so the master
+            // reports hangup once the child — now its sole holder — exits.
+            // `options.stdout`/`stderr` held the same fd; reset them so
+            // nothing can reuse it after the close.
+            slave.close();
+            self.options.stdout = spawn::Stdio::Ignore;
+            self.options.stderr = spawn::Stdio::Ignore;
+            // stdout and stderr are merged by the pty, so only one reader
+            // runs; `stderr_reader` stays idle.
+            if let Err(err) = self.stdout_reader.reader.start(read_fd, true) {
+                read_fd.close();
+                return Err(Error::from(err));
+            }
+        } else {
             if let Some(stdout_fd) = stdout_fd {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
                 self.stdout_reader
@@ -285,6 +362,122 @@ const COLORS: [&[u8]; 6] = [
 ];
 const RESET: &[u8] = ansi::RESET.as_bytes();
 
+/// Compile-time ANSI-tag expansion (colors are always on in pane mode —
+/// `Panes::init` already required an ANSI-capable stdout).
+#[cfg(unix)]
+macro_rules! fmt {
+    ($s:literal) => {
+        bun_core::Output::pretty_fmt!($s, true)
+    };
+}
+
+/// The pane renderer used when stdout is an interactive terminal.
+///
+/// Each task is spawned onto a pty sized `cols`×`rows` and its output is
+/// replayed into a libghostty-vt [`VirtualTerminal`] (`ProcessHandle::vt`).
+/// `redraw` then repaints one pane per task from that terminal's cell
+/// grid, so carriage-return progress bars, cursor movement, clears, and
+/// colors all resolve to what a real terminal would be showing instead
+/// of leaking control bytes into the interleaved output.
+///
+/// When stdout is not an interactive terminal (pipes, redirects, CI) this
+/// is `None` and every task keeps the `label | line` prefix renderer.
+#[cfg(unix)]
+struct Panes {
+    /// Pane interior width in cells: the terminal's width minus the `│ `
+    /// gutter. Also the width each task's pty reports.
+    cols: u16,
+    /// Pane height in rows (`--elide-lines`, default 10, shrunk so the
+    /// whole frame fits the terminal). Also the height each task's pty
+    /// reports.
+    rows: u16,
+    /// Terminal height in rows at startup. Bounds how many lines of the
+    /// previous frame the cursor-up erase can still reach.
+    term_rows: u16,
+    /// Accumulates a whole frame, then is written to stdout in one shot
+    /// inside a synchronized-update bracket so the repaint never tears.
+    draw_buf: Vec<u8>,
+    /// Scratch for one formatted terminal row.
+    row_buf: Vec<u8>,
+    /// Lines of the previous frame to cursor-up over before painting the
+    /// next one: its `\n` count, capped to what is still on screen.
+    last_lines_written: usize,
+    /// Set on every read and every exit; drained once per event-loop tick
+    /// by `flush_redraw` so a chatty task can't force a repaint per chunk.
+    needs_redraw: bool,
+}
+
+#[cfg(unix)]
+impl Panes {
+    /// Pane height when `--elide-lines` is absent; matches `bun run --filter`.
+    const DEFAULT_ROWS: usize = 10;
+    /// Cell width of the `│ ` gutter prefixed to every pane row.
+    const GUTTER_COLS: u16 = 2;
+    /// Lines a pane occupies beyond its content rows: the header, the
+    /// `[N lines elided]` line, and the `└─` footer.
+    const CHROME_ROWS: usize = 3;
+    /// Per-task scrollback retention, in bytes. Rows that scroll off the
+    /// top of a pane land here and surface as the `[N lines elided]` count.
+    const SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
+
+    /// `Some` only when stdout is an ANSI-capable interactive terminal
+    /// whose size is readable, on a platform where ptys can be created.
+    /// Anything else keeps the prefix renderer, so piped/CI output is
+    /// byte-for-byte what it was before panes existed.
+    fn init(elide_lines: Option<usize>, task_count: usize) -> Option<Self> {
+        if !Output::enable_ansi_colors_stdout() || !Output::is_stdout_tty() {
+            return None;
+        }
+        let winsize = Output::File::from(bun_core::Fd::stdout()).winsize()?;
+        // With 0 rows, `redraw`'s cursor-up erase (clamped to `term_rows - 1`)
+        // never fires and every repaint appends below the last. Treat it like
+        // an unreadable size, the same as the too-narrow `col` check below.
+        if winsize.row == 0 {
+            return None;
+        }
+        let cols = winsize
+            .col
+            .checked_sub(Self::GUTTER_COLS)
+            .filter(|c| *c > 0)?;
+        // Shrink the pane height so the whole frame fits the terminal
+        // whenever that is possible. A frame taller than the terminal
+        // scrolls its top into scrollback, which the next frame's
+        // cursor-up erase (clamped at row 1) can never reach. With enough
+        // tasks even 1-row panes cannot fit; `last_lines_written` is then
+        // capped to the reachable height in `redraw`.
+        let fits = usize::from(winsize.row)
+            // A frame of exactly `term_rows` newline-terminated lines still
+            // scrolls once: the last `\n` needs a resting row below it.
+            .saturating_sub(1)
+            .saturating_sub(task_count.saturating_mul(Self::CHROME_ROWS))
+            .checked_div(task_count)
+            .unwrap_or(usize::MAX);
+        let rows = elide_lines
+            .filter(|n| *n > 0)
+            .unwrap_or(Self::DEFAULT_ROWS)
+            .min(fits.max(1))
+            .min(usize::from(u16::MAX)) as u16;
+        // Every task is about to be given a pty; prove one can be created
+        // before committing to the pane renderer, so an environment with
+        // no openpty (or no /dev/ptmx) degrades to the prefix renderer
+        // instead of failing the whole run on the first task.
+        let probe = create_pty(cols, rows).ok()?;
+        probe.master.close();
+        probe.read_fd.close();
+        probe.write_fd.close();
+        probe.slave.close();
+        Some(Self {
+            cols,
+            rows,
+            term_rows: winsize.row,
+            draw_buf: Vec::new(),
+            row_buf: Vec::new(),
+            last_lines_written: 0,
+            needs_redraw: false,
+        })
+    }
+}
+
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     event_loop: *mut MiniEventLoop<'static>,
@@ -299,6 +492,8 @@ struct State<'a> {
     no_exit_on_error: bool,
     env: *mut DotEnvLoader<'static>,
     use_colors: bool,
+    #[cfg(unix)]
+    panes: Option<Panes>,
 }
 
 impl<'a> State<'a> {
@@ -307,6 +502,19 @@ impl<'a> State<'a> {
     }
 
     fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) -> Result<(), Error> {
+        #[cfg(unix)]
+        if let Some(panes) = &mut self.panes {
+            // SAFETY: `pipe.handle` is the `&raw mut` backref set in
+            // `ProcessHandle::start()`, so it carries write provenance;
+            // the handle outlives `pipe`, and `vt` is disjoint from `pipe`.
+            if let Some(vt) = unsafe { &mut (*pipe.handle).vt } {
+                vt.write(chunk);
+            }
+            // Coalesced: `flush_redraw` repaints at most once per tick.
+            panes.needs_redraw = true;
+            return Ok(());
+        }
+
         pipe.line_buffer.extend_from_slice(chunk);
 
         // Route to correct parent stream: child stdout -> parent stdout, child stderr -> parent stderr
@@ -380,9 +588,9 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
-        self.remaining_scripts -= 1;
-
+    /// Prefix-mode exit reporting: flush each pipe's partial last line,
+    /// then write the exit status to stderr behind the task's `label | `.
+    fn process_exit_prefix(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
         // Flush remaining buffers (stdout first, then stderr)
         // Reshaped for borrowck — `flush_pipe_buffer` would need both
         // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
@@ -426,6 +634,23 @@ impl<'a> State<'a> {
                 writer.write_all(b"Error\n")?;
             }
         }
+        Ok(())
+    }
+
+    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
+        self.remaining_scripts -= 1;
+
+        // Pane mode writes nothing here: the pane footer carries the exit
+        // status, and the main loop's `flush_redraw` repaints once this
+        // tick returns.
+        #[cfg(unix)]
+        if let Some(panes) = &mut self.panes {
+            panes.needs_redraw = true;
+        } else {
+            self.process_exit_prefix(handle)?;
+        }
+        #[cfg(not(unix))]
+        self.process_exit_prefix(handle)?;
 
         // Check if we should abort on error
         let failed = match &handle.process.as_ref().unwrap().status {
@@ -526,6 +751,181 @@ impl<'a> State<'a> {
             }
         }
         0
+    }
+}
+
+#[cfg(unix)]
+impl<'a> State<'a> {
+    /// Repaint the pane UI if anything changed since the last frame.
+    /// Called once per event-loop tick.
+    fn flush_redraw(&mut self) -> Result<(), Error> {
+        if self.panes.as_ref().is_some_and(|p| p.needs_redraw) {
+            self.redraw()?;
+        }
+        Ok(())
+    }
+
+    /// Erase the previous frame and paint one pane per task into a single
+    /// stdout write, bracketed by a synchronized update so the terminal
+    /// swaps frames atomically.
+    ///
+    /// Autowrap is disabled for the frame so an over-long header truncates
+    /// instead of soft-wrapping; the frame's `\n` count is then exactly the
+    /// number of terminal lines it occupies, which is what the next frame's
+    /// cursor-up erase relies on. Pane rows can never exceed the terminal
+    /// width by construction (`Panes::cols` plus the 2-cell gutter), and
+    /// the erase count is capped to the terminal height, past which a
+    /// scrolled-off line is out of the cursor's reach anyway.
+    fn redraw(&mut self) -> Result<(), Error> {
+        // `draw_buf`/`row_buf` (inside `panes`) and each handle's `vt` are
+        // mutated in the same loop; destructuring keeps the two `&mut`
+        // borrows of `self` provably disjoint.
+        let State {
+            handles,
+            panes,
+            aborted,
+            ..
+        } = self;
+        let aborted = *aborted;
+        let Some(panes) = panes.as_mut() else {
+            return Ok(());
+        };
+        panes.needs_redraw = false;
+        panes.draw_buf.clear();
+        panes
+            .draw_buf
+            .extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
+        // DECAWM off: long lines truncate instead of soft-wrapping.
+        panes.draw_buf.extend_from_slice(b"\x1b[?7l");
+        if panes.last_lines_written > 0 {
+            // Move to column 0 and clear, then cursor-up-and-clear once per
+            // line of the previous frame.
+            panes.draw_buf.extend_from_slice(b"\x1b[0G\x1b[K");
+            for _ in 0..panes.last_lines_written {
+                panes.draw_buf.extend_from_slice(b"\x1b[1A\x1b[K");
+            }
+        }
+        for handle in handles.iter_mut() {
+            // `command` is NUL-terminated for argv; drop the NUL for display.
+            let command = handle
+                .config
+                .command
+                .strip_suffix(&[0])
+                .unwrap_or(&handle.config.command);
+            write!(
+                &mut panes.draw_buf,
+                fmt!("<b>{s}<r> <d>$ {s}<r>\n"),
+                bstr::BStr::new(&handle.config.label),
+                bstr::BStr::new(command),
+            )?;
+            if let Some(vt) = &mut handle.vt {
+                let elided = vt.scrollback_rows();
+                if elided > 0 {
+                    write!(
+                        &mut panes.draw_buf,
+                        fmt!("<cyan>│<r> <d>[{d} lines elided]<r>\n"),
+                        elided,
+                    )?;
+                }
+                for y in 0..vt.used_rows() {
+                    panes
+                        .draw_buf
+                        .extend_from_slice(fmt!("<cyan>│<r> ").as_bytes());
+                    if vt.format_active_row(y, &mut panes.row_buf) {
+                        panes.draw_buf.extend_from_slice(&panes.row_buf);
+                    }
+                    // Keep a row's styles from bleeding into the next gutter.
+                    panes.draw_buf.extend_from_slice(RESET);
+                    panes.draw_buf.push(b'\n');
+                }
+            }
+            panes
+                .draw_buf
+                .extend_from_slice(fmt!("<cyan>└─<r> ").as_bytes());
+            match handle.process.as_ref().map(|p| &p.status) {
+                Some(Status::Running) => {
+                    panes
+                        .draw_buf
+                        .extend_from_slice(fmt!("<cyan>Running...<r>\n").as_bytes());
+                }
+                Some(Status::Exited(exited)) => {
+                    if exited.code != 0 {
+                        write!(
+                            &mut panes.draw_buf,
+                            fmt!("<red>Exited with code {d}<r>\n"),
+                            exited.code,
+                        )?;
+                    } else if let (Some(start), Some(end)) = (handle.start_time, handle.end_time) {
+                        let ms = end.duration_since(start).as_nanos() as f64 / 1_000_000.0;
+                        if ms > 1000.0 {
+                            write!(
+                                &mut panes.draw_buf,
+                                fmt!("<cyan>Done in {:.2}s<r>\n"),
+                                ms / 1000.0,
+                            )?;
+                        } else {
+                            write!(&mut panes.draw_buf, fmt!("<cyan>Done in {:.0}ms<r>\n"), ms)?;
+                        }
+                    } else {
+                        panes
+                            .draw_buf
+                            .extend_from_slice(fmt!("<cyan>Done<r>\n").as_bytes());
+                    }
+                }
+                Some(Status::Signaled(signal)) => {
+                    if *signal == bun_sys::SignalCode::SIGINT.0 {
+                        panes
+                            .draw_buf
+                            .extend_from_slice(fmt!("<red>Interrupted<r>\n").as_bytes());
+                    } else {
+                        write!(
+                            &mut panes.draw_buf,
+                            fmt!("<red>Signaled: {s}<r>\n"),
+                            bun_sys::SignalCode(*signal).name().unwrap_or("unknown"),
+                        )?;
+                    }
+                }
+                Some(_) => {
+                    panes
+                        .draw_buf
+                        .extend_from_slice(fmt!("<red>Error<r>\n").as_bytes());
+                }
+                // Never started. A task can be in this state because it is
+                // genuinely waiting on dependencies, or because it will
+                // never run: `skip_dependents` drained its dependency count
+                // without starting it (a pre/main script in its group
+                // failed), or the run was aborted. Rendering "Waiting"
+                // into the final frame for the latter would be a lie.
+                None if aborted || handle.remaining_dependencies == 0 => {
+                    panes
+                        .draw_buf
+                        .extend_from_slice(fmt!("<d>Skipped<r>\n").as_bytes());
+                }
+                None => {
+                    write!(
+                        &mut panes.draw_buf,
+                        fmt!("<cyan><d>Waiting for {d} other script(s)<r>\n"),
+                        handle.remaining_dependencies,
+                    )?;
+                }
+            }
+        }
+        // Restore autowrap before handing the terminal back.
+        panes.draw_buf.extend_from_slice(b"\x1b[?7h");
+        panes
+            .draw_buf
+            .extend_from_slice(Output::SYNCHRONIZED_END.as_bytes());
+        // A frame taller than the terminal scrolled its top out of the
+        // cursor's reach; only the visible lines can (and need to) be
+        // erased, so don't emit more cursor-ups than the screen has rows.
+        panes.last_lines_written = panes
+            .draw_buf
+            .iter()
+            .filter(|&&c| c == b'\n')
+            .count()
+            .min(usize::from(panes.term_rows).saturating_sub(1));
+        let _ = bun_sys::File::stdout().write_all(&panes.draw_buf);
+        Ok(())
     }
 }
 
@@ -1112,6 +1512,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         no_exit_on_error: ctx.no_exit_on_error,
         env: env_ptr,
         use_colors,
+        #[cfg(unix)]
+        panes: Panes::init(ctx.bundler_options.elide_lines, configs.len()),
     };
 
     // Initialize handles
@@ -1138,6 +1540,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             remaining_dependencies: 0,
             group_dependents: Vec::new(),
             next_dependents: Vec::new(),
+            #[cfg(unix)]
+            vt: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
                 #[cfg(unix)]
@@ -1210,6 +1614,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     AbortHandler::install();
 
+    // Paint the initial frame (all panes "Running..." / "Waiting") so the
+    // UI is visible before the first byte of output arrives.
+    #[cfg(unix)]
+    state.redraw()?;
+
     while !state.is_done() {
         if SHOULD_ABORT.load(Ordering::SeqCst) && !state.aborted {
             AbortHandler::uninstall();
@@ -1217,7 +1626,17 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         }
         // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
         unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
+        // Pane mode: at most one repaint per tick, however many reads landed.
+        #[cfg(unix)]
+        state.flush_redraw()?;
     }
+    // Paint the final frame unconditionally: under load the loop has been
+    // observed to exit with the last in-loop repaint still showing a task
+    // as Running (the mechanism is not yet understood; see PR #32761), and
+    // a user's terminal must never be left at that stale state. Not a
+    // `flush_redraw`, which gates on `needs_redraw`.
+    #[cfg(unix)]
+    state.redraw()?;
 
     let status = state.finalize();
     Global::exit(status as u32);

@@ -3722,7 +3722,7 @@ function addTest(
         );
         return Promise.resolve(undefined);
       }
-      const ownTodo = mode === "todo" || !!options.todo;
+      const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
       if (ownTodo) child.todoFlag = true;
       return scheduleSubtest(runningNode, child, fn, ownTodo);
     }

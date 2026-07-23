@@ -408,9 +408,6 @@ describe("spawn()", () => {
 
   it("stdin write failure (EPIPE) emits 'error' and destroys even with a write callback", async () => {
     // Child closes its own stdin fd, signals ready on stdout, then stays alive.
-    // On Windows this previously surfaced as EOF instead of EPIPE because
-    // libuv's async pipe write_cb used the read-side translator for
-    // ERROR_BROKEN_PIPE / ERROR_NO_DATA (fixed in oven-sh/libuv#11).
     const child = spawn(
       bunExe(),
       ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],

@@ -136,26 +136,24 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
         break;
     }
     case CryptoKeyFormat::Jwk: {
+        // Only reached with a non-null alg (the import arm checks first);
+        // no JWK alg spelling exists for the SHA3 hashes, so they fall
+        // through to the mismatch default.
         auto checkAlgCallback = [](CryptoAlgorithmIdentifier hash, const String& alg) -> bool {
             switch (hash) {
             case CryptoAlgorithmIdentifier::SHA_1:
-                return alg.isNull() || alg == ALG1;
+                return alg == ALG1;
             case CryptoAlgorithmIdentifier::SHA_224:
-                return alg.isNull() || alg == ALG224;
+                return alg == ALG224;
             case CryptoAlgorithmIdentifier::SHA_256:
-                return alg.isNull() || alg == ALG256;
+                return alg == ALG256;
             case CryptoAlgorithmIdentifier::SHA_384:
-                return alg.isNull() || alg == ALG384;
+                return alg == ALG384;
             case CryptoAlgorithmIdentifier::SHA_512:
-                return alg.isNull() || alg == ALG512;
-            case CryptoAlgorithmIdentifier::SHA3_256:
-            case CryptoAlgorithmIdentifier::SHA3_384:
-            case CryptoAlgorithmIdentifier::SHA3_512:
-                return alg.isNull();
+                return alg == ALG512;
             default:
                 return false;
             }
-            return false;
         };
         auto& jwk = std::get<JsonWebKey>(data);
         if (jwk.kty.isNull()) {

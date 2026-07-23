@@ -339,10 +339,17 @@ pub(crate) fn validate_object(
     name: impl fmt::Display + Copy,
     options: ValidateObjectOptions,
 ) -> JsResult<()> {
-    // In JSC a function cell satisfies `is_object()` (JSType >= Object), so the callable check
-    // cannot be folded into `!is_object()` the way Node's `typeof !== 'object'` does.
-    if (!options.allow_nullable() && value.is_null())
-        || (!options.allow_array() && value.js_type().is_array())
+    // `is_object()` is JSC's `isObjectType` (cell with JSType >= Object), not JS `typeof`: it is
+    // true for functions and false for null, so the allow_function/nullable opt-ins are handled
+    // explicitly rather than folded into the final `!is_object()` term.
+    if value.is_null() {
+        return if options.allow_nullable() {
+            Ok(())
+        } else {
+            Err(throw_err_invalid_arg_type(global_this, name, "object", value))
+        };
+    }
+    if (!options.allow_array() && value.js_type().is_array())
         || (!options.allow_function() && value.is_callable())
         || !value.is_object()
     {

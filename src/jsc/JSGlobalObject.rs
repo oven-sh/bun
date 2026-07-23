@@ -1204,10 +1204,17 @@ impl JSGlobalObject {
         value: JSValue,
         opts: ValidateObjectOpts,
     ) -> JsResult<()> {
-        // In JSC a function cell satisfies `is_object()` (JSType >= Object), so callables must be
-        // checked separately to match Node's `typeof value !== 'object'` semantics.
-        if (!opts.nullable && value.is_null())
-            || (!opts.allow_array && value.is_array())
+        // `is_object()` is JSC's `isObjectType` (cell with JSType >= Object), not JS `typeof`: it is
+        // true for functions and false for null, so the allow_function/nullable opt-ins are handled
+        // explicitly rather than folded into the final `!is_object()` term.
+        if value.is_null() {
+            return if opts.nullable {
+                Ok(())
+            } else {
+                Err(self.throw_invalid_argument_type_value(arg_name.as_bytes(), b"object", value))
+            };
+        }
+        if (!opts.allow_array && value.is_array())
             || (!opts.allow_function && value.is_callable())
             || !value.is_object()
         {

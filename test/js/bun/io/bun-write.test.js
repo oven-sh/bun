@@ -130,8 +130,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
   describe.each(["plain-ascii-missing.txt", "surro-\ud800-gate.txt"])(
     "Bun.write(dest, Bun.file(missing source)) rejects with ENOENT (%s)",
     basename => {
-      // Windows: previously segfaulted in the mkdirp retry path when the
-      // uv_fs_copyfile ENOENT was for the source rather than the destination.
       it("rejects instead of crashing", async () => {
         using dir = tempDir("bun-write-missing-src", {});
         const fixture = `

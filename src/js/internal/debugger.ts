@@ -169,6 +169,10 @@ export default function (
           try {
             sessionBackend?.close();
             sessionBackend = undefined;
+            // The leaked native connection keeps the adapter reachable; drop
+            // its per-session script/breakpoint state like Debugger.#close
+            // does for WebSocket adapters.
+            sessionAdapter?.handleClientDisconnect();
             sessionAdapter = undefined;
             sessionRefs = 0;
             debug?.stop();
@@ -191,6 +195,7 @@ export default function (
           sessionRefs = 0;
           sessionBackend?.close();
           sessionBackend = undefined;
+          sessionAdapter?.handleClientDisconnect();
           sessionAdapter = undefined;
           return;
         case "open": {

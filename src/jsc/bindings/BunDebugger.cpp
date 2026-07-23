@@ -682,9 +682,15 @@ static void inProcessRunWhilePaused(JSC::JSGlobalObject& globalObject, bool& isD
     channel.inPauseLoop = true;
     channel.drainSynchronously();
     channel.inPauseLoop = false;
-    if (auto* debugger = globalObject.debugger())
-        debugger->continueProgram();
-    isDoneProcessingEvents = true;
+    // A listener may have ended the pause synchronously during the drain
+    // (Debugger.resume or a step command). continueProgram() clears the
+    // next-pause state first, so calling it here would downgrade a step to a
+    // full resume. Auto-continue only when no listener command took over.
+    if (!isDoneProcessingEvents) {
+        if (auto* debugger = globalObject.debugger())
+            debugger->continueProgram();
+        isDoneProcessingEvents = true;
+    }
 }
 
 class JSBunInspectorConnection final : public JSC::JSNonFinalObject {

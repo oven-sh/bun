@@ -1315,6 +1315,38 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
   }
 }, 30_000);
 
+test("Debugger.stepOver from a paused listener re-pauses instead of resuming", async () => {
+  // The pause loop's auto-continue must not run when the listener already
+  // ended the pause with a step: continueProgram() clears the next-pause
+  // state first, which would silently downgrade the step to a full resume.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Debugger.enable");
+let pauses = 0;
+session.on("Debugger.paused", function onPaused() {
+  pauses++;
+  if (pauses === 1) {
+    session.post("Debugger.stepOver");
+  } else {
+    session.post("Debugger.resume");
+  }
+});
+session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; globalThis.y = 2;" }, function onDone() {
+  console.log(JSON.stringify({ pauses }));
+});`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: JSON.stringify({ pauses: 2 }), exitCode: 0 });
+});
+
 test("Debugger.paused from a pause nested inside a post() dispatch reaches listeners before execution continues", async () => {
   // A debugger statement evaluated via session.post pauses inside the
   // dispatch; the event must deliver synchronously so the listener can use

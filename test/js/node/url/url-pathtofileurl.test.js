@@ -171,6 +171,38 @@ describe("url.pathToFileURL", () => {
     }
   });
 
+  test("options.windows forces Windows or POSIX semantics regardless of host OS", () => {
+    // {windows: true} — Windows path semantics
+    assert.strictEqual(url.pathToFileURL("C:\\x", { windows: true }).href, "file:///C:/x");
+    assert.strictEqual(url.pathToFileURL("C:\\dir\\foo", { windows: true }).href, "file:///C:/dir/foo");
+    assert.strictEqual(url.pathToFileURL("C:\\dir\\", { windows: true }).href, "file:///C:/dir/");
+    assert.strictEqual(url.pathToFileURL("C:\\foo bar", { windows: true }).href, "file:///C:/foo%20bar");
+    assert.strictEqual(url.pathToFileURL("C:\\foo%bar", { windows: true }).href, "file:///C:/foo%25bar");
+    assert.strictEqual(url.pathToFileURL("C:\\€", { windows: true }).href, "file:///C:/%E2%82%AC");
+    // UNC paths
+    assert.strictEqual(url.pathToFileURL("\\\\srv\\s\\x", { windows: true }).href, "file://srv/s/x");
+    assert.strictEqual(
+      url.pathToFileURL("\\\\nas\\My Docs\\File.doc", { windows: true }).href,
+      "file://nas/My%20Docs/File.doc",
+    );
+    assert.strictEqual(url.pathToFileURL("\\\\?\\UNC\\srv\\s\\x", { windows: true }).href, "file://srv/s/x");
+    assert.throws(() => url.pathToFileURL("\\\\host", { windows: true }), { code: "ERR_INVALID_ARG_VALUE" });
+    assert.throws(() => url.pathToFileURL("\\\\\\x", { windows: true }), { code: "ERR_INVALID_ARG_VALUE" });
+
+    // {windows: false} — POSIX path semantics
+    assert.strictEqual(url.pathToFileURL("/foo/bar", { windows: false }).href, "file:///foo/bar");
+    assert.strictEqual(url.pathToFileURL("/foo%bar", { windows: false }).href, "file:///foo%25bar");
+    // backslash is a regular char under POSIX, percent-encoded
+    assert.strictEqual(url.pathToFileURL("/a\\b", { windows: false }).href, "file:///a%5Cb");
+
+    // round-trip across platform semantics
+    assert.strictEqual(
+      url.fileURLToPath(url.pathToFileURL("C:\\a\\b", { windows: true }), { windows: true }),
+      "C:\\a\\b",
+    );
+    assert.strictEqual(url.fileURLToPath(url.pathToFileURL("/a/b", { windows: false }), { windows: false }), "/a/b");
+  });
+
   // TODO: Support throwing correct exception for non-string params.
   test.todo("non-string parameter", () => {
     for (const badPath of [

@@ -893,30 +893,6 @@ Url.prototype.parseHost = function parseHost() {
   if (host) this.hostname = host;
 };
 
-// function fileURLToPath(...args) {
-//   // Since we use WTF::URL::fileSystemPath directly in Bun.fileURLToPath, we don't get invalid windows
-//   // path checking. We patch this in to `node:url` for compatibility. Note that
-//   // this behavior is missing from WATWG URL.
-//   if (process.platform === "win32") {
-//     var url: string;
-//     if ($isObject(args[0]) && args[0] instanceof Url) {
-//       url = (args[0] as { href: string }).href;
-//     } else if (typeof args[0] === "string") {
-//       url = args[0];
-//     } else {
-//       throw $ERR_INVALID_ARG_TYPE("url", ["string", "URL"], args[0]);
-//     }
-
-//     for (var i = 0; i < url.length; i++) {
-//       if (url.charCodeAt(i) === Char.PERCENT && (i + 1) < url.length) {
-//         switch (url.charCodeAt(i + 1)) {
-//         break;
-//       }
-//     }
-//   }
-//   return Bun.fileURLToPath.$call(args);
-// }
-
 /**
  * Add new characters as needed from
  * [here](https://github.com/nodejs/node/blob/main/lib/internal/constants.js).
@@ -936,10 +912,160 @@ const enum Char {
   PERCENT = 37,              // %
   LEFT_SQUARE_BRACKET = 91,  // [
   RIGHT_SQUARE_BRACKET = 93, // ]
+  LOWERCASE_A = 97,          // a
+  LOWERCASE_Z = 122,         // z
 
   // whitespace
   NO_BREAK_SPACE = 160,             // \u00A0
   ZERO_WIDTH_NOBREAK_SPACE = 65279, // \uFEFF
+}
+
+const isWindows = process.platform === "win32";
+const FORWARD_SLASH = /\//g;
+
+function getPathFromURLWin32(url: URL): string {
+  const hostname = url.hostname;
+  let pathname = url.pathname;
+  for (let n = 0; n < pathname.length; n++) {
+    if (pathname.$charCodeAt(n) === Char.PERCENT) {
+      const third = pathname.codePointAt(n + 2)! | 0x20;
+      if (
+        (pathname[n + 1] === "2" && third === 102) || // 2f 2F /
+        (pathname[n + 1] === "5" && third === 99) // 5c 5C \
+      ) {
+        throw $ERR_INVALID_FILE_URL_PATH("File URL path must not include encoded \\ or / characters");
+      }
+    }
+  }
+  pathname = pathname.replace(FORWARD_SLASH, "\\");
+  pathname = decodeURIComponent(pathname);
+  if (hostname !== "") {
+    // UNC path: \\server\share\resource
+    return `\\\\${domainToUnicode(hostname)}${pathname}`;
+  }
+  // Otherwise, it's a local path that requires a drive letter
+  const letter = pathname.codePointAt(1)! | 0x20;
+  const sep = pathname.$charCodeAt(2);
+  if (letter < Char.LOWERCASE_A || letter > Char.LOWERCASE_Z || sep !== Char.COLON) {
+    throw $ERR_INVALID_FILE_URL_PATH("File URL path must be absolute");
+  }
+  return pathname.slice(1);
+}
+
+function getPathFromURLPosix(url: URL): string {
+  if (url.hostname !== "") {
+    throw $ERR_INVALID_FILE_URL_HOST(`File URL host must be "localhost" or empty on ${process.platform}`);
+  }
+  const pathname = url.pathname;
+  for (let n = 0; n < pathname.length; n++) {
+    if (pathname.$charCodeAt(n) === Char.PERCENT) {
+      const third = pathname.codePointAt(n + 2)! | 0x20;
+      if (pathname[n + 1] === "2" && third === 102) {
+        throw $ERR_INVALID_FILE_URL_PATH("File URL path must not include encoded / characters");
+      }
+    }
+  }
+  return decodeURIComponent(pathname);
+}
+
+function fileURLToPath(path: unknown, options?: { windows?: boolean }): string {
+  const windows = options?.windows ?? isWindows;
+  // Bun.fileURLToPath already implements the host-platform semantics; only
+  // take the platform-parameterized path when the caller overrides it.
+  if (!windows === !isWindows) {
+    return Bun.fileURLToPath(path as string | URL);
+  }
+  if (typeof path === "string") {
+    path = new URL(path);
+  } else if (!isURL(path)) {
+    throw $ERR_INVALID_ARG_TYPE("path", ["string", "URL"], path);
+  }
+  const url = path as URL;
+  if (url.protocol !== "file:") {
+    throw $ERR_INVALID_URL_SCHEME("The URL must be of scheme file");
+  }
+  return windows ? getPathFromURLWin32(url) : getPathFromURLPosix(url);
+}
+
+// RFC1738 defines the following chars as "unsafe" for URLs
+// @see https://www.ietf.org/rfc/rfc1738.txt 2.2. URL Character Encoding Issues
+// prettier-ignore
+const urlPathEncodings: Record<number, string> = {
+  __proto__: null!,
+  0x00: "%00",  // \0
+  0x09: "%09",  // \t
+  0x0a: "%0A",  // \n
+  0x0d: "%0D",  // \r
+  0x20: "%20",  // (space)
+  0x22: "%22",  // "
+  0x23: "%23",  // #
+  0x25: "%25",  // %
+  0x3f: "%3F",  // ?
+  0x5b: "%5B",  // [
+  0x5c: "%5C",  // \
+  0x5d: "%5D",  // ]
+  0x5e: "%5E",  // ^
+  0x7c: "%7C",  // |
+  0x7e: "%7E",  // ~
+};
+
+function encodePathChars(filepath: string, windows: boolean): string {
+  let out = "file://";
+  let last = 0;
+  for (let i = 0; i < filepath.length; i++) {
+    const code = filepath.$charCodeAt(i);
+    if (code > 0x7e) continue;
+    if (windows && code === Char.BACKWARD_SLASH) {
+      out += filepath.slice(last, i) + "/";
+      last = i + 1;
+      continue;
+    }
+    const replacement = urlPathEncodings[code];
+    if (replacement !== undefined) {
+      out += filepath.slice(last, i) + replacement;
+      last = i + 1;
+    }
+  }
+  if (last === 0) return out + filepath;
+  return out + filepath.slice(last);
+}
+
+function pathToFileURL(filepath: unknown, options?: { windows?: boolean }): URL {
+  const windows = options?.windows ?? isWindows;
+  // Bun.pathToFileURL already implements the host-platform semantics; only
+  // take the platform-parameterized path when the caller overrides it.
+  if (!windows === !isWindows) {
+    return Bun.pathToFileURL(filepath as string);
+  }
+  validateString(filepath, "path");
+  const path = require("node:path");
+  if (windows && (filepath as string).startsWith("\\\\")) {
+    // UNC path format: \\server\share\resource
+    // "\\?\UNC\" path prefix should be ignored.
+    // Ref: https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation
+    const isExtendedUNC = (filepath as string).startsWith("\\\\?\\UNC\\");
+    const prefixLength = isExtendedUNC ? 8 : 2;
+    const hostnameEndIndex = (filepath as string).indexOf("\\", prefixLength);
+    if (hostnameEndIndex === -1) {
+      throw $ERR_INVALID_ARG_VALUE("path", filepath, "Missing UNC resource path");
+    }
+    if (hostnameEndIndex === 2) {
+      throw $ERR_INVALID_ARG_VALUE("path", filepath, "Empty UNC servername");
+    }
+    const hostname = (filepath as string).slice(prefixLength, hostnameEndIndex);
+    const outURL = new URL(encodePathChars((filepath as string).slice(hostnameEndIndex), true));
+    outURL.hostname = hostname;
+    return outURL;
+  }
+  let resolved = windows ? path.win32.resolve(filepath) : path.posix.resolve(filepath);
+  const filePathLast = (filepath as string).$charCodeAt((filepath as string).length - 1);
+  if (
+    (filePathLast === Char.FORWARD_SLASH || (windows && filePathLast === Char.BACKWARD_SLASH)) &&
+    resolved.$charCodeAt(resolved.length - 1) !== (windows ? Char.BACKWARD_SLASH : Char.FORWARD_SLASH)
+  ) {
+    resolved += "/";
+  }
+  return new URL(encodePathChars(resolved, windows));
 }
 
 // Port of Node.js fileURLToPathBuffer
@@ -997,7 +1123,7 @@ function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Bu
   if (url.protocol !== "file:") {
     throw $ERR_INVALID_URL_SCHEME("The URL must be of scheme file");
   }
-  if (windows ?? process.platform === "win32") {
+  if (windows ?? isWindows) {
     let pathname = url.pathname.replaceAll("/", "\\");
     const decoded = percentDecodeIntoBuffer(pathname);
     const hostname = url.hostname;
@@ -1027,8 +1153,8 @@ export default {
   Url,
   URLSearchParams,
   URL,
-  pathToFileURL: Bun.pathToFileURL,
-  fileURLToPath: Bun.fileURLToPath,
+  pathToFileURL,
+  fileURLToPath,
   fileURLToPathBuffer,
   urlToHttpOptions,
   domainToASCII,

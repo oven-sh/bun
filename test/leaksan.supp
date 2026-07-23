@@ -136,4 +136,4 @@ leak:napi_internal_enqueue_finalizer
 # pushed AST-alloc state and the transpiler's owned Vecs/Boxes leak.
 # Pre-existing; reproduces on main with `Bun.build({define:{X:'{"a":'}})`.
 leak:create_and_configure_transpiler
-leak:bun_alloc::ast_alloc::acquire_state
+leak:acquire_state

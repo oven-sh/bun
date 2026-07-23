@@ -451,12 +451,13 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
         let bytei64 = off.to_int64();
         if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(-bytei64).expect("int cast"));
+            addr = addr.saturating_sub(usize::try_from(bytei64.unsigned_abs()).expect("int cast"));
         } else {
-            addr += usize::try_from(bytei64).expect("int cast");
+            addr = addr.saturating_add(usize::try_from(bytei64).expect("int cast"));
         }
 
-        if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
+        let base = array_buffer.ptr as usize;
+        if addr < base || addr > base + array_buffer.byte_len as usize {
             return global_this.to_invalid_arguments(format_args!("byteOffset out of bounds"));
         }
     }
@@ -521,7 +522,7 @@ fn get_ptr_slice(
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(-off).expect("int cast"));
+                addr = addr.saturating_sub(usize::try_from(off.unsigned_abs()).expect("int cast"));
             } else {
                 addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
             }

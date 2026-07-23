@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -1641,6 +1641,52 @@ describe("Bun.Archive", () => {
       expect(extracted.length).toBe(67584);
       // Verify the 64KB hole is zeros
       expect(extracted.slice(1024, 66560)).toEqual(new Uint8Array(65536).fill(0));
+    });
+
+    test("preserves holes for a wholly-sparse entry instead of materializing the claimed size", async () => {
+      using dir = tempDir("sparse-hole-preserve", {});
+
+      // Build a minimal old-GNU sparse tar by hand: a single 'S' entry whose
+      // claimed (real) size is 64 MiB but which stores no data blocks at all.
+      const REAL_SIZE = 64 * 1024 * 1024;
+      const header = Buffer.alloc(512);
+      const writeOctal = (offset: number, length: number, value: number) => {
+        header.write(value.toString(8).padStart(length - 1, "0") + "\0", offset);
+      };
+
+      header.write("sparse.bin", 0); // name
+      writeOctal(100, 8, 0o644); // mode
+      writeOctal(108, 8, 0); // uid
+      writeOctal(116, 8, 0); // gid
+      writeOctal(124, 12, 0); // size: no data stored in the archive
+      writeOctal(136, 12, 0); // mtime
+      header.write("        ", 148); // chksum placeholder (spaces)
+      header.write("S", 156); // typeflag: GNU sparse regular file
+      header.write("ustar  \0", 257); // old GNU magic+version
+      // Old GNU sparse extension area
+      writeOctal(386, 12, REAL_SIZE); // sparse[0].offset: single zero-length extent at EOF
+      writeOctal(398, 12, 0); // sparse[0].numbytes
+      // isextended (482) stays 0
+      writeOctal(483, 12, REAL_SIZE); // realsize
+
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += header[i];
+      header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+
+      // Header followed by two zero blocks (end-of-archive marker).
+      const tarBytes = new Uint8Array(512 * 3);
+      tarBytes.set(header, 0);
+
+      await new Bun.Archive(tarBytes).extract(String(dir));
+
+      const st = statSync(join(String(dir), "sparse.bin"));
+      if (!isWindows) {
+        // The logical size must match the entry's real size...
+        expect(st.size).toBe(REAL_SIZE);
+        // ...but the holes must stay holes: the claimed 64 MiB must not be
+        // materialized on disk.
+        expect(st.blocks * 512).toBeLessThan(1024 * 1024);
+      }
     });
   });
 

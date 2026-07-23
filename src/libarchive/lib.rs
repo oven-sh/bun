@@ -139,6 +139,7 @@ pub mod lib {
         fn archive_entry_symlink(e: *mut Entry) -> *const c_char;
         fn archive_entry_perm(e: *mut Entry) -> bun_sys::Mode;
         fn archive_entry_size(e: *mut Entry) -> la_int64_t;
+        fn archive_entry_sparse_count(e: *mut Entry) -> c_int;
         fn archive_entry_filetype(e: *mut Entry) -> bun_sys::Mode;
         fn archive_entry_mtime(e: *mut Entry) -> time_t;
         fn archive_entry_set_pathname(e: *mut Entry, name: *const c_char);
@@ -447,6 +448,10 @@ pub mod lib {
         pub fn size(&self) -> i64 {
             // SAFETY: self valid.
             unsafe { archive_entry_size(self.as_mut_ptr()) }
+        }
+        pub fn sparse_count(&self) -> i32 {
+            // SAFETY: self valid.
+            unsafe { archive_entry_sparse_count(self.as_mut_ptr()) }
         }
         pub fn filetype(&self) -> u32 {
             // SAFETY: self valid.
@@ -1853,9 +1858,10 @@ impl Archiver {
                                 }
                                 // archive_read_data_into_fd reads in chunks of 1 MB
                                 // #define    MAX_WRITE    (1024 * 1024)
+                                let is_sparse = lib::Entry::opaque_ref(entry).sparse_count() > 0;
                                 #[cfg(any(target_os = "linux", target_os = "android"))]
                                 {
-                                    if size > 1_000_000 {
+                                    if size > 1_000_000 && !is_sparse {
                                         let _ = bun_sys::preallocate_file(
                                             file_handle.native(),
                                             0,
@@ -1917,6 +1923,13 @@ impl Archiver {
                                         }
                                     }
                                     retries_remaining -= 1;
+                                }
+
+                                if is_sparse && !cfg!(windows) {
+                                    let _ = bun_sys::ftruncate(
+                                        *file_handle,
+                                        i64::try_from(size).expect("int cast"),
+                                    );
                                 }
                             }
                         }

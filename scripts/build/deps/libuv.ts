@@ -15,7 +15,7 @@ import type { Dependency } from "../source.ts";
 // fixes (oven-sh/libuv#8), high-res poll timeouts (oven-sh/libuv#9),
 // FileModeInformation error return (oven-sh/libuv#10), error translation /
 // propagation audit fixes (oven-sh/libuv#11). To bump, update `bun`.
-const LIBUV_COMMIT = "76367c02c130c44a9b6d62b5408a9bc1a7d713c8";
+const LIBUV_COMMIT = "2881ce536d420132f132d57cb94075ee92ed4506";
 
 // prettier-ignore
 const SHARED = [

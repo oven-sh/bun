@@ -508,12 +508,70 @@ impl UpgradeCommand {
         }
     };
 
+    /// Parse a pull request number from `1234`, `#1234`, or a GitHub pull
+    /// request URL like `https://github.com/oven-sh/bun/pull/1234`.
+    fn parse_pr_number(arg: &[u8]) -> Option<u64> {
+        let mut digits = arg;
+        if strings::has_prefix_comptime(digits, b"https://")
+            || strings::has_prefix_comptime(digits, b"http://")
+        {
+            // The number is looked up in oven-sh/bun, so only the canonical
+            // oven-sh/bun pull request URL is accepted; a URL naming any
+            // other location must be rejected, not reinterpreted.
+            digits = digits
+                .strip_prefix(b"https://github.com/oven-sh/bun/pull/".as_slice())
+                .or_else(|| {
+                    digits.strip_prefix(b"http://github.com/oven-sh/bun/pull/".as_slice())
+                })?;
+            if let Some(end) = digits.iter().position(|c| !c.is_ascii_digit()) {
+                digits = &digits[..end];
+            }
+        } else if let Some(rest) = digits.strip_prefix(b"#") {
+            digits = rest;
+        }
+
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        core::str::from_utf8(digits)
+            .ok()?
+            .parse::<u64>()
+            .ok()
+            .filter(|n| *n > 0)
+    }
+
     #[cold]
     pub fn exec(ctx: Command::Context) -> crate::Result<()> {
         let args = bun_core::argv();
+        let mut pr_number: Option<u64> = None;
         if args.len() > 2 {
-            for arg in args.iter().skip(2) {
-                if !strings::contains(arg, b"--") {
+            let mut positionals = args
+                .iter()
+                .skip(2)
+                .filter(|arg| !strings::has_prefix_comptime(arg, b"--"));
+            if let Some(first) = positionals.next() {
+                if first == b"pr".as_slice() {
+                    let Some(arg) = positionals.next() else {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> Expected a pull request number.\n<blue>note<r><d>:<r> Usage: <b>bun upgrade pr \\<number\\><r>"
+                        );
+                        Global::exit(1);
+                    };
+                    let Some(number) = Self::parse_pr_number(arg) else {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> Invalid pull request number: <b>{}<r>\n<blue>note<r><d>:<r> Usage: <b>bun upgrade pr \\<number\\><r>",
+                            bstr::BStr::new(arg)
+                        );
+                        Global::exit(1);
+                    };
+                    if positionals.next().is_some() {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> Unexpected extra arguments.\n<blue>note<r><d>:<r> Usage: <b>bun upgrade pr \\<number\\><r>"
+                        );
+                        Global::exit(1);
+                    }
+                    pr_number = Some(number);
+                } else {
                     bun_core::pretty_error!(
                         "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
                     );
@@ -526,7 +584,7 @@ impl UpgradeCommand {
             }
         }
 
-        if let Err(err) = Self::_exec(ctx) {
+        if let Err(err) = Self::_exec(ctx, pr_number) {
             bun_core::pretty_errorln!(
                 "<r>Bun upgrade failed with error: <red><b>{}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>{}<r>\n\n",
                 err.name(),
@@ -537,7 +595,7 @@ impl UpgradeCommand {
         Ok(())
     }
 
-    fn _exec(ctx: Command::Context) -> crate::Result<()> {
+    fn _exec(ctx: Command::Context, pr_number: Option<u64>) -> crate::Result<()> {
         HTTP::http_thread::init(&Default::default());
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
@@ -548,21 +606,32 @@ impl UpgradeCommand {
         };
         env_loader.load_process()?;
 
-        let use_canary: bool = 'brk: {
-            let default_use_canary = Environment::IS_CANARY;
+        let is_pr = pr_number.is_some();
 
-            if default_use_canary && argv_contains(b"--stable") {
-                break 'brk false;
-            }
+        let use_canary: bool = !is_pr
+            && 'brk: {
+                let default_use_canary = Environment::IS_CANARY;
 
-            break 'brk (env_loader.map.get(b"BUN_CANARY").unwrap_or(b"0") == b"1")
-                || argv_contains(b"--canary")
-                || default_use_canary;
-        };
+                if default_use_canary && argv_contains(b"--stable") {
+                    break 'brk false;
+                }
+
+                break 'brk (env_loader.map.get(b"BUN_CANARY").unwrap_or(b"0") == b"1")
+                    || argv_contains(b"--canary")
+                    || default_use_canary;
+            };
 
         let use_profile = argv_contains(b"--profile");
 
-        let mut version: Version = if !use_canary {
+        let mut pr_build_title: Option<Box<[u8]>> = None;
+        let mut pr_checksum: Option<PrArtifactChecksum> = None;
+
+        let mut version: Version = if let Some(number) = pr_number {
+            let pr_build = Self::fetch_pr_build(&mut env_loader, number, use_profile)?;
+            pr_build_title = Some(pr_build.title);
+            pr_checksum = Some(pr_build.zip_checksum);
+            pr_build.version
+        } else if !use_canary {
             // `Progress::start` returns `&mut Node` borrowing `refresher`;
             // leak the Progress and use raw pointers so we can pass both
             // `&mut refresher` and `&mut progress` to `get_latest_version`.
@@ -639,85 +708,130 @@ impl UpgradeCommand {
             }
         };
 
+        // Try a delta upgrade first: download binary patches between
+        // consecutive stable releases instead of the full archive. Any
+        // failure falls back to the regular zip download below.
+        let delta_binary: Option<Vec<u8>> =
+            if !use_canary && !is_pr && !use_profile && !argv_contains(b"--no-delta") {
+                match version.name() {
+                    Some(target) => Self::try_delta_upgrade(&mut env_loader, &target, version.size),
+                    None => None,
+                }
+            } else {
+                None
+            };
+
         let zip_url_bytes = core::mem::take(&mut version.zip_url);
         let zip_url = URL::parse(&zip_url_bytes);
         let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let refresher: *mut Progress::Progress =
-                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
-            // SAFETY: refresher is a fresh leaked allocation.
-            let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Downloading", version.size as usize) };
-            // SAFETY: see above.
-            unsafe { (*progress).unit = Progress::Unit::Bytes };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
-            // Store in the process-lifetime CLI arena.
-            let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
-                .alloc(MutableString::init(version.size.max(1024) as usize)?);
+            let bytes: &[u8] = if delta_binary.is_some() {
+                // The new binary was reconstructed from delta patches; no
+                // archive download is needed.
+                b""
+            } else {
+                let refresher: *mut Progress::Progress =
+                    bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
+                // SAFETY: refresher is a fresh leaked allocation.
+                let progress: *mut Progress::Node =
+                    unsafe { (*refresher).start(b"Downloading", version.size as usize) };
+                // SAFETY: see above.
+                unsafe { (*progress).unit = Progress::Unit::Bytes };
+                // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
+                unsafe { (*refresher).refresh() };
+                // Store in the process-lifetime CLI arena.
+                let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
+                    .alloc(MutableString::init(version.size.max(1024) as usize)?);
 
-            let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
-                zip_url,
-                headers::EntryList::default(),
-                b"",
-                std::ptr::from_mut::<MutableString>(zip_file_buffer),
-                b"",
-                http_proxy,
-                None,
-                HTTP::FetchRedirect::Follow,
-            ));
-            // `progress` is intentionally leaked (process-lifetime), so the
-            // untracked NonNull stored in `progress_node` can never dangle.
-            async_http.client.progress_node =
-                Some(NonNull::new(progress).expect("leaked Box is non-null"));
-            async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+                let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+                    HTTP::Method::GET,
+                    zip_url,
+                    headers::EntryList::default(),
+                    b"",
+                    std::ptr::from_mut::<MutableString>(zip_file_buffer),
+                    b"",
+                    http_proxy,
+                    None,
+                    HTTP::FetchRedirect::Follow,
+                ));
+                // `progress` is intentionally leaked (process-lifetime), so the
+                // untracked NonNull stored in `progress_node` can never dangle.
+                async_http.client.progress_node =
+                    Some(NonNull::new(progress).expect("leaked Box is non-null"));
+                async_http.client.flags.reject_unauthorized =
+                    env_loader.get_tls_reject_unauthorized();
 
-            let response = async_http.send_sync()?;
+                let response = async_http.send_sync()?;
 
-            match response.status_code {
-                404 => {
-                    if use_canary {
+                match response.status_code {
+                    404 => {
+                        if use_canary {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error:<r> Canary builds are not available for this platform yet\n\n   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>\n  Filename: <b>{}<r>\n",
+                                Version::ZIP_FILENAME
+                            );
+                            Global::exit(1);
+                        }
+
+                        return Err(crate::Error::HTTP404);
+                    }
+                    403 => return Err(crate::Error::HTTPForbidden),
+                    429 => return Err(crate::Error::HTTPTooManyRequests),
+                    // PR artifacts download from Buildkite, not GitHub.
+                    499..=599 if is_pr => return Err(crate::Error::HTTPServerError),
+                    499..=599 => return Err(crate::Error::GitHubIsDown),
+                    200 => {}
+                    _ => return Err(crate::Error::HTTPError),
+                }
+
+                let bytes = zip_file_buffer.slice();
+
+                // SAFETY: refresher/progress are leaked allocations.
+                unsafe { (*progress).end() };
+                // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
+                unsafe { (*refresher).refresh() };
+
+                if bytes.is_empty() {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> Failed to download the latest version of Bun. Received empty content"
+                    );
+                    Global::exit(1);
+                }
+
+                if let Some(checksum) = &pr_checksum {
+                    let (expected, actual) = match checksum {
+                        PrArtifactChecksum::Sha256(expected) => {
+                            (&**expected, Self::sha256_hex(bytes))
+                        }
+                        PrArtifactChecksum::Sha1(expected) => (&**expected, Self::sha1_hex(bytes)),
+                    };
+                    if actual.as_bytes() != expected {
                         bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Canary builds are not available for this platform yet\n\n   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>\n  Filename: <b>{}<r>\n",
-                            Version::ZIP_FILENAME
+                            "<r><red>error:<r> The downloaded artifact failed checksum verification.\n  Expected: <b>{}<r>\n    Actual: <b>{}<r>",
+                            bstr::BStr::new(expected),
+                            actual
                         );
                         Global::exit(1);
                     }
-
-                    return Err(crate::Error::HTTP404);
                 }
-                403 => return Err(crate::Error::HTTPForbidden),
-                429 => return Err(crate::Error::HTTPTooManyRequests),
-                499..=599 => return Err(crate::Error::GitHubIsDown),
-                200 => {}
-                _ => return Err(crate::Error::HTTPError),
-            }
 
-            let bytes = zip_file_buffer.slice();
+                // The digest describes the release archive, so it only applies
+                // to a downloaded one. Delta upgrades verify every patch and
+                // the reconstructed binary against their own checksums.
+                if version.digest.tag.is_supported() && !version.digest.verify(bytes) {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> The file downloaded from {} did not match the checksum reported by the GitHub API for this release.\n<r>note: run <b>bun upgrade<r> again to retry the download",
+                        bstr::BStr::new(&zip_url_bytes)
+                    );
+                    Global::exit(1);
+                }
 
-            // SAFETY: refresher/progress are leaked allocations.
-            unsafe { (*progress).end() };
-            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
-            unsafe { (*refresher).refresh() };
-
-            if bytes.is_empty() {
-                bun_core::pretty_errorln!(
-                    "<r><red>error:<r> Failed to download the latest version of Bun. Received empty content"
-                );
-                Global::exit(1);
-            }
-
-            if version.digest.tag.is_supported() && !version.digest.verify(bytes) {
-                bun_core::pretty_errorln!(
-                    "<r><red>error:<r> The file downloaded from {} did not match the checksum reported by the GitHub API for this release.\n<r>note: run <b>bun upgrade<r> again to retry the download",
-                    bstr::BStr::new(&zip_url_bytes)
-                );
-                Global::exit(1);
-            }
+                bytes
+            };
 
             let version_name = version.name().unwrap();
+            let mut pr_revision: Option<Box<[u8]>> = None;
 
             if version_name.is_empty()
                 || version_name.as_slice() == b"."
@@ -789,113 +903,152 @@ impl UpgradeCommand {
                 Self::EXE_SUBPATH.as_bytes()
             };
 
-            let zip_file = match save_dir.open_file(
-                tmpname.as_bytes(),
-                sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                0o644,
-            ) {
-                Ok(f) => f,
-                Err(err) => {
+            if let Some(patched) = delta_binary.as_deref() {
+                // The patched executable was reconstructed in memory; write it
+                // into the staging directory at the same path the archive
+                // would have been extracted to.
+                // SAFETY: literal ends with NUL.
+                let folder_z: &ZStr = ZStr::from_static(
+                    const_format::concatcp!(Version::FOLDER_NAME, "\0").as_bytes(),
+                );
+                if let Err(err) = sys::mkdirat(&save_dir, folder_z, 0o755) {
                     bun_core::pretty_errorln!(
-                        "<r><red>error:<r> Failed to open temp file {}",
+                        "<r><red>error:<r> Failed to create staging directory {}",
                         bstr::BStr::new(err.name())
                     );
                     Global::exit(1);
                 }
-            };
 
-            {
-                if let Err(err) = zip_file.write_all(bytes) {
-                    let _ = sys::unlinkat(&save_dir, tmpname);
+                let exe_file = match save_dir.open_file(
+                    exe,
+                    sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                    0o755,
+                ) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error:<r> Failed to open temp file {}",
+                            bstr::BStr::new(err.name())
+                        );
+                        Global::exit(1);
+                    }
+                };
+                if let Err(err) = exe_file.write_all(patched) {
                     bun_core::pretty_errorln!(
                         "<r><red>error:<r> Failed to write to temp file {}",
                         bstr::BStr::new(err.name())
                     );
                     Global::exit(1);
                 }
-                let _ = zip_file.close();
-            }
-
-            {
-                scopeguard::defer! {
-                    let _ = sys::unlinkat(&save_dir, tmpname);
-                }
-
-                #[cfg(unix)]
-                {
-                    let mut unzip_path_buf = PathBuffer::uninit();
-                    let Some(unzip_exe) = which(
-                        &mut unzip_path_buf,
-                        env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
-                        b"unzip",
-                    ) else {
-                        let _ = sys::unlinkat(&save_dir, tmpname);
+                let _ = exe_file.close();
+            } else {
+                let zip_file = match save_dir.open_file(
+                    tmpname.as_bytes(),
+                    sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                    0o644,
+                ) {
+                    Ok(f) => f,
+                    Err(err) => {
                         bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
+                            "<r><red>error:<r> Failed to open temp file {}",
+                            bstr::BStr::new(err.name())
                         );
                         Global::exit(1);
-                    };
+                    }
+                };
 
-                    // We could just embed libz2
-                    // however, we want to be sure that xattrs are preserved
-                    // xattrs are used for codesigning
-                    // it'd be easy to mess that up
-                    let unzip_argv: [&[u8]; 4] =
-                        [unzip_exe.as_bytes(), b"-q", b"-o", tmpname.as_bytes()];
+                {
+                    if let Err(err) = zip_file.write_all(bytes) {
+                        let _ = sys::unlinkat(&save_dir, tmpname);
+                        bun_core::pretty_errorln!(
+                            "<r><red>error:<r> Failed to write to temp file {}",
+                            bstr::BStr::new(err.name())
+                        );
+                        Global::exit(1);
+                    }
+                    let _ = zip_file.close();
+                }
 
-                    let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&unzip_argv),
-                        envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
-                        stdin: spawn_sync::SyncStdio::Inherit,
-                        stdout: spawn_sync::SyncStdio::Inherit,
-                        stderr: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    }) {
-                        Ok(Ok(r)) => r,
-                        Ok(Err(err)) => {
+                {
+                    scopeguard::defer! {
+                        let _ = sys::unlinkat(&save_dir, tmpname);
+                    }
+
+                    #[cfg(unix)]
+                    {
+                        let mut unzip_path_buf = PathBuffer::uninit();
+                        let Some(unzip_exe) = which(
+                            &mut unzip_path_buf,
+                            env_loader.map.get(b"PATH").unwrap_or(b""),
+                            filesystem.top_level_dir,
+                            b"unzip",
+                        ) else {
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
-                                bstr::BStr::new(err.name())
+                                "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
                             );
                             Global::exit(1);
-                        }
-                        Err(err) => {
-                            let _ = sys::unlinkat(&save_dir, tmpname);
-                            bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
-                                err.name()
-                            );
-                            Global::exit(1);
-                        }
-                    };
+                        };
 
-                    match unzip_result.status {
-                        Status::Exited(e) if e.code == 0 => {}
-                        Status::Exited(e) => {
-                            bun_core::pretty_errorln!(
-                                "<r><red>Unzip failed<r> (exit code: {})",
-                                e.code
-                            );
-                            let _ = sys::unlinkat(&save_dir, tmpname);
-                            Global::exit(1);
-                        }
-                        other => {
-                            bun_core::pretty_errorln!("<r><red>Unzip failed<r> ({})", other);
-                            let _ = sys::unlinkat(&save_dir, tmpname);
-                            Global::exit(1);
+                        // We could just embed libz2
+                        // however, we want to be sure that xattrs are preserved
+                        // xattrs are used for codesigning
+                        // it'd be easy to mess that up
+                        let unzip_argv: [&[u8]; 4] =
+                            [unzip_exe.as_bytes(), b"-q", b"-o", tmpname.as_bytes()];
+
+                        let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
+                            argv: build_argv(&unzip_argv),
+                            envp: None,
+                            cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                            stdin: spawn_sync::SyncStdio::Inherit,
+                            stdout: spawn_sync::SyncStdio::Inherit,
+                            stderr: spawn_sync::SyncStdio::Inherit,
+                            #[cfg(windows)]
+                            windows: spawn_windows_options(),
+                            ..Default::default()
+                        }) {
+                            Ok(Ok(r)) => r,
+                            Ok(Err(err)) => {
+                                let _ = sys::unlinkat(&save_dir, tmpname);
+                                bun_core::pretty_errorln!(
+                                    "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                    bstr::BStr::new(err.name())
+                                );
+                                Global::exit(1);
+                            }
+                            Err(err) => {
+                                let _ = sys::unlinkat(&save_dir, tmpname);
+                                bun_core::pretty_errorln!(
+                                    "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                    err.name()
+                                );
+                                Global::exit(1);
+                            }
+                        };
+
+                        match unzip_result.status {
+                            Status::Exited(e) if e.code == 0 => {}
+                            Status::Exited(e) => {
+                                bun_core::pretty_errorln!(
+                                    "<r><red>Unzip failed<r> (exit code: {})",
+                                    e.code
+                                );
+                                let _ = sys::unlinkat(&save_dir, tmpname);
+                                Global::exit(1);
+                            }
+                            other => {
+                                bun_core::pretty_errorln!("<r><red>Unzip failed<r> ({})", other);
+                                let _ = sys::unlinkat(&save_dir, tmpname);
+                                Global::exit(1);
+                            }
                         }
                     }
-                }
-                #[cfg(windows)]
-                {
-                    // Run a powershell script to unzip the file
-                    let mut unzip_script = Vec::new();
-                    write!(
+                    #[cfg(windows)]
+                    {
+                        // Run a powershell script to unzip the file
+                        let mut unzip_script = Vec::new();
+                        write!(
                         &mut unzip_script,
                         "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
                         bun_fmt::escape_powershell(bstr::BStr::new(tmpname.as_bytes())),
@@ -903,23 +1056,24 @@ impl UpgradeCommand {
                     )
                     .expect("oom");
 
-                    let mut buf = PathBuffer::uninit();
-                    // Separate fallback buffer — borrowck holds `buf` for the lifetime
-                    // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
-                    let mut buf2 = PathBuffer::uninit();
-                    let powershell_path: &ZStr = match which(
-                        &mut buf,
-                        bun_core::env_var::PATH.get().unwrap_or(b""),
-                        b"",
-                        b"powershell",
-                    ) {
-                        Some(p) => p,
-                        None => {
-                            let system_root = bun_core::env_var::SYSTEMROOT
-                                .get()
-                                .unwrap_or(b"C:\\Windows");
-                            let hardcoded_system_powershell =
-                                bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
+                        let mut buf = PathBuffer::uninit();
+                        // Separate fallback buffer — borrowck holds `buf` for the lifetime
+                        // of `which`'s returned `Option<&ZStr>` even across the `None` arm.
+                        let mut buf2 = PathBuffer::uninit();
+                        let powershell_path: &ZStr = match which(
+                            &mut buf,
+                            bun_core::env_var::PATH.get().unwrap_or(b""),
+                            b"",
+                            b"powershell",
+                        ) {
+                            Some(p) => p,
+                            None => {
+                                let system_root = bun_core::env_var::SYSTEMROOT
+                                    .get()
+                                    .unwrap_or(b"C:\\Windows");
+                                let hardcoded_system_powershell = bun_paths::join_abs_string_buf_z::<
+                                    bun_paths::platform::Windows,
+                                >(
                                     system_root,
                                     &mut buf2[..],
                                     &[
@@ -927,62 +1081,63 @@ impl UpgradeCommand {
                                         b"System32\\WindowsPowerShell\\v1.0\\powershell.exe",
                                     ],
                                 );
-                            if !sys::exists(hardcoded_system_powershell.as_bytes()) {
+                                if !sys::exists(hardcoded_system_powershell.as_bytes()) {
+                                    bun_core::pretty_errorln!(
+                                        "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
+                                        bstr::BStr::new(tmpname.as_bytes())
+                                    );
+                                    Global::exit(1);
+                                }
+                                hardcoded_system_powershell
+                            }
+                        };
+
+                        let unzip_argv: [&[u8]; 6] = [
+                            powershell_path.as_bytes(),
+                            b"-NoProfile",
+                            b"-ExecutionPolicy",
+                            b"Bypass",
+                            b"-Command",
+                            &unzip_script,
+                        ];
+
+                        let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
+                            argv: build_argv(&unzip_argv),
+                            envp: None,
+                            cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                            stderr: spawn_sync::SyncStdio::Inherit,
+                            stdout: spawn_sync::SyncStdio::Inherit,
+                            stdin: spawn_sync::SyncStdio::Inherit,
+                            #[cfg(windows)]
+                            windows: spawn_windows_options(),
+                            ..Default::default()
+                        });
+                        let spawn_res = match spawn_res {
+                            Ok(r) => r,
+                            Err(err) => {
                                 bun_core::pretty_errorln!(
-                                    "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
-                                    bstr::BStr::new(tmpname.as_bytes())
+                                    "<r><red>error:<r> Failed to spawn Expand-Archive on {} due to error {}",
+                                    bstr::BStr::new(tmpname.as_bytes()),
+                                    err.name()
                                 );
                                 Global::exit(1);
                             }
-                            hardcoded_system_powershell
-                        }
-                    };
-
-                    let unzip_argv: [&[u8]; 6] = [
-                        powershell_path.as_bytes(),
-                        b"-NoProfile",
-                        b"-ExecutionPolicy",
-                        b"Bypass",
-                        b"-Command",
-                        &unzip_script,
-                    ];
-
-                    let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&unzip_argv),
-                        envp: None,
-                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
-                        stderr: spawn_sync::SyncStdio::Inherit,
-                        stdout: spawn_sync::SyncStdio::Inherit,
-                        stdin: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
-                        ..Default::default()
-                    });
-                    let spawn_res = match spawn_res {
-                        Ok(r) => r,
-                        Err(err) => {
+                        };
+                        if let Err(err) = spawn_res {
                             bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn Expand-Archive on {} due to error {}",
+                                "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
                                 bstr::BStr::new(tmpname.as_bytes()),
-                                err.name()
+                                bstr::BStr::new(err.name())
                             );
                             Global::exit(1);
                         }
-                    };
-                    if let Err(err) = spawn_res {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
-                            bstr::BStr::new(tmpname.as_bytes()),
-                            bstr::BStr::new(err.name())
-                        );
-                        Global::exit(1);
                     }
                 }
             }
             {
                 let verify_argv: [&[u8]; 2] = [
                     exe,
-                    if use_canary {
+                    if use_canary || is_pr {
                         b"--revision"
                     } else {
                         b"--version"
@@ -1063,6 +1218,13 @@ impl UpgradeCommand {
                     if let Some(i) = strings::index_of_char(version_string, b'+') {
                         version.tag = version_string[(i as usize + 1)..].into();
                     }
+                } else if is_pr {
+                    // PR builds report an arbitrary in-development version;
+                    // a successful exit is all the verification we can do.
+                    pr_revision = Some(Box::<[u8]>::from(bun_core::trim(
+                        result.stdout.as_slice(),
+                        b" \n\r\t",
+                    )));
                 } else {
                     let mut version_string = result.stdout.as_slice();
                     if let Some(i) = strings::index_of_char(version_string, b' ') {
@@ -1342,7 +1504,15 @@ impl UpgradeCommand {
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());
 
-            if use_canary {
+            if let Some(number) = pr_number {
+                bun_core::pretty_errorln!(
+                    "<r> Upgraded.\n\n<b><green>Installed a build of Bun from pull request #{}<r>\n\n     Title: <b>{}<r>\n  Revision: <b>{}<r>\n       PR: <cyan>https://github.com/oven-sh/bun/pull/{}<r>\n\nTo switch back to the latest stable release:\n\n  <b><cyan>bun upgrade<r>\n",
+                    number,
+                    bstr::BStr::new(pr_build_title.as_deref().unwrap_or(b"")),
+                    bstr::BStr::new(pr_revision.as_deref().unwrap_or(b"unknown")),
+                    number
+                );
+            } else if use_canary {
                 bun_core::pretty_errorln!(
                     "<r> Upgraded.\n\n<b><green>Welcome to Bun's latest canary build!<r>\n\nReport any bugs:\n\n    https://github.com/oven-sh/bun/issues\n\nChangelog:\n\n    https://github.com/oven-sh/bun/compare/{}...{}\n",
                     Environment::GIT_SHA_SHORT,
@@ -1382,6 +1552,831 @@ impl UpgradeCommand {
 
         Ok(())
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // HTTP helpers
+
+    /// Build the `Accept` (+ optional `Authorization`) headers for GitHub
+    /// API requests, honoring `GITHUB_TOKEN` / `GITHUB_ACCESS_TOKEN`.
+    fn github_api_headers(env_loader: &DotEnv::Loader) -> (headers::EntryList, &'static [u8]) {
+        let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
+
+        let mut header_entries: headers::EntryList = headers::EntryList::default();
+        let accept = headers::Entry {
+            name: HTTP::ETag::StringPointer {
+                offset: 0,
+                length: u32::try_from(b"Accept".len()).expect("int cast"),
+            },
+            value: HTTP::ETag::StringPointer {
+                offset: u32::try_from(b"Accept".len()).expect("int cast"),
+                length: u32::try_from(b"application/vnd.github.v3+json".len()).expect("int cast"),
+            },
+        };
+        header_entries.append(accept).expect("oom");
+
+        if let Some(access_token) = env_loader
+            .map
+            .get(b"GITHUB_TOKEN")
+            .or_else(|| env_loader.map.get(b"GITHUB_ACCESS_TOKEN"))
+        {
+            if !access_token.is_empty() {
+                let offset = u32::try_from(headers_buf.len()).expect("int cast");
+                write!(
+                    &mut headers_buf,
+                    "AuthorizationBearer {}",
+                    bstr::BStr::new(access_token),
+                )
+                .expect("oom");
+                header_entries
+                    .append(headers::Entry {
+                        name: HTTP::ETag::StringPointer {
+                            offset,
+                            length: u32::try_from(b"Authorization".len()).expect("int cast"),
+                        },
+                        value: HTTP::ETag::StringPointer {
+                            offset: offset
+                                + u32::try_from(b"Authorization".len()).expect("int cast"),
+                            length: u32::try_from(b"Bearer ".len() + access_token.len())
+                                .expect("int cast"),
+                        },
+                    })
+                    .expect("oom");
+            }
+        }
+
+        (header_entries, crate::cli::cli_dupe(&headers_buf))
+    }
+
+    /// Synchronously GET `url_bytes`, following redirects. Returns the
+    /// response body when the server answers 200.
+    fn http_get_sync(
+        env_loader: &mut DotEnv::Loader,
+        url_bytes: &[u8],
+        github_auth: bool,
+    ) -> crate::Result<&'static [u8]> {
+        // `AsyncHTTP::init_sync` wants `URL<'static>` / `&'static [u8]`; back
+        // the buffers in the process-lifetime CLI arena.
+        let url_buf: &'static [u8] = crate::cli::cli_dupe(url_bytes);
+        let url = URL::parse(url_buf);
+
+        let (header_entries, headers_buf) = if github_auth {
+            Self::github_api_headers(env_loader)
+        } else {
+            (headers::EntryList::default(), &b""[..])
+        };
+
+        let http_proxy = env_loader.get_http_proxy_for(&url);
+
+        let response_body: &'static mut MutableString =
+            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+
+        // ensure very stable memory address
+        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+            HTTP::Method::GET,
+            url,
+            header_entries,
+            headers_buf,
+            std::ptr::from_mut::<MutableString>(response_body),
+            b"",
+            http_proxy,
+            None,
+            HTTP::FetchRedirect::Follow,
+        ));
+        async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+
+        let response = async_http.send_sync()?;
+
+        match response.status_code {
+            200 => Ok(response_body.list.as_slice()),
+            404 => Err(crate::Error::HTTP404),
+            403 => Err(crate::Error::HTTPForbidden),
+            429 => Err(crate::Error::HTTPTooManyRequests),
+            // This helper also talks to non-GitHub hosts (Buildkite), so
+            // only blame GitHub when the request actually went there.
+            499..=599 if github_auth => Err(crate::Error::GitHubIsDown),
+            499..=599 => Err(crate::Error::HTTPServerError),
+            _ => Err(crate::Error::HTTPError),
+        }
+    }
+
+    fn parse_json_response(bytes: &'static [u8]) -> Option<bun_ast::Expr> {
+        let mut log = bun_ast::Log::init();
+        let source = bun_ast::Source::init_path_string(b"response.json", bytes);
+        bun_ast::initialize_store();
+        let bump: &'static Bump = crate::cli::cli_arena();
+        let expr = JSON::parse_utf8(&source, &mut log, bump).ok()?;
+        if log.errors > 0 {
+            return None;
+        }
+        Some(expr)
+    }
+
+    /// Owned copy of the string literal at `expr[name]`, if present.
+    fn json_string_property(expr: &bun_ast::Expr, name: &[u8]) -> Option<Vec<u8>> {
+        let query = expr.as_property(name)?;
+        Some(query.expr.as_utf8_string_literal()?.to_vec())
+    }
+
+    /// `scheme://host[:port]` prefix of `url`, without any path/query/fragment.
+    fn url_origin(url: &[u8]) -> &[u8] {
+        let scheme_end = match strings::index_of(url, b"://") {
+            Some(i) => i as usize + b"://".len(),
+            None => 0,
+        };
+        let mut end = url.len();
+        for (i, c) in url[scheme_end..].iter().enumerate() {
+            if *c == b'/' || *c == b'?' || *c == b'#' {
+                end = scheme_end + i;
+                break;
+            }
+        }
+        &url[..end]
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use bun_sha_hmac::sha;
+        let mut digest = [0u8; sha::SHA256::DIGEST];
+        let mut hasher = sha::SHA256::init();
+        hasher.update(bytes);
+        hasher.r#final(&mut digest);
+        bun_fmt::bytes_to_hex_lower_string(&digest)
+    }
+
+    fn sha1_hex(bytes: &[u8]) -> String {
+        use bun_sha_hmac::sha;
+        let mut digest = [0u8; sha::SHA1::DIGEST];
+        let mut hasher = sha::SHA1::init();
+        hasher.update(bytes);
+        hasher.r#final(&mut digest);
+        bun_fmt::bytes_to_hex_lower_string(&digest)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Delta upgrades
+
+    const RELEASES_DOWNLOAD_BASE: &'static str = "https://github.com/oven-sh/bun/releases/download";
+
+    /// Where `buildkite/bun` commit statuses are expected to point; builds
+    /// anywhere else are not Bun's CI.
+    const BUILDKITE_BUILDS_PREFIX: &'static str = "https://buildkite.com/bun/bun/builds/";
+
+    /// zstd frame magic number — delta patches are zstd-compressed bsdiff
+    /// streams. Raw bsdiff patches are accepted as well.
+    const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
+    /// Upper bound on the decompressed size of a delta patch, to reject
+    /// pathological inputs (the raw bsdiff stream can exceed the size of the
+    /// new binary, so this is intentionally generous).
+    const MAX_PATCH_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
+    /// The release version this build was cut from, without the `-debug`
+    /// suffix that debug builds append to `Bun.version`.
+    fn current_release_version() -> &'static [u8] {
+        let version = Global::package_json_version.as_bytes();
+        version.strip_suffix(b"-debug").unwrap_or(version)
+    }
+
+    /// Base URL that release assets (delta patches and checksums) are
+    /// downloaded from. Overridable so tests can serve fixtures.
+    fn releases_download_base(env_loader: &DotEnv::Loader) -> Vec<u8> {
+        let base: &[u8] = match env_loader.map.get(b"BUN_UPGRADE_TESTING_RELEASE_URL") {
+            Some(url) if !url.is_empty() => url,
+            _ => Self::RELEASES_DOWNLOAD_BASE.as_bytes(),
+        };
+        base.strip_suffix(b"/").unwrap_or(base).to_vec()
+    }
+
+    fn parse_version_component(digits: &[u8]) -> Option<u64> {
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        core::str::from_utf8(digits).ok()?.parse::<u64>().ok()
+    }
+
+    /// Parse a plain `major.minor.patch` version. Pre-release or build
+    /// metadata (canary, debug, …) disqualifies a version from delta
+    /// upgrades, so anything else returns `None`.
+    fn parse_stable_version(bytes: &[u8]) -> Option<(u64, u64, u64)> {
+        let mut parts = bytes.split(|c| *c == b'.');
+        let major = Self::parse_version_component(parts.next()?)?;
+        let minor = Self::parse_version_component(parts.next()?)?;
+        let patch = Self::parse_version_component(parts.next()?)?;
+        if parts.next().is_some() {
+            return None;
+        }
+        Some((major, minor, patch))
+    }
+
+    /// Build the chain of consecutive `(from, to)` versions between
+    /// `current` and `target`. Each release publishes a delta patch from its
+    /// immediate predecessor, so multi-step upgrades chain patches:
+    /// 1.2.10 -> 1.2.12 applies the 1.2.10->1.2.11 patch, then the
+    /// 1.2.11->1.2.12 patch.
+    ///
+    /// Supports same-minor patch chains and a single minor-version jump
+    /// (e.g. 1.2.13 -> 1.3.0 -> 1.3.1); capped at 3 steps. Returns an empty
+    /// chain when the versions aren't eligible for delta upgrade.
+    fn build_delta_chain(current: &[u8], target: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let Some((current_major, current_minor, current_patch)) =
+            Self::parse_stable_version(current)
+        else {
+            return Vec::new();
+        };
+        let Some((target_major, target_minor, target_patch)) = Self::parse_stable_version(target)
+        else {
+            return Vec::new();
+        };
+        if current_major != target_major {
+            return Vec::new();
+        }
+
+        fn format_version(major: u64, minor: u64, patch: u64) -> Vec<u8> {
+            let mut out = Vec::new();
+            write!(&mut out, "{}.{}.{}", major, minor, patch).expect("oom");
+            out
+        }
+
+        let mut chain = Vec::new();
+
+        if current_minor == target_minor {
+            // Same minor: chain through consecutive patch versions.
+            let diff = target_patch.saturating_sub(current_patch);
+            if diff == 0 || diff > 3 {
+                return Vec::new();
+            }
+            for i in 0..diff {
+                chain.push((
+                    format_version(current_major, current_minor, current_patch + i),
+                    format_version(current_major, current_minor, current_patch + i + 1),
+                ));
+            }
+        } else if target_minor == current_minor + 1 {
+            // Cross-minor: the first step jumps to target_minor.0, the rest
+            // chain through its patch versions.
+            chain.push((
+                current.to_vec(),
+                format_version(target_major, target_minor, 0),
+            ));
+            for i in 0..target_patch {
+                chain.push((
+                    format_version(target_major, target_minor, i),
+                    format_version(target_major, target_minor, i + 1),
+                ));
+            }
+            if chain.len() > 3 {
+                return Vec::new();
+            }
+        }
+
+        chain
+    }
+
+    /// Parse the `<hex sha256>  <filename>` format of `.sha256sum` release
+    /// assets (a bare hash is accepted too).
+    fn parse_sha256sum(body: &[u8]) -> Option<Vec<u8>> {
+        let hash = body
+            .split(|c: &u8| c.is_ascii_whitespace())
+            .find(|token| !token.is_empty())?;
+        if hash.len() != 64 || !hash.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        Some(hash.to_ascii_lowercase())
+    }
+
+    /// Apply a delta patch (zstd-compressed bsdiff stream) to `old`,
+    /// producing the new binary.
+    pub(crate) fn apply_delta_patch(
+        old: &[u8],
+        patch_data: &[u8],
+    ) -> Result<Vec<u8>, &'static str> {
+        let decompressed;
+        let raw_patch: &[u8] = if patch_data.starts_with(&Self::ZSTD_MAGIC) {
+            if bun_zstd::get_decompressed_size(patch_data) > Self::MAX_PATCH_SIZE {
+                return Err("patch is too large");
+            }
+            decompressed =
+                bun_zstd::decompress_alloc(patch_data).map_err(|_| "failed to decompress patch")?;
+            if decompressed.len() > Self::MAX_PATCH_SIZE {
+                return Err("patch is too large");
+            }
+            &decompressed
+        } else {
+            patch_data
+        };
+
+        let mut new = Vec::new();
+        let mut reader = raw_patch;
+        bsdiff::patch(old, &mut reader, &mut new).map_err(|_| "patch did not apply")?;
+        if new.is_empty() {
+            return Err("patch produced an empty file");
+        }
+        Ok(new)
+    }
+
+    /// Create a delta patch that transforms `old` into `new` — the inverse
+    /// of [`Self::apply_delta_patch`]. Used by the release tooling (via
+    /// `bun:internal-for-testing`) to publish patch assets.
+    pub(crate) fn create_delta_patch(old: &[u8], new: &[u8]) -> Result<Vec<u8>, &'static str> {
+        let mut raw = Vec::new();
+        bsdiff::diff(old, new, &mut raw).map_err(|_| "failed to compute binary diff")?;
+
+        let mut compressed = vec![0u8; bun_zstd::compress_bound(raw.len())];
+        match bun_zstd::compress(&mut compressed, &raw, Some(19)) {
+            bun_zstd::Result::Success(size) => {
+                compressed.truncate(size);
+                Ok(compressed)
+            }
+            _ => Err("failed to compress binary diff"),
+        }
+    }
+
+    /// Fetch `<url>.sha256sum` and return the expected hash, if valid.
+    fn fetch_sha256(env_loader: &mut DotEnv::Loader, url: &[u8]) -> Option<Vec<u8>> {
+        let mut checksum_url = url.to_vec();
+        checksum_url.extend_from_slice(b".sha256sum");
+        Self::parse_sha256sum(Self::http_get_sync(env_loader, &checksum_url, false).ok()?)
+    }
+
+    /// Attempt to reconstruct the target release's binary by downloading and
+    /// applying bsdiff patches between consecutive releases, instead of
+    /// downloading the whole archive.
+    ///
+    /// Tries the direct `target.from-current` patch first (each release
+    /// publishes a patch from its immediate predecessor, which covers the
+    /// common "one release behind" case even when version numbers were
+    /// skipped), then falls back to chaining per-version patches. Returns
+    /// `None` on any failure so the caller downloads the full archive.
+    fn try_delta_upgrade(
+        env_loader: &mut DotEnv::Loader,
+        target_version: &[u8],
+        full_download_size: u32,
+    ) -> Option<Vec<u8>> {
+        let current_version = Self::current_release_version();
+
+        let chain = Self::build_delta_chain(current_version, target_version);
+        if chain.is_empty() {
+            return None;
+        }
+
+        let base = Self::releases_download_base(env_loader);
+
+        // Verify the on-disk binary matches its release checksum before
+        // patching anything; modified binaries can't be patched. Releases
+        // that predate delta support have no checksum asset, so failures
+        // here are silent.
+        let expected_current = {
+            let mut url = Vec::new();
+            write!(
+                &mut url,
+                "{}/bun-v{}/{}",
+                bstr::BStr::new(&base),
+                bstr::BStr::new(current_version),
+                Version::FOLDER_NAME,
+            )
+            .expect("oom");
+            Self::fetch_sha256(env_loader, &url)?
+        };
+
+        let current_exe = bun_core::self_exe_path().ok()?;
+        let mut original: Vec<u8> = sys::File::open(current_exe, sys::O::RDONLY, 0)
+            .and_then(|file| file.read_to_end())
+            .ok()?;
+        if Self::sha256_hex(&original).as_bytes() != expected_current {
+            return None;
+        }
+
+        let mut candidates: Vec<Vec<(Vec<u8>, Vec<u8>)>> =
+            vec![vec![(current_version.to_vec(), target_version.to_vec())]];
+        if chain.len() > 1 {
+            candidates.push(chain);
+        }
+
+        bun_core::pretty_errorln!("<r><d>Attempting delta upgrade<r>");
+        Output::flush();
+
+        let candidate_count = candidates.len();
+        'candidates: for (candidate, chain) in candidates.iter().enumerate() {
+            // The last candidate can take the buffer instead of copying it.
+            let mut binary = if candidate + 1 == candidate_count {
+                core::mem::take(&mut original)
+            } else {
+                original.clone()
+            };
+            let mut downloaded: usize = 0;
+            let total_steps = chain.len();
+
+            for (step, (from, to)) in chain.iter().enumerate() {
+                let mut patch_url = Vec::new();
+                write!(
+                    &mut patch_url,
+                    "{}/bun-v{}/{}.from-{}.bsdiff",
+                    bstr::BStr::new(&base),
+                    bstr::BStr::new(to),
+                    Version::FOLDER_NAME,
+                    bstr::BStr::new(from),
+                )
+                .expect("oom");
+
+                bun_core::pretty_errorln!(
+                    "<r><d>Downloading patch {}/{} (v{} -> v{})<r>",
+                    step + 1,
+                    total_steps,
+                    bstr::BStr::new(from),
+                    bstr::BStr::new(to),
+                );
+                Output::flush();
+
+                let Ok(patch) = Self::http_get_sync(env_loader, &patch_url, false) else {
+                    continue 'candidates;
+                };
+                downloaded += patch.len();
+
+                let Some(expected_patch) = Self::fetch_sha256(env_loader, &patch_url) else {
+                    continue 'candidates;
+                };
+                if Self::sha256_hex(patch).as_bytes() != expected_patch {
+                    continue 'candidates;
+                }
+
+                binary = match Self::apply_delta_patch(&binary, patch) {
+                    Ok(patched) => patched,
+                    Err(_) => continue 'candidates,
+                };
+
+                let expected_binary = {
+                    let mut url = Vec::new();
+                    write!(
+                        &mut url,
+                        "{}/bun-v{}/{}",
+                        bstr::BStr::new(&base),
+                        bstr::BStr::new(to),
+                        Version::FOLDER_NAME,
+                    )
+                    .expect("oom");
+                    let Some(expected) = Self::fetch_sha256(env_loader, &url) else {
+                        continue 'candidates;
+                    };
+                    expected
+                };
+                if Self::sha256_hex(&binary).as_bytes() != expected_binary {
+                    continue 'candidates;
+                }
+            }
+
+            if full_download_size > 0 {
+                bun_core::pretty_errorln!(
+                    "<r><green>Delta upgrade verified<r> <d>— downloaded {} instead of {}<r>",
+                    bun_fmt::bytes(downloaded),
+                    bun_fmt::bytes(full_download_size as usize),
+                );
+            } else {
+                bun_core::pretty_errorln!(
+                    "<r><green>Delta upgrade verified<r> <d>— downloaded {}<r>",
+                    bun_fmt::bytes(downloaded),
+                );
+            }
+            Output::flush();
+
+            return Some(binary);
+        }
+
+        bun_core::pretty_errorln!(
+            "<r><d>Delta upgrade unavailable, downloading the full release<r>"
+        );
+        Output::flush();
+        None
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Installing builds from pull requests
+
+    /// Locate the Buildkite build for a pull request's latest commit and
+    /// resolve the download URL of this platform's build artifact.
+    ///
+    /// PR builds are uploaded as public Buildkite artifacts, so — unlike
+    /// GitHub Actions artifacts — no authentication is needed. The build is
+    /// discovered through the `buildkite/bun` commit status, and artifacts
+    /// are listed via Buildkite's browser-facing JSON endpoints.
+    fn fetch_pr_build(
+        env_loader: &mut DotEnv::Loader,
+        pr_number: u64,
+        use_profile: bool,
+    ) -> crate::Result<PrBuild> {
+        // Incase they're using a GitHub proxy in e.g. China
+        let api_domain: Vec<u8> = match env_loader.map.get(b"GITHUB_API_DOMAIN") {
+            Some(domain) if !domain.is_empty() => domain.to_vec(),
+            _ => b"api.github.com".to_vec(),
+        };
+
+        bun_core::pretty_errorln!(
+            "<r><d>Looking up pull request <b>#{}<r><d>...<r>",
+            pr_number
+        );
+        Output::flush();
+
+        let pull_body = {
+            let mut url = Vec::new();
+            write!(
+                &mut url,
+                "https://{}/repos/oven-sh/bun/pulls/{}",
+                bstr::BStr::new(&api_domain),
+                pr_number,
+            )
+            .expect("oom");
+            match Self::http_get_sync(env_loader, &url, true) {
+                Ok(body) => body,
+                Err(crate::Error::HTTP404) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> Pull request <b>#{}<r> was not found in oven-sh/bun",
+                        pr_number
+                    );
+                    Global::exit(1);
+                }
+                Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> Failed to look up pull request #{} (code: {})",
+                        pr_number,
+                        err.name()
+                    );
+                    Global::exit(1);
+                }
+            }
+        };
+        let Some(pull) = Self::parse_json_response(pull_body) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error:<r> Failed to parse the GitHub API response for PR #{}",
+                pr_number
+            );
+            Global::exit(1);
+        };
+
+        let title: Box<[u8]> = Self::json_string_property(&pull, b"title")
+            .unwrap_or_default()
+            .into();
+        let state: Vec<u8> =
+            Self::json_string_property(&pull, b"state").unwrap_or_else(|| b"unknown".to_vec());
+        let Some(head_sha) = pull
+            .as_property(b"head")
+            .and_then(|p| Self::json_string_property(&p.expr, b"sha"))
+        else {
+            bun_core::pretty_errorln!(
+                "<r><red>error:<r> The GitHub API response for PR #{} is missing the head commit",
+                pr_number
+            );
+            Global::exit(1);
+        };
+
+        bun_core::pretty_errorln!(
+            "<r>PR <b>#{}<r><d>:<r> {} <d>({})<r>",
+            pr_number,
+            bstr::BStr::new(&title),
+            bstr::BStr::new(&state),
+        );
+        Output::flush();
+
+        // Find the Buildkite build for the latest commit through its commit
+        // status.
+        let statuses_body = {
+            let mut url = Vec::new();
+            write!(
+                &mut url,
+                "https://{}/repos/oven-sh/bun/commits/{}/statuses?per_page=100",
+                bstr::BStr::new(&api_domain),
+                bstr::BStr::new(&head_sha),
+            )
+            .expect("oom");
+            match Self::http_get_sync(env_loader, &url, true) {
+                Ok(body) => body,
+                Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> Failed to fetch the CI statuses for PR #{} (code: {})",
+                        pr_number,
+                        err.name()
+                    );
+                    Global::exit(1);
+                }
+            }
+        };
+
+        // Only follow links into Bun's own Buildkite pipeline: a status whose
+        // target points anywhere else is not the CI build (fail closed).
+        let allowed_build_prefix: Vec<u8> =
+            match env_loader.map.get(b"BUN_UPGRADE_TESTING_BUILDKITE_URL") {
+                Some(url) if !url.is_empty() => url.to_vec(),
+                _ => Self::BUILDKITE_BUILDS_PREFIX.as_bytes().to_vec(),
+            };
+
+        let mut build_url: Option<Vec<u8>> = None;
+        if let Some(statuses) = Self::parse_json_response(statuses_body) {
+            if let Some(statuses) = statuses.data.e_array() {
+                // Statuses are listed newest-first; take the most recent
+                // Buildkite build.
+                for status in statuses.items.slice() {
+                    let Some(context) = Self::json_string_property(status, b"context") else {
+                        continue;
+                    };
+                    if context != b"buildkite/bun" {
+                        continue;
+                    }
+                    if let Some(target_url) = Self::json_string_property(status, b"target_url") {
+                        if strings::starts_with(&target_url, &allowed_build_prefix) {
+                            build_url = Some(target_url);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let Some(build_url_owned) = build_url else {
+            bun_core::pretty_errorln!(
+                "<r><red>error:<r> No CI build was found for the latest commit of PR <b>#{}<r>.\n\nCI may not have started yet:\n\n  <cyan>https://github.com/oven-sh/bun/pull/{}<r>\n",
+                pr_number,
+                pr_number
+            );
+            Global::exit(1);
+        };
+        let mut build_url: &[u8] = &build_url_owned;
+        if let Some(i) = build_url.iter().position(|c| *c == b'#' || *c == b'?') {
+            build_url = &build_url[..i];
+        }
+        let build_url = build_url.strip_suffix(b"/").unwrap_or(build_url);
+        let origin: Vec<u8> = Self::url_origin(build_url).to_vec();
+
+        bun_core::pretty_errorln!("<r><d>Finding build artifacts...<r>");
+        Output::flush();
+
+        let build_body = {
+            let mut url = build_url.to_vec();
+            url.extend_from_slice(b".json");
+            match Self::http_get_sync(env_loader, &url, false) {
+                Ok(body) => body,
+                Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> Failed to fetch the CI build for PR #{} (code: {})",
+                        pr_number,
+                        err.name()
+                    );
+                    Global::exit(1);
+                }
+            }
+        };
+        let Some(build) = Self::parse_json_response(build_body) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error:<r> Failed to parse the CI build info for PR #{}",
+                pr_number
+            );
+            Global::exit(1);
+        };
+
+        let jobs_prop = build.as_property(b"jobs");
+        let jobs_array = jobs_prop.and_then(|p| p.expr.data.e_array());
+        let mut jobs: &[bun_ast::Expr] = match &jobs_array {
+            Some(array) => array.items.slice(),
+            None => &[],
+        };
+
+        // Buildkite's frontend stopped inlining jobs in the build response;
+        // fall back to the paginated jobs endpoint.
+        let fallback_jobs_array;
+        if jobs.is_empty() {
+            let mut url = build_url.to_vec();
+            url.extend_from_slice(b"/data/jobs");
+            fallback_jobs_array = Self::http_get_sync(env_loader, &url, false)
+                .ok()
+                .and_then(Self::parse_json_response)
+                .and_then(|expr| expr.as_property(b"records"))
+                .and_then(|p| p.expr.data.e_array());
+            if let Some(array) = &fallback_jobs_array {
+                jobs = array.items.slice();
+            }
+        }
+
+        let artifact_name: &[u8] = if use_profile {
+            Version::PROFILE_ZIP_FILENAME.as_bytes()
+        } else {
+            Version::ZIP_FILENAME.as_bytes()
+        };
+
+        for job in jobs {
+            let Some(step_key) = Self::json_string_property(job, b"step_key") else {
+                continue;
+            };
+            if !strings::contains(&step_key, b"build-bun") {
+                continue;
+            }
+            let Some(base_path) = Self::json_string_property(job, b"base_path") else {
+                continue;
+            };
+            if base_path.is_empty() {
+                continue;
+            }
+
+            let mut artifacts_url = origin.clone();
+            artifacts_url.extend_from_slice(&base_path);
+            artifacts_url.extend_from_slice(b"/artifacts");
+            let Ok(artifacts_body) = Self::http_get_sync(env_loader, &artifacts_url, false) else {
+                continue;
+            };
+            let Some(artifacts) = Self::parse_json_response(artifacts_body) else {
+                continue;
+            };
+            let Some(artifacts) = artifacts.data.e_array() else {
+                continue;
+            };
+
+            for artifact in artifacts.items.slice() {
+                let Some(file_name) = Self::json_string_property(artifact, b"file_name") else {
+                    continue;
+                };
+                if file_name != artifact_name {
+                    continue;
+                }
+                let Some(artifact_url) = Self::json_string_property(artifact, b"url") else {
+                    continue;
+                };
+                if artifact_url.is_empty() {
+                    continue;
+                }
+
+                let zip_url: Vec<u8> = if strings::has_prefix_comptime(&artifact_url, b"http") {
+                    // An absolute artifact URL must stay on the build's own
+                    // origin; anything else doesn't belong to this CI build.
+                    // Compare origins exactly (a prefix check would accept
+                    // lookalike hosts such as `https://example.com.evil`).
+                    if Self::url_origin(&artifact_url) != origin.as_slice() {
+                        continue;
+                    }
+                    artifact_url
+                } else {
+                    // Always followed by `return`, so `origin` can be taken.
+                    let mut absolute = origin;
+                    absolute.extend_from_slice(&artifact_url);
+                    absolute
+                };
+
+                // Buildkite records checksums for every artifact; refuse to
+                // install one that can't be verified after download.
+                let zip_checksum = Self::json_string_property(artifact, b"sha256sum")
+                    .filter(|hash| hash.len() == 64 && hash.iter().all(u8::is_ascii_hexdigit))
+                    .map(|hash| PrArtifactChecksum::Sha256(hash.to_ascii_lowercase().into()))
+                    .or_else(|| {
+                        Self::json_string_property(artifact, b"sha1sum")
+                            .filter(|hash| {
+                                hash.len() == 40 && hash.iter().all(u8::is_ascii_hexdigit)
+                            })
+                            .map(|hash| PrArtifactChecksum::Sha1(hash.to_ascii_lowercase().into()))
+                    });
+                let Some(zip_checksum) = zip_checksum else {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> The <b>{}<r> artifact for PR <b>#{}<r> has no usable checksum; refusing to install it.",
+                        bstr::BStr::new(&file_name),
+                        pr_number,
+                    );
+                    Global::exit(1);
+                };
+
+                let mut tag = Vec::new();
+                write!(&mut tag, "pr-{}", pr_number).expect("oom");
+
+                return Ok(PrBuild {
+                    version: Version {
+                        tag: tag.into(),
+                        zip_url: zip_url.into(),
+                        size: 0,
+                        buf: MutableString::init_empty(),
+                        // CI artifacts are verified against the checksum
+                        // Buildkite records for them, not a release digest.
+                        digest: Integrity::default(),
+                    },
+                    title,
+                    zip_checksum,
+                });
+            }
+        }
+
+        bun_core::pretty_errorln!(
+            "<r><red>error:<r> Could not find a <b>{}<r> build artifact for PR <b>#{}<r>.\n\nThe build may still be running, or this platform isn't built in PR CI:\n\n  <cyan>{}<r>\n",
+            bstr::BStr::new(artifact_name),
+            pr_number,
+            bstr::BStr::new(build_url),
+        );
+        Global::exit(1);
+    }
+}
+
+/// A pull request's build artifact, resolved by [`UpgradeCommand::fetch_pr_build`].
+struct PrBuild {
+    version: Version,
+    title: Box<[u8]>,
+    /// Buildkite's recorded checksum of the artifact.
+    zip_checksum: PrArtifactChecksum,
+}
+
+/// Buildkite's recorded checksum of a build artifact, as a lowercase hex
+/// string. Newer responses carry sha256; older ones only sha1.
+enum PrArtifactChecksum {
+    Sha256(Box<[u8]>),
+    Sha1(Box<[u8]>),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1397,7 +2392,7 @@ pub mod upgrade_js_bindings {
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 2);
+        let obj = JSValue::create_empty_object(global, 4);
         obj.put(
             global,
             b"openTempDirWithoutSharingDelete",
@@ -1422,7 +2417,82 @@ pub mod upgrade_js_bindings {
                 Default::default(),
             ),
         );
+        obj.put(
+            global,
+            b"createDeltaPatch",
+            jsc::JSFunction::create(
+                global,
+                b"createDeltaPatch",
+                __jsc_host_js_create_delta_patch,
+                2,
+                Default::default(),
+            ),
+        );
+        obj.put(
+            global,
+            b"applyDeltaPatch",
+            jsc::JSFunction::create(
+                global,
+                b"applyDeltaPatch",
+                __jsc_host_js_apply_delta_patch,
+                2,
+                Default::default(),
+            ),
+        );
         obj
+    }
+
+    fn delta_patch_arguments(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<(crate::node::StringOrBuffer, crate::node::StringOrBuffer)> {
+        let arguments = frame.arguments();
+        let (Some(first), Some(second)) = (arguments.first(), arguments.get(1)) else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected two buffer arguments"))
+            );
+        };
+        let (Some(first), Some(second)) = (
+            crate::node::StringOrBuffer::from_js(global, *first)?,
+            crate::node::StringOrBuffer::from_js(global, *second)?,
+        ) else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected two buffer arguments"))
+            );
+        };
+        Ok((first, second))
+    }
+
+    /// Create a delta patch transforming `old` into `new` — the format that
+    /// `bun upgrade` downloads from release assets. Used by the release
+    /// tooling to publish patches, and by tests.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_create_delta_patch(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let (old, new) = delta_patch_arguments(global, frame)?;
+        match UpgradeCommand::create_delta_patch(old.slice(), new.slice()) {
+            Ok(patch) => Ok(JSValue::create_buffer(global, patch.leak())),
+            Err(message) => Err(global
+                .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("{}", message))
+                .throw()),
+        }
+    }
+
+    /// Apply a delta patch created by `createDeltaPatch`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_apply_delta_patch(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let (old, patch) = delta_patch_arguments(global, frame)?;
+        match UpgradeCommand::apply_delta_patch(old.slice(), patch.slice()) {
+            Ok(new) => Ok(JSValue::create_buffer(global, new.leak())),
+            Err(message) => Err(global
+                .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("{}", message))
+                .throw()),
+        }
     }
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.

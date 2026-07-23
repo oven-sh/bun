@@ -3594,17 +3594,58 @@
     "upgrade": {
       "name": "upgrade",
       "description": "Upgrade Bun",
-      "flags": [],
+      "flags": [
+        {
+          "name": "canary",
+          "description": "Install the most recent canary build",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "stable",
+          "description": "Switch back to the latest stable release",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "profile",
+          "description": "Install a build with debug symbols",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-delta",
+          "description": "Always download the full release instead of delta patches",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
       "positionalArgs": [
         {
           "name": "flags",
           "required": false,
           "multiple": false,
           "type": "string"
+        },
+        {
+          "name": "subcommand",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "pullRequest",
+          "required": false,
+          "multiple": false,
+          "type": "string"
         }
       ],
-      "examples": ["bun upgrade", "bun upgrade --stable"],
-      "usage": "Usage: bun upgrade [flags]",
+      "examples": ["bun upgrade", "bun upgrade --stable", "bun upgrade pr 12345"],
+      "usage": "Usage: bun upgrade [flags] [pr <number>]",
       "documentationUrl": "https://bun.com/docs/installation#upgrading",
       "dynamicCompletions": {}
     }

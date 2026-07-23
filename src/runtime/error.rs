@@ -276,6 +276,8 @@ pub enum Error {
     lcovCoverageError,
     #[error("HTTP404")]
     HTTP404,
+    #[error("HTTPServerError")]
+    HTTPServerError,
     #[error("GitHubIsDown")]
     GitHubIsDown,
     #[error("UpgradeFailedMissingExecutable")]
@@ -727,6 +729,7 @@ impl Error {
             Self::JUnitReportFailed => "JUnitReportFailed",
             Self::lcovCoverageError => "lcovCoverageError",
             Self::HTTP404 => "HTTP404",
+            Self::HTTPServerError => "HTTPServerError",
             Self::GitHubIsDown => "GitHubIsDown",
             Self::UpgradeFailedMissingExecutable => "UpgradeFailedMissingExecutable",
             Self::UpgradeFailedBecauseOfMissingExecutableDir => {

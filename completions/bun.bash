@@ -153,7 +153,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
             return;;
         upgrade)
-            COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
+            COMPREPLY=( $(compgen -W "--version --cwd --help -v -h --canary --stable --profile --no-delta pr" -- "${cur_word}") );
             return;;
         repl)
             COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );

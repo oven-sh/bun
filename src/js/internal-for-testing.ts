@@ -112,6 +112,10 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
 export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bindings.generate") as {
   openTempDirWithoutSharingDelete: () => void;
   closeTempDirHandle: () => void;
+  /** Create a `bun upgrade` delta patch that transforms `oldData` into `newData`. */
+  createDeltaPatch: (oldData: Uint8Array, newData: Uint8Array) => Buffer;
+  /** Apply a delta patch created by `createDeltaPatch`. */
+  applyDeltaPatch: (oldData: Uint8Array, patch: Uint8Array) => Buffer;
 };
 
 export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_bindings.generate") as {

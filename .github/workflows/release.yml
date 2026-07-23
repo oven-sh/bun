@@ -79,6 +79,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+  deltas:
+    name: Publish Delta Patches
+    runs-on: ubuntu-latest
+    needs: sign
+    # Delta patches only exist between stable releases; the daily canary
+    # refresh (schedule) has nothing to diff. The script itself skips
+    # non-stable tags, so a canary workflow_dispatch is a no-op.
+    if: ${{ github.repository_owner == 'oven-sh' && github.event_name != 'schedule' }}
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: packages/bun-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # The upload step passes GITHUB_TOKEN explicitly; don't leave the
+          # checkout token in the local git config.
+          persist-credentials: false
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.2.3"
+      - name: Install Dependencies
+        run: bun install
+      - name: Publish Delta Patches
+        run: |
+          bun upload-deltas -- "${{ env.BUN_VERSION }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest

@@ -344,6 +344,8 @@ strum = { version = "0.26", features = ["derive"] }
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
 allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }
+# Binary-diff patches for `bun upgrade` delta updates (pure Rust, no deps).
+bsdiff = "0.2.1"
 scopeguard = "1"
 const_format = "0.2"
 enum-map = "2"

@@ -99,6 +99,24 @@ describe.skipIf(!isPosix)("process.env <-> libc environ on the main thread", () 
     expect(out).toEqual({ child: "via-js" });
   });
 
+  // Object.freeze/seal pass attribute-only descriptors for every key; those
+  // must not reach unsetenv and wipe the OS environment.
+  test.concurrent("Object.freeze(process.env) does not touch environ", async () => {
+    const out = await run(
+      { ENVSYNC_FREEZE: "kept" },
+      `
+      Object.freeze(process.env);
+      Object.defineProperty(process.env, "ENVSYNC_FREEZE", { writable: false });
+      console.log(JSON.stringify({
+        native: cget("ENVSYNC_FREEZE"),
+        js:     process.env.ENVSYNC_FREEZE ?? null,
+        path:   cget("PATH") !== null,
+      }));
+    `,
+    );
+    expect(out).toEqual({ native: "kept", js: "kept", path: true });
+  });
+
   test.concurrent("'in' operator matches native presence", async () => {
     const out = await run(
       { ENVSYNC_IN: "x" },

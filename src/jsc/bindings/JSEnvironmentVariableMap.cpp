@@ -626,7 +626,10 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         // an enumerable data property first: a partial descriptor then keeps that
         // enumerability, exactly as it does on the regular process.env. (Node rejects
         // accessors on process.env outright — on both maps — so match bun's own map.)
-        if (!propertyName.isSymbol() && uid) {
+        // Only do this for a genuine accessor: Object.freeze/seal pass attribute-only
+        // descriptors ({writable:false, configurable:false}) for every key and must
+        // not wipe the store — for a main-rooted tree that would unsetenv every var.
+        if (!propertyName.isSymbol() && uid && descriptor.isAccessorDescriptor()) {
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
                 if (!existing.isNull()) {
@@ -825,27 +828,36 @@ bool JSRealEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
-    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
-        // Node rejects accessors and partial descriptors via ERR_INVALID_OBJECT_DEFINE_PROPERTY;
-        // matching that here is a separate behavior change with its own tests.
-        // For now fall through to the base so existing code that defineProperty'd
-        // on process.env keeps working, after moving any `environ` entry onto
-        // the base as an enumerable data property first: getOwnPropertySlot
-        // reads getenv() before the base, so it would shadow the accessor, and
-        // a partial descriptor on a fresh base slot would lose enumerability.
-        if (!propertyName.isSymbol() && uid) {
-            String keyStr = String(uid);
-            BunString name = Bun::toString(keyStr);
-            BunString existing = { BunStringTag::Dead };
-            if (Bun__Process__getOSEnv(globalObject, &name, &existing))
-                object->putDirect(vm, propertyName, jsString(vm, existing.transferToWTFString()), 0);
-            Bun__Process__unsetOSEnv(globalObject, &name);
-        }
+    // Node rejects accessors and partial descriptors on process.env via
+    // ERR_INVALID_OBJECT_DEFINE_PROPERTY; matching that is a separate behavior
+    // change with its own tests. Until then:
+    if (propertyName.isSymbol() || !uid) {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    PutPropertySlot slot(object, shouldThrow);
-    RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
+    if (descriptor.value()) {
+        PutPropertySlot slot(object, shouldThrow);
+        RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
+    }
+
+    if (descriptor.isAccessorDescriptor()) {
+        // A user getter/setter would be shadowed by getOwnPropertySlot's
+        // getenv() read, so move the environ entry onto the base (enumerable
+        // data property, so a partial descriptor keeps enumerability) and
+        // unsetenv the key.
+        String keyStr = String(uid);
+        BunString name = Bun::toString(keyStr);
+        BunString existing = { BunStringTag::Dead };
+        if (Bun__Process__getOSEnv(globalObject, &name, &existing))
+            object->putDirect(vm, propertyName, jsString(vm, existing.transferToWTFString()), 0);
+        Bun__Process__unsetOSEnv(globalObject, &name);
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+    // Attribute-only descriptor (Object.freeze/seal's {writable:false,
+    // configurable:false}). The live environ view has no meaningful
+    // writable/configurable state to change; accept without touching environ.
+    return true;
 }
 
 bool JSRealEnvMap::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)

@@ -451,13 +451,7 @@ fn exit_early_if_self_exe_truncated_cold() {
     let mut filled: usize = 0;
     while filled < buf.len() {
         // SAFETY: `fd` is open for reading; `buf[filled..]` is a valid writable buffer.
-        let n = unsafe {
-            libc::read(
-                fd,
-                buf.as_mut_ptr().add(filled).cast(),
-                buf.len() - filled,
-            )
-        };
+        let n = unsafe { libc::read(fd, buf.as_mut_ptr().add(filled).cast(), buf.len() - filled) };
         if n <= 0 {
             break;
         }

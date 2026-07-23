@@ -314,7 +314,10 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       entrypoints: [tmpFile],
       define,
       target: "bun",
-      minify: { syntax: true, whitespace: false, keepNames: true },
+      // keepNames is intentionally off: it now emits __name() calls whose
+      // runtime helper lives outside the $$capture_start$$/$$capture_end$$
+      // window and so is undefined inside the captured function body.
+      minify: { syntax: true, whitespace: false },
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {

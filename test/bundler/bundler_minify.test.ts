@@ -160,6 +160,7 @@ describe("bundler", () => {
         let lazy; lazy ??= () => {};
         let lazy2; lazy2 ||= () => {};
         let lazy3 = 1; lazy3 &&= () => {};
+        function withDefault(cb = () => {}) { return cb.name; }
         const NamedClassExpr = class Foo {};
         const AnonClassExpr = class {};
         class Base {}
@@ -176,6 +177,7 @@ describe("bundler", () => {
           lazy.name,
           lazy2.name,
           lazy3.name,
+          withDefault(),
           NamedClassExpr.name,
           AnonClassExpr.name,
           Base.name,
@@ -196,6 +198,7 @@ describe("bundler", () => {
         "lazy",
         "lazy2",
         "lazy3",
+        "cb",
         "Foo",
         "AnonClassExpr",
         "Base",

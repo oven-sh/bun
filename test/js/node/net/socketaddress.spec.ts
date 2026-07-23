@@ -135,12 +135,12 @@ describe("SocketAddress constructor", () => {
 
   it("does not leak the address string on validation-error paths", async () => {
     // Each case populates the address BunString (+1 WTFStringImpl ref) then
-    // throws from a later validator. With a 64KB address and 1000 iterations,
+    // throws from a later validator. With a 128KB address and 500 iterations,
     // a leaked ref pins ~64MB per case; the threshold is well below that and
     // well above ASAN/GC noise.
     const code = /* js */ `
       const net = require("node:net");
-      const big = Buffer.alloc(64 * 1024, "a").toString();
+      const big = Buffer.alloc(128 * 1024, "a").toString();
       const cases = {
         // Options::from_js: later option validators throw after address_str is set
         bad_family:      i => new net.SocketAddress({ address: big + (i & 0xff), family: "bad!" }),
@@ -153,13 +153,13 @@ describe("SocketAddress constructor", () => {
         blocklist_bad_family: i => new net.BlockList().addAddress(big + (i & 0xff), "bad!"),
       };
       for (const fn of Object.values(cases))
-        for (let i = 0; i < 300; i++) try { fn(i); } catch {}
+        for (let i = 0; i < 150; i++) try { fn(i); } catch {}
       Bun.gc(true); Bun.gc(true);
       const out = {};
       for (const [name, fn] of Object.entries(cases)) {
         Bun.gc(true);
         const before = process.memoryUsage.rss();
-        for (let i = 0; i < 1000; i++) try { fn(i); } catch {}
+        for (let i = 0; i < 500; i++) try { fn(i); } catch {}
         Bun.gc(true); Bun.gc(true); Bun.gc(true);
         out[name] = (process.memoryUsage.rss() - before) / 1024 / 1024;
       }

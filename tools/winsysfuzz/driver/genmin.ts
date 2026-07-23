@@ -18,7 +18,7 @@ const flag = (n: string, d?: string) => {
 const bun = flag("--bun")!;
 const inFile = flag("--in")!;
 const outFile = flag("--out")!;
-const timeoutMs = 1000 * +(flag("--timeout", "15") as string);
+const timeoutMs = 1000 * +(flag("--timeout", "6") as string);
 const cls = (flag("--class", "any") as string).toLowerCase();
 if (!bun || !inFile || !outFile) {
   console.error("usage: genmin.ts --bun <bun.exe> --in <program.js> --out <tiny.js> [--timeout 15] [--class ...]");
@@ -54,16 +54,26 @@ if (!(await crashes(cur))) {
   process.exit(1);
 }
 console.log(`genmin: start ${cur.length} line(s)`);
-let changed = true;
-while (changed) {
-  changed = false;
-  for (let i = 0; i < cur.length; ) {
-    const trial = cur.filter((_, j) => j !== i);
+// Delta debugging (ddmin): remove chunks of decreasing granularity - big
+// blocks first, single lines last. Converges in far fewer candidate runs
+// than a pure single-line sweep on an 80+ line program.
+let n = 2;
+while (cur.length >= 2) {
+  const chunk = Math.ceil(cur.length / n);
+  let reduced = false;
+  for (let start = 0; start < cur.length; start += chunk) {
+    const trial = [...cur.slice(0, start), ...cur.slice(start + chunk)];
     if (trial.length && (await crashes(trial))) {
       cur = trial;
-      changed = true;
-      console.log(`  dropped -> ${cur.length} line(s)`);
-    } else i++;
+      n = Math.max(2, n - 1);
+      reduced = true;
+      console.log(`  dropped block -> ${cur.length} line(s) (granularity ${n})`);
+      break;
+    }
+  }
+  if (!reduced) {
+    if (n >= cur.length) break; // finest granularity reached, no removal works
+    n = Math.min(cur.length, n * 2);
   }
 }
 await Bun.write(outFile, cur.join("\n") + "\n");

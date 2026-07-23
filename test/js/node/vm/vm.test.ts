@@ -8,6 +8,8 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1234,5 +1236,312 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("node:vm SourceTextModule graph evaluation order", () => {
+  // A module graph is evaluated in depth-first post-order, dependencies first
+  // (https://tc39.es/ecma262/#sec-innermoduleevaluation). Evaluating each
+  // dependency before its importer used to make the innermost dependency the
+  // root of the DFS, which rotates the evaluation order of any cycle it sits
+  // on and puts legal cyclic bindings in the TDZ when their importer runs.
+  async function linkGraph(modules: Record<string, SourceTextModule | SyntheticModule>, rootIdentifier = "A") {
+    const root = modules[rootIdentifier] as SourceTextModule;
+    await root.link(specifier => modules[specifier]);
+    return root;
+  }
+
+  test("a two-module cycle runs the dependency's body before the importer's", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import { v } from "B"; order.push("A"); export const a = v + 1;`, {
+        identifier: "A",
+        context,
+      }),
+      B: new SourceTextModule(`import "A"; order.push("B"); export const v = 1;`, { identifier: "B", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["B", "A"]);
+    expect(modules.A.namespace.a).toBe(2);
+    expect([modules.A.status, modules.B.status]).toEqual(["evaluated", "evaluated"]);
+  });
+
+  test("a three-module cycle runs bodies in depth-first post-order", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import "B"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "C"; order.push("B");`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "A"; order.push("C");`, { identifier: "C", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["C", "B", "A"]);
+  });
+
+  test("an acyclic diamond runs each body once, dependencies first", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "C"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "D"; order.push("B");`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "D"; order.push("C");`, { identifier: "C", context }),
+      D: new SourceTextModule(`order.push("D");`, { identifier: "D", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["D", "B", "C", "A"]);
+  });
+
+  // JSC's SyntheticModuleRecord evaluates to undefined and offers no hook for a
+  // user callback, so a SyntheticModule's evaluation steps cannot run at their
+  // DFS position the way V8 runs them. Bun runs every synthetic callback before
+  // record->evaluate() runs any body, so node orders this ["B","S","A7"] while
+  // bun orders it ["S","B","A7"]. Only the relative order of a synthetic's side
+  // effects differs; its exports are always set before any importer reads them.
+  test("a synthetic dependency of a cyclic graph runs its evaluation steps first", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S: SyntheticModule = new SyntheticModule(
+      ["x"],
+      () => {
+        context.order.push("S");
+        S.setExport("x", 7);
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; import { x } from "S"; order.push("A" + x);`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "A"; order.push("B");`, { identifier: "B", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["S", "B", "A7"]);
+  });
+
+  test("a synthetic dependency that throws errors every module importing it", async () => {
+    const context = createContext({});
+    const S = new SyntheticModule(
+      [],
+      () => {
+        throw new Error("synthetic boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; export const a = 1;`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "S"; export const b = 2;`, { identifier: "B", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("synthetic boom");
+
+    // B transitively imports S, so it must not be left evaluable on top of a
+    // dependency that never produced its exports.
+    expect([modules.A.status, modules.B.status, S.status]).toEqual(["errored", "errored", "errored"]);
+    expect(modules.B.error.message).toBe("synthetic boom");
+    await expect(modules.B.evaluate()).rejects.toThrow("synthetic boom");
+  });
+
+  test("a cycle member popped before a throwing synthetic is still errored", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S = new SyntheticModule(
+      ["x"],
+      () => {
+        throw new Error("cycle boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "C"; import { x } from "S"; order.push("B" + x);`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "B"; order.push("C");`, { identifier: "C", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("cycle boom");
+
+    // C sits in a cycle with B and so transitively imports S, even though the
+    // post-order walk pops C before it ever reaches S.
+    expect([modules.A.status, modules.B.status, modules.C.status, S.status]).toEqual([
+      "errored",
+      "errored",
+      "errored",
+      "errored",
+    ]);
+    await expect(modules.C.evaluate()).rejects.toThrow("cycle boom");
+    expect(context.order).toEqual([]);
+  });
+
+  test("a sibling that does not import a throwing synthetic stays evaluable", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S = new SyntheticModule(
+      [],
+      () => {
+        throw new Error("sibling boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "S"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`order.push("B"); export const b = 5;`, { identifier: "B", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("sibling boom");
+
+    // B has no dependency on S, so erroring it would be wrong. Its body has not
+    // run yet either (synthetic steps run before any body), so it reads "linked"
+    // where node reads "evaluated" -- it evaluates on demand instead.
+    expect(modules.A.status).toBe("errored");
+    expect(modules.B.status).toBe("linked");
+    await modules.B.evaluate();
+    expect(modules.B.namespace.b).toBe(5);
+    expect(context.order).toEqual(["B"]);
+  });
+
+  test("an initializeImportMeta that throws errors the module and its importers", async () => {
+    const context = createContext({});
+    const modules = {
+      A: new SourceTextModule(`import "B"; export const a = 1;`, { identifier: "A", context }),
+      B: new SourceTextModule(`import.meta.x; export const b = 2;`, {
+        identifier: "B",
+        context,
+        initializeImportMeta() {
+          throw new Error("meta boom");
+        },
+      }),
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("meta boom");
+
+    expect([modules.A.status, modules.B.status]).toEqual(["errored", "errored"]);
+    await expect(modules.B.evaluate()).rejects.toThrow("meta boom");
+  });
+
+  test("a module the failure never reached cannot evaluate through an errored dependency", async () => {
+    const context = createContext({ order: [] as string[] });
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "C"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "D"; order.push("B");`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "D"; order.push("C");`, { identifier: "C", context }),
+      D: new SourceTextModule(`import.meta.x; order.push("D");`, {
+        identifier: "D",
+        context,
+        initializeImportMeta() {
+          throw new Error("never reached");
+        },
+      }),
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("never reached");
+
+    // C was never walked (the failure cut A's request list short), so like node
+    // it stays linked. Evaluating it must still fail on D rather than run D's
+    // body: the error lives on D's record, not just its wrapper.
+    expect([modules.A.status, modules.B.status, modules.D.status]).toEqual(["errored", "errored", "errored"]);
+    expect(modules.C.status).toBe("linked");
+    await expect(modules.C.evaluate()).rejects.toThrow("never reached");
+    expect(context.order).toEqual([]);
+  });
+
+  test("an unreached module cannot evaluate through an errored intermediate", async () => {
+    const context = createContext({ order: [] as string[] });
+    const S = new SyntheticModule(
+      ["x"],
+      () => {
+        throw new Error("via boom");
+      },
+      { identifier: "S", context },
+    );
+    const modules = {
+      A: new SourceTextModule(`import "B"; import "C"; order.push("A");`, { identifier: "A", context }),
+      B: new SourceTextModule(`import { x } from "S"; order.push("B" + x);`, { identifier: "B", context }),
+      C: new SourceTextModule(`import "B"; order.push("C");`, { identifier: "C", context }),
+      S,
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("via boom");
+
+    expect(modules.B.status).toBe("errored");
+    await expect(modules.C.evaluate()).rejects.toThrow("via boom");
+    expect(context.order).toEqual([]);
+  });
+
+  test("import.meta is initialized for every module in a cycle before any body runs", async () => {
+    const context = createContext({ order: [] as string[] });
+    const initialized: string[] = [];
+    const sourceText = (identifier: string, source: string) =>
+      new SourceTextModule(source, {
+        identifier,
+        context,
+        initializeImportMeta(meta, module) {
+          initialized.push(module.identifier);
+          (meta as any).id = identifier;
+        },
+      });
+    const modules = {
+      A: sourceText("A", `import "B"; order.push(import.meta.id);`),
+      B: sourceText("B", `import "A"; order.push(import.meta.id);`),
+    };
+
+    const root = await linkGraph(modules);
+    await root.evaluate();
+
+    expect(context.order).toEqual(["B", "A"]);
+    expect(initialized).toEqual(["B", "A"]);
+  });
+
+  test("a module shared by two roots is evaluated once and its import.meta initialized once", async () => {
+    const context = createContext({ order: [] as string[] });
+    const initialized: string[] = [];
+    const shared = new SourceTextModule(`order.push(import.meta.id);`, {
+      identifier: "shared",
+      context,
+      initializeImportMeta(meta, module) {
+        initialized.push(module.identifier);
+        (meta as any).id = "shared";
+      },
+    });
+    const roots = ["root1", "root2"].map(
+      identifier => new SourceTextModule(`import "shared"; order.push("${identifier}");`, { identifier, context }),
+    );
+
+    for (const root of roots) {
+      await root.link(() => shared);
+      await root.evaluate();
+    }
+
+    expect(context.order).toEqual(["shared", "root1", "root2"]);
+    expect(initialized).toEqual(["shared"]);
+    expect(shared.status).toBe("evaluated");
+  });
+
+  test("a cycle that throws errors every module on the cycle with the same error", async () => {
+    const context = createContext({});
+    const modules = {
+      A: new SourceTextModule(`import "B"; export const a = 1;`, { identifier: "A", context }),
+      B: new SourceTextModule(`import "A"; throw new Error("boom");`, { identifier: "B", context }),
+    };
+
+    const root = await linkGraph(modules);
+    await expect(root.evaluate()).rejects.toThrow("boom");
+
+    expect([modules.A.status, modules.B.status]).toEqual(["errored", "errored"]);
+    expect(modules.A.error).toBe(modules.B.error);
+    expect(modules.A.error.message).toBe("boom");
   });
 });

@@ -54,7 +54,10 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
 
 void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 {
-    if (m_status != Status::Evaluating)
+    // Only a module that has not reached a terminal state of its own can still
+    // learn something from its record: the root's evaluate() already wrote its
+    // own status, and dependencies sit at Linked until their record moves.
+    if (m_status != Status::Linked && m_status != Status::Evaluating)
         return;
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
@@ -63,14 +66,25 @@ void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
 
     // JSModuleRecord is a CyclicModuleRecord; no downcast machinery needed.
     JSC::JSModuleRecord* cyclic = sourceTextThis->moduleRecordIfExists();
-    if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluated)
+    if (!cyclic)
         return;
 
-    if (JSValue error = cyclic->evaluationError(); error && !error.isEmpty()) {
-        status(Status::Errored);
-        m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
-    } else {
-        status(Status::Evaluated);
+    using RecordStatus = JSC::CyclicModuleRecord::Status;
+    switch (cyclic->status()) {
+    case RecordStatus::Evaluating:
+    case RecordStatus::EvaluatingAsync:
+        status(Status::Evaluating);
+        break;
+    case RecordStatus::Evaluated:
+        if (JSValue error = cyclic->evaluationError(); error && !error.isEmpty()) {
+            status(Status::Errored);
+            m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
+        } else {
+            status(Status::Evaluated);
+        }
+        break;
+    default:
+        break;
     }
 }
 
@@ -117,7 +131,11 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 return {};
             }
         }
-        return m_evaluationResult.get();
+        // A dependency evaluated as part of a root's graph never created a
+        // capability promise of its own; vm.ts resolves an already-evaluated
+        // module with undefined, so the value here is only a placeholder.
+        JSValue evaluationResult = m_evaluationResult.get();
+        return evaluationResult ? evaluationResult : jsUndefined();
     }
 
     auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
@@ -162,13 +180,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     auto run = [&] {
         if (sourceTextThis) {
             status(Status::Evaluating);
-            evaluateDependencies(globalObject, record, timeout, breakOnSigint);
+            prepareGraphForEvaluation(globalObject, timeout, breakOnSigint);
             RETURN_IF_EXCEPTION(scope, );
-            sourceTextThis->initializeImportMeta(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
-            // Spec-style Evaluate(): returns the capability promise that
-            // settles when (possibly async, for top-level await) evaluation
-            // finishes. Errors are stored on the record, not thrown.
+            // Spec-style Evaluate(): walks the whole graph in depth-first
+            // post-order and returns the capability promise that settles when
+            // (possibly async, for top-level await) evaluation finishes.
+            // Errors are stored on the record, not thrown.
             result = record->evaluate(globalObject);
             RETURN_IF_EXCEPTION(scope, );
         } else if (syntheticThis) {
@@ -301,35 +318,115 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
 {
 }
 
-void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
+// record->evaluate() walks the whole graph itself in the spec's depth-first
+// post-order, so a dependency must not be evaluated beforehand: that makes the
+// dependency the root of the DFS and rotates the evaluation order of every cycle
+// it sits on. Only what JSC cannot see is applied here first: a
+// SyntheticModuleRecord evaluates to undefined in JSC (the user's evaluation
+// steps hang off the wrapper) and import.meta is a wrapper-side callback.
+//
+// Iterative like the other graph walks here: a deep import chain would overflow
+// the native stack before record->evaluate() reaches its isSafeToRecurse() guard
+// and throws a catchable RangeError.
+void NodeVMModule::prepareGraphForEvaluation(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    for (const auto& request : record->requestedModules()) {
-        if (auto iter = m_resolveCache.find(request.m_specifier.string()); iter != m_resolveCache.end()) {
-            auto* dependency = uncheckedDowncast<NodeVMModule>(iter->value.get());
-            RELEASE_ASSERT(dependency != nullptr);
+    struct Frame {
+        NodeVMModule* module;
+        unsigned nextRequest;
+    };
 
-            if (dependency->status() == Status::Unlinked) {
-                if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
-                    syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
-                    RETURN_IF_EXCEPTION(scope, );
+    WTF::HashSet<NodeVMModule*> visited;
+    WTF::Vector<Frame, 16> stack;
+
+    visited.add(this);
+    stack.append(Frame { this, 0 });
+
+    // A callback threw, so record->evaluate() never runs and nothing in the graph
+    // has evaluated. Error the thrower and everything that transitively imports
+    // it, found by walking importer edges back from it. The stack alone is not
+    // that set: post-order pops a cycle member as soon as its own requests are
+    // done, which can happen before a sibling of a still-stacked cycle member
+    // throws. `visited` is not it either: a module that does not import the
+    // thrower is untouched by the failure and has to stay evaluable.
+    //
+    // The error is recorded on the module record as well as the wrapper, the way
+    // innerModuleEvaluation does for an abrupt completion. A wrapper-only error
+    // leaves the record Linked, so a module outside the walk (a sibling the
+    // failure cut short) would evaluate straight through it and run its body.
+    auto propagateEvaluationError = [&](NodeVMModule* thrower) {
+        JSC::Exception* exception = scope.exception();
+        if (!exception) [[unlikely]]
+            return;
+
+        WTF::HashMap<NodeVMModule*, WTF::Vector<NodeVMModule*>> importers;
+        for (NodeVMModule* module : visited) {
+            for (const NodeVMModuleRequest& request : module->moduleRequests()) {
+                auto iter = module->m_resolveCache.find(request.specifier());
+                if (iter == module->m_resolveCache.end())
+                    continue;
+                if (auto* dependency = dynamicDowncast<NodeVMModule>(iter->value.get()))
+                    importers.add(dependency, WTF::Vector<NodeVMModule*> {}).iterator->value.append(module);
+            }
+        }
+
+        WTF::HashSet<NodeVMModule*> errored;
+        WTF::Vector<NodeVMModule*, 16> worklist;
+        worklist.append(thrower);
+        while (!worklist.isEmpty()) {
+            NodeVMModule* module = worklist.takeLast();
+            if (!errored.add(module).isNewEntry)
+                continue;
+            if (module->status() != Status::Errored) {
+                module->status(Status::Errored);
+                module->m_evaluationException.set(vm, module, exception);
+            }
+            if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
+                if (JSC::JSModuleRecord* record = sourceTextModule->moduleRecordIfExists(); record && !record->evaluationError()) {
+                    record->setStatus(JSC::CyclicModuleRecord::Status::Evaluated);
+                    record->setEvaluationError(vm, exception->value());
                 }
             }
+            if (auto iter = importers.find(module); iter != importers.end())
+                worklist.appendVector(iter->value);
+        }
+    };
 
-            if (dependency->status() == Status::Linked) {
-                JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
-                RETURN_IF_EXCEPTION(scope, );
-                // Source text dependencies evaluate via the spec-style
-                // Evaluate() and return a capability promise. A still-pending
-                // promise means the dependency uses top-level await; the
-                // root record's evaluate() drives the async machinery to
-                // completion and the wrapper status reconciles lazily
-                // (reconcileEvaluationState), so a pending result is fine
-                // here.
-                UNUSED_PARAM(dependencyResult);
+    while (!stack.isEmpty()) {
+        NodeVMModule* module = stack.last().module;
+        const WTF::Vector<NodeVMModuleRequest>& requests = module->moduleRequests();
+
+        if (unsigned index = stack.last().nextRequest; index < requests.size()) {
+            stack.last().nextRequest = index + 1;
+            auto iter = module->m_resolveCache.find(requests[index].specifier());
+            if (iter == module->m_resolveCache.end())
+                continue;
+            if (auto* dependency = dynamicDowncast<NodeVMModule>(iter->value.get()); dependency && visited.add(dependency).isNewEntry)
+                stack.append(Frame { dependency, 0 });
+            continue;
+        }
+
+        stack.removeLast();
+
+        // Post-order: a module is prepared after its dependencies, the order
+        // record->evaluate() will run the bodies in.
+        if (auto* syntheticModule = dynamicDowncast<NodeVMSyntheticModule>(module)) {
+            if (module->status() == Status::Unlinked) {
+                syntheticModule->link(globalObject, nullptr, nullptr, jsUndefined());
+                if (scope.exception()) [[unlikely]]
+                    return propagateEvaluationError(module);
             }
+            if (module->status() == Status::Linked) {
+                module->evaluate(globalObject, timeout, breakOnSigint);
+                if (scope.exception()) [[unlikely]]
+                    return propagateEvaluationError(module);
+            }
+        } else if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(module)) {
+            sourceTextModule->initializeImportMeta(globalObject);
+            if (scope.exception()) [[unlikely]]
+                return propagateEvaluationError(module);
         }
     }
 }

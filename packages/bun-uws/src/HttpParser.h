@@ -283,6 +283,13 @@ struct HttpResponseData;
             bool has: 1 = false;
             bool chunked: 1 = false;
             bool invalid: 1 = false;
+            /* More than one coding token was named across all Transfer-Encoding
+             * fields (e.g. "gzip, chunked" or a "gzip" field plus a "chunked"
+             * field). Bun.serve implements no transfer coding other than chunked,
+             * so when this is set the extra coding would be silently dropped and
+             * the still-encoded body handed to the app; Bun.serve rejects it
+             * (RFC 9112 6.1). node:http accepts it to match llhttp. */
+            bool multipleCodings: 1 = false;
         };
 
         TransferEncoding getTransferEncoding()
@@ -293,13 +300,12 @@ struct HttpResponseData;
                 return te;
             }
 
+            bool seenAnyCoding = false;
             for (Header *h = headers; (++h)->key.length();) {
                 if (h->key.length() == 17 && !strncasecmp(h->key.data(), "transfer-encoding", 17)) {
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;
-                    size_t lastTokenStart = 0;
-                    size_t lastTokenLen = 0;
 
                     while (pos < value.length()) {
                         // Skip leading whitespace
@@ -323,8 +329,20 @@ struct HttpResponseData;
 
                         size_t tokenLen = tokenEnd - tokenStart;
                         if (tokenLen > 0) {
-                            lastTokenStart = tokenStart;
-                            lastTokenLen = tokenLen;
+                            /* A prior coding (from this or an earlier TE field) was
+                             * "chunked": chunked MUST be the final coding (RFC 9112
+                             * 6.1), so any token after it is invalid. llhttp
+                             * (s_n_llhttp__internal__n_header_value_te_chunked_last)
+                             * rejects here too, for "chunked, chunked" as well. */
+                            if (te.chunked) [[unlikely]] {
+                                te.invalid = true;
+                                return te;
+                            }
+                            if (seenAnyCoding) {
+                                te.multipleCodings = true;
+                            }
+                            seenAnyCoding = true;
+                            te.chunked = tokenLen == 7 && strncasecmp(value.data() + tokenStart, "chunked", 7) == 0;
                         }
 
                         // Move past comma if present
@@ -333,20 +351,10 @@ struct HttpResponseData;
                         }
                     }
 
-                    if (te.chunked) [[unlikely]] {
-                        te.invalid = true;
-                        return te;
-                    }
-
                     /* Present even when the value names no transfer coding: treating
                      * an empty/whitespace-only field as absent would fall back to
                      * Content-Length framing (request smuggling; RFC 9112 6.3). */
                     te.has = true;
-
-                    // Check if the last token is "chunked"
-                    if (lastTokenLen == 7 && strncasecmp(value.data() + lastTokenStart, "chunked", 7) == 0) [[likely]] {
-                        te.chunked = true;
-                    }
                 }
             }
 
@@ -1209,7 +1217,14 @@ struct HttpResponseData;
             bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
 
-            transferEncoding.invalid = transferEncoding.invalid || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked));
+            /* Bun.serve: no transfer coding other than chunked is implemented, so a
+             * list that ends in chunked but also names another coding ("gzip, chunked",
+             * "x, chunked", two TE fields) would hand the still-encoded body to the
+             * app. Reject it. node:http keeps llhttp's behaviour (accepts the list,
+             * body remains un-decoded for the other coding). */
+            transferEncoding.invalid = transferEncoding.invalid
+                || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked))
+                || (!IsNodeHttp && transferEncoding.multipleCodings);
 
             if (transferEncoding.invalid && !deferredTransferEncodingError) [[unlikely]] {
                 /* Invalid Transfer-Encoding (multiple headers or chunked not last - request smuggling attempt) */

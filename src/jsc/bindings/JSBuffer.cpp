@@ -1004,7 +1004,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(JSC::JS
     auto lengthValue = callFrame->argument(2);
 
     auto view = dynamicDowncast<JSArrayBufferView>(viewValue);
-    if (!view || !JSC::isTypedView(view->type())) {
+    if (!view || !isTypedArrayType(view->type())) {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "view"_s, "TypedArray"_s, viewValue);
     }
 

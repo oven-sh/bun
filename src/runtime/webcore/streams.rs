@@ -1773,6 +1773,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 return bun_sys::Result::Ok(value);
             }
         } else {
+            // The owner's status line is written on the first body byte; an
+            // empty body never fires that, so fire it here before `res.end()`
+            // writes uWS's default `200 OK`.
+            self.handle_first_write_if_necessary();
             if let Some(res) = self.any_res() {
                 res.end(b"", false);
             }

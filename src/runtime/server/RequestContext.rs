@@ -935,6 +935,11 @@ where
             }
             let state = resp.state();
             if state.is_http_write_called() && state.is_response_pending() {
+                // This path can be reached inside the `do_render_stream` cork
+                // (a direct stream's sync pull() wrote then threw); flush the
+                // cork so those bytes reach the socket before the close.
+                // No-op when not corked.
+                resp.uncork();
                 ctx.force_close();
             } else {
                 ctx.end_stream(ctx.should_close_connection());
@@ -2048,11 +2053,12 @@ where
         // we use this memory address to disable signals being sent
         response_stream.sink.signal.clear();
         debug_assert!(response_stream.sink.signal.is_dead());
-        // we need to render metadata before assignToStream because the stream can call res.end
-        // and this would auto write an 200 status
-        if !this.flags.has_written_status() {
-            this.render_metadata();
-        }
+        // The status line is written lazily by `on_first_write` (fired from the
+        // sink just before the first body byte reaches uWS, and from
+        // `end_from_js` when the stream ends with no body). Writing it here
+        // would commit the user's status before the stream produced anything,
+        // so a stream that errors before its first yield could no longer be
+        // routed to `error()`.
 
         // We are already corked!
         // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
@@ -2141,11 +2147,13 @@ where
                         // keeps `handle_reject` from ending the response out
                         // from under the sink while the stream is in flight.
                         this.flags.set_has_marked_pending(true);
-                        if !this.flags.has_written_status() {
-                            response_stream.sink.on_first_write = None;
-                            response_stream.sink.ctx = None;
-                            this.render_metadata();
-                        }
+                        // Keep `on_first_write` armed: if the stream rejects
+                        // before producing a byte, `handle_reject_stream` can
+                        // still hand the error to `error()`. The `ref_()` below
+                        // keeps this context (and so the `ctx` pointer the sink
+                        // holds) alive until the pump promise settles, and the
+                        // Locked body value protects the Response for the
+                        // deferred `render_metadata()`.
 
                         // The sink only tracks `has_backpressure`; the
                         // on_writable registration lives here so it is armed
@@ -2185,20 +2193,6 @@ where
                     }
                     jsc::PromiseResult::Rejected(err) => {
                         stream_log!("promise Rejected");
-                        // Consuming the rejection here is what keeps it out of
-                        // the unhandledRejection reporter, so surface it here.
-                        // DEBUG_MODE already reports it in handle_reject_stream.
-                        if !DEBUG_MODE
-                            && let Some(server) = this.server
-                            && !err.is_empty_or_undefined_or_null()
-                        {
-                            // SAFETY: BACKREF; see drain_microtasks() re: the
-                            // const→mut cast.
-                            unsafe {
-                                (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
-                                    .run_error_handler(err, None);
-                            }
-                        }
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
                         Self::handle_reject_stream(this, global_this, err);
@@ -2983,76 +2977,6 @@ where
 
         stream_log!("onReject()");
 
-        // `resp` must not be dereferenced once the sink has already ended the
-        // response (see `end_already_responded_stream`).
-        if !ended_response && !req.flags.has_written_status() {
-            req.render_metadata();
-        }
-
-        if DEBUG_MODE {
-            if let Some(server) = req.server {
-                if !err.is_empty_or_undefined_or_null() {
-                    // SAFETY: BACKREF
-                    let server = &*server;
-                    let mut exception_list: jsc::ExceptionList = Vec::new();
-                    // SAFETY: see drain_microtasks() re: const→mut cast.
-                    unsafe {
-                        (*std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut())
-                            .run_error_handler(err, Some(&mut exception_list));
-                    }
-                    let exception_list = jsc_exceptions_to_api(exception_list);
-
-                    // The fallback page below writes into `resp`, which must
-                    // not be dereferenced once the sink has already ended the
-                    // response (see `end_already_responded_stream`).
-                    if !ended_response && server.dev_server().is_some() {
-                        // Render the error fallback HTML page like renderDefaultError does
-                        if !req.flags.has_written_status() {
-                            req.flags.set_has_written_status(true);
-                            if let Some(resp) = req.resp {
-                                resp.write_status(b"500 Internal Server Error");
-                                resp.write_header(
-                                    b"content-type",
-                                    &bun_http_types::MimeType::HTML.value,
-                                );
-                            }
-                        }
-
-                        // Create error message for the stream rejection
-                        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-                        let fallback_container = Box::new(Api::FallbackMessageContainer {
-                            message: Some(
-                                b"Stream error during server-side rendering"
-                                    .to_vec()
-                                    .into_boxed_slice(),
-                            ),
-                            router: None,
-                            reason: Some(Api::FallbackStep::fetch_event_handler),
-                            cwd: Some(cwd.to_vec().into_boxed_slice()),
-                            problems: Some(Api::Problems {
-                                code: 500,
-                                name: b"StreamError".to_vec().into_boxed_slice(),
-                                exceptions: exception_list,
-                                build: Api::Log::default(),
-                            }),
-                        });
-
-                        let mut bb: Vec<u8> = Vec::new();
-
-                        Fallback::render_backend(&fallback_container, &mut bb)
-                            .expect("unreachable");
-
-                        if let Some(resp) = req.resp {
-                            // SAFETY: FFI handle
-                            resp.write(&bb);
-                        }
-
-                        req.end_stream(req.should_close_connection());
-                        return;
-                    }
-                }
-            }
-        }
         // HTTP/1 only: the sink already fully ended the response, so `resp`
         // can no longer be dereferenced (see `end_already_responded_stream`).
         // H3 keeps the end_stream() path: its `resp` is still alive here and
@@ -3061,12 +2985,47 @@ where
             req.end_already_responded_stream();
             return;
         }
-        // Body bytes were already written: close without the terminating chunk
-        // (RFC 9112 section 7) so the client sees an incomplete message, not a
-        // truncated body that looks like a complete, successful response.
+
+        // No status line committed: the stream failed before its first body
+        // byte reached uWS, so `error()` can still replace the response.
+        // `handle_reject` runs the user's handler (or the default 500 page)
+        // and reports the failure itself.
+        if !req.flags.has_written_status() {
+            // The Pending branch set `has_marked_pending` for the in-flight
+            // pump; clear it so `handle_reject` falls through to
+            // `render_missing` when `error()` returns nothing to render.
+            req.flags.set_has_marked_pending(false);
+            Self::handle_reject(
+                req,
+                if err.is_empty() {
+                    JSValue::UNDEFINED
+                } else {
+                    err
+                },
+            );
+            return;
+        }
+
+        // Status already on the wire: a second status from `error()` cannot be
+        // sent. Report the failure and terminate the body so the client
+        // observes an incomplete message (RFC 9112 section 7).
+        if !err.is_empty_or_undefined_or_null()
+            && let Some(server) = req.server
+        {
+            // SAFETY: BACKREF; see drain_microtasks() re: const→mut cast.
+            unsafe {
+                (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                    .run_error_handler(err, None);
+            }
+        }
         if let Some(resp) = req.resp {
             let state = resp.state();
             if state.is_http_write_called() && state.is_response_pending() {
+                // The synchronous-reject path reaches here inside the
+                // `do_render_stream` cork; flush it so the status line and
+                // already-written chunks reach the socket before the close.
+                // No-op when not corked.
+                resp.uncork();
                 req.force_close();
                 return;
             }
@@ -3500,6 +3459,35 @@ where
                         // falls through to the default error page below.
                         // SAFETY: `response` is the live, rooted cell pointer.
                         if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                            // `render()` may suspend (stream/file body); root
+                            // the Response like `process_on_error_promise` and
+                            // the normal fetch() path do, so the deferred
+                            // `render_metadata()` can still read it. Release
+                            // any previously-protected Response first.
+                            if !self.response_jsvalue.is_empty()
+                                && self.flags.response_protected()
+                            {
+                                self.response_jsvalue.unprotect();
+                            }
+                            self.response_jsvalue = result;
+                            self.flags.set_response_protected(false);
+                            // SAFETY: as above; body_value borrows the rooted
+                            // Response cell, disjoint from `self`.
+                            let body_value = unsafe { (*response).get_body_value() };
+                            body_value.to_blob_if_possible();
+                            match body_value {
+                                Body::Value::Blob(blob) => {
+                                    if shim::blob_needs_to_read_file(blob) {
+                                        result.protect();
+                                        self.flags.set_response_protected(true);
+                                    }
+                                }
+                                Body::Value::Locked(_) => {
+                                    result.protect();
+                                    self.flags.set_response_protected(true);
+                                }
+                                _ => {}
+                            }
                             // SAFETY: as above.
                             unsafe { self.render(response) };
                             return;

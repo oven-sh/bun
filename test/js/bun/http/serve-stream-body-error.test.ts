@@ -8,7 +8,7 @@
 //   3. A body that errored after chunks were already sent was still terminated
 //      with a clean `0\r\n\r\n`, so the client could not tell the truncated
 //      body apart from a complete one.
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
 
@@ -25,66 +25,57 @@ async function runFixture(variant: string, ...extra: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-// The wire-level contract for a stream source that errors before producing any
-// body bytes is unchanged: the Response's own status and headers go out with
-// an empty chunked body and the server `error()` callback is NOT invoked (see
-// "throw on pull renders headers, does not call error handler" in
-// serve.test.ts). What changes is that the rejection no longer reaches the
-// unhandledRejection reporter; it is reported directly instead.
+// A stream source that errors before producing any body bytes is routed to
+// `error()`: no status line has been committed yet, so the handler's Response
+// can replace the original one in full. The rejection must still not reach the
+// unhandledRejection reporter.
 test.concurrent.each([
   "pull-throw",
   "pull-async-reject",
   "controller-error",
   "start-async-reject",
   "deferred-pull-throw",
-])("%s: the rejection is handled and the error is still reported", async variant => {
+])("%s: error() is invoked and its Response is sent", async variant => {
   const { stdout, stderr, exitCode } = await runFixture(variant);
-  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+  expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
     result: {
-      statusLine: "HTTP/1.1 200 OK",
-      cleanChunkedTerminator: true,
-      body: "0\r\n\r\n",
-      errorCb: 0,
+      statusLine: "HTTP/1.1 500 Internal Server Error",
+      cleanChunkedTerminator: false,
+      body: "err-body",
+      errorCb: 2,
       unhandled: 0,
-      secondStatusLine: "HTTP/1.1 200 OK",
+      secondStatusLine: "HTTP/1.1 500 Internal Server Error",
     },
+    stderr: "",
     exitCode: 0,
   });
-  // With `development: false` the unhandledRejection report used to be the
-  // only place the error surfaced; it must still reach stderr without it.
-  expect(stderr).toContain("boom");
 });
 
 // Same under `development: true` (the DEBUG RequestContext monomorphization).
-test.concurrent("pull-throw in development mode: the rejection is handled", async () => {
+test.concurrent("pull-throw in development mode: error() is invoked", async () => {
   const { stdout, stderr, exitCode } = await runFixture("pull-throw", "development");
-  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+  expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
     result: {
-      statusLine: "HTTP/1.1 200 OK",
-      cleanChunkedTerminator: true,
-      body: "0\r\n\r\n",
-      errorCb: 0,
+      statusLine: "HTTP/1.1 500 Internal Server Error",
+      cleanChunkedTerminator: false,
+      body: "err-body",
+      errorCb: 2,
       unhandled: 0,
-      secondStatusLine: "HTTP/1.1 200 OK",
+      secondStatusLine: "HTTP/1.1 500 Internal Server Error",
     },
+    stderr: "",
     exitCode: 0,
   });
-  expect(stderr).toContain("boom");
 });
 
 // The body errors after a chunk has already been flushed to the client. The
 // 200 is irrevocable at that point, but the connection must be closed without
 // the terminating `0\r\n\r\n` chunk (RFC 9112 section 7) so the client can
-// tell the body is incomplete.
-//
-// No stderr assertion: a rejection on this path already had a reaction
-// attached (it never became an unhandledRejection), so there is no lost
-// report for this change to restore. `development: false` intentionally
-// keeps handle_reject_stream quiet here, which the existing
-// serve-direct-readable-stream.test.ts and serve-stream-reject-flush-leak
-// tests rely on. The development-mode variant below asserts the report.
+// tell the body is incomplete. `error()` is not invoked (a second status line
+// cannot be sent) but the failure is reported to stderr.
 test.concurrent("mid-stream error: the chunked body is not terminated as complete", async () => {
-  const { stdout, exitCode } = await runFixture("mid-stream-reject");
+  const { stdout, stderr, exitCode } = await runFixture("mid-stream-reject");
+  expect(stderr).toContain("boom");
   expect({ result: JSON.parse(stdout), exitCode }).toEqual({
     result: {
       statusLine: "HTTP/1.1 200 OK",
@@ -209,7 +200,9 @@ test.concurrent("a throwing cancel() on client abort does not kill the server pr
 
 // The whole point: with Bun's default unhandledRejection policy (no handler
 // installed), a single request whose Response body errors must not exit the
-// server process.
+// server process. With no error() handler the failure is reported like a
+// fetch() throw (500 + stderr report + process.exitCode set), but the server
+// keeps serving.
 test.concurrent("a stream body error does not kill the server process", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -218,7 +211,8 @@ test.concurrent("a stream body error does not kill the server process", async ()
       `const server = Bun.serve({
         port: 0,
         development: false,
-        fetch() {
+        fetch(req) {
+          if (new URL(req.url).pathname === "/ok") return new Response("ok");
           return new Response(new ReadableStream({ pull() { throw new Error("boom"); } }));
         },
       });
@@ -227,7 +221,8 @@ test.concurrent("a stream body error does not kill the server process", async ()
       // Tick the event loop past the unhandledRejection checkpoint that used
       // to exit the process before this line was reached.
       for (let i = 0; i < 10; i++) await Bun.sleep(0);
-      console.log("alive", res.status);
+      const ok = await fetch(new URL("/ok", server.url));
+      console.log("alive", res.status, ok.status, await ok.text());
       server.stop(true);`,
     ],
     env: bunEnv,
@@ -235,8 +230,9 @@ test.concurrent("a stream body error does not kill the server process", async ()
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "alive 200\n", exitCode: 0 });
-  // The error must still be surfaced to the operator.
+  // exitCode is 1: the default error reporter sets it, exactly as it does when
+  // fetch() itself throws with no error() handler.
+  expect({ stdout, exitCode }).toEqual({ stdout: "alive 500 200 ok\n", exitCode: 1 });
   expect(stderr).toContain("boom");
 });
 
@@ -313,13 +309,137 @@ test.skipIf(!isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // The stream errors after "EB" is on the wire, so the body is force-closed
-    // without the terminating 0\r\n\r\n chunk (RFC 9112 section 7).
+    // without the terminating 0\r\n\r\n chunk (RFC 9112 section 7). The
+    // nested failure is reported to stderr (error() already ran for the outer
+    // rejection and is not re-invoked).
     const expected = Array(6).fill({ status: "HTTP/1.1 597 HM", terminated: false });
-    expect({ stderr, results: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
-      stderr: "",
+    expect({ results: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
       results: expected,
       exitCode: 0,
     });
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stderr).not.toContain("heap-use-after-free");
   },
   30_000,
 );
+
+// A Response body driven by an async iterable (async generator or
+// `[Symbol.asyncIterator]` object). Before the fix:
+//   * throw before the first yield -> a complete `200 OK` with an empty
+//     chunked body (cacheable as a successful response);
+//   * synchronous yields then throw -> connection reset with zero bytes
+//     (the already-yielded chunks discarded along with the status line);
+//   * awaited yields then throw -> chunked body truncated (the only case a
+//     client could detect);
+// and error() was never invoked in any of them.
+describe("Response body errors reach error() until the first body byte is written", () => {
+  const fixture = join(import.meta.dir, "serve-body-error-before-first-byte-fixture.ts");
+
+  async function run(route: string, ...extra: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, route, ...extra],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout), stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    ["iter-throw-first", "boom-first"],
+    ["iter-throw-first-slow", "boom-slow"],
+    ["rs-pull-throw", "rs-boom"],
+  ])("%s: error() is invoked and the original headers are not sent", async (route, message) => {
+    // No body byte reached uWS: error() replaces the response entirely.
+    expect(await run(route)).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 500 Internal Server Error",
+        xErr: true,
+        xOrig: false,
+        xCustom: false,
+        body: "E:" + message,
+        resetAfterBytes: false,
+        errorCalls: [message],
+        unhandled: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent(
+    "iter-throw-first without error(): the default 500 is sent and the failure is reported",
+    async () => {
+      const { result, stderr, exitCode } = await run("iter-throw-first", "no-error-handler");
+      expect({ result, exitCode }).toEqual({
+        result: {
+          statusLine: "HTTP/1.1 500 Internal Server Error",
+          xErr: false,
+          xOrig: false,
+          xCustom: false,
+          body: "Something went wrong!",
+          resetAfterBytes: false,
+          errorCalls: [],
+          unhandled: 0,
+        },
+        exitCode: 1,
+      });
+      expect(stderr).toContain("boom-first");
+    },
+  );
+
+  // Yields then throws (both the synchronous and awaited variants): by the time
+  // the error is observed the status line and the yielded chunks have been
+  // written to uWS, so error() cannot replace the response. The already-written
+  // bytes must reach the client and the chunked body must be left unterminated.
+  test.concurrent.each([
+    ["iter-yield-then-throw", "8\r\nAAAABBBB\r\n", "boom-fast"],
+    ["iter-yield-slow-then-throw", "4\r\nAAAA\r\n", "boom-mid"],
+  ])("%s: the written chunks reach the client and the body is not terminated", async (route, body, message) => {
+    const { result, stderr, exitCode } = await run(route);
+    // The socket may surface the force-close as either a clean FIN or
+    // ECONNRESET depending on kernel buffer state; either way the chunked
+    // body is not terminated.
+    expect({ result: { ...result, resetAfterBytes: undefined }, exitCode }).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 200 OK",
+        xErr: false,
+        xOrig: false,
+        xCustom: false,
+        body,
+        resetAfterBytes: undefined,
+        errorCalls: [],
+        unhandled: 0,
+      },
+      exitCode: 0,
+    });
+    expect(stderr).toContain(message);
+  });
+
+  // Deferring the status write must not lose a successful empty body's own
+  // status/headers: on_first_write fires from the sink's empty-end path.
+  test.concurrent.each(["iter-empty-ok", "rs-empty-ok"])(
+    "%s: an empty body keeps the Response's own status and headers",
+    async route => {
+      const { result, stderr, exitCode } = await run(route);
+      expect({
+        statusLine: result.statusLine,
+        xCustom: result.xCustom,
+        xErr: result.xErr,
+        errorCalls: result.errorCalls,
+        unhandled: result.unhandled,
+        stderr,
+        exitCode,
+      }).toEqual({
+        statusLine: "HTTP/1.1 202 Accepted",
+        xCustom: true,
+        xErr: false,
+        errorCalls: [],
+        unhandled: 0,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});

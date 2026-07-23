@@ -516,7 +516,6 @@ public:
     // The bit at index i is set if the column at index i is valid.
     WTF::BitVector validColumns;
     std::unique_ptr<PropertyNameArrayBuilder> columnNames;
-    mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
     mutable JSC::WriteBarrier<JSC::JSObject> userPrototype;
     size_t extraMemorySize = 0;
@@ -735,15 +734,18 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     auto* stmt = castedThis->stmt;
 
     castedThis->_structure.clear();
-    castedThis->_prototype.clear();
 
     int count = sqlite3_column_count(stmt);
     if (count < 1)
         return;
 
-    // Fast path:
-    if (count <= JSFinalObject::maxInlineCapacity) {
-        // 64 is the maximum we can preallocate here
+    // Fast path: cache a Structure for up to s_maxTransitionLengthForNonEvalPutById
+    // columns (the limit above which addNewPropertyTransition would convert to a
+    // dictionary, which cannot be safely shared across row objects). Columns beyond
+    // JSFinalObject::maxInlineCapacity (62) get out-of-line offsets backed by a
+    // per-row Butterfly allocation in constructResultObject.
+    static constexpr int maxCachedStructureColumnCount = JSC::Structure::s_maxTransitionLengthForNonEvalPutById;
+    if (count <= maxCachedStructureColumnCount) {
         // see https://github.com/oven-sh/bun/issues/987
         // also see https://github.com/oven-sh/bun/issues/1646
         auto& globalObject = *lexicalGlobalObject;
@@ -764,12 +766,22 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 break;
             }
 
+            const auto identifier = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
+
+            // Column names that parse as array indices ("0", "2", ...) cannot be
+            // stored in a Structure's property table: reads canonicalize them to
+            // indexed lookups, which never consult the property table. Take the
+            // non-cached path, which puts them into per-row indexed storage.
+            if (JSC::parseIndex(identifier)) {
+                anyHoles = true;
+                break;
+            }
+
             // When joining multiple tables, the same column names can appear multiple times
             // columnNames de-dupes property names internally
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
-            columnNames->add(
-                Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
+            columnNames->add(identifier);
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -780,7 +792,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         if (!anyHoles) [[likely]] {
             PropertyOffset offset;
             JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : globalObject.objectPrototype();
-            Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, prototype, columnNames->size());
+            Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, prototype, std::min<unsigned>(columnNames->size(), JSFinalObject::maxInlineCapacity));
             vm.writeBarrier(castedThis, structure);
 
             // We iterated over the columns in reverse order so we need to reverse the columnNames here
@@ -788,8 +800,16 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             // later refer to the correct property.
             columnNames->data()->propertyNameVector().reverse();
             for (const auto& propertyName : *columnNames) {
-                structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
+                // Use the PutById transition context so that structures with more than
+                // s_maxTransitionLength properties are not converted to dictionary
+                // structures (which cannot be safely shared across row objects). PutById
+                // raises the threshold to s_maxTransitionLengthForNonEvalPutById.
+                if (Structure* existing = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, 0, offset))
+                    structure = existing;
+                else
+                    structure = Structure::addNewPropertyTransition(vm, structure, propertyName, 0, offset, JSC::PutPropertySlot::PutById);
             }
+            ASSERT_WITH_MESSAGE(!structure->isDictionary(), "cached row Structure must not be a dictionary structure (it is shared across row objects)");
             castedThis->_structure.set(vm, castedThis, structure);
 
             // We are done.
@@ -805,13 +825,10 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         }
     }
 
-    // Slow path:
-
-    // 64 is the maximum we can preallocate here
-    // see https://github.com/oven-sh/bun/issues/987
-    JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : lexicalGlobalObject->objectPrototype();
-    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, prototype, std::min(static_cast<unsigned>(count), JSFinalObject::maxInlineCapacity));
-
+    // Slow path (>maxCachedStructureColumnCount columns, or an index-like/empty/null
+    // column name): collect deduped column names + validColumns; constructResultObject
+    // builds each row from a fresh empty object with putDirectMayBeIndex so that named
+    // properties enumerate in forward SQL order and index-like names go to indexed storage.
     for (int i = count - 1; i >= 0; i--) {
         const char* name = sqlite3_column_name(stmt, i);
 
@@ -824,37 +841,13 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
         const auto key = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
 
-        JSC::JSValue primitive = JSC::jsUndefined();
-        auto decl = sqlite3_column_decltype(stmt, i);
-        if (decl != nullptr) {
-            switch (decl[0]) {
-            case 'F':
-            case 'D':
-            case 'I': {
-                primitive = jsNumber(0);
-                break;
-            }
-            case 'V':
-            case 'T': {
-                primitive = jsEmptyString(vm);
-                break;
-            }
-            }
-        }
-
         auto preCount = castedThis->columnNames->size();
         castedThis->columnNames->add(key);
-        auto curCount = castedThis->columnNames->size();
-
-        // only put the property if it's not a duplicate
-        if (preCount != curCount) {
+        if (preCount != castedThis->columnNames->size())
             castedThis->validColumns.set(i);
-            object->putDirect(vm, key, primitive, 0);
-        }
     }
     // We iterated over the columns in reverse order so we need to reverse the columnNames here
     castedThis->columnNames->data()->propertyNameVector().reverse();
-    castedThis->_prototype.set(vm, castedThis, object);
 }
 
 void JSSQLStatement::destroy(JSC::JSCell* cell)
@@ -1981,6 +1974,25 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+template<bool useBigInt64, bool hasOutOfLine>
+static ALWAYS_INLINE void fillRowFromCachedStructure(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSSQLStatement* castedThis, JSC::JSObject* result, int count, unsigned inlineCapacity)
+{
+    auto* stmt = castedThis->stmt;
+    // i: the index of columns returned from SQLite
+    // j: the index of object property
+    for (int i = 0, j = 0; j < count; i++, j++) {
+        if (!castedThis->validColumns.get(i)) {
+            // this column is duplicate, skip
+            j -= 1;
+            continue;
+        }
+        auto value = toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i);
+        RETURN_IF_EXCEPTION(scope, void());
+        // Out-of-line offsets start at firstOutOfLineOffset, not at inlineCapacity.
+        result->putDirectOffset(vm, hasOutOfLine ? JSC::offsetForPropertyNumber(j, inlineCapacity) : j, value);
+    }
+}
+
 template<bool useBigInt64>
 static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
 {
@@ -1989,35 +2001,29 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // 64 is the maximum we can preallocate here
+    // The cached Structure covers up to maxCachedStructureColumnCount columns;
+    // rows wider than JSFinalObject::maxInlineCapacity use out-of-line butterfly storage.
     // see https://github.com/oven-sh/bun/issues/987
     JSC::JSObject* result;
 
     auto* stmt = castedThis->stmt;
 
     if (auto* structure = castedThis->_structure.get()) {
-        result = JSC::constructEmptyObject(vm, structure);
-
-        // i: the index of columns returned from SQLite
-        // j: the index of object property
-        for (int i = 0, j = 0; j < count; i++, j++) {
-            if (!castedThis->validColumns.get(i)) {
-                // this column is duplicate, skip
-                j -= 1;
-                continue;
-            }
-            auto value = toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i);
-            RETURN_IF_EXCEPTION(scope, {});
-            result->putDirectOffset(vm, j, value);
-        }
-
-    } else {
-        if (count <= JSFinalObject::maxInlineCapacity) {
-            result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+        unsigned outOfLineCapacity = structure->outOfLineCapacity();
+        if (outOfLineCapacity == 0) [[likely]] {
+            result = JSC::constructEmptyObject(vm, structure);
+            fillRowFromCachedStructure<useBigInt64, false>(vm, lexicalGlobalObject, scope, castedThis, result, count, 0);
         } else {
-            JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : lexicalGlobalObject->objectPrototype();
-            result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, prototype, JSFinalObject::maxInlineCapacity));
+            // JSFinalObject::create cannot handle out-of-line capacity (null butterfly);
+            // allocate a zeroed butterfly first, mirroring operationNewObjectWithButterfly.
+            JSC::Butterfly* butterfly = JSC::Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, JSC::IndexingHeader(), 0);
+            result = JSC::JSFinalObject::createWithButterfly(vm, structure, butterfly);
+            fillRowFromCachedStructure<useBigInt64, true>(vm, lexicalGlobalObject, scope, castedThis, result, count, structure->inlineCapacity());
         }
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : lexicalGlobalObject->objectPrototype();
+        result = JSC::constructEmptyObject(lexicalGlobalObject, prototype, std::min(static_cast<unsigned>(count), JSFinalObject::maxInlineCapacity));
 
         for (int i = 0, j = 0; j < count; i++, j++) {
             if (!castedThis->validColumns.get(i)) {
@@ -2027,7 +2033,10 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             const auto& name = columnNames[j];
             auto value = toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i);
             RETURN_IF_EXCEPTION(scope, {});
-            result->putDirect(vm, name, value, 0);
+            // Index-like names go to indexed storage so that both reads
+            // (canonicalized to indexed lookups) and enumeration see them.
+            result->putDirectMayBeIndex(lexicalGlobalObject, name, value);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -2638,25 +2647,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
         initializeColumnNames(lexicalGlobalObject, castedThis);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    JSC::JSArray* array;
     auto* columnNames = castedThis->columnNames.get();
-    if (columnNames->size() > 0) {
-        if (castedThis->_prototype) {
-            array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), columnNames->size());
-            RETURN_IF_EXCEPTION(scope, {});
-            unsigned int i = 0;
-            for (const auto& column : *columnNames) {
-                auto* string = jsString(vm, column.string());
-                RETURN_IF_EXCEPTION(scope, {});
-                array->putDirectIndex(lexicalGlobalObject, i++, string);
-            }
-        }
-    } else {
-        array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), columnNames->size());
+    RETURN_IF_EXCEPTION(scope, {});
+    unsigned int i = 0;
+    for (const auto& column : *columnNames) {
+        auto* string = jsString(vm, column.string());
         RETURN_IF_EXCEPTION(scope, {});
+        array->putDirectIndex(lexicalGlobalObject, i++, string);
     }
     return JSC::JSValue::encode(array);
 }
@@ -2920,7 +2918,6 @@ void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.reportExtraMemoryVisited(thisObject->extraMemorySize);
 
     visitor.append(thisObject->_structure);
-    visitor.append(thisObject->_prototype);
     visitor.append(thisObject->userPrototype);
 }
 
@@ -2933,7 +2930,6 @@ void JSSQLStatement::visitAdditionalChildrenInGCThread(Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     visitor.append(thisObject->_structure);
-    visitor.append(thisObject->_prototype);
     visitor.append(thisObject->userPrototype);
 }
 

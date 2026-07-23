@@ -1389,6 +1389,195 @@ it("issue#6597 with many columns", () => {
   db.close();
 });
 
+describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
+  // Rows with >62 columns use a cached Structure with out-of-line (butterfly)
+  // property storage. These tests pin object-mode correctness on both sides of
+  // that boundary.
+  it.each([62, 63, 64, 100, 200, 512, 513])("returns correct values for all %d columns", count => {
+    const db = new Database(":memory:");
+    const columns = Array.from({ length: count }, (_, i) => `c${i} INTEGER`);
+    db.run(`CREATE TABLE wide (${columns.join(",")})`);
+    for (let r = 0; r < 3; r++) {
+      db.run(`INSERT INTO wide VALUES (${Array.from({ length: count }, (_, i) => r * count + i).join(",")})`);
+    }
+
+    const rows = db.query("SELECT * FROM wide").all();
+    const expected = Array.from({ length: 3 }, (_, r) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`c${i}`, r * count + i])),
+    );
+    expect(rows).toEqual(expected);
+    expect(Object.keys(rows[0])).toEqual(Array.from({ length: count }, (_, i) => `c${i}`));
+
+    // .get() takes the same row-construction path
+    const first = db.query("SELECT * FROM wide LIMIT 1").get();
+    expect(first).toEqual(expected[0]);
+    db.close();
+  });
+
+  it("dedupes duplicate column names across a join with >62 total columns", () => {
+    const db = new Database(":memory:");
+    const colsA = Array.from({ length: 40 }, (_, i) => `a${i} INTEGER`).join(",");
+    const colsB = Array.from({ length: 40 }, (_, i) => `b${i} INTEGER`).join(",");
+    db.run(`CREATE TABLE ta (id INTEGER PRIMARY KEY, ${colsA})`);
+    db.run(`CREATE TABLE tb (id INTEGER PRIMARY KEY, ${colsB})`);
+    db.run(`INSERT INTO ta VALUES (1, ${Array.from({ length: 40 }, (_, i) => i).join(",")})`);
+    db.run(`INSERT INTO tb VALUES (1, ${Array.from({ length: 40 }, (_, i) => 100 + i).join(",")})`);
+
+    // 82 columns total, "id" appears twice -> 81 deduped keys
+    const rows = db.query("SELECT * FROM ta JOIN tb ON ta.id = tb.id").all();
+    expect(rows).toHaveLength(1);
+    expect(Object.keys(rows[0])).toHaveLength(81);
+    expect(rows[0].id).toBe(1);
+    expect(rows[0].a0).toBe(0);
+    expect(rows[0].b39).toBe(139);
+    db.close();
+  });
+
+  it("supports .as(Class) with >62 columns", () => {
+    const db = new Database(":memory:");
+    const ncols = 70;
+    db.run(`CREATE TABLE wide_as (${Array.from({ length: ncols }, (_, i) => `c${i} INTEGER`).join(",")})`);
+    db.run(`INSERT INTO wide_as VALUES (${Array.from({ length: ncols }, (_, i) => i).join(",")})`);
+
+    class Row {
+      sum() {
+        let s = 0;
+        for (let i = 0; i < ncols; i++) s += this[`c${i}`];
+        return s;
+      }
+    }
+    const rows = db.query("SELECT * FROM wide_as").as(Row).all();
+    expect(rows[0]).toBeInstanceOf(Row);
+    expect(rows[0].sum()).toBe((ncols * (ncols - 1)) / 2);
+    expect(rows[0].c69).toBe(69);
+    db.close();
+  });
+
+  it("supports safeIntegers with >62 columns", () => {
+    const db = new Database(":memory:");
+    const ncols = 70;
+    db.run(`CREATE TABLE wide_big (${Array.from({ length: ncols }, (_, i) => `d${i} INTEGER`).join(",")})`);
+    db.run(
+      `INSERT INTO wide_big VALUES (${Array.from(
+        { length: ncols },
+        (_, i) => `${BigInt(Number.MAX_SAFE_INTEGER) + BigInt(i)}`,
+      ).join(",")})`,
+    );
+    const query = db.query("SELECT * FROM wide_big");
+    query.safeIntegers(true);
+    const rows = query.all();
+    expect(typeof rows[0].d0).toBe("bigint");
+    expect(rows[0].d69).toBe(BigInt(Number.MAX_SAFE_INTEGER) + 69n);
+    db.close();
+  });
+
+  it("makes index-like column names readable on both sides of the boundary", () => {
+    // Column names that parse as array indices ("0", "2") cannot live in the
+    // shared row Structure: reads canonicalize them to indexed lookups, which
+    // never consult the property table, so `row["0"]` used to return
+    // undefined even though enumeration saw the key. Such columns now go to
+    // per-row indexed storage, making reads work and giving the spec
+    // enumeration order (integer indices first, ascending).
+    const db = new Database(":memory:");
+
+    const narrow = db.query(`SELECT 1 AS "2", 2 AS name, 3 AS "0"`).get();
+    expect(narrow["2"]).toBe(1);
+    expect(narrow[2]).toBe(1);
+    expect(narrow["0"]).toBe(3);
+    expect(narrow.name).toBe(2);
+    expect("2" in narrow).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(narrow, "2")?.value).toBe(1);
+    expect(Object.keys(narrow)).toEqual(["0", "2", "name"]);
+    expect(narrow).toEqual({ "0": 3, "2": 1, name: 2 });
+    expect(JSON.parse(JSON.stringify(narrow))).toEqual({ "0": 3, "2": 1, name: 2 });
+
+    // Named properties must enumerate in forward SQL column order when an
+    // index-like column routes the row off the cached-Structure fast path.
+    const mixedQuery = db.query(`SELECT 1 AS a, 2 AS "0", 3 AS b, 4 AS c`);
+    const mixed = mixedQuery.get();
+    expect(Object.keys(mixed)).toEqual(["0", "a", "b", "c"]);
+    expect(mixed).toEqual({ "0": 2, a: 1, b: 3, c: 4 });
+    expect(mixedQuery.columnNames).toEqual(["a", "0", "b", "c"]);
+
+    const cols = Array.from({ length: 70 }, (_, i) => `${100 + i} AS "c${i}"`);
+    cols[5] = `1005 AS "2"`;
+    cols[65] = `1065 AS "0"`;
+    const rows = db.query(`SELECT ${cols.join(", ")}`).all();
+    expect(rows).toHaveLength(1);
+    const wide = rows[0];
+    expect(wide["2"]).toBe(1005);
+    expect(wide[0]).toBe(1065);
+    expect(wide.c0).toBe(100);
+    expect(wide.c69).toBe(169);
+    const expectedNamed = Array.from({ length: 70 }, (_, i) => `c${i}`).filter(n => n !== "c5" && n !== "c65");
+    expect(Object.keys(wide)).toEqual(["0", "2", ...expectedNamed]);
+    const parsed = JSON.parse(JSON.stringify(wide));
+    expect(parsed["2"]).toBe(1005);
+    expect(parsed["0"]).toBe(1065);
+    expect(parsed.c69).toBe(169);
+
+    // >512 columns (never uses the cached Structure) takes the same per-row path
+    const many = Array.from({ length: 515 }, (_, i) => `${1000 + i} AS d${i}`);
+    many[7] = `42 AS "7"`;
+    const big = db.query(`SELECT ${many.join(", ")}`).get();
+    expect(big["7"]).toBe(42);
+    expect(big[7]).toBe(42);
+    expect(big.d514).toBe(1514);
+    db.close();
+  });
+
+  it("supports indexed expandos on wide rows (butterfly reallocation)", () => {
+    // Putting an array-indexed property on a row whose Structure has
+    // out-of-line capacity forces JSC to reallocate the butterfly around the
+    // zero-capacity indexing header; the out-of-line named slots must survive.
+    const db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${100 + i} AS c${i}`).join(", ");
+    const row = db.query(`SELECT ${cols}`).get();
+    row[5] = "indexed-expando";
+    row.named = "named-expando";
+    Bun.gc(true);
+    expect(row[5]).toBe("indexed-expando");
+    expect(row.named).toBe("named-expando");
+    expect(row.c0).toBe(100);
+    expect(row.c69).toBe(169);
+    db.close();
+  });
+
+  it("does not leak expando properties between rows and survives GC", () => {
+    const db = new Database(":memory:");
+    const ncols = 80;
+    const nrows = 100;
+    // Columns >= 62 use out-of-line butterfly storage; put heap cells (TEXT ->
+    // JSString) there so GC visitation bugs surface as collected values.
+    db.run(
+      `CREATE TABLE wide_gc (${Array.from({ length: ncols }, (_, i) => `f${i} ${i >= 62 ? "TEXT" : "INTEGER"}`).join(",")})`,
+    );
+    const cellOf = (r, c) => (c >= 62 ? `cell_${r}_${c}_${Buffer.alloc(32, "x").toString()}` : r * ncols + c);
+    for (let r = 0; r < nrows; r++) {
+      db.run(
+        `INSERT INTO wide_gc VALUES (${Array.from({ length: ncols }, (_, i) => (i >= 62 ? `'${cellOf(r, i)}'` : cellOf(r, i))).join(",")})`,
+      );
+    }
+    const rows = db.query("SELECT * FROM wide_gc").all();
+
+    rows[0].expando = "x";
+    expect("expando" in rows[1]).toBe(false);
+
+    Bun.gc(true);
+
+    // out-of-line property storage must survive GC
+    for (let r = 0; r < nrows; r++) {
+      for (let c = 0; c < ncols; c++) {
+        const expected = cellOf(r, c);
+        if (rows[r][`f${c}`] !== expected) {
+          expect(rows[r][`f${c}`]).toBe(expected);
+        }
+      }
+    }
+    db.close();
+  });
+});
+
 it("issue#7147", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");

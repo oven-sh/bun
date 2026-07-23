@@ -1119,6 +1119,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         if cmd == CommandTag::AutoCommand
             && args.flag(b"-i")
             && ctx.runtime_options.interactive
+            && ctx.positionals.is_empty()
+            && ctx.runtime_options.eval.script.is_empty()
             && ctx.debug.global_cache == options::GlobalCache::fallback
         {
             // Bare `bun -i` reaches the REPL, so drop the --install=fallback

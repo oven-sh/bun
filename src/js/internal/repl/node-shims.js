@@ -133,7 +133,10 @@ const BuiltinModule = {
     // from the `node:`-prefixed builtinModules entries (e.g. node:sqlite);
     // `test` resolves as node:test but is missing from builtinModules.
     const names = ["test"];
-    for (const id of Module.builtinModules) {
+    // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator].
+    const modules = Module.builtinModules;
+    for (let i = 0; i < modules.length; i++) {
+      const id = modules[i];
       if (!StringPrototypeStartsWith(id, "node:")) continue;
       const bare = StringPrototypeSlice(id, 5);
       if (!ArrayPrototypeIncludes(names, bare)) ArrayPrototypePush(names, bare);

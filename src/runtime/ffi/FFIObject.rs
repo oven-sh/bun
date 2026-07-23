@@ -262,7 +262,14 @@ pub mod reader {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
         let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
+            // The offset is a non-negative byte offset added to the address. A negative
+            // value from JS must be rejected, not converted: `usize::try_from` of a
+            // negative int errors, and panicking on it would abort the process.
+            usize::try_from(arguments[1].to_int32()).map_err(|_| {
+                global_object.throw_invalid_arguments(format_args!(
+                    "Expected byte offset to be a non-negative integer"
+                ))
+            })?
         } else {
             0usize
         };

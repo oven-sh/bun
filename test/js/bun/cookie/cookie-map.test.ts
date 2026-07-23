@@ -227,6 +227,59 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
+  describe("can create CookieMap from any iterable of pairs", () => {
+    const pairs: [string, string][] = [
+      ["name", "value"],
+      ["foo", "bar"],
+    ];
+    const cases: readonly [string, () => Iterable<[string, string]>][] = [
+      ["Map", () => new Map(pairs)],
+      ["Headers", () => new Headers({ name: "value", foo: "bar" })],
+      ["URLSearchParams", () => new URLSearchParams({ name: "value", foo: "bar" })],
+      ["Set", () => new Set(pairs)],
+      [
+        "generator",
+        () =>
+          (function* () {
+            yield ["name", "value"] as [string, string];
+            yield ["foo", "bar"] as [string, string];
+          })(),
+      ],
+      ["CookieMap", () => new Bun.CookieMap("name=value; foo=bar")],
+      [
+        "custom @@iterator",
+        () => ({
+          *[Symbol.iterator]() {
+            yield ["name", "value"];
+            yield ["foo", "bar"];
+          },
+        }),
+      ],
+    ];
+    test.each(cases)("%s", (_, makeInit) => {
+      const map = new Bun.CookieMap(makeInit());
+      expect(map.size).toBe(2);
+      expect(map.get("name")).toBe("value");
+      expect(map.get("foo")).toBe("bar");
+      // Entries must match the source iterable's output (Headers sorts its
+      // entries, so compare without asserting a fixed order here).
+      expect([...map]).toEqual([...makeInit()]);
+      expect(map.toSetCookieHeaders()).toEqual([]);
+    });
+
+    test("iterable yielding wrong-length pair throws", () => {
+      expect(() => new Bun.CookieMap(new Set([["only-one"]]) as any)).toThrow(TypeError);
+      expect(() => new Bun.CookieMap([["a", "b", "c"]] as any)).toThrow(TypeError);
+    });
+
+    test("iterable yielding non-iterable pair throws", () => {
+      function* gen() {
+        yield 42 as any;
+      }
+      expect(() => new Bun.CookieMap(gen())).toThrow(TypeError);
+    });
+  });
+
   test("CookieMap methods work", () => {
     const map = new Bun.CookieMap();
 

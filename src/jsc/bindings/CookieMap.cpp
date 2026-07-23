@@ -64,7 +64,7 @@ CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
 {
 }
 
-ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
+ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&& variant, bool throwOnInvalidCookieString)
 {
     auto visitor = WTF::makeVisitor(
         [&](const Vector<Vector<String>>& pairs) -> ExceptionOr<Ref<CookieMap>> {
@@ -73,18 +73,13 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 if (pair.size() == 2) {
                     cookies.append(KeyValuePair<String, String>(pair[0], pair[1]));
                 } else if (throwOnInvalidCookieString) {
-                    return Exception { TypeError, "Invalid cookie string: expected name=value pair"_s };
+                    return Exception { TypeError, "Expected name/value pair to have exactly two items"_s };
                 }
             }
             return adoptRef(*new CookieMap(WTF::move(cookies)));
         },
-        [&](const HashMap<String, String>& pairs) -> ExceptionOr<Ref<CookieMap>> {
-            Vector<KeyValuePair<String, String>> cookies;
-            for (const auto& entry : pairs) {
-                cookies.append(KeyValuePair<String, String>(entry.key, entry.value));
-            }
-
-            return adoptRef(*new CookieMap(WTF::move(cookies)));
+        [&](Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<CookieMap>> {
+            return adoptRef(*new CookieMap(WTF::move(pairs)));
         },
         [&](const String& cookieString) -> ExceptionOr<Ref<CookieMap>> {
             StringView forCookieHeader = cookieString;

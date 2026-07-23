@@ -28,7 +28,7 @@ public:
 
     // Define a simple struct to hold the key-value pair
 
-    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
+    static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
     Vector<KeyValuePair<String, String>> getAll() const;

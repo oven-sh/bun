@@ -399,7 +399,7 @@ test("delete cookie invalid path option", () => {
 describe("Bun.CookieMap constructor", () => {
   test("throws for invalid array", () => {
     expect(() => new Bun.CookieMap([["abc defg =fhaingj809读写汉字学中文"]])).toThrowErrorMatchingInlineSnapshot(
-      `"Expected arrays of exactly two strings"`,
+      `"Expected name/value pair to have exactly two items"`,
     );
   });
   test("accepts unicode cookie value in object", () => {

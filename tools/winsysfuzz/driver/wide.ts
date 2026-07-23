@@ -354,6 +354,15 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     } catch {}
     return null;
   }
+  // The crash's identity and its captured stack, BEFORE verification: an
+  // unverified one-shot must still leave its faulting stack behind (a
+  // native segfault prints no frames of its own - the crash DUMP is the
+  // only stack, and it lives in rr, not in the panic text).
+  const crashSig = rr.crashSig ?? (rr.stdout || rr.stderr ? detectCrash(rr.stdout, rr.stderr) : null);
+  const stacks =
+    rr.hangStacks || rr.crashDump
+      ? digestStacks(rr.hangStacks ?? rr.crashDump ?? "")
+      : (crashSig?.frames ?? []).slice(0, 24);
   // In-pass verification: a single crash/hang under 8-way load often will
   // not replay solo later (timing-sensitive, or a false signature). Replay
   // the schedule twice NOW, under the same load that produced it, and queue
@@ -379,11 +388,15 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
       const key = (sig || detail).slice(0, 120);
       const prior = unverifiedCount.get(key) ?? 0;
       unverifiedCount.set(key, prior + 1);
-      const frames = (crashSig?.frames ?? []).slice(0, 8).join(" || ");
+      // The captured crash-dump stack (native crashes) or the panic's own
+      // frames: the one thing that makes an unreproduced sighting worth
+      // reading later. The run dir is KEPT (traces stripped) so the dump
+      // and stdout/stderr survive alongside this ledger line.
+      const frames = (stacks && stacks.length ? stacks : (crashSig?.frames ?? [])).slice(0, 12).join(" || ");
       try {
         appendFileSync(
           unverifiedPath,
-          `${new Date().toISOString()}\t${outcome}\t${basename(file)}\t${key}\t${schedule.join(" ; ")}\t${frames}\n`,
+          `${new Date().toISOString()}\t${outcome}\t${basename(file)}\t${key}\t${schedule.join(" ; ")}\t${frames}\t${dir}\n`,
         );
       } catch {}
       if (prior + 1 >= 2) {
@@ -393,8 +406,10 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
         detail = `${detail} [recurring x${prior + 1}, unreproduced in-pass]`;
       } else {
         console.log(`  [${outcome} unverified 0/2 - logged] ${basename(file)}: ${key.slice(0, 70)}`);
+        // Keep this run dir: its crash dump / output is the only evidence
+        // an unreproduced one-shot has. Strip the raw trace, retain the rest.
         try {
-          rmSync(dir, { recursive: true, force: true });
+          for (const f of readdirSync(dir)) if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(join(dir, f), { force: true });
         } catch {}
         return null;
       }
@@ -406,13 +421,7 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
   try {
     for (const f of readdirSync(dir)) if (f.startsWith("wsf-") && f.endsWith(".log")) rmSync(join(dir, f), { force: true });
   } catch {}
-  const crashSig = rr.crashSig ?? (rr.stdout || rr.stderr ? detectCrash(rr.stdout, rr.stderr) : null);
-  // Persist the crash's own backtrace lines (the panic's frames name the
-  // faulting caller - symbolizable later) plus any captured hang stacks.
-  const stacks =
-    rr.hangStacks || rr.crashDump
-      ? digestStacks(rr.hangStacks ?? rr.crashDump ?? "")
-      : (crashSig?.frames ?? []).slice(0, 24);
+
   const key =
     outcome === "CRASH"
       ? `crash: ${crashSig?.signature ?? detail}` // folded signature: stable dedupe

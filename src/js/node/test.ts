@@ -600,6 +600,24 @@ async function runOneFile(
   addRunCounts(counts, fileCounts);
 }
 
+function rebuildError(serialized: any, depth = 0): Error {
+  const { message, stack, name, code, failureType, cause, generatedMessage, actual, expected, operator, diff } =
+    serialized;
+  const error = new Error(message) as Record<string, unknown> & Error;
+  error.stack = stack;
+  if (name !== undefined && name !== "Error") error.name = name;
+  // Enumerable-property order mirrors node's AssertionError inspect.
+  if (generatedMessage !== undefined) error.generatedMessage = generatedMessage;
+  if (code !== undefined) error.code = code;
+  if (actual !== undefined) error.actual = actual;
+  if (expected !== undefined) error.expected = expected;
+  if (operator !== undefined) error.operator = operator;
+  if (diff !== undefined) error.diff = diff;
+  if (failureType !== undefined) error.failureType = failureType;
+  if (cause !== undefined && depth < 8) error.cause = rebuildError(cause, depth + 1);
+  return error;
+}
+
 function republishChildEvent(
   event: { type: string; data: any },
   file: string,
@@ -647,38 +665,7 @@ function republishChildEvent(
     const serialized = data.error;
     let error;
     if (serialized !== undefined) {
-      if (Error.isError(serialized)) {
-        error = serialized;
-      } else {
-        const { message, stack, code, failureType, name, cause } = serialized;
-        error = new Error(message);
-        error.stack = stack;
-        if (name !== undefined && name !== "Error") error.name = name;
-        if (code !== undefined) (error as any).code = code;
-        if (failureType !== undefined) (error as any).failureType = failureType;
-        if (cause !== undefined) {
-          const {
-            name: causeName,
-            generatedMessage: causeGeneratedMessage,
-            code: causeCode,
-            actual: causeActual,
-            expected: causeExpected,
-            operator: causeOperator,
-            diff: causeDiff,
-          } = cause;
-          const rebuilt = new Error(cause.message) as Record<string, unknown> & Error;
-          rebuilt.stack = cause.stack;
-          if (causeName !== undefined && causeName !== "Error") rebuilt.name = causeName;
-          // Enumerable-property order mirrors node's AssertionError inspect.
-          if (causeGeneratedMessage !== undefined) rebuilt.generatedMessage = causeGeneratedMessage;
-          if (causeCode !== undefined) rebuilt.code = causeCode;
-          if (causeActual !== undefined) rebuilt.actual = causeActual;
-          if (causeExpected !== undefined) rebuilt.expected = causeExpected;
-          if (causeOperator !== undefined) rebuilt.operator = causeOperator;
-          if (causeDiff !== undefined) rebuilt.diff = causeDiff;
-          (error as { cause?: unknown }).cause = rebuilt;
-        }
-      }
+      error = Error.isError(serialized) ? serialized : rebuildError(serialized);
     }
     data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
     if (type === "test:complete") data.details.passed = data.passed;
@@ -806,9 +793,10 @@ function nestingOf(node: TestNode) {
 }
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
-const kSerializedCauseExtras = ["generatedMessage", "actual", "expected", "operator", "diff"];
-function serializeRunError(error: unknown) {
+const kSerializedErrorExtras = ["generatedMessage", "actual", "expected", "operator", "diff"];
+function serializeRunError(error: unknown, depth = 0) {
   if (Error.isError(error)) {
+    const { cause } = error as { cause?: unknown };
     const out: Record<string, unknown> = {
       __proto__: null,
       message: error.message,
@@ -816,24 +804,13 @@ function serializeRunError(error: unknown) {
       code: (error as { code?: string }).code,
       failureType: (error as { failureType?: string }).failureType,
       name: error.name,
+      cause: cause !== undefined && depth < 8 ? serializeRunError(cause, depth + 1) : undefined,
     };
-    const { cause } = error as { cause?: unknown };
-    if (Error.isError(cause)) {
-      const c = cause as Record<string, unknown> & Error;
-      const serializedCause: Record<string, unknown> = {
-        __proto__: null,
-        message: c.message,
-        stack: c.stack,
-        code: c.code,
-        name: c.name,
-      };
-      // Only JSON-safe primitives survive the pipe (node uses the v8 serializer).
-      for (const key of kSerializedCauseExtras) {
-        const value = c[key];
-        const t = typeof value;
-        if (value === null || t === "string" || t === "number" || t === "boolean") serializedCause[key] = value;
-      }
-      out.cause = serializedCause;
+    // Only JSON-safe primitives survive the pipe (node uses the v8 serializer).
+    for (const key of kSerializedErrorExtras) {
+      const value = (error as Record<string, unknown>)[key];
+      const t = typeof value;
+      if (value === null || t === "string" || t === "number" || t === "boolean") out[key] = value;
     }
     return out;
   }
@@ -3061,7 +3038,7 @@ async function drainSubtestChain(node: TestNode) {
   } while (chain !== node.subtestChain);
 }
 
-function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown): Promise<undefined> {
+function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown, ownTodo: boolean): Promise<undefined> {
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
@@ -3093,7 +3070,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown)
     suite.finished = true;
     suite.passed = suite.failedSubtests === 0;
     // A todo suite's failures do not fail the owning test (Node).
-    if (suite.failedSubtests > 0 && !suite.todoFlag) {
+    if (suite.failedSubtests > 0 && !ownTodo) {
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
@@ -3896,7 +3873,8 @@ function addSuite(
       runningNode.subtestChain = runningNode.subtestChain.then(reportDirectiveOnlyNode.bind(undefined, suite, "skip"));
       return Promise.resolve(undefined);
     }
-    if (mode === "todo") suite.todoFlag = true;
+    const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
+    if (ownTodo) suite.todoFlag = true;
     // The suite's children must run after the parent's previously scheduled
     // subtests AND after the describe callback's own returned promise settles
     // (Node's Suite.run awaits buildPromise before iterating subtests). The
@@ -3928,7 +3906,7 @@ function addSuite(
       gate.resolve();
       build = undefined;
     }
-    return scheduleSuiteSubtest(runningNode, suite, build);
+    return scheduleSuiteSubtest(runningNode, suite, build, ownTodo);
   }
 
   const parent = currentCollectionParent();

@@ -88,19 +88,29 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmMLDSA::platformSign(const CryptoKeyA
 {
     EvpDigestCtxPtr mdCtx(EVP_MD_CTX_new());
     EVP_PKEY_CTX* pkeyCtx = nullptr;
-    if (!mdCtx || !EVP_DigestSignInit(mdCtx.get(), &pkeyCtx, nullptr, nullptr, key.platformKey()))
+    // Failures run on the work queue; clear the BoringSSL queue so the next
+    // operation on this thread does not pick up a stale error as its cause.
+    if (!mdCtx || !EVP_DigestSignInit(mdCtx.get(), &pkeyCtx, nullptr, nullptr, key.platformKey())) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
-    if (!context.isEmpty() && !EVP_PKEY_CTX_set1_signature_context_string(pkeyCtx, context.begin(), context.size()))
+    if (!context.isEmpty() && !EVP_PKEY_CTX_set1_signature_context_string(pkeyCtx, context.begin(), context.size())) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
     size_t signatureLength = 0;
-    if (!EVP_DigestSign(mdCtx.get(), nullptr, &signatureLength, data.begin(), data.size()))
+    if (!EVP_DigestSign(mdCtx.get(), nullptr, &signatureLength, data.begin(), data.size())) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
     Vector<uint8_t> signature(signatureLength);
-    if (!EVP_DigestSign(mdCtx.get(), signature.begin(), &signatureLength, data.begin(), data.size()))
+    if (!EVP_DigestSign(mdCtx.get(), signature.begin(), &signatureLength, data.begin(), data.size())) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
     signature.shrink(signatureLength);
     return signature;
 }
@@ -109,11 +119,15 @@ ExceptionOr<bool> CryptoAlgorithmMLDSA::platformVerify(const CryptoKeyAKP& key, 
 {
     EvpDigestCtxPtr mdCtx(EVP_MD_CTX_new());
     EVP_PKEY_CTX* pkeyCtx = nullptr;
-    if (!mdCtx || !EVP_DigestVerifyInit(mdCtx.get(), &pkeyCtx, nullptr, nullptr, key.platformKey()))
+    if (!mdCtx || !EVP_DigestVerifyInit(mdCtx.get(), &pkeyCtx, nullptr, nullptr, key.platformKey())) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
-    if (!context.isEmpty() && !EVP_PKEY_CTX_set1_signature_context_string(pkeyCtx, context.begin(), context.size()))
+    if (!context.isEmpty() && !EVP_PKEY_CTX_set1_signature_context_string(pkeyCtx, context.begin(), context.size())) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
     bool valid = EVP_DigestVerify(mdCtx.get(), signature.begin(), signature.size(), data.begin(), data.size()) == 1;
     if (!valid)

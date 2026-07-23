@@ -116,7 +116,7 @@ void CryptoAlgorithmAES_GCM::decrypt(const CryptoAlgorithmParameters& parameters
         return;
     }
     if (cipherText.size() < *(aesParameters.tagLength) / 8) {
-        exceptionCallback(OperationError, "The provided data is too small"_s);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 

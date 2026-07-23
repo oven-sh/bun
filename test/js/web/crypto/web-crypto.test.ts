@@ -530,28 +530,105 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     expect(err.message).toBe("Unrecognized algorithm name");
   });
 
-  it("structuredClone of ChaCha20-Poly1305 and AKP keys throws DataCloneError", async () => {
-    // Node clones these; until real clone support lands, DataCloneError
-    // replaces the RELEASE_ASSERT abort the serializer used to hit.
-    const chacha = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", true, [
+  it("structuredClone round-trips ChaCha20-Poly1305 keys", async () => {
+    const material = new Uint8Array(32).fill(7);
+    const key = await crypto.subtle.importKey("raw-secret", material, "ChaCha20-Poly1305", true, [
       "encrypt",
       "decrypt",
     ]);
-    const ml = (await crypto.subtle.generateKey("ML-DSA-65", true, ["sign", "verify"])) as CryptoKeyPair;
-    const kem = (await crypto.subtle.generateKey("ML-KEM-768", true, [
-      "encapsulateBits",
-      "decapsulateBits",
-    ])) as CryptoKeyPair;
-    for (const key of [chacha, ml.privateKey, ml.publicKey, kem.privateKey, kem.publicKey]) {
-      let err: Error | undefined;
-      try {
-        structuredClone(key);
-      } catch (e) {
-        err = e as Error;
-      }
-      expect(err).toBeInstanceOf(DOMException);
-      expect(err!.name).toBe("DataCloneError");
+    const clone = structuredClone(key);
+    expect(clone.algorithm).toEqual(key.algorithm);
+    expect(clone.type).toBe("secret");
+    expect(clone.extractable).toBe(true);
+    expect(clone.usages).toEqual(key.usages);
+    expect(new Uint8Array(await crypto.subtle.exportKey("raw-secret", clone))).toEqual(material);
+    // Clones must be usable, not just inspectable.
+    const iv = new Uint8Array(12);
+    const ct = await crypto.subtle.encrypt({ name: "ChaCha20-Poly1305", iv }, clone, new Uint8Array([1, 2, 3]));
+    expect(new Uint8Array(await crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv }, key, ct))).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
+  it("structuredClone preserves extractable=false for ChaCha20-Poly1305 keys", async () => {
+    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", false, [
+      "encrypt",
+    ]);
+    const clone = structuredClone(key);
+    expect(clone.extractable).toBe(false);
+    expect(crypto.subtle.exportKey("raw-secret", clone)).rejects.toThrow();
+  });
+
+  it.each(["ML-DSA-65", "ML-KEM-768"])("structuredClone round-trips %s key pairs", async alg => {
+    const usages = alg.startsWith("ML-DSA") ? ["sign", "verify"] : ["encapsulateBits", "decapsulateBits"];
+    const pair = (await crypto.subtle.generateKey(alg, true, usages as KeyUsage[])) as CryptoKeyPair;
+    const pub = structuredClone(pair.publicKey);
+    const priv = structuredClone(pair.privateKey);
+    expect(pub.algorithm).toEqual(pair.publicKey.algorithm);
+    expect(pub.type).toBe("public");
+    expect(pub.usages).toEqual(pair.publicKey.usages);
+    expect(priv.type).toBe("private");
+    expect(priv.extractable).toBe(true);
+    expect(priv.usages).toEqual(pair.privateKey.usages);
+    expect(new Uint8Array(await crypto.subtle.exportKey("spki", pub))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)),
+    );
+    expect(new Uint8Array(await crypto.subtle.exportKey("pkcs8", priv))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey)),
+    );
+    // Like Node, the clone keeps the FIPS seed (pkcs8 embeds it).
+    expect(new Uint8Array(await crypto.subtle.exportKey("raw-seed", priv))).toEqual(
+      new Uint8Array(await crypto.subtle.exportKey("raw-seed", pair.privateKey)),
+    );
+  });
+
+  it("Worker postMessage delivers ChaCha20-Poly1305 and ML-DSA keys", async () => {
+    const material = new Uint8Array(32).fill(9);
+    const chacha = await crypto.subtle.importKey("raw-secret", material, "ChaCha20-Poly1305", true, ["encrypt"]);
+    const pair = (await crypto.subtle.generateKey("ML-DSA-65", true, ["sign", "verify"])) as CryptoKeyPair;
+    const worker = new Worker(
+      URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = async ({ data }) => {
+              const raw = new Uint8Array(await crypto.subtle.exportKey("raw-secret", data.chacha));
+              const spki = new Uint8Array(await crypto.subtle.exportKey("spki", data.mlPublic));
+              postMessage({
+                raw,
+                spki,
+                chachaAlg: data.chacha.algorithm.name,
+                mlUsages: data.mlPublic.usages,
+              });
+            };`,
+          ],
+          { type: "application/javascript" },
+        ),
+      ),
+    );
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(new Error(e.message));
+      worker.postMessage({ chacha, mlPublic: pair.publicKey });
+      const result = await promise;
+      expect(new Uint8Array(result.raw)).toEqual(material);
+      expect(result.chachaAlg).toBe("ChaCha20-Poly1305");
+      expect(result.mlUsages).toEqual(["verify"]);
+      expect(new Uint8Array(result.spki)).toEqual(
+        new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)),
+      );
+    } finally {
+      worker.terminate();
     }
+  });
+
+  it("decrypt of undersized ChaCha20-Poly1305 input rejects with Node's generic message", async () => {
+    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", false, [
+      "decrypt",
+    ]);
+    expect(
+      crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(12) }, key, new Uint8Array(5)),
+    ).rejects.toThrow("The operation failed for an operation-specific reason");
   });
 
   it("encapsulateBits and encapsulateKey enumerate results in Node's order", async () => {

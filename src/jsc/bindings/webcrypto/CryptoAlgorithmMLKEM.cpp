@@ -112,6 +112,7 @@ void CryptoAlgorithmMLKEM::encapsulate(Ref<CryptoKey>&& key, VectorPairCallback&
     const auto& akpKey = downcast<CryptoKeyAKP>(key.get());
     EvpPKeyCtxPtr ctx(EVP_PKEY_CTX_new(akpKey.platformKey(), nullptr));
     if (!ctx || !EVP_PKEY_encapsulate_init(ctx.get(), nullptr)) {
+        ERR_clear_error();
         exceptionCallback(OperationError, ""_s);
         return;
     }
@@ -147,6 +148,7 @@ void CryptoAlgorithmMLKEM::decapsulate(Ref<CryptoKey>&& key, Vector<uint8_t>&& c
     const auto& akpKey = downcast<CryptoKeyAKP>(key.get());
     EvpPKeyCtxPtr ctx(EVP_PKEY_CTX_new(akpKey.platformKey(), nullptr));
     if (!ctx || !EVP_PKEY_decapsulate_init(ctx.get(), nullptr)) {
+        ERR_clear_error();
         exceptionCallback(OperationError, ""_s);
         return;
     }

@@ -106,7 +106,7 @@ void CryptoAlgorithmChaCha20Poly1305::decrypt(const CryptoAlgorithmParameters& p
     if (!validateIvLength(aeadParameters, exceptionCallback))
         return;
     if (cipherText.size() < TagLength / 8) {
-        exceptionCallback(OperationError, "The provided data is too small"_s);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 

@@ -148,17 +148,23 @@ ExceptionOr<CryptoKeyPair> CryptoKeyAKP::generatePair(CryptoAlgorithmIdentifier 
         return Exception { OperationError };
 
     EvpPKeyCtxPtr ctx(EVP_PKEY_CTX_new_id(nid, nullptr));
-    if (!ctx)
+    if (!ctx) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
     EVP_PKEY* rawPrivateKey = nullptr;
-    if (EVP_PKEY_keygen_init(ctx.get()) <= 0 || EVP_PKEY_keygen(ctx.get(), &rawPrivateKey) <= 0)
+    if (EVP_PKEY_keygen_init(ctx.get()) <= 0 || EVP_PKEY_keygen(ctx.get(), &rawPrivateKey) <= 0) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
     EvpPKeyPtr privateKey(rawPrivateKey);
 
     EvpPKeyPtr publicKey = publicKeyFromPrivate(privateKey.get(), alg);
-    if (!publicKey)
+    if (!publicKey) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
     auto publicCryptoKey = CryptoKeyAKP::create(identifier, CryptoKeyType::Public, WTF::move(publicKey), true, publicUsages);
     auto privateCryptoKey = CryptoKeyAKP::create(identifier, CryptoKeyType::Private, WTF::move(privateKey), extractable, privateUsages);
@@ -260,8 +266,10 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportSpki() const
         return Exception { InvalidAccessError };
 
     auto der = marshalEVPKey(m_key.get(), true);
-    if (!der)
+    if (!der) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
     return WTF::move(*der);
 }
@@ -272,8 +280,10 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportPkcs8() const
         return Exception { InvalidAccessError };
 
     auto der = marshalEVPKey(m_key.get(), false);
-    if (!der)
+    if (!der) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
 
     return WTF::move(*der);
 }
@@ -284,8 +294,10 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportRawPublic() const
         return Exception { InvalidAccessError };
 
     auto result = rawPublicKeyBytes(m_key.get());
-    if (!result)
+    if (!result) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
     return WTF::move(*result);
 }
 
@@ -295,11 +307,16 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyAKP::exportRawSeed() const
         return Exception { InvalidAccessError };
 
     size_t length = 0;
-    if (!EVP_PKEY_get_private_seed(m_key.get(), nullptr, &length))
+    if (!EVP_PKEY_get_private_seed(m_key.get(), nullptr, &length)) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
     Vector<uint8_t> result(length);
-    if (!EVP_PKEY_get_private_seed(m_key.get(), result.begin(), &length))
+    if (!EVP_PKEY_get_private_seed(m_key.get(), result.begin(), &length)) {
+        ERR_clear_error();
         return Exception { OperationError };
+    }
+    result.shrink(length);
     return result;
 }
 

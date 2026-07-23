@@ -523,7 +523,23 @@ pub fn parse_ts_config(
     Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
 }
 
-/// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
+/// `--define` / `Bun.build({define})` values: the whole input must be a single JSON
+/// literal (trailing commas and single-quoted strings are accepted, matching esbuild).
+/// No keyword handling, no implicit auto-quoting: callers do the entity-name check
+/// first and emit the user-facing error on `Err`.
+pub fn parse_define_value(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> crate::Result<Expr> {
+    const OPTS: JSONOptions = JSONOptions {
+        allow_trailing_commas: true,
+        ..JSONOptions::DEFAULT
+    };
+    Ok(parse_classic(source, log, bump, OPTS, true)?.root)
+}
+
+/// `.env` values: JSON, keywords, or an implicitly-quoted string.
 pub fn parse_env_json(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

@@ -71,38 +71,120 @@ describe("Bun.build", () => {
     throw new Error("should have thrown");
   });
 
-  // A `define:` value that isn't valid JSON or a JS identifier is auto-quoted
-  // (treated as a string literal). The JSON lexer must not error eagerly on the
-  // first character — a raw minified CSS string starts with `*{...}`, which
-  // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
-  describe.each([
-    "*{box-sizing:border-box}.root{all:initial}",
-    "?foo",
-    "(parenthesized)",
-    ")close",
-    "abc{not json}",
-    // Leading-operator chars must `step()` before falling back to auto-quote so
-    // `parse_string_literal`'s leading `step()` lands past index 1 (matching the
-    // reference lexer). Otherwise a LF at index 1 truncates the value to `"("`.
-    "(\nrest",
-    "*\nrest",
-  ])("define value %j is auto-quoted when not valid JSON", value => {
-    test("emits a quoted string literal", async () => {
-      const dir = tempDirWithFiles("bun-build-define-auto-quote", {
-        "entry.ts": `declare const X: string; console.log(X);`,
+  // A `define:` value must be either a JSON literal or an entity name (a
+  // dot-separated identifier chain). Anything else is rejected like esbuild
+  // does, so a value that *starts* with a JSON literal (`60 * 60 * 1000`) is
+  // never silently truncated to its prefix, and a non-JSON string is never
+  // auto-quoted.
+  describe("define: rejects invalid values", () => {
+    test.concurrent.each([
+      // prefix-truncation hazards: start with a JSON literal, trail junk
+      ["60 * 60 * 1000", "number"],
+      ["1 + 2", "number"],
+      ["true false", "boolean"],
+      ['"a" + "b"', "string"],
+      ["true.x", "boolean"],
+      ["123abc", "number"],
+      // non-JSON, non-identifier: previously auto-quoted to a string literal
+      ["foo bar", "string"],
+      ["*{box-sizing:border-box}.root{all:initial}", "string"],
+      ["?foo", "string"],
+      ["(parenthesized)", "string"],
+      ["abc{not json}", "string"],
+    ])("%j", async (value, _priorType) => {
+      const dir = tempDirWithFiles("bun-build-define-invalid", {
+        "entry.ts": `declare const X: unknown; console.log(X);`,
       });
-      const result = await Bun.build({
+      const result = await buildNoThrow({
         entrypoints: [join(dir, "entry.ts")],
         define: { X: value },
       });
+      const messages = result.logs.map(l => l.message).join("\n");
+      expect(messages).toContain(
+        `define value "${value}" must be a valid JSON literal or identifier`,
+      );
+      expect(result.success).toBe(false);
+    });
+
+    test("multiple invalid values are all reported", async () => {
+      const dir = tempDirWithFiles("bun-build-define-invalid-multi", {
+        "entry.ts": `console.log(A, B);`,
+      });
+      const result = await buildNoThrow({
+        entrypoints: [join(dir, "entry.ts")],
+        define: { A: "1 + 2", B: "foo bar" },
+      });
+      const messages = result.logs.map(l => l.message).join("\n");
+      expect(messages).toContain('define value "1 + 2"');
+      expect(messages).toContain('define value "foo bar"');
+      expect(result.success).toBe(false);
+    });
+
+    test("CLI --define rejects trailing content", async () => {
+      const dir = tempDirWithFiles("bun-build-cli-define-invalid", {
+        "entry.js": `console.log(V, typeof V);`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--define", "V=60 * 60 * 1000"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).toContain(
+        'define value "60 * 60 * 1000" must be a valid JSON literal or identifier',
+      );
+      expect(stdout).not.toContain("console.log(60,");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("invalid key part names the key and the part", async () => {
+      const dir = tempDirWithFiles("bun-build-define-invalid-key", {
+        "entry.ts": `console.log(1);`,
+      });
+      const result = await buildNoThrow({
+        entrypoints: [join(dir, "entry.ts")],
+        define: { "process.env.*": "1" },
+      });
+      expect(result.logs.map(l => l.message).join("\n")).toContain(
+        'define key "process.env.*" contains invalid identifier "*"',
+      );
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // Values that *are* a single JSON literal or an entity name are accepted.
+  describe("define: accepts valid values", () => {
+    test.concurrent.each([
+      ['"hello"', '"hello" "string"'],
+      ["'hello'", '"hello" "string"'],
+      ["123", '123 "number"'],
+      ["-1.5", '-1.5 "number"'],
+      ["true", 'true "boolean"'],
+      ["false", 'false "boolean"'],
+      ["null", 'null "object"'],
+      ["undefined", 'undefined "undefined"'],
+      ["[1, 2, 3]", '[1,2,3] "object"'],
+      ['{"a": 1}', '{"a":1} "object"'],
+      ["  42  ", '42 "number"'],
+      ["process.env.FOO", 'undefined "undefined"'],
+    ])("%j", async (value, expected) => {
+      const dir = tempDirWithFiles("bun-build-define-valid", {
+        "entry.ts": `declare const X: unknown; console.log(JSON.stringify(X) ?? String(X), JSON.stringify(typeof X));`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(dir, "entry.ts")],
+        outdir: join(dir, "out"),
+        define: { X: value },
+      });
+      expect(result.logs).toEqual([]);
       expect(result.success).toBe(true);
-      const out = await result.outputs[0].text();
-      // The printer emits the define as a `"..."` string literal, or as a
-      // `` `...` `` template literal when the value contains a literal newline.
-      // Either way the full value — not a truncated prefix — must round-trip.
-      if (!out.includes("`" + value + "`")) {
-        expect(out).toContain(JSON.stringify(value));
-      }
+      expect([result.outputs[0].path]).toRun(expected + "\n");
     });
   });
 

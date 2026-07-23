@@ -12,7 +12,6 @@ use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
-use bun_wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
 use crate::package_manager;
@@ -696,7 +695,10 @@ impl PatchTask {
             sys::Result::Ok(f) => f,
         };
 
-        let mut hasher = Wyhash11::init(0);
+        // SHA-1/64 (not Wyhash11): a constructed wyhash collision would let
+        // two distinct patches share one `_patch_hash=` cache folder.
+        // Truncation keeps the u64 folder-suffix / tag-file interface.
+        let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
 
         // what's a good number for this? page size i guess
         const STACK_SIZE: usize = 16384;
@@ -725,7 +727,9 @@ impl PatchTask {
             read += slice.len();
         }
 
-        Some(hasher.final_())
+        let mut digest = [0u8; bun_sha_hmac::sha::hashers::SHA1::DIGEST];
+        hasher.r#final(&mut digest);
+        Some(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {

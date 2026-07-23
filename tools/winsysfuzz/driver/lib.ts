@@ -105,6 +105,10 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       const signature = detail
         .replace(/0x[0-9a-fA-F]{9,}/g, m => (/^0x[fF]{9,}$/.test(m) ? "0xFFFF(-1)" : "0xPTR"))
         .replace(/\bthread \d+\b/g, "thread N")
+        // fold Win32/errno codes: the same die-with-message site with a
+        // different injected error code is the same finding
+        .replace(/Win32Error\(\d+\)/g, "Win32Error(N)")
+        .replace(/\b(errno|code:?) ?-?\d+\b/g, "$1 N")
         .replace(/\b\d{5,}\b/g, "N");
       // The handler's backtrace: lines like "???:?:?: 0x7ffc... in ??? (???)"
       // or "<file>:<line>:<col>: 0x7ff6... in <symbol> (bun-debug.exe)".

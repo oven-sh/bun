@@ -177,6 +177,9 @@ export const NEVER_FAULT = new Set([
   // fake hang, exactly like faulting the wait itself
   "NtSetEvent", "NtResetEvent", "NtPulseEvent", "NtClearEvent", "NtReleaseSemaphore",
   "NtReleaseMutant", "NtSetTimer", "NtSetTimerEx", "NtCancelTimer", "NtSetIoCompletion",
+  // thread resume/suspend: failing ResumeThread on a valid handle is the
+  // same fabrication - the child's main thread never wakes, a fake stall
+  "NtResumeThread", "NtSuspendThread", "NtAlertResumeThread", "NtSuspendProcess", "NtResumeProcess",
   "NtWaitForWorkViaWorkerFactory", "NtReleaseWorkerFactoryWorker", "NtSignalAndWaitForSingleObject",
   // control-flow / loader / callbacks
   "NtContinue", "NtCallbackReturn", "NtRaiseException", "NtRaiseHardError",

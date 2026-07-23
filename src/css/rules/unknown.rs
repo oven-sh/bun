@@ -5,7 +5,8 @@ use crate::{PrintErr, Printer};
 /// An unknown at-rule, stored as raw tokens.
 pub struct UnknownAtRule {
     /// The name of the at-rule (without the @).
-    // TODO: arena lifetime — slice backed by parser arena.
+    // TODO: arena lifetime — slice backed by parser arena. Requires threading
+    // `'bump` through CssRule and css_parser.rs; not fixable piecemeal.
     pub name: &'static [u8],
     /// The prelude of the rule.
     pub prelude: TokenList,

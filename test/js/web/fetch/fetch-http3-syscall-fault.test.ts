@@ -95,31 +95,37 @@ test.skipIf(skip)("EAGAIN on the coalesced handshake datagram is requeued and th
   });
 });
 
-test.skipIf(skip)("a non-backpressure send error on the first datagram recovers without stalling the engine", async () => {
-  await withServer(async port => {
-    // ECONNREFUSED on the very first send is what a stale ICMP on the shared
-    // client socket looks like. The errno is remapped to EAGAIN for lsquic,
-    // the UDP poll is re-armed writable, and on_drain → send_unsent_packets
-    // resends once the single-shot fault is consumed.
-    fault.set({ syscall: "sendmsg", action: "errno", errno: "ECONNREFUSED", after: 0, repeat: 1 });
+test.skipIf(skip)(
+  "a non-backpressure send error on the first datagram recovers without stalling the engine",
+  async () => {
+    await withServer(async port => {
+      // ECONNREFUSED on the very first send is what a stale ICMP on the shared
+      // client socket looks like. The errno is remapped to EAGAIN for lsquic,
+      // the UDP poll is re-armed writable, and on_drain → send_unsent_packets
+      // resends once the single-shot fault is consumed.
+      fault.set({ syscall: "sendmsg", action: "errno", errno: "ECONNREFUSED", after: 0, repeat: 1 });
 
-    const res = await h3(port);
-    expect(await res.text()).toBe("ok");
-    expect(res.status).toBe(200);
-  });
-});
+      const res = await h3(port);
+      expect(await res.text()).toBe("ok");
+      expect(res.status).toBe(200);
+    });
+  },
+);
 
-test.skipIf(skip)("repeated EAGAIN over several loop iterations recovers via on_drain without stalling the fetch", async () => {
-  await withServer(async port => {
-    // Fail the first handful of sends with EAGAIN. Each failure re-arms the
-    // UDP poll's writable interest; on_drain → send_unsent_packets runs on
-    // the next iteration, so progress resumes as soon as the rule disarms.
-    // The 8s abort is well above lsquic's one-second resume_sending_at
-    // failsafe, so the only way to time out is an engine-level stall.
-    fault.set({ syscall: "sendmsg", action: "errno", errno: "EAGAIN", after: 0, repeat: 5 });
+test.skipIf(skip)(
+  "repeated EAGAIN over several loop iterations recovers via on_drain without stalling the fetch",
+  async () => {
+    await withServer(async port => {
+      // Fail the first handful of sends with EAGAIN. Each failure re-arms the
+      // UDP poll's writable interest; on_drain → send_unsent_packets runs on
+      // the next iteration, so progress resumes as soon as the rule disarms.
+      // The 8s abort is well above lsquic's one-second resume_sending_at
+      // failsafe, so the only way to time out is an engine-level stall.
+      fault.set({ syscall: "sendmsg", action: "errno", errno: "EAGAIN", after: 0, repeat: 5 });
 
-    const res = await h3(port);
-    expect(await res.text()).toBe("ok");
-    expect(res.status).toBe(200);
-  });
-});
+      const res = await h3(port);
+      expect(await res.text()).toBe("ok");
+      expect(res.status).toBe(200);
+    });
+  },
+);

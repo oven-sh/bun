@@ -357,9 +357,7 @@ test.skipIf(!isDebug)("Runtime.evaluate does not trip exception-check validation
   // Without the WebKit-side fix the inspectee SIGABRTs ("Unchecked JS exception")
   // before replying, so the socket closes 1006 and reply is { closed: { code: 1006, ... } }.
   if (child.signalCode === "SIGABRT") {
-    throw new Error(
-      `inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`,
-    );
+    throw new Error(`inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`);
   }
   expect(reply).toMatchObject({
     id: 1,

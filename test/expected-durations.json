@@ -2283,13 +2283,13 @@
   },
   "js/bun/http/bun-serve-static-stress-access-body.test.ts": {
     "default": 32903,
-    "asan": 65153,
+    "asan": 25000,
     "musl": 29873,
     "windows": 1057
   },
   "js/bun/http/bun-serve-static-stress-no-body.test.ts": {
     "default": 34371,
-    "asan": 62151,
+    "asan": 25000,
     "musl": 30951,
     "windows": 955
   },
@@ -6308,12 +6308,6 @@
     "asan": 7340,
     "musl": 7875,
     "windows": 36877
-  },
-  "js/node/process/dlopen-non-object-exports.test.ts": {
-    "default": 6146,
-    "asan": 7631,
-    "musl": 9478,
-    "windows": 32080
   },
   "js/node/process/process-args.test.js": {
     "default": 1455,

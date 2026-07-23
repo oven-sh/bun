@@ -682,7 +682,7 @@ function TLSSocket(socket?, options?) {
   this._rejectUnauthorized = false;
   this._securePending = true;
   this._newSessionPending = undefined;
-  this._controlReleased = undefined;
+  this._controlReleased = false;
   this.secureConnecting = false;
   this._SNICallback = undefined;
   this.servername = undefined;
@@ -709,6 +709,13 @@ function TLSSocket(socket?, options?) {
   this._rejectUnauthorized = !!options.rejectUnauthorized;
 
   NetSocket.$call(this, options);
+
+  // Node's _init installs this as the first 'error' listener and removes it in
+  // _releaseControl: until control is handed to the user it routes errors
+  // through '_tlsError' (which the server turns into 'tlsClientError') and
+  // keeps a destroy(err) from surfacing as an uncaught exception.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L606
+  this.on("error", this._tlsError);
 
   // A server-side TLSSocket is created with { isServer: true }; track it so
   // server-only guards (e.g. setServername throwing ERR_TLS_SNI_FROM_SERVER)
@@ -804,6 +811,25 @@ Object.defineProperty(TLSSocket.prototype, "ssl", {
     Object.defineProperty(this, "ssl", { value, writable: true, enumerable: false, configurable: true });
   },
 });
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1060-L1079
+TLSSocket.prototype._tlsError = function _tlsError(err) {
+  this.emit("_tlsError", err);
+  if (this._controlReleased) return err;
+  return null;
+};
+
+TLSSocket.prototype._emitTLSError = function _emitTLSError(err) {
+  const e = this._tlsError(err);
+  if (e) this.emit("error", e);
+};
+
+TLSSocket.prototype._releaseControl = function _releaseControl() {
+  if (this._controlReleased) return false;
+  this._controlReleased = true;
+  this.removeListener("error", this._tlsError);
+  return true;
+};
 
 TLSSocket.prototype._destroySSL = function _destroySSL() {
   // Releases the TLS state for this socket; the connection itself is torn
@@ -1134,8 +1160,15 @@ function Server(options, secureConnectionListener): void {
   this.sigalgs = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
-  this._rejectUnauthorized = rejectUnauthorizedDefault();
-  this._requestCert = undefined;
+  // The Server constructor is the only writer of these: node assigns them
+  // here and Server.prototype.setSecureContext never touches them, so a later
+  // context swap cannot change whether client certificates are requested.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368
+  // NODE_TLS_REJECT_UNAUTHORIZED is a client-side switch; a server's default
+  // is unconditionally true.
+  const serverOptions = options instanceof InternalSecureContext ? undefined : options;
+  this._requestCert = serverOptions?.requestCert === true ? true : undefined;
+  this._rejectUnauthorized = serverOptions?.rejectUnauthorized !== false;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
@@ -1287,16 +1320,6 @@ function Server(options, secureConnectionListener): void {
       if (options.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
       next.secureOptions = secureOptions;
 
-      const requestCert = options.requestCert || false;
-
-      next._requestCert = requestCert || undefined;
-
-      const rejectUnauthorized = options.rejectUnauthorized;
-
-      if (typeof rejectUnauthorized !== "undefined") {
-        next._rejectUnauthorized = rejectUnauthorized !== false;
-      } else next._rejectUnauthorized = rejectUnauthorizedDefault();
-
       const ciphers = options.ciphers;
       if (typeof ciphers !== "undefined") {
         if (typeof ciphers !== "string") {
@@ -1329,8 +1352,6 @@ function Server(options, secureConnectionListener): void {
       this.passphrase = next.passphrase;
       this.servername = next.servername;
       this.secureOptions = next.secureOptions;
-      this._requestCert = next._requestCert;
-      this._rejectUnauthorized = next._rejectUnauthorized;
       this.ciphers = next.ciphers;
       this.secureProtocol = next.secureProtocol;
       this.minVersion = next.minVersion;
@@ -1527,6 +1548,10 @@ function connect(...args) {
   }
 
   const tlssock = new TLSSocket(connectOptions);
+  // A client socket is the caller's from the start, so its errors are theirs
+  // to handle: node releases control before the connection is even started.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1798
+  tlssock._releaseControl();
   tlssock._rejectUnauthorized = rejectUnauthorized;
   // Honor the `timeout` option here: Socket.prototype.connect does not (only
   // the net.createConnection factory does), so tls.connect applies it

@@ -450,7 +450,7 @@ impl<const SSL: bool> ListenSocket<SSL> {
     }
 
     #[inline]
-    pub fn get_local_port(&mut self) -> i32 {
+    pub fn get_local_port(&mut self) -> Option<u16> {
         // S008: opaque ZST cast as above.
         bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
             .get_local_port()

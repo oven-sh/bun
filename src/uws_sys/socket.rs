@@ -635,42 +635,32 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn local_port(&self) -> i32 {
+    pub fn local_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).local_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
-    pub fn remote_port(&self) -> i32 {
+    pub fn remote_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).remote_port(),
-            _ => 0,
+            _ => None,
         }
     }
 
     pub fn local_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match self.socket {
-            InternalSocket::Connected(s) => match sock(s).local_address(buf) {
-                Ok(v) => Some(v),
-                Err(e) => bun_core::Output::panic(format_args!(
-                    "Failed to get socket's local address: {}",
-                    e.name()
-                )),
-            },
+            // getsockname() can fail (EBADF/ENOTCONN/…) on a socket the OS
+            // closed or reset underneath us; callers treat that as "no address".
+            InternalSocket::Connected(s) => sock(s).local_address(buf).ok(),
             _ => None,
         }
     }
 
     pub fn remote_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match self.socket {
-            InternalSocket::Connected(s) => match sock(s).remote_address(buf) {
-                Ok(v) => Some(v),
-                Err(e) => bun_core::Output::panic(format_args!(
-                    "Failed to get socket's remote address: {}",
-                    e.name()
-                )),
-            },
+            InternalSocket::Connected(s) => sock(s).remote_address(buf).ok(),
             _ => None,
         }
     }
@@ -956,7 +946,7 @@ impl AnySocket {
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);
         fn shutdown_read(&self);
-        fn local_port(&self) -> i32;
+        fn local_port(&self) -> Option<u16>;
         fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

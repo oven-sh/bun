@@ -54,16 +54,26 @@ describe("util file tests", () => {
     expect(actual).toEqual(cases);
   });
 
-  test("Bun.file().slice() inherits a text/* charset-promoted type", () => {
+  test("slice() inherits the parent's non-empty type", () => {
     using dir = tempDir("slice-type", { "a.md": "hello", "a.txt": "hello", "a.png": "x" });
     expect({
+      // extension-derived, charset-promoted (Owned):
       md: Bun.file(join(String(dir), "a.md")).slice(0, 3).type,
+      // extension-derived, static constant:
       txt: Bun.file(join(String(dir), "a.txt")).slice(0, 3).type,
       png: Bun.file(join(String(dir), "a.png")).slice(0, 3).type,
+      // user-set type not in the MIME table (Owned):
+      custom: new Blob(["hello"], { type: "custom/mimetype" }).slice(0, 3).type,
+      customFile: Bun.file("x", { type: "application/x-foo" }).slice(0, 3).type,
+      // explicit override still wins:
+      override: Bun.file(join(String(dir), "a.md")).slice(0, 3, "text/plain").type,
     }).toEqual({
       md: "text/markdown;charset=utf-8",
       txt: "text/plain;charset=utf-8",
       png: "image/png",
+      custom: "custom/mimetype",
+      customFile: "application/x-foo",
+      override: "text/plain;charset=utf-8",
     });
   });
 });

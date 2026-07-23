@@ -972,10 +972,13 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       self.emit("secure", self);
       self.emit("secureConnect", verifyError);
     } catch (err) {
-      // A throwing listener is a programmer error, not a TLS failure: Node
-      // crashes with an uncaught exception instead of feeding the socket error
-      // path (node v26.3.0 lib/_tls_wrap.js; test-tls-handshake-exception).
-      process.nextTick(rethrowUncaught, err);
+      // Node emits these straight from the C++ handshake-done callback with no
+      // try/catch (lib/internal/tls/wrap.js _finishInit / onServerSocketSecure),
+      // so a throwing listener reaches InternalCallbackScope and becomes an
+      // uncaught exception. Bun's native dispatch would otherwise route a throw
+      // here to the socket error handler; reportError matches Node's observable
+      // behaviour (test-tls-handshake-exception.js).
+      reportError(err);
     } finally {
       if (!pauseOnConnect && !self.destroyed) {
         // Node's server-side TLSSocket is manualStart: initRead() only read(0)s
@@ -1050,10 +1053,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
   },
   binaryType: "buffer",
 } as const;
-
-function rethrowUncaught(err) {
-  throw err;
-}
 
 function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
   if (typeof rejectUnauthorized !== "undefined") {

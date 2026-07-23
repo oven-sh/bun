@@ -2708,7 +2708,7 @@ function lookupAndConnect(self, options) {
     if (!self.connecting) return;
     if (err) {
       process.nextTick(destroyNT, self, err);
-    } else if (!isIP(ip)) {
+    } else if (typeof ip !== "string" || !isIP(ip)) {
       err = $ERR_INVALID_IP_ADDRESS(ip);
       process.nextTick(destroyNT, self, err);
     } else if (addressType !== 4 && addressType !== 6) {
@@ -3179,7 +3179,7 @@ function afterConnect(status, handle, req, readable, writable) {
     if (localAddress && (localPort = req.localPort)) {
       details = localAddress + ":" + localPort;
     }
-    const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port);
+    const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port, details);
     if (details) {
       ex.localAddress = req.localAddress;
       ex.localPort = req.localPort;
@@ -3241,7 +3241,7 @@ function createConnectionError(req, status) {
     details = localAddress + ":" + localPort;
   }
 
-  const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port);
+  const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port, details);
   if (details) {
     ex.localAddress = req.localAddress;
     ex.localPort = req.localPort;

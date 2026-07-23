@@ -627,15 +627,6 @@ pub struct FindCache {
 impl FindCache {
     pub const SLOT_COUNT: usize = 16;
 
-    pub fn invalidate(&mut self, data: *const u8) {
-        for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
-            if k.data == data {
-                k.data = ptr::null();
-                s.data = ptr::null();
-            }
-        }
-    }
-
     pub fn invalidate_all(&mut self) {
         for (k, s) in self.keys.iter_mut().zip(self.slots.iter_mut()) {
             k.data = ptr::null();
@@ -883,6 +874,12 @@ impl InternalSourceMap {
     /// the inspector's inline-sourcemap path needs this.
     pub fn append_vlq_to(self, out: &mut MutableString) {
         let n_sync = self.sync_count();
+        // A 4-field VLQ segment averages ~5 bytes plus a separator. Cap by the
+        // structural bound so a crafted header can't force an unbounded reserve.
+        let count = self
+            .mapping_count()
+            .min((n_sync as usize).saturating_mul(SYNC_INTERVAL));
+        let _ = out.grow_if_needed(count.saturating_mul(6));
         let mut prev = SourceMapState::default();
         let mut generated_line: i32 = 0;
 
@@ -907,10 +904,11 @@ fn emit_vlq(
     generated_line: &mut i32,
     out: &mut MutableString,
 ) {
-    while *generated_line < state.generated_line {
-        out.list.push(b';');
+    if *generated_line < state.generated_line {
+        let gap = (state.generated_line - *generated_line) as usize;
+        out.list.resize(out.list.len() + gap, b';');
         prev.generated_column = 0;
-        *generated_line += 1;
+        *generated_line = state.generated_line;
     }
     let current = SourceMapState {
         generated_line: state.generated_line,

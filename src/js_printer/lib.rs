@@ -1788,11 +1788,9 @@ pub mod __gated_printer {
             }
 
             // Special-case "#foo in bar"
-            if matches!(e.left.data, ExprData::EPrivateIdentifier(_)) && e.op == Op::Code::BinIn {
-                let private = match &e.left.data {
-                    ExprData::EPrivateIdentifier(p) => p,
-                    _ => unreachable!(),
-                };
+            if let ExprData::EPrivateIdentifier(private) = &e.left.data
+                && e.op == Op::Code::BinIn
+            {
                 let name = self.name_for_symbol(private.ref_);
                 self.add_source_mapping_for_name(e.left.loc, name, private.ref_);
                 self.print_identifier(name);
@@ -2280,11 +2278,7 @@ pub mod __gated_printer {
                     let first_decl = &decls[0];
                     let second_decl = &decls[1];
 
-                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_)) {
-                        break 'brk;
-                    }
-                    if second_decl.value.is_none()
-                        || !matches!(second_decl.value.as_ref().unwrap().data, ExprData::EDot(_))
+                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_))
                         || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
                     {
                         break 'brk;
@@ -2296,32 +2290,24 @@ pub mod __gated_printer {
                     let ExprData::EDot(target_e_dot) = &target_value.data else {
                         break 'brk;
                     };
-                    let target_ref = if matches!(target_e_dot.target.data, ExprData::EIdentifier(_))
-                        && target_e_dot.optional_chain.is_none()
-                    {
-                        match &target_e_dot.target.data {
-                            ExprData::EIdentifier(id) => id.ref_,
-                            _ => unreachable!(),
-                        }
-                    } else {
+                    let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
                         break 'brk;
                     };
-
-                    let second_e_dot = match &second_decl.value.as_ref().unwrap().data {
-                        ExprData::EDot(d) => d,
-                        _ => unreachable!(),
-                    };
-                    if !matches!(second_e_dot.target.data, ExprData::EIdentifier(_))
-                        || second_e_dot.optional_chain.is_some()
-                    {
+                    if target_e_dot.optional_chain.is_some() {
                         break 'brk;
                     }
+                    let target_ref = target_id.ref_;
 
-                    let second_ref = match &second_e_dot.target.data {
-                        ExprData::EIdentifier(id) => id.ref_,
-                        _ => unreachable!(),
+                    let Some(second_value) = &second_decl.value else {
+                        break 'brk;
                     };
-                    if !second_ref.eql(target_ref) {
+                    let ExprData::EDot(second_e_dot) = &second_value.data else {
+                        break 'brk;
+                    };
+                    let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
+                        break 'brk;
+                    };
+                    if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref) {
                         break 'brk;
                     }
 
@@ -2352,28 +2338,19 @@ pub mod __gated_printer {
                         while !decls.is_empty() {
                             let decl = &decls[0];
 
-                            if decl.value.is_none()
-                                || !matches!(decl.value.as_ref().unwrap().data, ExprData::EDot(_))
-                                || !matches!(decl.binding.data, BindingData::BIdentifier(_))
-                            {
+                            if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
                                 break;
                             }
-
-                            let e_dot = match &decl.value.as_ref().unwrap().data {
-                                ExprData::EDot(d) => *d,
-                                _ => unreachable!(),
-                            };
-                            if !matches!(e_dot.target.data, ExprData::EIdentifier(_))
-                                || e_dot.optional_chain.is_some()
-                            {
+                            let Some(value) = &decl.value else {
                                 break;
-                            }
-
-                            let ref_ = match &e_dot.target.data {
-                                ExprData::EIdentifier(id) => id.ref_,
-                                _ => unreachable!(),
                             };
-                            if !ref_.eql(target_ref) {
+                            let ExprData::EDot(e_dot) = &value.data else {
+                                break;
+                            };
+                            let ExprData::EIdentifier(id) = &e_dot.target.data else {
+                                break;
+                            };
+                            if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
                                 break;
                             }
 
@@ -7923,14 +7900,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // hoisted out of the `minify_identifiers` arm so the
     // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
     let mut minify_renamer;
-    let renamer: rename::Renamer<'_, '_>;
     // `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
     // `children` — never `parent` — so we re-point at the in-place
     // `tree.module_scope` instead (lives for `'a`).
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
-    if opts.minify_identifiers {
+    let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
             // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
@@ -8008,11 +7984,11 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&minifier)?;
 
-        renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
+        rename::Renamer::MinifyRenamer(&mut *minify_renamer)
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
-        renamer = no_op_renamer.to_renamer();
-    }
+        no_op_renamer.to_renamer()
+    };
 
     // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
 

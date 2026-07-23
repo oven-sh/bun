@@ -4965,6 +4965,15 @@ impl NodeFS {
         stat_size: usize,
         wrote: &mut u64,
     ) -> Maybe<ret::CopyFile> {
+        // Kernel-side fast paths have already bailed; double the readahead
+        // window for the sequential read()s below. Best-effort.
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        {
+            // SAFETY: `src_fd` is a valid open fd; `posix_fadvise` only reads it.
+            let _ =
+                unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+        }
+
         let mut stack_buf = [0u8; 64 * 1024];
         let stack_buf_len = stack_buf.len();
         let mut buf_to_free: Vec<u8> = Vec::new();
@@ -6714,7 +6723,6 @@ impl NodeFS {
             sys::WindowsOpenDirOptions {
                 no_follow: true,
                 iterable: true,
-                read_only: true,
                 ..Default::default()
             },
         );
@@ -7112,7 +7120,6 @@ impl NodeFS {
             path.as_bytes(),
             sys::WindowsOpenDirOptions {
                 iterable: true,
-                read_only: true,
                 ..Default::default()
             },
         );

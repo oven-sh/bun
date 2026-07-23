@@ -1641,6 +1641,13 @@ static void ensureOnWarningInstalled(Zig::GlobalObject* globalObject, Process* p
         return;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Also honor the JS property (Node's --no-warnings alias name) so the
+    // Node-test common harness can suppress the printer in-process when it
+    // skips the --no-warnings re-spawn to install --expose-* shims instead.
+    JSValue noWarnings = process->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "noProcessWarnings"_s));
+    RETURN_IF_EXCEPTION(scope, );
+    if (noWarnings && noWarnings.toBoolean(globalObject))
+        return;
     auto* installer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInstallOnWarningListenerCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(process);
@@ -4873,6 +4880,8 @@ void Process::finishCreation(JSC::VM& vm)
         putDirect(vm, Identifier::fromString(vm, "noDeprecation"_s), jsBoolean(true), readOnlyAlias);
     if (Bun__Node__ProcessPendingDeprecation)
         putDirect(vm, Identifier::fromString(vm, "pendingDeprecation"_s), jsBoolean(true), readOnlyAlias);
+    if (Bun__Node__ProcessNoWarnings)
+        putDirect(vm, Identifier::fromString(vm, "noProcessWarnings"_s), jsBoolean(true), readOnlyAlias);
 }
 
 } // namespace Bun

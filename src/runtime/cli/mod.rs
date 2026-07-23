@@ -1151,8 +1151,12 @@ pub mod command {
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
         // SAFETY: single-threaded CLI startup — no other thread exists yet.
-        // `CMD` is read by crash-reporter / debug logging only.
+        // `CMD` is read by debug logging and `run_command` (feedback dispatch).
         unsafe { CMD.write(Some(cmd)) };
+        // The crash handler can't read `CMD` (lower-tier crate); mirror the
+        // one-byte command tag into its `cli_state` so crash-report trace
+        // strings encode the running subcommand (Zig: `Cli.cmd = command`).
+        bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
         let ctx = write_context_no_parse(log);
 

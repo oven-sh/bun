@@ -62,9 +62,7 @@ impl From<EncodeError> for DecodeDataError {
 impl PercentEncoding {
     /// returns true if str starts with a valid path character or a percent encoded octet
     pub(crate) fn is_pchar(str: &[u8]) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(!str.is_empty());
-        }
+        debug_assert!(!str.is_empty());
         match str[0] {
             b'a'..=b'z'
             | b'A'..=b'Z'

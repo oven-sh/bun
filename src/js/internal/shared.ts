@@ -57,7 +57,7 @@ class ExceptionWithHostPort extends Error {
   port?: number;
   address: string;
 
-  constructor(err: number, syscall: string, address: string, port?: number) {
+  constructor(err: number, syscall: string, address: string, port?: number, additional?: string) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
@@ -69,6 +69,9 @@ class ExceptionWithHostPort extends Error {
       details = ` ${address}:${port}`;
     } else if (address) {
       details = ` ${address}`;
+    }
+    if (additional) {
+      details += ` - Local (${additional})`;
     }
 
     super(`${syscall} ${code}${details}`);
@@ -132,7 +135,11 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   return function (...args) {
     if (called) return returnValue;
     called = true;
-    const result = callback.$apply(this, args);
+    const fn = callback;
+    // Drop the reference so the wrapper cannot keep the callback's
+    // closure (and everything it captured) alive once it has run.
+    callback = undefined;
+    const result = fn.$apply(this, args);
     returnValue = preserveReturnValue ? result : undefined;
     return result;
   };

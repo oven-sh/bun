@@ -18,6 +18,7 @@ use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
+use crate::expect_throw as throw;
 
 use bun_jsc::js_error_to_write_error;
 
@@ -222,34 +223,73 @@ impl Expect {
         args: &'static str,
         not: bool,
     ) -> &'static str {
-        // Rust has no compile-time string concat across runtime call sites (all ~188 callers pass literals, but the `not` bool is runtime
-        // in some), so emulate via a process-lifetime intern table: each
-        // unique (matcher, args, not) triple is rendered exactly once and the
-        // boxed str is owned by the static `CACHE` for the rest of the
-        // process. Returning
-        // `&'static str` keeps the ~188 call sites and `throw()`'s `signature:
-        // &'static str` parameter unchanged.
+        // Rust has no compile-time string concat across runtime call sites
+        // (all ~188 callers pass literals, but the `not` bool is runtime in
+        // some), so emulate via a process-lifetime intern table: each unique
+        // (matcher, args, not) triple is rendered exactly once and the boxed
+        // str is owned by the static `CACHE` for the rest of the process.
+        //
+        // The `<tag>` → ANSI rewrite is applied here, once, and both colour
+        // variants are cached; the returned header is ready to emit verbatim.
+        // All inputs are `'static` template literals (never user data), so the
+        // one-time markup pass can never touch user-supplied bytes.
         use bun_collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
-        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, Box<str>>>> = OnceLock::new();
+        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, [Box<str>; 2]>>> =
+            OnceLock::new();
         let cache = CACHE.get_or_init(Default::default);
+        let colors = Output::enable_ansi_colors_stderr();
 
         let mut map = cache.lock();
-        if let Some(s) = map.get(&(matcher_name, args, not)) {
+        if let Some(pair) = map.get(&(matcher_name, args, not)) {
             // SAFETY: `CACHE` is process-static and entries are never removed
             // or mutated, so the `Box<str>` allocation outlives the program.
-            return unsafe { &*std::ptr::from_ref::<str>(s.as_ref()) };
+            return unsafe { &*std::ptr::from_ref::<str>(pair[colors as usize].as_ref()) };
         }
-        const RECEIVED: &str = "<d>expect(<r><red>received<r><d>).<r>";
-        let s: Box<str> = if not {
-            format!("{RECEIVED}not<d>.<r>{matcher_name}<d>(<r>{args}<d>)<r>")
-        } else {
-            format!("{RECEIVED}{matcher_name}<d>(<r>{args}<d>)<r>")
-        }
-        .into_boxed_str();
-        let ptr = std::ptr::from_ref::<str>(s.as_ref());
-        map.insert((matcher_name, args, not), s);
+        let render = |enabled: bool| -> Box<str> {
+            #[allow(clippy::disallowed_methods)] // `args` is a `'static` template literal
+            let params = Output::pretty_fmt_rt(args.as_bytes(), enabled);
+            if enabled {
+                if not {
+                    format!(
+                        bun_core::pretty_fmt!(
+                            "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>{}<d>(<r>{}<d>)<r>",
+                            true
+                        ),
+                        matcher_name, params,
+                    )
+                } else {
+                    format!(
+                        bun_core::pretty_fmt!(
+                            "<d>expect(<r><red>received<r><d>).<r>{}<d>(<r>{}<d>)<r>",
+                            true
+                        ),
+                        matcher_name, params,
+                    )
+                }
+            } else if not {
+                format!(
+                    bun_core::pretty_fmt!(
+                        "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>{}<d>(<r>{}<d>)<r>",
+                        false
+                    ),
+                    matcher_name, params,
+                )
+            } else {
+                format!(
+                    bun_core::pretty_fmt!(
+                        "<d>expect(<r><red>received<r><d>).<r>{}<d>(<r>{}<d>)<r>",
+                        false
+                    ),
+                    matcher_name, params,
+                )
+            }
+            .into_boxed_str()
+        };
+        let pair = [render(false), render(true)];
+        let ptr = std::ptr::from_ref::<str>(pair[colors as usize].as_ref());
+        map.insert((matcher_name, args, not), pair);
         // SAFETY: just inserted into process-static `CACHE`; never removed.
         unsafe { &*ptr }
     }
@@ -260,11 +300,12 @@ impl Expect {
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
-        // Rust can't splice runtime args into a const format
-        // string, so callers pre-render the message body (prose + args) into a
-        // single `fmt::Arguments` here. `<tag>` markers in the rendered body
-        // are still rewritten by `throw_pretty`'s post-render `pretty_fmt_rt`
-        // pass, so the prose may contain `<r>`/`<red>`/etc.
+        // Callers pre-render the message body (prose + substituted user data)
+        // into a single `fmt::Arguments`. `<tag>` markers in the caller's
+        // *template* must already be ANSI/stripped at the call site (via the
+        // `throw!`-style compile-time pass); this sink emits `message`,
+        // `matcher_name`, and `matcher_params` verbatim so user data containing
+        // `<…>` is never scanned.
         message: fmt::Arguments<'_>,
     ) -> JsError {
         let colors = Output::enable_ansi_colors_stderr();
@@ -307,14 +348,31 @@ impl Expect {
                 }
             }
         };
-        // Matches the semantics of `Expect.throw`: empty label → default
+        // Matches the semantics of `throw_rendered`: empty label → default
         // signature header, non-empty label → user's label header.
         if custom_label.is_empty() {
-            global_this.throw_pretty(format_args!(
-                "<d>expect(<r><red>received<r><d>).<r>{chain}{matcher_name}<d>(<r>{matcher_params}<d>)<r>\n\n{message}",
-            ))
+            // Apply markup to the header *template* pieces only; interpolate
+            // `chain` (already ANSI/stripped above), `matcher_name`,
+            // `matcher_params`, `message` verbatim.
+            if colors {
+                global_this.throw(format_args!(
+                    bun_core::pretty_fmt!(
+                        "<d>expect(<r><red>received<r><d>).<r>{}{}<d>(<r>{}<d>)<r>\n\n{}",
+                        true
+                    ),
+                    chain, matcher_name, matcher_params, message,
+                ))
+            } else {
+                global_this.throw(format_args!(
+                    bun_core::pretty_fmt!(
+                        "<d>expect(<r><red>received<r><d>).<r>{}{}<d>(<r>{}<d>)<r>\n\n{}",
+                        false
+                    ),
+                    chain, matcher_name, matcher_params, message,
+                ))
+            }
         } else {
-            global_this.throw_pretty(format_args!("{custom_label}\n\n{message}"))
+            global_this.throw(format_args!("{custom_label}\n\n{message}"))
         }
     }
 
@@ -387,6 +445,40 @@ impl Expect {
         )
     }
 
+    /// Shared failure path for the three `.resolves`/`.rejects` mismatch cases
+    /// in `process_promise`. The body template's only markup is `<red>…<r>`
+    /// around `received`, so it's applied here; `expected`/`label`/`received`
+    /// are emitted verbatim.
+    #[allow(clippy::too_many_arguments)]
+    fn throw_promise_matcher_error(
+        global_this: &JSGlobalObject,
+        custom_label: bun_core::String,
+        matcher_name: impl fmt::Display,
+        matcher_params: impl fmt::Display,
+        flags: Flags,
+        expected: &'static str,
+        label: &'static str,
+        received: impl fmt::Display,
+    ) -> JsError {
+        if Output::enable_ansi_colors_stderr() {
+            Self::throw_pretty_matcher_error(
+                global_this, custom_label, matcher_name, matcher_params, flags,
+                format_args!(
+                    bun_core::pretty_fmt!("{}<r>\n{}<red>{}<r>\n", true),
+                    expected, label, received,
+                ),
+            )
+        } else {
+            Self::throw_pretty_matcher_error(
+                global_this, custom_label, matcher_name, matcher_params, flags,
+                format_args!(
+                    bun_core::pretty_fmt!("{}<r>\n{}<red>{}<r>\n", false),
+                    expected, label, received,
+                ),
+            )
+        }
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -415,16 +507,11 @@ impl Expect {
                             Promise::Rejects => {
                                 if !silent {
                                     let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                                    return Err(Self::throw_pretty_matcher_error(
-                                        global_this,
-                                        custom_label,
-                                        matcher_name,
-                                        matcher_params,
-                                        flags,
-                                        format_args!(
-                                            "Expected promise that rejects<r>\nReceived promise that resolved: <red>{}<r>\n",
-                                            value.to_fmt(&mut formatter),
-                                        ),
+                                    return Err(Self::throw_promise_matcher_error(
+                                        global_this, custom_label, matcher_name, matcher_params, flags,
+                                        "Expected promise that rejects",
+                                        "Received promise that resolved: ",
+                                        value.to_fmt(&mut formatter),
                                     ));
                                 }
                                 return Err(JsError::Thrown);
@@ -436,16 +523,11 @@ impl Expect {
                             Promise::Resolves => {
                                 if !silent {
                                     let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                                    return Err(Self::throw_pretty_matcher_error(
-                                        global_this,
-                                        custom_label,
-                                        matcher_name,
-                                        matcher_params,
-                                        flags,
-                                        format_args!(
-                                            "Expected promise that resolves<r>\nReceived promise that rejected: <red>{}<r>\n",
-                                            value.to_fmt(&mut formatter),
-                                        ),
+                                    return Err(Self::throw_promise_matcher_error(
+                                        global_this, custom_label, matcher_name, matcher_params, flags,
+                                        "Expected promise that resolves",
+                                        "Received promise that rejected: ",
+                                        value.to_fmt(&mut formatter),
                                     ));
                                 }
                                 return Err(JsError::Thrown);
@@ -460,16 +542,11 @@ impl Expect {
                 } else {
                     if !silent {
                         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                        return Err(Self::throw_pretty_matcher_error(
-                            global_this,
-                            custom_label,
-                            matcher_name,
-                            matcher_params,
-                            flags,
-                            format_args!(
-                                "Expected promise<r>\nReceived: <red>{}<r>\n",
-                                value.to_fmt(&mut formatter),
-                            ),
+                        return Err(Self::throw_promise_matcher_error(
+                            global_this, custom_label, matcher_name, matcher_params, flags,
+                            "Expected promise",
+                            "Received: ",
+                            value.to_fmt(&mut formatter),
                         ));
                     }
                     Err(JsError::Thrown)
@@ -666,45 +743,24 @@ impl Expect {
         Ok(expect_js_value)
     }
 
-    /// Matcher failure path. The 75 `expect/to*.rs` matchers all call this as
-    /// `return this.throw(global, SIGNATURE, format_args!(..))`, so the return
-    /// type is `JsResult<JSValue>` (always `Err`) to slot directly into a
-    /// host_fn body without `Err(..)` wrapping at every call site.
-    pub fn throw(
+    /// Matcher failure sink. Invoked via the `throw!` macro — never directly
+    /// — so the `<tag>` → ANSI rewrite has already been applied to the
+    /// *template literal* at compile time; `args` therefore carries rendered
+    /// user data and is emitted verbatim. `signature` is the pre-processed
+    /// header returned by `get_signature` (ANSI or stripped, per stderr
+    /// colour state). Nothing here scans bytes for `<…>` markers.
+    pub fn throw_rendered(
         &self,
         global_this: &JSGlobalObject,
         signature: &'static str,
         args: fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        // No compile-time string concat across runtime call sites, so
-        // render at runtime.
         Err(if self.custom_label.is_empty() {
-            global_this.throw_pretty(format_args!("{signature}{args}"))
+            global_this.throw(format_args!("{signature}{args}"))
         } else {
-            global_this.throw_pretty(format_args!("{}{args}", self.custom_label))
+            // custom_label is user-supplied; emit verbatim.
+            global_this.throw(format_args!("{}{args}", self.custom_label))
         })
-    }
-
-    /// Legacy 4-arg form used by a handful of internal call sites in this file
-    /// (snapshot/mock helpers) that take a separate `fmt` literal.
-    /// Folds `fmt` into `args` and delegates.
-    #[inline]
-    pub fn throw_fmt(
-        &self,
-        global_this: &JSGlobalObject,
-        signature: &'static str,
-        _fmt: &'static str,
-        args: fmt::Arguments<'_>,
-    ) -> JsResult<JSValue> {
-        // Rust cannot interpolate a runtime-literal format string, so every
-        // caller bakes the rendered tail (literal text + substitutions) into
-        // `args`; `_fmt` is kept only for documentation.
-        // If `args` is empty but `_fmt` is not, a caller forgot to migrate.
-        debug_assert!(
-            _fmt.is_empty() || args.as_str() != Some(""),
-            "throw_fmt: caller passed non-empty fmt tail {_fmt:?} but empty args — message body would be dropped",
-        );
-        self.throw(global_this, signature, args)
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -753,7 +809,7 @@ impl Expect {
 
         if not {
             let signature = Self::get_signature("pass", "", true);
-            return this.throw_fmt(global_this, signature, "\n\n{s}\n", format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())));
+            return throw!(this, global_this, signature, "\n\n{}\n", bstr::BStr::new(msg.slice()));
         }
 
         // should never reach here
@@ -799,7 +855,7 @@ impl Expect {
         let msg = _msg.to_slice();
 
         let signature = Self::get_signature("fail", "", true);
-        this.throw_fmt(global_this, signature, "\n\n{s}\n", format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())))
+        throw!(this, global_this, signature, "\n\n{}\n", bstr::BStr::new(msg.slice()))
     }
 }
 
@@ -1006,7 +1062,7 @@ impl Expect {
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
             let signature = Self::get_signature(fn_name, "", false);
-            return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
+            return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
         };
         match runner.snapshots.add_count(this, b"") {
             Ok(_) => {}
@@ -1046,7 +1102,7 @@ impl Expect {
                     global_this: Some(global_this),
                     ..Default::default()
                 };
-                return Err(global_this.throw_pretty(format_args!("{signature}\n\n{diff_format}\n")));
+                return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
             }
         } else {
             needs_write = true;
@@ -1057,20 +1113,16 @@ impl Expect {
                 if !update {
                     let signature = Self::get_signature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
-                    return this.throw_fmt(
-                        global_this,
-                        signature,
-                        "",
-                        format_args!(
-                            "\n\n<b>Matcher error<r>: Inline snapshot creation is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {}",
-                            bstr::BStr::new(&pretty_value),
-                        ),
+                    return throw!(
+                        this, global_this, signature,
+                        "\n\n<b>Matcher error<r>: Inline snapshot creation is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {}",
+                        bstr::BStr::new(&pretty_value),
                     );
                 }
             }
             let Some(buntest_strong) = this.bun_test() else {
                 let signature = Self::get_signature(fn_name, "", false);
-                return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
+                return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
             };
             let buntest = buntest_strong.get();
 
@@ -1087,17 +1139,13 @@ impl Expect {
 
             if !srcloc.str.eql_utf8(fget_source_path_text) {
                 let signature = Self::get_signature(fn_name, "", false);
-                return this.throw_fmt(
-                    global_this,
-                    signature,
-                    "",
-                    format_args!(
-                        "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
-                        bstr::BStr::new(fget_source_path_text),
-                        fn_name,
-                        // `{:?}` on BStr renders a quoted, escaped string
-                        bstr::BStr::new(srcloc.str.to_utf8().slice()),
-                    ),
+                return throw!(
+                    this, global_this, signature,
+                    "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
+                    bstr::BStr::new(fget_source_path_text),
+                    fn_name,
+                    // `{:?}` on BStr renders a quoted, escaped string
+                    bstr::BStr::new(srcloc.str.to_utf8().slice()),
                 );
             }
 
@@ -1128,7 +1176,7 @@ impl Expect {
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return self.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n")).map(drop);
+                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
             }
 
             let prop_matchers = _prop_matchers;
@@ -1137,10 +1185,11 @@ impl Expect {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
-                return Err(global_this.throw_pretty(format_args!(
-                    "{signature}\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
-                    value.to_fmt(&mut formatter)
-                )));
+                return throw!(
+                    self, global_this, signature,
+                    "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
+                    value.to_fmt(&mut formatter),
+                ).map(drop);
             }
         }
 
@@ -1236,7 +1285,7 @@ impl Expect {
                 global_this: Some(global_this),
                 ..Default::default()
             };
-            return Err(global_this.throw_pretty(format_args!("{signature}\n\n{diff_format}\n")));
+            return throw!(self, global_this, signature, "\n\n{}\n", diff_format);
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1317,9 +1366,10 @@ impl Expect {
         let args = args_.slice();
 
         if args.is_empty() || !args[0].is_object() {
-            return Err(global_this.throw_pretty(format_args!(
+            return Err(crate::throw_pretty_static!(
+                global_this,
                 "<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n",
-            )));
+            ));
         }
 
         // SAFETY: FFI call with valid &JSGlobalObject
@@ -1507,9 +1557,7 @@ impl Expect {
         } else if message.is_string() {
             bun_core::OwnedString::new(message.to_bun_string(global_this)?)
         } else {
-            if cfg!(debug_assertions) {
-                debug_assert!(message.is_callable()); // checked above
-            }
+            debug_assert!(message.is_callable()); // checked above
 
             // Pass the global object itself as `this`.
             let message_result = message.call_with_global_this(global_this, &[])?;
@@ -1814,12 +1862,12 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
                             // skip the first param from the matcher_fn, which is the received value
                             if param_index > 1 {
                                 if self.colors {
-                                    write!(writer, "{}", Output::pretty_fmt::<true>("<r><d>, <r><green>"))?;
+                                    writer.write_str(bun_core::pretty_fmt!("<r><d>, <r><green>", true))?;
                                 } else {
                                     writer.write_str(", ")?;
                                 }
                             } else if self.colors {
-                                writer.write_str("<green>")?;
+                                writer.write_str(bun_core::output::ansi::GREEN)?;
                             }
                             let param_name_trimmed = bun_core::trim(param_name, b" ");
                             if !param_name_trimmed.is_empty() {
@@ -1831,7 +1879,7 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
                         param_index += 1;
                     }
                     if param_index > 1 && self.colors {
-                        writer.write_str("<r>")?;
+                        writer.write_str(bun_core::output::ansi::RESET)?;
                     }
                     return Ok(()); // don't do fallback
                 }
@@ -2020,10 +2068,10 @@ impl Expect {
         }
         let mut formatter = make_formatter(global);
         let signature = Self::get_signature(matcher_name, "", not);
-        this.throw(
-            global,
-            signature,
-            format_args!("\n\nReceived: <red>{}<r>\n", value.to_fmt(&mut formatter)),
+        throw!(
+            this, global, signature,
+            "\n\nReceived: <red>{}<r>\n",
+            value.to_fmt(&mut formatter),
         )
     }
 
@@ -2088,24 +2136,20 @@ impl Expect {
         let mut f2 = make_formatter(global);
         let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
         if not {
-            this.throw(
-                global,
-                signature,
-                format_args!(
-                    "\n\nExpected to not {verb}: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    expected.to_fmt(&mut f1),
-                    value.to_fmt(&mut f2),
-                ),
+            throw!(
+                this, global, signature,
+                "\n\nExpected to not {}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                verb,
+                expected.to_fmt(&mut f1),
+                value.to_fmt(&mut f2),
             )
         } else {
-            this.throw(
-                global,
-                signature,
-                format_args!(
-                    "\n\nExpected to {verb}: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    expected.to_fmt(&mut f1),
-                    value.to_fmt(&mut f2),
-                ),
+            throw!(
+                this, global, signature,
+                "\n\nExpected to {}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                verb,
+                expected.to_fmt(&mut f1),
+                value.to_fmt(&mut f2),
             )
         }
     }
@@ -2214,26 +2258,20 @@ impl Expect {
         let mut f2 = make_formatter(global);
         let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
         if not {
-            this.throw(
-                global,
-                signature,
-                format_args!(
-                    "\n\nExpected to not {}: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    msgs.not_verb,
-                    expected.to_fmt(&mut f1),
-                    received.to_fmt(&mut f2),
-                ),
+            throw!(
+                this, global, signature,
+                "\n\nExpected to not {}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                msgs.not_verb,
+                expected.to_fmt(&mut f1),
+                received.to_fmt(&mut f2),
             )
         } else {
-            this.throw(
-                global,
-                signature,
-                format_args!(
-                    "\n\nExpected to {}: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    msgs.verb,
-                    expected.to_fmt(&mut f1),
-                    received.to_fmt(&mut f2),
-                ),
+            throw!(
+                this, global, signature,
+                "\n\nExpected to {}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                msgs.verb,
+                expected.to_fmt(&mut f1),
+                received.to_fmt(&mut f2),
             )
         }
     }
@@ -2356,8 +2394,10 @@ impl ExpectStringMatching {
         let args = call_frame.arguments();
 
         if args.is_empty() || (!args[0].is_string() && !args[0].is_reg_exp()) {
-            const FMT: &str = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n";
-            return Err(global_this.throw_pretty(format_args!("{FMT}")));
+            return Err(crate::throw_pretty_static!(
+                global_this,
+                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n",
+            ));
         }
 
         let test_value = args[0];
@@ -2382,9 +2422,10 @@ impl ExpectCloseTo {
         let args = args_buf.slice();
 
         if args.is_empty() || !args[0].is_number() {
-            return Err(global_this.throw_pretty(format_args!(
+            return Err(crate::throw_pretty_static!(
+                global_this,
                 "<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value",
-            )));
+            ));
         }
         let number_value = args[0];
 
@@ -2393,9 +2434,10 @@ impl ExpectCloseTo {
             precision_value = JSValue::js_number_from_int32(2); // default value from jest
         }
         if !precision_value.is_number() {
-            return Err(global_this.throw_pretty(format_args!(
+            return Err(crate::throw_pretty_static!(
+                global_this,
                 "<d>expect.<r>closeTo<d>(number, <r>precision?<d>)<r>\n\nPrecision must be a number or undefined",
-            )));
+            ));
         }
 
         let instance_jsvalue = ExpectCloseTo { flags: Cell::new(Flags::default()) }.to_js(global_this);
@@ -2421,8 +2463,10 @@ impl ExpectObjectContaining {
         let args = args_buf.slice();
 
         if args.is_empty() || !args[0].is_object() {
-            const FMT: &str = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";
-            return Err(global_this.throw_pretty(format_args!("{FMT}")));
+            return Err(crate::throw_pretty_static!(
+                global_this,
+                "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n",
+            ));
         }
 
         let object_value = args[0];
@@ -2447,8 +2491,10 @@ impl ExpectStringContaining {
         let args = args_buf.slice();
 
         if args.is_empty() || !args[0].is_string() {
-            const FMT: &str = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
-            return Err(global_this.throw_pretty(format_args!("{FMT}")));
+            return Err(crate::throw_pretty_static!(
+                global_this,
+                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n",
+            ));
         }
 
         let string_value = args[0];
@@ -2482,8 +2528,10 @@ impl ExpectAny {
         let constructor = arguments[0];
         constructor.ensure_still_alive();
         if !constructor.is_constructor() {
-            const FMT: &str = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
-            return Err(global_this.throw_pretty(format_args!("{FMT}")));
+            return Err(crate::throw_pretty_static!(
+                global_this,
+                "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n",
+            ));
         }
 
         let asymmetric_matcher_constructor_type = AsymmetricMatcherConstructorType::from_js(global_this, constructor)?;
@@ -2519,8 +2567,10 @@ impl ExpectArrayContaining {
         let args = args_buf.slice();
 
         if args.is_empty() || !args[0].js_type().is_array() {
-            const FMT: &str = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
-            return Err(global_this.throw_pretty(format_args!("{FMT}")));
+            return Err(crate::throw_pretty_static!(
+                global_this,
+                "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n",
+            ));
         }
 
         let array_value = args[0];
@@ -3069,16 +3119,13 @@ pub mod mock {
             if !arr.js_type().is_array() {
                 let mut formatter = make_formatter(global);
                 return Err(match kind {
-                    MockKind::CallsWithSig => this
-                        .throw(
-                            global,
-                            Self::get_signature(matcher_name, matcher_params, false),
-                            format_args!(
-                                "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
-                                value.to_fmt(&mut formatter),
-                            ),
-                        )
-                        .unwrap_err(),
+                    MockKind::CallsWithSig => throw!(
+                        this, global,
+                        Self::get_signature(matcher_name, matcher_params, false),
+                        "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
+                        value.to_fmt(&mut formatter),
+                    )
+                    .unwrap_err(),
                     MockKind::Calls | MockKind::Returns => global.throw(format_args!(
                         "Expected value must be a mock function: {}",
                         value.to_fmt(&mut formatter),

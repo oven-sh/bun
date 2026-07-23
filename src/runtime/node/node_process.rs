@@ -2,6 +2,7 @@
 
 use core::ffi::c_char;
 
+use bun_core::env_var;
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
@@ -66,7 +67,7 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
+    env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
 /// `--redirect-warnings=<path>` value, if set. Returns false when unset.

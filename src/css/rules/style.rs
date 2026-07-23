@@ -91,6 +91,25 @@ impl<R> StyleRule<R> {
 /// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
+/// Maximum number of bytes that `&` parent-selector substitution may emit
+/// across the whole stylesheet when compiling nesting away.
+///
+/// `MAX_NESTING_EXPANSIONS` bounds the substitution count per rule prelude
+/// and is reset between preludes. A selector with multiple `&` references
+/// (e.g. `& > &`) is one selector in its list, so the minify-time
+/// `selector_expansion_multiplier` (which multiplies by the list length) does
+/// not see it as fan-out; but each `&` expands the parent during printing, so
+/// each nesting level fans out by the number of `&` references it holds. Many
+/// sibling leaf rules under such a chain each stay under the per-prelude
+/// count while the total output grows by (leaf count) x (product of per-level
+/// `&` counts). The bytes emitted by each prelude's substitutions are measured
+/// and accumulated here, so a few kilobytes of that shape cannot expand into
+/// gigabytes of output. Real stylesheets emit little here; anything past this
+/// limit is a runaway expansion, so bail out with the existing
+/// `maximum_nesting_expansion` error instead. Matches
+/// `MAX_PREFIX_EXPANSION_BYTES`.
+pub(crate) const MAX_NESTING_EXPANSION_BYTES: usize = 64 << 20;
+
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
@@ -179,12 +198,27 @@ impl<R> StyleRule<R> {
             // Each rule prelude gets its own budget for `&` substitutions when
             // compiling nesting (see `serialize::serialize_nesting`).
             dest.nesting_expansions = 0;
+            // Only meter if there is a parent context: preludes with no
+            // ancestors serialize verbatim (linear in the selector's own
+            // tokens) and charging them would penalize large flat
+            // stylesheets for no reason.
+            let prelude_bytes_before = ctx.map(|_| dest.bytes_written());
             selector::serialize::serialize_selector_list(
                 self.selectors.v.slice(),
                 dest,
                 ctx,
                 false,
             )?;
+            if let Some(before) = prelude_bytes_before {
+                let emitted = dest.bytes_written().saturating_sub(before);
+                dest.nesting_expansion_bytes = dest.nesting_expansion_bytes.saturating_add(emitted);
+                if dest.nesting_expansion_bytes > MAX_NESTING_EXPANSION_BYTES {
+                    return dest.new_error(
+                        css::error::PrinterErrorKind::maximum_nesting_expansion,
+                        None,
+                    );
+                }
+            }
             dest.whitespace()?;
             dest.write_char(b'{')?;
             dest.indent();

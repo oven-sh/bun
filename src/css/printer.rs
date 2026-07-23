@@ -149,6 +149,18 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
+    /// Running total of bytes emitted by `&` parent-selector substitution
+    /// across the whole stylesheet (accumulated per rule prelude, never
+    /// reset). Complements `nesting_expansions`: that bounds the per-prelude
+    /// substitution count, but a selector like `& > &` (one selector, two
+    /// `&` references) is charged as one selector by the minify-time
+    /// expansion multiplier yet fans out twice during printing, so many
+    /// sibling rules each stay under the per-prelude count while the total
+    /// output grows without bound. Measured around each prelude's
+    /// `serialize_selector_list` call in `StyleRule::to_css_base` and
+    /// `ScopeRule::to_css`, and bounded there by
+    /// `MAX_NESTING_EXPANSION_BYTES`.
+    pub nesting_expansion_bytes: usize,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list
     /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
@@ -315,6 +327,7 @@ impl<'a> Printer<'a> {
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
+            nesting_expansion_bytes: 0,
             prefix_expansion_bytes: 0,
             error_kind: None,
         }

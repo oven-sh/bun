@@ -925,7 +925,7 @@ test("junit reporter escapes attribute quotes exactly like node", async () => {
   using dir = tempDir("node-test-junit-escape", {
     "q.test.mjs": `
       import { test } from 'node:test';
-      test('line1\nline2 "q" & <angle>', () => {});
+      test('line1\\nline2 "q" & <angle>', () => {});
     `,
   });
   await using proc = Bun.spawn({

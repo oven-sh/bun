@@ -1063,7 +1063,17 @@ impl CompletionStruct for JSBundleCompletionTask {
         // not `self`) to the trait method.
         let tp: *mut Transpiler<'a> = transpiler;
         // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
+        if let Err(err) = self.configure_bundler(unsafe { &mut *tp }, bump) {
+            // `tp` lives in `bump`, whose bulk-free skips `Transpiler::drop`.
+            // On the Ok path `generate_in_new_thread` runs `drop_in_place` on
+            // the returned pointer; on the Err path it never sees `tp`, so the
+            // embedded global-heap state (options/resolver Vecs/Boxes) would
+            // leak. SAFETY: `tp` is the unique `&'a mut` slot from
+            // `bump.alloc`; the reborrow above has ended and nothing else
+            // holds a reference to it.
+            unsafe { core::ptr::drop_in_place(tp) };
+            return Err(err);
+        }
         // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
         // reborrow above has ended.
         Ok(unsafe { &mut *tp })

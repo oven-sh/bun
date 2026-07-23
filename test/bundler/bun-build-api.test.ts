@@ -1314,6 +1314,51 @@ export { greeting };`,
   });
 });
 
+// When `Bun.build()` / `new Bun.Transpiler()` reject their options (here: a
+// `define` value that is not valid JSON), the bundle-thread setup must still
+// tear down the arena-allocated `Transpiler` and AST allocator it created on
+// the way in. The arena bulk-free skips `Drop`, so without an explicit
+// `drop_in_place` on the error path every failed call leaks the transpiler's
+// owned options/resolver state. `new Bun.Transpiler` additionally used to
+// write the define-parse error to a stale stack `options.log` and leak the
+// `Msg`. The assertion compares leaked bytes between a 1-iteration and a
+// 21-iteration run so unrelated one-time at-exit allocations cancel out.
+test.skipIf(!isASAN)(
+  "Bun.build / Bun.Transpiler configure_bundler error path does not leak the transpiler",
+  async () => {
+    const suppressions = join(import.meta.dirname, "..", "leaksan.supp");
+    const run = async (iters: number) => {
+      using dir = tempDir("bun-build-configure-err-leak", { "e.js": "0;\n" });
+      const script = `
+        const entry = ${JSON.stringify(join(String(dir), "e.js"))};
+        const bad = { X: '{"a":' };
+        for (let i = 0; i < ${iters}; i++) {
+          try { await Bun.build({ entrypoints: [entry], define: bad }); } catch {}
+          try { new Bun.Transpiler({ define: bad }); } catch {}
+        }
+        Bun.gc(true);
+        console.log("done");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, ASAN_OPTIONS: "detect_leaks=1", LSAN_OPTIONS: `suppressions=${suppressions}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("done");
+      const m = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+      return m ? Number(m[1]) : 0;
+    };
+    const [small, large] = await Promise.all([run(1), run(21)]);
+    // 20 extra failed builds leaked ~5.4KB each (plus ~0.9KB per Transpiler)
+    // before the fix; ~125KB delta. With the fix both runs report the same
+    // (suppressed) at-exit residue.
+    expect(large - small).toBeLessThan(4000);
+  },
+  30_000,
+);
+
 // On release builds mimalloc's large-allocation arenas make RSS growth too
 // non-deterministic to draw a clean line between "leaking" and "not leaking"
 // for this path. Under debug/ASAN the allocator behaviour is stable enough to

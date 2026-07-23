@@ -265,7 +265,27 @@ impl<C: CompletionStruct> BundleThread<C> {
         ast_memory_store.push();
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
-        let transpiler = completion.create_and_configure_transpiler(bump)?;
+        let transpiler = match completion.create_and_configure_transpiler(bump) {
+            Ok(t) => t,
+            Err(err) => {
+                // `ast_memory_store` is arena-allocated so `heap`'s Drop never
+                // runs `ASTMemoryAllocator::drop`; without an explicit pop +
+                // drop_in_place here the `push()` above leaves the AST-alloc
+                // thread-locals pointing at freed arena bytes and leaks the
+                // owned pooled `Arena`.
+                ast_memory_store.pop();
+                // SAFETY: `ast_memory_store` is the unique `&mut` slot from
+                // `bump.alloc(...)` above; `pop()` restored the AST-allocator
+                // thread-local so nothing else references it. The arena bytes
+                // are bulk-freed by `heap`'s Drop afterwards.
+                unsafe {
+                    core::ptr::drop_in_place(std::ptr::from_mut::<bun_ast::ASTMemoryAllocator>(
+                        ast_memory_store,
+                    ));
+                }
+                return Err(err);
+            }
+        };
 
         transpiler.resolver.generation = generation;
 

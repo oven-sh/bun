@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isFlaky, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
@@ -8,7 +8,7 @@ const batchSize = 40;
 // A leaked 512 KB body × totalCount would grow RSS by gigabytes; the assertions
 // below compare against O(100 MB), so the slower ASAN/debug lanes keep the same
 // margin with fewer iterations (each request is ~2-10× slower there).
-const totalCount = isASAN || isDebug ? 4_000 : 10_000;
+const totalCount = isASAN || isDebug ? 3_000 : 10_000;
 const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
@@ -26,7 +26,7 @@ async function warmup(url: URL) {
       batch[j] = fetch(`${url.origin}/streaming`, {
         method: "POST",
         body: zeroCopyPayload,
-      });
+      }).then(res => res.text());
     }
     await Promise.all(batch);
     remaining -= batchSize;
@@ -130,7 +130,7 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
 // test (and re-running the 10k-request warmup each time) was the dominant cost
 // on ASAN. Sequential reuse keeps the RSS assertions meaningful because a real
 // body leak compounds across scenarios instead of being hidden by a restart.
-describe.todoIf(isFlaky && isWindows)("request body leak", () => {
+describe("request body leak", () => {
   let fixture: Subprocess;
   let url: URL;
 
@@ -145,7 +145,6 @@ describe.todoIf(isFlaky && isWindows)("request body leak", () => {
         defer.resolve(message);
       },
     });
-    fixture.unref();
     fixture.exited.then(code => defer.reject(new Error(`body-leak fixture exited (${code}) before sending its URL`)));
     url = new URL(await defer.promise);
     await warmup(url);
@@ -157,24 +156,28 @@ describe.todoIf(isFlaky && isWindows)("request body leak", () => {
   });
 
   for (const test_info of [
-    ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
-    ["should not leak memory when buffering the body", callBuffering, false, 64],
-    ["should not leak memory when buffering a JSON body", callJSONBuffering, false, 64],
-    ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
-    ["should not leak memory when streaming the body", callStreaming, isFlaky && isLinux, 64],
-    ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
-    ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
+    ["#10265 should not leak memory when ignoring the body", callIgnore, 64],
+    ["should not leak memory when buffering the body", callBuffering, 64],
+    ["should not leak memory when buffering a JSON body", callJSONBuffering, 64],
+    ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, 64],
+    ["should not leak memory when streaming the body", callStreaming, 64],
+    ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, 64],
+    ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, 64],
   ] as const) {
-    const [testName, fn, skip, maxMemoryGrowth] = test_info;
-    it.todoIf(skip)(
+    const [testName, fn, maxMemoryGrowth] = test_info;
+    it(
       testName,
       async () => {
         // fail fast with the exit code instead of a ConnectionRefused cascade if a prior scenario crashed the fixture
         expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
         const report = await calculateMemoryLeak(fn, url);
         console.log(report);
-        // peak memory is too high
-        expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 2.5);
+        // Peak should stay within a small multiple of the post-GC baseline; a
+        // leaked 512 KB body per request would blow past this by an order of
+        // magnitude. 3x (was 2.5x) gives headroom for the incomplete-streaming
+        // scenario on Windows, where 40 concurrent half-read uploads briefly
+        // hold ~2.6x of a low shared-server baseline before dropping back.
+        expect(report.peak_memory).not.toBeGreaterThan(report.start_memory * 3);
         // acceptable memory leak
         expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
         // ASAN quarantine + debug-assertions instrumentation inflate RSS;

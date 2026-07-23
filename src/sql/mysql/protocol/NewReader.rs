@@ -71,9 +71,7 @@ impl<C: ReaderContext> NewReader<C> {
                 self.wrapped.skip(1);
                 Ok(data)
             }
-            None if self.wrapped.packet_remaining() == usize::MAX => {
-                Err(AnyMySQLError::ShortRead)
-            }
+            None if self.wrapped.packet_remaining() == usize::MAX => Err(AnyMySQLError::ShortRead),
             None => Err(AnyMySQLError::MalformedPacket),
         }
     }

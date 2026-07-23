@@ -14,8 +14,10 @@ use crate::internal_state::HTTPStage;
 use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
-/// body transmission. Called from `callbacks.on_stream_open` once lsquic hands
-/// us a stream for a pending request.
+/// body transmission. Called from the first `callbacks.on_stream_writable`
+/// for this stream (not `on_stream_open`; see the comment there for why no
+/// `lsquic_stream_write` may happen before lsquic's priority iterator has
+/// served the HSK crypto stream).
 pub fn write_request(
     session: &ClientSession,
     stream: &mut Stream,
@@ -118,22 +120,12 @@ pub fn write_request(
     drop(lower);
     drop(headers);
 
-    // Defer body bytes to `on_stream_writable`. `on_stream_open` can fire
-    // from inside `on_hsk_done` (which lsquic invokes from `ci_tick`'s
-    // crypto-read phase with `SC_BUFFER_STREAM` set) while the client's TLS
-    // Finished is still only on the HSK crypto stream's frab list. A large
-    // body written here fills the send controller so `write_is_possible()`
-    // goes false before `process_streams_write_events` ever dispatches the
-    // crypto stream, and the Finished is never packetized (the server stays
-    // a mini-conn and drops every 1-RTT packet). `on_write` is dispatched
-    // via lsquic's priority iterator, which serves the crypto stream first.
-    // This matches lsquic's reference `http_client.c:on_new_stream`.
     if has_inline_body {
         stream.pending_body = req_body;
-        qs.want_write(true);
+        drain_send_body(stream, qs);
     } else if is_streaming {
         stream.is_streaming_body = true;
-        qs.want_write(true);
+        drain_send_body(stream, qs);
     } else {
         stream.request_body_done = true;
     }

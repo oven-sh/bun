@@ -563,7 +563,7 @@ mod draft {
                     if val.is_empty() {
                         break 'out;
                     }
-                    // `bun_parsers::json::parse_utf8_impl` returns the T2
+                    // `bun_parsers::json::parse_utf8` returns the T2
                     // value-subset `bun_ast::Expr`; lift it into the T4
                     // `bun_ast::Expr` (via the `From` impl in
                     // `bun_ast::expr`) so the rest of this body works
@@ -575,22 +575,21 @@ mod draft {
                     let src = Source::init_path_string(self.source.path.text, val_s);
                     let mut log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
-                    let json_val: Expr =
-                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
-                            Ok(v) => v,
-                            Err(_) => {
-                                // JSON parse failed (e.g., single-quoted string like '${VAR}')
-                                // Still need to expand env vars in the content
-                                if usage == Usage::Value {
-                                    let expanded = self.expand_env_vars(bump, val)?;
-                                    return Ok(PrepareResult::Value(Expr::init(
-                                        E::EString::init(expanded),
-                                        Loc { start: offset },
-                                    )));
-                                }
-                                break 'out;
+                    let json_val: Expr = match bun_parsers::json::parse_utf8(&src, &mut log, bump) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            // JSON parse failed (e.g., single-quoted string like '${VAR}')
+                            // Still need to expand env vars in the content
+                            if usage == Usage::Value {
+                                let expanded = self.expand_env_vars(bump, val)?;
+                                return Ok(PrepareResult::Value(Expr::init(
+                                    E::EString::init(expanded),
+                                    Loc { start: offset },
+                                )));
                             }
-                        };
+                            break 'out;
+                        }
+                    };
                     drop(log);
 
                     if let ExprData::EString(s) = &json_val.data {

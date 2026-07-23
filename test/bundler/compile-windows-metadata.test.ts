@@ -10,10 +10,8 @@ async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   return { stdout, stderr, exitCode };
 }
 
-// Read all VersionInfo fields in a single PowerShell invocation. Spawning
-// powershell is expensive (~0.5-1s on CI); before this helper each field was
-// read via its own `execSync("powershell ...")`, adding ~30 extra spawns
-// across the file. `-NoProfile` avoids loading user/system profile scripts.
+// Read all VersionInfo fields in a single PowerShell invocation (spawning
+// powershell is ~0.5-1s on CI). `-NoProfile` avoids loading profile scripts.
 async function readVersionInfo(outfile: string) {
   const fields = [
     "ProductName",

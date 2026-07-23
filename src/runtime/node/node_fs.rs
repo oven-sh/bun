@@ -4947,7 +4947,6 @@ impl NodeFS {
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
     fn copy_file_inner(&mut self, args: &args::CopyFile) -> Maybe<ret::CopyFile> {
-        // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
         {
             let mut src_buf = PathBuffer::uninit();
@@ -4963,74 +4962,75 @@ impl NodeFS {
                     src,
                 )
                 .unwrap_or(Ok(()));
+            }
+
+            let stat_ = match Syscall::stat(src) {
+                Ok(result) => result,
+                Err(err) => return Err(err.with_path(src)),
+            };
+
+            if !sys::S::ISREG(stat_.st_mode as u32) {
+                return Err(sys::Error {
+                    errno: SystemErrno::ENOTSUP as _,
+                    syscall: sys::Tag::copyfile,
+                    ..Default::default()
+                });
+            }
+
+            // 64 KB is about the break-even point for clonefile() to be worth it
+            // at least, on an M1 with an NVME SSD.
+            if stat_.st_size > 128 * 1024 {
+                if !args.mode.shouldnt_overwrite() {
+                    // clonefile() will fail if it already exists
+                    let _ = Syscall::unlink(dest);
+                }
+                if Maybe::<ret::CopyFile>::errno_sys_p(
+                    bun_sys::c::clonefile_rc(src, dest, 0),
+                    sys::Tag::copyfile,
+                    src,
+                )
+                .is_none()
+                {
+                    let _ = Syscall::chmod(dest, stat_.st_mode as u32);
+                    return Ok(());
+                }
             } else {
-                let stat_ = match Syscall::stat(src) {
+                let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
                     Ok(result) => result,
-                    Err(err) => return Err(err.with_path(src)),
+                    Err(err) => return Err(err.with_path(args.src.slice())),
+                };
+                let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
+
+                let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
+                // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
+                // that wrote into a discarded temporary so the deferred ftruncate
+                // always saw 0. The scopeguard variant also double-borrowed `wrote`.
+                // There are no early returns between open(dest) and the
+                // `copy_file_using_read_write_loop` call, so inlining the
+                // cleanup after it is equivalent.
+                let mut wrote: u64 = 0;
+                if args.mode.shouldnt_overwrite() {
+                    flags |= sys::O::EXCL;
+                }
+
+                let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
+                    Ok(result) => result,
+                    Err(err) => return Err(err.with_path(args.dest.slice())),
                 };
 
-                if !sys::S::ISREG(stat_.st_mode as u32) {
-                    return Err(sys::Error {
-                        errno: SystemErrno::ENOTSUP as _,
-                        syscall: sys::Tag::copyfile,
-                        ..Default::default()
-                    });
-                }
-
-                // 64 KB is about the break-even point for clonefile() to be worth it
-                // at least, on an M1 with an NVME SSD.
-                if stat_.st_size > 128 * 1024 {
-                    if !args.mode.shouldnt_overwrite() {
-                        // clonefile() will fail if it already exists
-                        let _ = Syscall::unlink(dest);
-                    }
-                    if Maybe::<ret::CopyFile>::errno_sys_p(
-                        bun_sys::c::clonefile_rc(src, dest, 0),
-                        sys::Tag::copyfile,
-                        src,
-                    )
-                    .is_none()
-                    {
-                        let _ = Syscall::chmod(dest, stat_.st_mode as u32);
-                        return Ok(());
-                    }
-                } else {
-                    let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
-                        Ok(result) => result,
-                        Err(err) => return Err(err.with_path(args.src.slice())),
-                    };
-                    let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
-
-                    let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-                    // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
-                    // that wrote into a discarded temporary so the deferred ftruncate
-                    // always saw 0. The scopeguard variant also double-borrowed `wrote`.
-                    // There are no early returns between open(dest) and the
-                    // `copy_file_using_read_write_loop` call, so inlining the
-                    // cleanup after it is equivalent.
-                    let mut wrote: u64 = 0;
-                    if args.mode.shouldnt_overwrite() {
-                        flags |= sys::O::EXCL;
-                    }
-
-                    let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
-                        Ok(result) => result,
-                        Err(err) => return Err(err.with_path(args.dest.slice())),
-                    };
-
-                    let result = Self::copy_file_using_read_write_loop(
-                        src,
-                        dest,
-                        src_fd,
-                        dest_fd,
-                        stat_.st_size.max(0) as usize,
-                        &mut wrote,
-                    );
-                    let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
-                    return result;
-                }
+                let result = Self::copy_file_using_read_write_loop(
+                    src,
+                    dest,
+                    src_fd,
+                    dest_fd,
+                    stat_.st_size.max(0) as usize,
+                    &mut wrote,
+                );
+                let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
+                let _ = Syscall::fchown(dest_fd, stat_.st_uid as u32, stat_.st_gid as u32);
+                let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
+                dest_fd.close();
+                return result;
             }
 
             // we fallback to copyfile() when the file is > 128 KB and clonefile fails
@@ -5040,12 +5040,16 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() {
                 mode |= bun_sys::c::COPYFILE_EXCL;
             }
-            return Maybe::<ret::CopyFile>::errno_sys_p(
+            if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
                 bun_sys::c::copyfile_rc(src, dest, mode),
                 sys::Tag::copyfile,
                 src,
-            )
-            .unwrap_or(Ok(()));
+            ) {
+                return err;
+            }
+            let _ = Syscall::chown(dest, stat_.st_uid as u32, stat_.st_gid as u32);
+            let _ = Syscall::chmod(dest, stat_.st_mode as u32);
+            return Ok(());
         }
 
         #[cfg(target_os = "freebsd")]
@@ -5127,6 +5131,8 @@ impl NodeFS {
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
+                            let _ =
+                                Syscall::fchown(dest_fd, stat_.st_uid as u32, stat_.st_gid as u32);
                             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
                             return Ok(());
                         }
@@ -5156,6 +5162,7 @@ impl NodeFS {
                 let _ = sys::unlink(dest);
                 return Err(err);
             }
+            let _ = Syscall::fchown(dest_fd, stat_.st_uid as u32, stat_.st_gid as u32);
             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
             return Ok(());
         }
@@ -5208,6 +5215,7 @@ impl NodeFS {
                     let _ = sys::unlink(dest);
                     return err;
                 }
+                let _ = Syscall::fchown(dest_fd, stat_.st_uid as u32, stat_.st_gid as u32);
                 let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                 dest_fd.close();
                 return Ok(());
@@ -5217,6 +5225,7 @@ impl NodeFS {
             if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
+                    let _ = Syscall::fchown(dest_fd, stat_.st_uid as u32, stat_.st_gid as u32);
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
                     return Ok(());
@@ -5226,14 +5235,17 @@ impl NodeFS {
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest =
-                scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                    // ftruncate/fchmod take only ints — no memory-safety preconditions; route
-                    // through the existing `bun_sys` safe wrappers (same as lines above).
+            let _close_dest = scopeguard::guard(
+                (dest_fd, stat_.st_mode, stat_.st_uid, stat_.st_gid, &wrote),
+                |(fd, m, uid, gid, wrote)| {
+                    // ftruncate/fchown/fchmod take only ints — no memory-safety preconditions;
+                    // route through the existing `bun_sys` safe wrappers (same as lines above).
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
+                    let _ = Syscall::fchown(fd, uid as u32, gid as u32);
                     let _ = Syscall::fchmod(fd, m as u32);
                     fd.close();
-                });
+                },
+            );
 
             let mut off_in_copy: i64 = 0;
             let mut off_out_copy: i64 = 0;
@@ -8487,7 +8499,6 @@ impl NodeFS {
     ) -> Maybe<ret::CopyFile> {
         let _ = args; // only the Windows branch consults `args` (shouldIgnoreEbusy)
 
-        // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
         {
             if mode.is_force_clone() {
@@ -8569,12 +8580,15 @@ impl NodeFS {
 
                 let dest_fd =
                     Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
-                let _close_dest =
-                    scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
+                let _close_dest = scopeguard::guard(
+                    (dest_fd, stat_.st_mode, stat_.st_uid, stat_.st_gid, &wrote),
+                    |(fd, m, uid, gid, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
+                        let _ = Syscall::fchown(fd, uid as u32, gid as u32);
                         let _ = Syscall::fchmod(fd, m as u32);
                         fd.close();
-                    });
+                    },
+                );
 
                 let mut w = wrote.get();
                 let r = Self::copy_file_using_read_write_loop(
@@ -8605,20 +8619,24 @@ impl NodeFS {
                 src.as_bytes(),
             );
             match first_try {
-                None => return Ok(()),
+                None => {}
                 Some(err) if err.get_errno() == E::ENOENT => {
                     let _ = sys::Dir::cwd().make_path(paths::resolve_path::dirname::<
                         paths::platform::Auto,
                     >(dest.as_bytes()));
-                    return Maybe::<ret::CopyFile>::errno_sys_p(
+                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
                         bun_sys::c::copyfile_rc(src, dest, mode_),
                         sys::Tag::copyfile,
                         src.as_bytes(),
-                    )
-                    .unwrap_or(Ok(()));
+                    ) {
+                        return err;
+                    }
                 }
                 Some(err) => return err,
             }
+            let _ = Syscall::chown(dest, stat_.st_uid as u32, stat_.st_gid as u32);
+            let _ = Syscall::chmod(dest, stat_.st_mode as u32);
+            return Ok(());
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -8668,6 +8686,7 @@ impl NodeFS {
             if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
+                    let _ = Syscall::fchown(dest_fd, stat_.st_uid as u32, stat_.st_gid as u32);
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
                     return Ok(());
@@ -8676,9 +8695,16 @@ impl NodeFS {
             }
 
             let _close_dest = scopeguard::guard(
-                (dest_fd, stat_.st_mode as Mode, &wrote),
-                |(fd, m, wrote)| {
+                (
+                    dest_fd,
+                    stat_.st_mode as Mode,
+                    stat_.st_uid,
+                    stat_.st_gid,
+                    &wrote,
+                ),
+                |(fd, m, uid, gid, wrote)| {
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
+                    let _ = Syscall::fchown(fd, uid as u32, gid as u32);
                     let _ = Syscall::fchmod(fd, m);
                     fd.close();
                 },
@@ -8854,9 +8880,16 @@ impl NodeFS {
             }
 
             let _close_dest = scopeguard::guard(
-                (dest_fd, stat_.st_mode as Mode, &wrote),
-                |(fd, m, wrote)| {
+                (
+                    dest_fd,
+                    stat_.st_mode as Mode,
+                    stat_.st_uid,
+                    stat_.st_gid,
+                    &wrote,
+                ),
+                |(fd, m, uid, gid, wrote)| {
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
+                    let _ = Syscall::fchown(fd, uid as u32, gid as u32);
                     let _ = Syscall::fchmod(fd, m);
                     fd.close();
                 },

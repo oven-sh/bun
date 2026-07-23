@@ -135,4 +135,5 @@ leak:napi_internal_enqueue_finalizer
 # the ast_memory_store.pop() / drop_in_place(transpiler) teardown, so the
 # pushed AST-alloc state and the transpiler's owned Vecs/Boxes leak.
 # Pre-existing; reproduces on main with `Bun.build({define:{X:'{"a":'}})`.
-leak:generate_in_new_thread
+leak:create_and_configure_transpiler
+leak:bun_alloc::ast_alloc::acquire_state

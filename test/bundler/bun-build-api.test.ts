@@ -104,12 +104,15 @@ describe("Bun.build", () => {
       expect(result.success).toBe(false);
     });
 
-    test("bun run --define fails before running the script", async () => {
+    test.concurrent.each([
+      ["X=60 * 60 * 1000", 'define value for "X" must be a valid JSON literal or identifier: 60 * 60 * 1000'],
+      ["a.*=1", 'define key "a.*" contains invalid identifier "*"'],
+    ])("bun run --define %j fails before running the script", async (arg, msg) => {
       const dir = tempDirWithFiles("bun-run-define-invalid", {
-        "entry.js": `console.log("RAN", typeof X);`,
+        "entry.js": `console.log("RAN");`,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--define", "X=60 * 60 * 1000", "entry.js"],
+        cmd: [bunExe(), "run", "--define", arg, "entry.js"],
         // `bun run` builds a full VM before configure_defines errors; under the
         // ASAN lane's inherited BUN_DESTRUCT_VM_ON_EXIT=1 the teardown + LSAN
         // scan takes ~5s on its own. The test cares about the error message
@@ -120,7 +123,7 @@ describe("Bun.build", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain('define value for "X" must be a valid JSON literal or identifier: 60 * 60 * 1000');
+      expect(stderr).toContain(msg);
       expect(stdout).not.toContain("RAN");
       expect(exitCode).not.toBe(0);
     });

@@ -4048,8 +4048,13 @@ function addSuite(
               return;
             }
             const { afterAll } = bunTest();
-            afterAll(function settleSuite() {
+            afterAll(function settleSuite(done: (error?: unknown) => void) {
               noteSuiteCollectionSettled(suiteNode);
+              // Settle asynchronously like the other hook wrappers so
+              // bun:test's native hook driver is not re-entered from its own
+              // callback (on Windows a sync return from a nested describe's
+              // last afterAll does not advance to the outer's afterAll).
+              Promise.resolve(undefined).then(done, done);
             });
           }
           function onWrappedSuiteBuilt() {

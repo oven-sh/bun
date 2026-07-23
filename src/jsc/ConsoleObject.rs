@@ -620,6 +620,11 @@ pub struct TablePrinter<'a> {
 
     is_iterable: bool,
     jstype: jsc::JSType,
+    /// Whether `tabular_data` is a real `Map` (strict, unlike `jstype.is_map()`
+    /// which also matches `WeakMap`). Gates the `Key` column and the Map-entry
+    /// key/value extraction; the producer and every consumer must agree on it,
+    /// or a `WeakMap` with an own property indexes a missing `columns[1]`.
+    is_map: bool,
 
     /// Width of the "Values" column. This column is not appended to "columns"
     /// from the start, because it needs to be the last column.
@@ -711,12 +716,14 @@ impl<'a> TablePrinter<'a> {
         properties: JSValue,
     ) -> JsResult<Self> {
         let _ = level;
+        let jstype = tabular_data.js_type();
         Ok(TablePrinter {
             global_object,
             tabular_data,
             properties,
             is_iterable: tabular_data.is_iterable(global_object)?,
-            jstype: tabular_data.js_type(),
+            jstype,
+            is_map: jstype == jsc::JSType::Map,
             value_formatter: {
                 // `Formatter` has a `Drop` impl, so struct-update
                 // from a temporary is rejected (E0509).
@@ -776,7 +783,7 @@ impl<'a> TablePrinter<'a> {
         };
 
         // special handling for Map: column with idx=1 is "Keys"
-        if self.jstype.is_map() {
+        if self.is_map {
             let key_cell = self.format_cell::<ENABLE_ANSI_COLORS>(
                 cell_text,
                 row_value.get_index(self.global_object, 0)?,
@@ -887,10 +894,8 @@ impl<'a> TablePrinter<'a> {
         {
             let needed = columns[0].width.saturating_sub(row.key.width());
 
-            // Right-align the number column
-            writer
-                .splat_byte_all(b' ', (needed + PADDING) as usize)
-                .ok();
+            // Left-align the index column, matching Node's `console.table`.
+            writer.splat_byte_all(b' ', PADDING as usize).ok();
             match &row.key {
                 RowKey::Str { text, .. } => {
                     writer.write_all(text.slice()).ok();
@@ -899,7 +904,9 @@ impl<'a> TablePrinter<'a> {
                     write!(writer, "{value}").ok();
                 }
             }
-            writer.splat_byte_all(b' ', PADDING as usize).ok();
+            writer
+                .splat_byte_all(b' ', (needed + PADDING) as usize)
+                .ok();
         }
 
         for col_idx in 1..columns.len() {
@@ -947,14 +954,23 @@ impl<'a> TablePrinter<'a> {
         // reshaped for borrowck — re-borrow through the guard.
         let columns: &mut Vec<Column> = &mut **_deref_names;
 
-        // create the first column " " which is always present
+        // create the index column, which is always present. Node labels it
+        // "(iteration index)" for Map/Set and "(index)" otherwise; the width
+        // grows to fit the header name below. Match only real Map/Set: Node's
+        // isMap/isSet brand checks exclude WeakMap/WeakSet (they are not
+        // iterable and print as plain objects with the "(index)" header).
+        let index_column_name = if self.is_map || self.jstype == jsc::JSType::Set {
+            "(iteration index)"
+        } else {
+            "(index)"
+        };
         columns.push(Column {
-            name: BunString::static_("\u{0020}"),
+            name: BunString::static_(index_column_name),
             width: 1,
         });
 
         // special case for Map: create the special "Key" column at index 1
-        if self.jstype.is_map() {
+        if self.is_map {
             columns.push(Column {
                 name: BunString::static_("Key"),
                 width: 1,

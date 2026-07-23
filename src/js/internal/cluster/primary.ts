@@ -10,6 +10,7 @@ const settleClusterAck = $newRustFunction("node_cluster_binding.rs", "settleClus
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
 const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
+const ebadfErrorCode = $newRustFunction("node_util_binding.rs", "ebadfErrorCode", 0);
 const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
 
 let child_process;
@@ -347,9 +348,10 @@ function queryServer(worker, message) {
   });
 }
 
-// node:http cluster workers self-bind with SO_REUSEPORT, which never collides
-// with a foreign process at bind time. The primary arbitrates instead: known
-// keys belong to this cluster; new ones get a one-shot test bind.
+// Node's primary binds for workers, so a foreign EADDRINUSE surfaces from that
+// bind; Bun's http workers self-bind with SO_REUSEPORT (never collides), so the
+// primary test-binds once to recover the same error.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/round_robin_handle.js#L30-L61
 function destroyProbeConnection(probeConnection) {
   probeConnection.destroy();
 }
@@ -374,9 +376,8 @@ class ReusePortHandle {
     this.address = message.address ?? null;
     if (!(this.port > 0)) return; // Port 0 is kernel-assigned; nothing can collide.
     if (owned !== undefined) {
-      // The port is already claimed by this cluster under an overlapping host
-      // key; mirror that claim instead of test-binding against our own
-      // workers' REUSEPORT sockets (a plain bind would collide on Linux).
+      // Port already claimed by this cluster under an overlapping host key:
+      // mirror it; a test bind would collide with our own REUSEPORT sockets.
       const ownedPending = owned.pending;
       if (ownedPending) {
         this.pending = [];
@@ -388,9 +389,8 @@ class ReusePortHandle {
     }
     netForProbe ??= require("node:net");
     this.pending = [];
-    // A stray client connecting inside the probe window would otherwise be
-    // accepted and never destroyed, blocking server.close() (and with it
-    // every parked probePort reply) until that client goes away.
+    // Destroy stray clients landing in the probe window: an accepted idle
+    // connection would block server.close() and every parked reply.
     const server = (this.server = netForProbe.createServer(destroyProbeConnection));
     server.once("error", this.#onProbeError.bind(this));
     server.listen({ port: this.port, host: this.address || undefined }, this.#onProbeListening.bind(this, server));
@@ -448,18 +448,17 @@ class ReusePortHandle {
     this.server?.close();
     this.server = null;
     if (this.pending !== null) {
-      // The close() above suppressed the probe's 'listening' callback, which
-      // was #settle()'s only trigger - settle the parked repliers now so no
-      // worker's listen() waits forever on a dead probe.
+      // close() suppressed the probe's 'listening' callback (#settle's only
+      // trigger): settle the parked repliers so no listen() waits forever.
       this.#settle();
     }
     return true;
   }
 }
 
-// node:http `listen({fd})` in a worker: the descriptor exists only in the
-// primary, so SCM_RIGHTS-dup it to the worker, which adopts it directly
-// (accepts are then kernel-distributed across sharers).
+// Node routes a worker's listen({fd}) through SharedHandle in the primary;
+// Bun dups the descriptor to the worker over SCM_RIGHTS so Bun.serve adopts it.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js#L13-L29
 function shareListenFd(worker, message) {
   if (worker.exitedAfterDisconnect) return;
 
@@ -471,7 +470,7 @@ function shareListenFd(worker, message) {
     return;
   }
   if (typeof fd !== "number" || fd < 0) {
-    send(worker, { errno: -9 /* UV_EBADF */, ack: message.seq });
+    send(worker, { errno: ebadfErrorCode(), ack: message.seq });
     return;
   }
   try {

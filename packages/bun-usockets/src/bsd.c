@@ -1308,8 +1308,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
      * A dup of a listening socket deterministically hits the benign
      * already-listening path in the worker; racing listen() calls on dups of a
      * bound-only socket intermittently fail with WSAEINVAL (SO_ACCEPTCONN
-     * probes on protocol info snapshotted pre-listen). */
-    if (listen(fd, 512)) {
+     * probes on protocol info snapshotted pre-listen). SOMAXCONN like libuv;
+     * the user's backlog is ignored here because the primary listens before
+     * any worker (and its backlog option) exists. */
+    if (listen(fd, SOMAXCONN)) {
         *error = WSAGetLastError();
         bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;

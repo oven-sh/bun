@@ -573,3 +573,50 @@ setInterval(() => {}, 1 << 30);
     },
   );
 });
+
+describe.skipIf(isWindows)("http listen({ fd })", () => {
+  test.concurrent("adopts fd 0 (inetd-style) and stays alive with nothing else pending", async () => {
+    using dir = tempDir("http-listen-fd0", {
+      "parent.js": `
+const net = require('node:net');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', async () => {
+  const port = server.address().port;
+  const child = Bun.spawn({
+    cmd: [process.execPath, 'child.js'],
+    stdio: [server._handle.fd, 'inherit', 'inherit'],
+    env: { ...process.env },
+    cwd: import.meta.dir,
+  });
+  // The child owns a dup; drop the parent's acceptor so requests reach it.
+  server.close();
+  await new Promise(r => setTimeout(r, 500));
+  // The adopted listen alone must keep the child alive.
+  console.log('child alive:', child.exitCode === null);
+  const res = await fetch('http://127.0.0.1:' + port + '/', { signal: AbortSignal.timeout(5000) });
+  console.log('response:', await res.text());
+  child.kill();
+  process.exit(0);
+});
+`,
+      "child.js": `
+const http = require('node:http');
+const s = http.createServer((req, res) => res.end('hello-fd0'));
+s.on('error', e => { console.error('listen error:', e.code); process.exit(3); });
+// fd 0: get_truthy would drop it and silently bind the default port instead.
+s.listen({ fd: 0 });
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("child alive: true");
+    expect(stdout).toContain("response: hello-fd0");
+    expect(exitCode).toBe(0);
+  });
+});

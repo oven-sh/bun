@@ -739,6 +739,11 @@ function onProbePortReply(server, tls, port, host, socketPath, onListen, fd, rep
   try {
     server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
   } catch (err) {
+    // The listen never took effect: release the primary's claim now rather
+    // than waiting for a close() nobody is obligated to call on a server
+    // that failed to start.
+    server[kClusterProbeKey] = undefined;
+    cluster._sendInternal({ act: "close", key: reply.key });
     server.emit("error", err);
   }
 }

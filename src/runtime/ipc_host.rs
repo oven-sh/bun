@@ -173,6 +173,14 @@ pub(crate) fn do_send(
             match IPC::ipc_serialize(global_object, message, handle, options_, target) {
                 Ok(v) => v,
                 Err(e) => {
+                    // Never take a pending TerminationException: taking it
+                    // clears the VM's termination request, resuming the
+                    // terminating worker through the user's send callback
+                    // (same class as the receive path's
+                    // clear_exception_except_termination sites).
+                    if matches!(e, bun_jsc::JsError::Terminated) {
+                        return Err(e);
+                    }
                     // take_error unwraps the JSC::Exception cell to the value.
                     let ex = global_object.take_error(e);
                     let mut rethrow = false;

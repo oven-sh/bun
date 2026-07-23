@@ -277,9 +277,22 @@ export function parseHandle(target, serialized, fd) {
     case "dgram.Socket": {
       const dgram = require("node:dgram");
       const socket = dgram.createSocket(serialized.dgramType);
+      // Adoption failure (a stale or closed descriptor) must fail as loudly
+      // as the dgram.Native path's throw. Without a listener the async bind
+      // error would surface as a bare 'error' event on a socket nobody holds
+      // yet - an uncaught exception with no context and a silently dropped
+      // message.
+      function throwOnAdoptionFailure(err) {
+        throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`);
+      }
+      socket.once("error", throwOnAdoptionFailure);
       // exclusive: the SCM_RIGHTS descriptor is local; without it a cluster
       // worker's bind({ fd }) would resolve fd in the primary's fd space.
-      socket.bind({ fd, exclusive: true }, emitReceivedHandle.bind(null, emit, target, serialized.msg, socket));
+      socket.bind({ fd, exclusive: true }, function onAdopted() {
+        // Hand user code a socket with untouched error semantics.
+        socket.removeListener("error", throwOnAdoptionFailure);
+        emitReceivedHandle(emit, target, serialized.msg, socket);
+      });
       return;
     }
     default: {

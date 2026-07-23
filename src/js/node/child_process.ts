@@ -153,12 +153,14 @@ function spawn(file, args, options) {
       }
     }, timeout).unref();
 
-    child.once("exit", () => {
+    const clear = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
-    });
+    };
+    child.once("exit", clear);
+    child.once("close", clear);
   }
 
   const signal = options.signal;

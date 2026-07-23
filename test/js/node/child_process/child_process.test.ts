@@ -1028,8 +1028,8 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     child.on("error", e => errors.push(e));
     child.on("close", () => resolve());
     await closed;
-    ac.abort();
     expect(getEventListeners(ac.signal, "abort").length).toBe(0);
+    ac.abort();
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
 });

@@ -280,6 +280,9 @@ export function parseHandle(target, serialized, fd) {
       // Without a listener an async bind failure surfaces as a bare 'error'
       // on a socket nobody holds; throw loudly like the dgram.Native path.
       function throwOnAdoptionFailure(err) {
+        try {
+          require("node:fs").closeSync(fd);
+        } catch {}
         throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`);
       }
       socket.once("error", throwOnAdoptionFailure);

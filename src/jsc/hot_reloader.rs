@@ -720,8 +720,7 @@ where
             const GRACE_MS: u64 = 500;
             const STEP_MS: u64 = 10;
             let mut waited = 0u64;
-            while waited < GRACE_MS
-                && !bun_core::is_process_reload_in_progress_on_another_thread()
+            while waited < GRACE_MS && !bun_core::is_process_reload_in_progress_on_another_thread()
             {
                 std::thread::sleep(std::time::Duration::from_millis(STEP_MS));
                 waited += STEP_MS;

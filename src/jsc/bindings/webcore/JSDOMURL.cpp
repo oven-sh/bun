@@ -662,16 +662,16 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMURLContextNoop, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsUndefined());
 }
 
-#define DEFINE_URL_CONTEXT_HAS_GETTER(name, field)                                                                                  \
-    static JSC_DECLARE_HOST_FUNCTION(jsDOMURLContext##name);                                                                        \
-    JSC_DEFINE_HOST_FUNCTION(jsDOMURLContext##name, (JSGlobalObject * globalObject, CallFrame* callFrame))                          \
-    {                                                                                                                               \
-        auto& vm = JSC::getVM(globalObject);                                                                                        \
-        JSObject* thisObj = callFrame->thisValue().getObject();                                                                     \
-        if (!thisObj)                                                                                                               \
-            return JSValue::encode(jsBoolean(false));                                                                               \
-        JSValue v = thisObj->getDirect(vm, Identifier::fromString(vm, field##_s));                                                  \
-        return JSValue::encode(jsBoolean(v.isNumber() && v.asNumber() != static_cast<double>(kURLContextOmittedComponent)));        \
+#define DEFINE_URL_CONTEXT_HAS_GETTER(name, field)                                                                           \
+    static JSC_DECLARE_HOST_FUNCTION(jsDOMURLContext##name);                                                                 \
+    JSC_DEFINE_HOST_FUNCTION(jsDOMURLContext##name, (JSGlobalObject * globalObject, CallFrame * callFrame))                  \
+    {                                                                                                                        \
+        auto& vm = JSC::getVM(globalObject);                                                                                 \
+        JSObject* thisObj = callFrame->thisValue().getObject();                                                              \
+        if (!thisObj)                                                                                                        \
+            return JSValue::encode(jsBoolean(false));                                                                        \
+        JSValue v = thisObj->getDirect(vm, Identifier::fromString(vm, field##_s));                                           \
+        return JSValue::encode(jsBoolean(v.isNumber() && v.asNumber() != static_cast<double>(kURLContextOmittedComponent))); \
     }
 DEFINE_URL_CONTEXT_HAS_GETTER(HasPort, "port")
 DEFINE_URL_CONTEXT_HAS_GETTER(HasSearch, "search_start")

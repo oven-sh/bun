@@ -1165,13 +1165,6 @@ mod tests {
         }
     }
 
-    fn root_string(p: &Parsed) -> String {
-        match &p.root.as_ref().unwrap().data {
-            Data::EString(s) => estring_to_string(s),
-            _ => panic!("expected a string"),
-        }
-    }
-
     #[test]
     fn parses_basics() {
         assert_parses_to("{}", "{}");

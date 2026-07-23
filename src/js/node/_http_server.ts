@@ -3108,20 +3108,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    // Read the storage directly - the `socket` getter auto-creates a
-    // FakeSocket and would make this condition always true.
-    if (this[fakeSocketSymbol] || this.outputData?.length || !this._header) {
-      // Standalone response writing through an assigned socket (or buffering
-      // until one is assigned): use the OutgoingMessage machinery. The
-      // original chunk passes through (mirroring write()): write_() has its
-      // own !_hasBody handling, including the rejectNonStandardBodyWrites
-      // throw, which the clearing below would bypass.
-      return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
-    }
-    if ($isCallable(callback)) {
-      process.nextTick(callback);
-    }
-    return this;
+    // Standalone response (no native handle): use the OutgoingMessage
+    // machinery unconditionally so `finished` / `writableEnded` transition and
+    // the chunk is buffered into outputData like Node.js, regardless of whether
+    // writeHead() rendered `_header` first. The original chunk passes through
+    // (mirroring write()): write_() has its own !_hasBody handling, including
+    // the rejectNonStandardBodyWrites throw.
+    return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {

@@ -4221,6 +4221,32 @@ console.log(foo, array);
   });
 
   describe("transform", () => {
+    it("multi-diagnostic input throws the same AggregateError from transform and transformSync", async () => {
+      const ts = new Bun.Transpiler({ loader: "ts" });
+      // JSX under the "ts" loader produces 5 diagnostics, so both paths wrap in AggregateError.
+      const bad = `const el = <div a={1} {...p}>text {x}</div>;`;
+
+      let syncErr;
+      try {
+        ts.transformSync(bad);
+      } catch (e) {
+        syncErr = e;
+      }
+      let asyncErr;
+      try {
+        await ts.transform(bad);
+      } catch (e) {
+        asyncErr = e;
+      }
+
+      expect(syncErr).toBeInstanceOf(AggregateError);
+      expect(asyncErr).toBeInstanceOf(AggregateError);
+      expect(asyncErr.message).toBe(syncErr.message);
+      expect(asyncErr.message).toBe("Parse error");
+      expect(asyncErr.errors.map(e => e.message)).toEqual(syncErr.errors.map(e => e.message));
+      expect(asyncErr.errors.length).toBeGreaterThan(1);
+    });
+
     // Async transform doesn't work in the test runner. Skipping for now.
     // This might be caused by incorrectly using shared memory between the two files.
     it.skip("supports macros", async () => {

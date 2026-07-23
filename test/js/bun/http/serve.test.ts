@@ -1768,7 +1768,12 @@ describe("response framing", () => {
           s.on("data", d => (raw += d.toString("latin1")));
           s.on("error", reject);
           s.on("close", () => {
-            const head = raw.slice(0, raw.indexOf("\r\n\r\n"));
+            const separator = raw.indexOf("\r\n\r\n");
+            if (separator < 0) {
+              reject(new Error("server closed before sending a complete HTTP header block"));
+              return;
+            }
+            const head = raw.slice(0, separator);
             resolve(head.split("\r\n").filter(l => /^content-length:/i.test(l)));
           });
         });

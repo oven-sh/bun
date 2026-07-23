@@ -2122,9 +2122,7 @@ mod draft {
         let pc = record.ExceptionAddress as usize;
         let base = WINDOWS_EXE_IMAGE_BASE.load(Ordering::Relaxed);
         let end = WINDOWS_EXE_IMAGE_END.load(Ordering::Relaxed);
-        if !matches!(reason, CrashReason::StackOverflow)
-            && base != 0
-            && !(base..end).contains(&pc)
+        if !matches!(reason, CrashReason::StackOverflow) && base != 0 && !(base..end).contains(&pc)
         {
             return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH;
         }

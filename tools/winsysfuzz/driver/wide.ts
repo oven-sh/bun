@@ -246,6 +246,7 @@ try {
 } catch {}
 // --- known signatures: never re-report a triaged/queued finding ------------
 const knownKeys = new Set<string>();
+const resolvedKeys = new Set<string>(); // triaged as intentional/not-real: never worth recurrence evidence
 for (const f of ["triaged.jsonl", "queue.jsonl"]) {
   const path = join(queueDir, f);
   if (!(await Bun.file(path).exists())) continue;
@@ -253,7 +254,11 @@ for (const f of ["triaged.jsonl", "queue.jsonl"]) {
     if (!line.trim()) continue;
     try {
       const e = JSON.parse(line);
-      if (e.dedupeKey) knownKeys.add(e.dedupeKey);
+      if (e.dedupeKey) {
+        knownKeys.add(e.dedupeKey);
+        // Verdicts that mark a signature as expected-by-design or not-real.
+        if (f === "triaged.jsonl" && /^(intentional-fatal|not-real|not-bun)$/.test(e.verdict ?? "")) resolvedKeys.add(e.dedupeKey);
+      }
     } catch {}
   }
 }
@@ -457,6 +462,11 @@ while (pass++ < passes) {
       hits++;
       console.log(`  [${h.outcome}] ${basename(h.file)}  <-  ${h.schedule.join(" ; ")}`);
       if (knownKeys.has(h.key)) {
+        // A signature already TRIAGED as intentional/not-real recurring is
+        // expected noise (a die-with-message by design fires every time its
+        // condition is injected) - only unresolved known signatures earn a
+        // recurrence-evidence entry.
+        if (resolvedKeys.has(h.key)) continue;
         // A known signature reproduced AGAIN, in-pass: never waste it. Append
         // the fresh evidence (raw detail, captured stacks, schedule, file) to
         // a recurrence ledger - the newest reproduction of a known finding is

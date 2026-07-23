@@ -84,9 +84,18 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
-    frame.source_url = Bun::toStringRef(sourceURL);
     auto m_codeBlock = stackFrame.codeBlock();
+    auto evalOrigin = Zig::evalOriginForCodeBlock(m_codeBlock);
+    if (evalOrigin.isEval && !evalOrigin.hasSourceURL) {
+        // Positions refer to the eval string; the Rust remapper must not look
+        // them up against the caller file's source map. "<anonymous>" is not a
+        // real path, so resolve_source_mapping returns None and the source
+        // preview falls back to collect_source_lines (the eval provider).
+        frame.source_url = Bun::toStringRef("<anonymous>"_s);
+    } else {
+        auto sourceURL = Zig::sourceURL(vm, stackFrame);
+        frame.source_url = Bun::toStringRef(sourceURL);
+    }
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode: {
@@ -290,13 +299,28 @@ public:
         offset = end;
 
         // the proper singular spelling is parenthesis
-        auto openingParentheses = line.reverseFind('(');
         auto closingParentheses = line.reverseFind(')');
+        size_t openingParentheses = WTF::notFound;
+        if (closingParentheses != WTF::notFound) {
+            // Balance parentheses from the end so nested "eval at <name> (<loc>)"
+            // origins and function names that themselves contain '(' both work.
+            size_t depth = 0;
+            for (size_t i = closingParentheses + 1; i-- > 0;) {
+                if (line[i] == ')') {
+                    depth++;
+                } else if (line[i] == '(' && --depth == 0) {
+                    openingParentheses = i;
+                    break;
+                }
+            }
+            // A path with an unmatched ')' (e.g. "/tmp/a)b/file.js") leaves
+            // depth > 0; fall back to the first '(' rather than dropping the
+            // whole remaining trace.
+            if (openingParentheses == WTF::notFound)
+                openingParentheses = line.find('(');
+        }
 
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
-
-        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
+        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound || openingParentheses > closingParentheses) {
             // Special case: "unknown" frames don't have parentheses but are valid
             // These appear in stack traces from certain error paths
             if (line == "unknown"_s) {
@@ -311,6 +335,12 @@ public:
         }
 
         auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
+
+        if (lineInner.startsWith("eval at "_s)) {
+            auto comma = lineInner.reverseFind(", "_s);
+            if (comma != WTF::notFound)
+                lineInner = lineInner.substring(comma + 2);
+        }
 
         {
             auto marker1 = 0;

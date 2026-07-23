@@ -58,6 +58,7 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
 
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());
+    m_evalOrigin.set(vm, this, JSC::jsUndefined());
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
@@ -67,6 +68,11 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
 
     if (stackFrame.isEval()) {
         m_flags |= static_cast<unsigned int>(Flags::IsEval);
+        if (stackFrame.hasEvalSourceURL()) {
+            m_evalOrigin.set(vm, this, stackFrame.sourceURL());
+        } else if (!stackFrame.evalCallerURL().isEmpty()) {
+            m_evalOrigin.set(vm, this, jsString(vm, makeString("eval at <anonymous> ("_s, stackFrame.evalCallerURL(), ')')));
+        }
     } else if (stackFrame.isFunctionOrEval()) {
         m_flags |= static_cast<unsigned int>(Flags::IsFunction);
     }
@@ -90,6 +96,7 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisCallSite->m_function);
     visitor.append(thisCallSite->m_functionName);
     visitor.append(thisCallSite->m_sourceURL);
+    visitor.append(thisCallSite->m_evalOrigin);
 }
 JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -158,7 +165,16 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         if (functionName.length() > 0) {
             sb.append(" ("_s);
         }
-        if (!mySourceURL || mySourceURL->length() == 0) {
+
+        bool isAnonymousEval = isEval() && (!mySourceURL || mySourceURL->length() == 0);
+        if (isAnonymousEval) {
+            JSValue origin = evalOrigin();
+            if (auto* originStr = origin.toStringOrNull(globalObject); originStr && originStr->length() > 0) {
+                sb.append(originStr->getString(globalObject));
+                sb.append(", "_s);
+            }
+            sb.append("<anonymous>"_s);
+        } else if (!mySourceURL || mySourceURL->length() == 0) {
             sb.append("unknown"_s);
         } else {
             sb.append(mySourceURL->getString(globalObject));

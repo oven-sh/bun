@@ -66,6 +66,9 @@ private:
 
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
+    bool m_isInsideEval = false;
+    bool m_hasEvalSourceURL = false;
+    WTF::String m_evalCallerURL;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -91,6 +94,9 @@ public:
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
     bool isAsync() const { return m_isAsync; }
+    bool isInsideEval() const { return m_isInsideEval; }
+    bool hasEvalSourceURL() const { return m_hasEvalSourceURL; }
+    const WTF::String& evalCallerURL() const { return m_evalCallerURL; }
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
     JSC::BytecodeIndex bytecodeIndex() const
@@ -102,34 +108,14 @@ public:
     SourcePositions* getSourcePositions();
 
     bool isWasmFrame() const { return m_isWasmFrame; }
-    bool isEval()
+    bool isEval() const
     {
-        if (m_codeBlock) {
-            if (m_codeBlock->codeType() == JSC::EvalCode) {
-                return true;
-            }
-            auto* executable = m_codeBlock->ownerExecutable();
-            if (!executable) {
-                return false;
-            }
-
-            switch (executable->evalContextType()) {
-            case JSC::EvalContextType::None: {
-                return false;
-            }
-            case JSC::EvalContextType::FunctionEvalContext:
-            case JSC::EvalContextType::InstanceFieldEvalContext:
-                return true;
-            }
+        if (m_isInsideEval) {
+            return true;
         }
-
-        if (m_callee && m_callee->inherits<JSC::JSFunction>()) {
-            auto* function = uncheckedDowncast<JSC::JSFunction>(m_callee);
-            if (function->isHostFunction()) {
-                return false;
-            }
+        if (m_codeBlock && m_codeBlock->codeType() == JSC::EvalCode) {
+            return true;
         }
-
         return false;
     }
     bool isConstructor() const
@@ -219,6 +205,22 @@ String sourceURL(JSC::CodeBlock& codeBlock);
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
+
+// A frame is "eval-originated" when its code block's top-level executable is an
+// EvalExecutable (code inside eval("...")) or a FunctionExecutable with no
+// sourceURL (code inside new Function("...")). JSC records the CALLER's URL as
+// the source origin for such providers, but not the caller's line/column.
+struct EvalOrigin {
+    // The frame's own source came from eval / new Function.
+    bool isEval { false };
+    // The provider has a //# sourceURL= directive (or a real sourceURL), so the
+    // location should be displayed as that name rather than "eval at ...".
+    bool hasSourceURL { false };
+    // sourceOrigin() of the eval's provider, i.e. the calling script's URL.
+    String callerURL;
+};
+
+EvalOrigin evalOriginForCodeBlock(JSC::CodeBlock* codeBlock);
 
 enum class FinalizerSafety {
     NotInFinalizer,

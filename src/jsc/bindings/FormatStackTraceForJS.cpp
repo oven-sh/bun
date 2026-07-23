@@ -32,6 +32,57 @@ using namespace WebCore;
 
 namespace Bun {
 
+// JSC stores only the calling script's URL on an eval / new Function source
+// (sourceOrigin()); the caller's line/column are recovered by walking outward
+// past consecutive frames that share the eval's SourceProvider until we pass
+// the EvalCode frame, then taking the next outer frame. If the eval-created
+// function is called after the eval returned (no EvalCode frame on the stack),
+// frames.size() is returned and the origin falls back to the URL alone.
+template<typename Frames>
+static size_t findEvalCallerIndex(Frames& frames, size_t frameIndex, JSC::CodeBlock* codeBlock)
+{
+    size_t n = frames.size();
+    if (!codeBlock)
+        return n;
+    auto* provider = codeBlock->source().provider();
+    bool sawEvalCodeFrame = codeBlock->codeType() == JSC::EvalCode;
+    for (size_t j = frameIndex + 1; j < n; j++) {
+        auto* outerBlock = frames.at(j).codeBlock();
+        if (!outerBlock)
+            continue;
+        if (outerBlock->source().provider() == provider) {
+            if (outerBlock->codeType() == JSC::EvalCode)
+                sawEvalCodeFrame = true;
+            continue;
+        }
+        if (sawEvalCodeFrame)
+            return j;
+        // Foreign-provider frame before the EvalCode frame: the eval-defined
+        // function called out through script-defined code. Keep looking.
+    }
+    return n;
+}
+
+static WTF::String buildEvalOriginText(bool foundCaller, const WTF::String& callerName, const WTF::String& callerLocation, const WTF::String& fallbackURL)
+{
+    WTF::StringBuilder origin;
+    origin.append("eval at "_s);
+    if (foundCaller) {
+        origin.append(callerName.isEmpty() ? "<anonymous>"_s : callerName);
+        origin.append(" ("_s);
+        origin.append(callerLocation.isEmpty() ? fallbackURL : callerLocation);
+        origin.append(')');
+    } else {
+        origin.append("<anonymous>"_s);
+        if (!fallbackURL.isEmpty()) {
+            origin.append(" ("_s);
+            origin.append(fallbackURL);
+            origin.append(')');
+        }
+    }
+    return origin.toString();
+}
+
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -244,10 +295,12 @@ WTF::String formatStackTrace(
     WTF::Vector<ZigStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<LineColumn, 8> originalLineColumns;
+    WTF::Vector<Zig::EvalOrigin, 8> evalOrigins;
     remappedFrames.grow(framesCount);
     memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * framesCount);
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
+    evalOrigins.grow(framesCount);
     bool anyRemap = false;
 
     for (size_t i = 0; i < framesCount; i++) {
@@ -273,6 +326,13 @@ WTF::String formatStackTrace(
             }
         }
 
+        evalOrigins[i] = Zig::evalOriginForCodeBlock(frame.codeBlock());
+        if (evalOrigins[i].isEval && !evalOrigins[i].hasSourceURL) {
+            // Positions for this frame refer to the eval string, not any file
+            // the source-map cache knows about.
+            continue;
+        }
+
         sourceURLs[i] = Zig::sourceURL(vm, frame);
 
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
@@ -292,8 +352,68 @@ WTF::String formatStackTrace(
         Bun__remapStackFramePositions(getBunVM(), remappedFrames.begin(), framesCount);
     }
 
-    // Pass 2: format. Everything except (display line/col, source_url) is
-    // re-derived from `frame`; only the remap output is read from pass 1.
+    // Pass 2: compute the location text for every frame, outer → inner, so an
+    // eval frame can embed its caller's already-computed location in the
+    // "eval at <name> (<location>)" origin.
+    WTF::Vector<WTF::String, 8> locationStrings;
+    locationStrings.grow(framesCount);
+    for (size_t idx = framesCount; idx-- > 0;) {
+        StackFrame& frame = stackTrace.at(idx);
+        ZigStackFrame& remappedFrame = remappedFrames[idx];
+
+        OrdinalNumber displayLine = {};
+        OrdinalNumber displayColumn = {};
+        WTF::String sourceURLForFrame = sourceURLs[idx];
+
+        if (frame.hasLineAndColumnInfo()) {
+            displayLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[idx].line);
+            displayColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[idx].column);
+            if (remappedFrame.remapped) {
+                displayLine = remappedFrame.position.line();
+                displayColumn = remappedFrame.position.column();
+                sourceURLForFrame = remappedFrame.source_url.toWTFString();
+            }
+        }
+
+        WTF::StringBuilder loc;
+        if (evalOrigins[idx].isEval && !evalOrigins[idx].hasSourceURL) {
+            size_t callerIdx = findEvalCallerIndex(stackTrace, idx, frame.codeBlock());
+            bool foundCaller = callerIdx < framesCount;
+            WTF::String callerName;
+            if (foundCaller) {
+                auto& callerFrame = stackTrace.at(callerIdx);
+                JSC::JSGlobalObject* callerGlobalObject = lexicalGlobalObject;
+                if (auto* callee = callerFrame.callee()) {
+                    if (auto* object = callee->getObject())
+                        callerGlobalObject = object->globalObject();
+                }
+                callerName = Zig::functionName(vm, callerGlobalObject, callerFrame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, nullptr);
+            }
+            auto origin = buildEvalOriginText(foundCaller, callerName, foundCaller ? locationStrings[callerIdx] : String(), evalOrigins[idx].callerURL);
+            loc.append(origin);
+            loc.append(", <anonymous>"_s);
+            if (frame.hasLineAndColumnInfo()) {
+                loc.append(':');
+                loc.append(displayLine.oneBasedInt());
+                loc.append(':');
+                loc.append(displayColumn.oneBasedInt());
+            }
+        } else if (!sourceURLForFrame.isEmpty()) {
+            loc.append(sourceURLForFrame);
+            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+                loc.append(':');
+                loc.append(displayLine.oneBasedInt());
+                if (displayColumn.zeroBasedInt() > 0) {
+                    loc.append(':');
+                    loc.append(displayColumn.oneBasedInt());
+                }
+            }
+        }
+        locationStrings[idx] = loc.toString();
+    }
+
+    // Pass 3: format. Everything except the location string is re-derived from
+    // `frame`; only the remap output is read from pass 1.
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
         ZigStackFrame& remappedFrame = remappedFrames[i];
@@ -309,36 +429,21 @@ WTF::String formatStackTrace(
         }
 
         WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
-        OrdinalNumber originalLine = {};
-        OrdinalNumber originalColumn = {};
-        OrdinalNumber displayLine = {};
-        OrdinalNumber displayColumn = {};
-        WTF::String sourceURLForFrame = sourceURLs[i];
 
-        if (frame.hasLineAndColumnInfo()) {
-            originalLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
-            originalColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
-            displayLine = originalLine;
-            displayColumn = originalColumn;
-
+        if (frame.hasLineAndColumnInfo() && !hasSet) {
+            OrdinalNumber displayLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
+            OrdinalNumber displayColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
             if (remappedFrame.remapped) {
                 displayLine = remappedFrame.position.line();
                 displayColumn = remappedFrame.position.column();
-                sourceURLForFrame = remappedFrame.source_url.toWTFString();
             }
-
-            if (!hasSet) {
-                hasSet = true;
-                line = displayLine;
-                column = displayColumn;
-                sourceURL = sourceURLForFrame;
-
-                if (remappedFrame.remapped) {
-                    if (errorInstance) {
-                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
-                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
-                    }
-                }
+            hasSet = true;
+            line = displayLine;
+            column = displayColumn;
+            sourceURL = remappedFrame.remapped ? remappedFrame.source_url.toWTFString() : sourceURLs[i];
+            if (remappedFrame.remapped && errorInstance) {
+                errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line).oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column).oneBasedInt()), PropertyAttribute::DontEnum | 0);
             }
         }
 
@@ -348,15 +453,28 @@ WTF::String formatStackTrace(
             }
         }
 
-        if (sourceURLForFrame.isEmpty()) {
-            if (flags & static_cast<unsigned int>(FunctionNameFlags::Builtin)) {
-                sourceURLForFrame = "native"_s;
-            } else {
-                sourceURLForFrame = "unknown"_s;
+        WTF::String locationString = locationStrings[i];
+        if (locationString.isEmpty()) {
+            WTF::StringBuilder fallback;
+            fallback.append(flags & static_cast<unsigned int>(FunctionNameFlags::Builtin) ? "native"_s : "unknown"_s);
+            if (frame.hasLineAndColumnInfo()) {
+                OrdinalNumber displayLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
+                OrdinalNumber displayColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
+                if (remappedFrame.remapped) {
+                    displayLine = remappedFrame.position.line();
+                    displayColumn = remappedFrame.position.column();
+                }
+                if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+                    fallback.append(':');
+                    fallback.append(displayLine.oneBasedInt());
+                    if (displayColumn.zeroBasedInt() > 0) {
+                        fallback.append(':');
+                        fallback.append(displayColumn.oneBasedInt());
+                    }
+                }
             }
+            locationString = fallback.toString();
         }
-
-        // --- actually render the text ---
 
         sb.append("    at "_s);
 
@@ -368,18 +486,7 @@ WTF::String formatStackTrace(
             sb.append(" ("_s);
         }
 
-        if (!sourceURLForFrame.isEmpty()) {
-            sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
-                sb.append(':');
-                sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
-            }
-        }
+        sb.append(locationString);
 
         if (!functionName.isEmpty()) {
             sb.append(')');
@@ -455,11 +562,16 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     for (int i = 0; i < n; i++) {
         ZigStackFrame& frame = remappedFrames[i];
         auto& stackFrame = stackFrames.at(i);
-        sourceURLs[i] = Zig::sourceURL(vm, stackFrame);
         didRemap[i] = false;
         frame.position.line_zero_based = -1;
         frame.position.column_zero_based = -1;
         frame.position.byte_position = -1;
+
+        auto& jscFrame = stackTrace.at(i);
+        if (jscFrame.isInsideEval() && !jscFrame.hasEvalSourceURL())
+            continue;
+
+        sourceURLs[i] = Zig::sourceURL(vm, stackFrame);
 
         // When you use node:vm, the global object can be different on a
         // per-frame basis. We should sourcemap the frames which are in Bun's
@@ -507,6 +619,46 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         if (frame.remapped) {
             callsite->setLineNumber(frame.position.line());
             callsite->setColumnNumber(frame.position.column());
+        }
+    }
+
+    // Compute eval origins outer → inner so an eval frame can reference its
+    // caller's (possibly also eval) location string. formatAsString reads the
+    // same evalOrigin, so the default-format path and a user prepareStackTrace
+    // see identical text.
+    {
+        WTF::Vector<WTF::String, 8> locationStrings;
+        locationStrings.grow(n);
+        for (int idx = n - 1; idx >= 0; idx--) {
+            auto* callsite = uncheckedDowncast<CallSite>(callSites.at(idx));
+            auto& jscFrame = stackTrace.at(idx);
+            WTF::StringBuilder loc;
+            JSValue urlValue = callsite->sourceURL();
+            auto* urlStr = urlValue.toStringOrNull(lexicalGlobalObject);
+            bool isAnonymousEval = callsite->isEval() && (!urlStr || urlStr->length() == 0);
+            if (isAnonymousEval) {
+                size_t callerIdx = findEvalCallerIndex(stackTrace, static_cast<size_t>(idx), jscFrame.codeBlock());
+                bool foundCaller = callerIdx < static_cast<size_t>(n);
+                WTF::String callerName;
+                if (foundCaller) {
+                    auto* callerSite = uncheckedDowncast<CallSite>(callSites.at(callerIdx));
+                    if (auto* name = callerSite->functionName().toStringOrNull(lexicalGlobalObject))
+                        callerName = name->getString(lexicalGlobalObject);
+                }
+                auto origin = buildEvalOriginText(foundCaller, callerName, foundCaller ? locationStrings[callerIdx] : String(), jscFrame.evalCallerURL());
+                callsite->setEvalOrigin(vm, jsString(vm, origin));
+                loc.append(origin);
+                loc.append(", <anonymous>"_s);
+            } else if (urlStr && urlStr->length() > 0) {
+                loc.append(urlStr->getString(lexicalGlobalObject));
+            }
+            if (!loc.isEmpty() && callsite->lineNumber().zeroBasedInt() >= 0) {
+                loc.append(':');
+                loc.append(callsite->lineNumber().oneBasedInt());
+                loc.append(':');
+                loc.append(callsite->columnNumber().oneBasedInt());
+            }
+            locationStrings[idx] = loc.toString();
         }
     }
 

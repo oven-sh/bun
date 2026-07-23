@@ -128,7 +128,12 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globa
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(callSite->sourceURL());
+    if (callSite->isEval())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    JSValue url = callSite->sourceURL();
+    if (auto* str = url.toStringOrNull(globalObject); str && str->length() == 0)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(url);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -145,16 +150,19 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * glo
     return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
 }
 
-// TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    ENTER_PROTO_FUNC();
+    return JSC::JSValue::encode(callSite->evalOrigin());
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(callSite->sourceURL());
+    JSValue url = callSite->sourceURL();
+    if (auto* str = url.toStringOrNull(globalObject); str && str->length() == 0)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(url);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

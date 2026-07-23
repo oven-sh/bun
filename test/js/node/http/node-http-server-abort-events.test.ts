@@ -56,9 +56,11 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
   const events: string[] = [];
   const { promise: resClosed, resolve: resolveResClosed } = Promise.withResolvers<void>();
   let writeResult: boolean | undefined;
-  let endResult: unknown;
+  let endReturnedSelf: boolean | undefined;
   let finishedAfterEnd: boolean | undefined;
   let writableEndedAfterEnd: boolean | undefined;
+  let writeCbCalled = false;
+  let endCbCalled = false;
 
   const server = createServer((req, res) => {
     res.on("prefinish", () => events.push("res.prefinish"));
@@ -69,8 +71,8 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
     });
 
     req.socket.destroy();
-    writeResult = res.write("body");
-    endResult = res.end("done");
+    writeResult = res.write("body", () => (writeCbCalled = true));
+    endReturnedSelf = res.end("done", () => (endCbCalled = true)) === res;
     finishedAfterEnd = res.finished;
     writableEndedAfterEnd = res.writableEnded;
   });
@@ -85,13 +87,23 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
     client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
     await resClosed;
 
-    expect({ writeResult, finishedAfterEnd, writableEndedAfterEnd, events }).toEqual({
+    expect({
+      writeResult,
+      endReturnedSelf,
+      finishedAfterEnd,
+      writableEndedAfterEnd,
+      writeCbCalled,
+      endCbCalled,
+      events,
+    }).toEqual({
       writeResult: false,
+      endReturnedSelf: true,
       finishedAfterEnd: true,
       writableEndedAfterEnd: true,
+      writeCbCalled: false,
+      endCbCalled: false,
       events: ["res.prefinish", "res.close"],
     });
-    expect(endResult).toBeInstanceOf(Object);
   } finally {
     server.close();
   }

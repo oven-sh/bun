@@ -3031,8 +3031,10 @@ impl RunCommand {
 
         if ctx.positionals.is_empty() {
             // Node: bare `node` on a TTY starts the REPL. Only in emulation
-            // mode; bun's own `bun` with no args stays the help text.
-            if bun_sys::isatty(bun_core::Fd::stdin()) {
+            // mode; bun's own `bun` with no args stays the help text. Use
+            // Output's cached stdio flag (set at startup via libuv's handle
+            // probe), which is the same check `bun update --interactive` uses.
+            if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }
             Self::exec_as_if_node_missing_script();

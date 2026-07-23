@@ -127,25 +127,22 @@ it.skipIf(!isLinux || !cc)("retries FileWatcher thread spawn on transient EAGAIN
   });
 });
 
-it.skipIf(!isLinux || !cc)(
-  "propagates FileWatcher thread spawn failure instead of panicking in start()",
-  async () => {
-    await withShim(async (dir, env) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
-        cwd: dir,
-        env: { ...env, FAIL_PTHREAD_CREATE_N: "1000000" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      // The .expect("spawn FileWatcher thread") panic inside start() must be
-      // gone; the error reaches the caller, which reports it by errno name.
-      expect(stderr).not.toContain("spawn FileWatcher thread");
-      expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
-      expect(stdout).not.toContain("running");
-      expect(exitCode).not.toBe(0);
+it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
+  await withShim(async (dir, env) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
+      cwd: dir,
+      env: { ...env, FAIL_PTHREAD_CREATE_N: "1000000" },
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  },
-);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The .expect("spawn FileWatcher thread") panic inside start() must be
+    // gone; the error reaches the caller, which reports it by errno name.
+    expect(stderr).not.toContain("spawn FileWatcher thread");
+    expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
+    expect(stdout).not.toContain("running");
+    expect(exitCode).not.toBe(0);
+  });
+});

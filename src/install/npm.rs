@@ -1551,7 +1551,16 @@ impl PackageManifest {
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
                 if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
-                    if newest_filtered.is_none() {
+                    // `newest_filtered` is shared by the release and
+                    // prerelease scans: keep the highest filtered version.
+                    let is_newer = match *newest_filtered {
+                        Some(existing) => {
+                            existing.order(version, &self.string_buf, &self.string_buf)
+                                == core::cmp::Ordering::Less
+                        }
+                        None => true,
+                    };
+                    if is_newer {
                         *newest_filtered = Some(version);
                     }
                     prev_package_blocked_from_age = Some(package);
@@ -1619,9 +1628,13 @@ pub enum FindVersionResult<'a> {
 
 impl<'a> FindVersionResult<'a> {
     pub fn unwrap(self) -> Option<FindResult<'a>> {
+        self.found()
+    }
+
+    pub fn found(&self) -> Option<FindResult<'a>> {
         match self {
-            FindVersionResult::Found(result) => Some(result),
-            FindVersionResult::FoundWithFilter { result, .. } => Some(result),
+            FindVersionResult::Found(result) => Some(*result),
+            FindVersionResult::FoundWithFilter { result, .. } => Some(*result),
             FindVersionResult::Err(_) => None,
         }
     }
@@ -1787,11 +1800,13 @@ impl PackageManifest {
         };
         debug_assert!(self.pkg.has_extended_manifest);
 
-        let left = group.head.head.range.left;
         let mut newest_filtered: Option<Semver::Version> = None;
 
-        if left.op == Semver::range::Op::Eql {
-            let result = self.find_by_version(left.version);
+        // Fast path: the whole range is one exact version. An exact version
+        // that is only the first `||` alternative does not qualify; every
+        // alternative has to be evaluated.
+        if let Some(exact) = group.get_exact_version() {
+            let result = self.find_by_version(exact);
             if let Some(r) = result {
                 if Self::is_package_version_too_recent(r.package, min_age_ms) {
                     return FindVersionResult::Err(FindVersionError::TooRecent);
@@ -1801,40 +1816,50 @@ impl PackageManifest {
             return FindVersionResult::Err(FindVersionError::NotFound);
         }
 
+        // `*` means the `latest` dist-tag (like npm), so it takes the dist-tag
+        // age filter: a too recent `latest` falls back to an older version of
+        // the same list, which the range scans below skip for prereleases.
+        if group.is_star_literal() {
+            let latest =
+                self.find_by_dist_tag_with_filter(b"latest", minimum_release_age_ms, exclusions);
+            if latest.found().is_some() {
+                return latest;
+            }
+            // Every version in the `latest` channel is age-filtered: remember
+            // the newest one and fall through, so an old enough version from
+            // the other list can still match (and the scans can report it).
+            if latest.latest_is_filtered() {
+                if let Some(tag) = self.find_by_dist_tag(b"latest") {
+                    newest_filtered = Some(tag.version);
+                }
+            }
+        }
+
         if let Some(result) = self.find_by_dist_tag(b"latest") {
+            // npm prefers the `latest` dist-tag over every other satisfying
+            // version whenever it satisfies the range.
             if group.satisfies(result.version, group_buf, &self.string_buf) {
                 if Self::is_package_version_too_recent(result.package, min_age_ms) {
                     newest_filtered = Some(result.version);
                 }
                 if newest_filtered.is_none() {
-                    if group.flags.is_set(Semver::query::Flags::PRE) {
-                        if left
-                            .version
-                            .order(result.version, group_buf, &self.string_buf)
-                            == core::cmp::Ordering::Equal
-                        {
-                            return FindVersionResult::Found(result);
-                        }
-                    } else {
-                        return FindVersionResult::Found(result);
-                    }
+                    return FindVersionResult::Found(result);
                 }
             }
         }
 
-        if let Some(result) = self.search_version_list(
+        let from_releases = self.search_version_list(
             self.pkg.releases.keys.get(&self.versions),
             self.pkg.releases.values.get(&self.package_versions),
             group,
             group_buf,
             min_age_ms,
             &mut newest_filtered,
-        ) {
-            return result;
-        }
+        );
 
+        let mut best = from_releases;
         if group.flags.is_set(Semver::query::Flags::PRE) {
-            if let Some(result) = self.search_version_list(
+            if let Some(from_prereleases) = self.search_version_list(
                 self.pkg.prereleases.keys.get(&self.versions),
                 self.pkg.prereleases.values.get(&self.package_versions),
                 group,
@@ -1842,8 +1867,45 @@ impl PackageManifest {
                 min_age_ms,
                 &mut newest_filtered,
             ) {
-                return result;
+                // npm picks the highest satisfying version overall: a range
+                // with a prerelease comparator can be satisfied by a
+                // prerelease that is higher than every satisfying release.
+                let prerelease_is_higher = match (
+                    best.as_ref().and_then(|r| r.found()),
+                    from_prereleases.found(),
+                ) {
+                    (Some(release), Some(prerelease)) => {
+                        release.version.order(
+                            prerelease.version,
+                            &self.string_buf,
+                            &self.string_buf,
+                        ) == core::cmp::Ordering::Less
+                    }
+                    // the releases list had no satisfying version
+                    _ => true,
+                };
+                if prerelease_is_higher {
+                    best = Some(from_prereleases);
+                }
             }
+        }
+
+        if let Some(result) = best {
+            // A newer satisfying version was skipped by the age filter in the
+            // other list (or was the `latest` dist-tag): report it.
+            if let (Some(found), Some(newer)) = (result.found(), newest_filtered) {
+                if found
+                    .version
+                    .order(newer, &self.string_buf, &self.string_buf)
+                    == core::cmp::Ordering::Less
+                {
+                    return FindVersionResult::FoundWithFilter {
+                        result: found,
+                        newest_filtered,
+                    };
+                }
+            }
+            return result;
         }
 
         if newest_filtered.is_some() {
@@ -1858,62 +1920,70 @@ impl PackageManifest {
         group: &Semver::query::Group,
         group_buf: &[u8],
     ) -> Option<FindResult<'_>> {
-        let left = group.head.head.range.left;
-        // Fast path: exact version
-        if left.op == Semver::range::Op::Eql {
-            return self.find_by_version(left.version);
+        // Fast path: the whole range is one exact version. An exact version
+        // that is only the first `||` alternative does not qualify; every
+        // alternative has to be evaluated.
+        if let Some(exact) = group.get_exact_version() {
+            return self.find_by_version(exact);
         }
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {
-            if group.satisfies(result.version, group_buf, &self.string_buf) {
-                if group.flags.is_set(Semver::query::Flags::PRE) {
-                    if left
-                        .version
-                        .order(result.version, group_buf, &self.string_buf)
-                        == core::cmp::Ordering::Equal
-                    {
-                        // if prerelease, use latest if semver+tag match range exactly
-                        return Some(result);
-                    }
-                } else {
-                    return Some(result);
-                }
+            // npm prefers a satisfying `latest` dist-tag over every other
+            // satisfying version, and `*` accepts `latest` unconditionally
+            // (a prerelease-only package never satisfies `*` otherwise).
+            if group.is_star_literal()
+                || group.satisfies(result.version, group_buf, &self.string_buf)
+            {
+                return Some(result);
             }
         }
 
-        {
-            // This list is sorted at serialization time.
-            let releases = self.pkg.releases.keys.get(&self.versions);
-            let mut i = releases.len();
-
-            while i > 0 {
-                let version = releases[i - 1];
-
-                if group.satisfies(version, group_buf, &self.string_buf) {
-                    return Some(FindResult {
-                        version,
-                        package: &self.pkg.releases.values.get(&self.package_versions)[i - 1],
-                    });
-                }
-                i -= 1;
-            }
-        }
+        let best_release = self.find_highest_satisfying(self.pkg.releases, group, group_buf);
 
         if group.flags.is_set(Semver::query::Flags::PRE) {
-            let prereleases = self.pkg.prereleases.keys.get(&self.versions);
-            let mut i = prereleases.len();
-            while i > 0 {
-                let version = prereleases[i - 1];
+            if let Some(prerelease) =
+                self.find_highest_satisfying(self.pkg.prereleases, group, group_buf)
+            {
+                // npm picks the highest satisfying version overall: a range
+                // with a prerelease comparator can be satisfied by a
+                // prerelease that is higher than every satisfying release.
+                return Some(match best_release {
+                    Some(release)
+                        if release.version.order(
+                            prerelease.version,
+                            &self.string_buf,
+                            &self.string_buf,
+                        ) == core::cmp::Ordering::Greater =>
+                    {
+                        release
+                    }
+                    _ => prerelease,
+                });
+            }
+        }
 
-                // This list is sorted at serialization time.
-                if group.satisfies(version, group_buf, &self.string_buf) {
-                    let packages = self.pkg.prereleases.values.get(&self.package_versions);
-                    return Some(FindResult {
-                        version,
-                        package: &packages[i - 1],
-                    });
-                }
-                i -= 1;
+        best_release
+    }
+
+    /// The list is sorted by version at serialization time, so the first
+    /// satisfying entry found while scanning backwards is the highest
+    /// satisfying version in the list.
+    fn find_highest_satisfying(
+        &self,
+        list: ExternVersionMap,
+        group: &Semver::query::Group,
+        group_buf: &[u8],
+    ) -> Option<FindResult<'_>> {
+        let versions = list.keys.get(&self.versions);
+        let mut i = versions.len();
+        while i > 0 {
+            i -= 1;
+            let version = versions[i];
+            if group.satisfies(version, group_buf, &self.string_buf) {
+                return Some(FindResult {
+                    version,
+                    package: &list.values.get(&self.package_versions)[i],
+                });
             }
         }
 

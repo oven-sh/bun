@@ -50,8 +50,63 @@ private:
 
     /* Current URL cache */
     std::string_view currentUrl = {};
+    std::string normalizedUrlBuffer = {};
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
+
+    static constexpr bool isHexDigit(unsigned char c) {
+        return (c >= '0' && c <= '9') || ((c | 32) >= 'a' && (c | 32) <= 'f');
+    }
+
+    static constexpr unsigned char upperHex(unsigned char c) {
+        return c >= 'a' ? (unsigned char) (c - 32) : c;
+    }
+
+    /* RFC 3986 6.2.2.1: percent-encoding hex digits are case-insensitive, and a raw
+     * non-ASCII byte is equivalent to its percent-encoded form. Route keys are required
+     * to be ASCII, so normalize both the registered pattern and the request target to
+     * uppercase-hex percent-encoding before comparing. Returns the input view unchanged
+     * when it is already canonical. */
+    std::string_view normalizePercentEncoding(std::string_view url) {
+        size_t i = 0, length = url.length();
+        const unsigned char *data = (const unsigned char *) url.data();
+        for (; i < length; i++) {
+            unsigned char c = data[i];
+            if (c >= 0x80) {
+                break;
+            }
+            if (c == '%' && i + 2 < length && isHexDigit(data[i + 1]) && isHexDigit(data[i + 2])) {
+                if (data[i + 1] >= 'a' || data[i + 2] >= 'a') {
+                    break;
+                }
+                i += 2;
+            }
+        }
+        if (i == length) {
+            return url;
+        }
+
+        static constexpr char HEX[] = "0123456789ABCDEF";
+        normalizedUrlBuffer.clear();
+        normalizedUrlBuffer.reserve(length + (length >> 1));
+        normalizedUrlBuffer.append(url.data(), i);
+        for (; i < length; i++) {
+            unsigned char c = data[i];
+            if (c >= 0x80) {
+                normalizedUrlBuffer.push_back('%');
+                normalizedUrlBuffer.push_back(HEX[c >> 4]);
+                normalizedUrlBuffer.push_back(HEX[c & 15]);
+            } else if (c == '%' && i + 2 < length && isHexDigit(data[i + 1]) && isHexDigit(data[i + 2])) {
+                normalizedUrlBuffer.push_back('%');
+                normalizedUrlBuffer.push_back((char) upperHex(data[i + 1]));
+                normalizedUrlBuffer.push_back((char) upperHex(data[i + 2]));
+                i += 2;
+            } else {
+                normalizedUrlBuffer.push_back((char) c);
+            }
+        }
+        return normalizedUrlBuffer;
+    }
 
     /* The matching tree */
     struct Node {
@@ -125,7 +180,7 @@ private:
         /* Todo: URL may also start with "http://domain/" or "*", not only "/" */
 
         /* We expect to stand on a slash */
-        currentUrl = url;
+        currentUrl = normalizePercentEncoding(url);
         urlSegmentTop = -1;
     }
 

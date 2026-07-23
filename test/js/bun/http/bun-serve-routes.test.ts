@@ -94,6 +94,115 @@ describe("path parameters", () => {
   });
 });
 
+// RFC 3986 6.2.2.1: percent-encoding hex digits are case-insensitive, and a raw
+// non-ASCII byte on the wire is equivalent to its percent-encoded form. Route keys
+// must be ASCII, so the only way to register a non-ASCII path is percent-encoded;
+// that key must still match clients that send raw UTF-8 or lowercase hex.
+describe("percent-encoded route keys", () => {
+  let server: Server;
+
+  async function rawGet(pathBytes: Buffer | number[]): Promise<string> {
+    const request = Buffer.concat([
+      Buffer.from("GET "),
+      Buffer.from(pathBytes),
+      Buffer.from(" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    ]);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(request));
+    const httpResponse = await promise;
+    return httpResponse.slice(httpResponse.indexOf("\r\n\r\n") + 4);
+  }
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      routes: {
+        "/caf%C3%A9": req => new Response("cafe-upper:" + new URL(req.url).pathname),
+        "/t%c3%a9a": () => new Response("tea-lower"),
+        "/%F0%9F%A6%8A": () => new Response("fox"),
+        "/m%C3%aFx": () => new Response("mix"),
+        "/caf%C3%A9/:id": req => new Response("cafe-id:" + req.params.id),
+        "/%c3%a9tat": new Response("static"),
+        "/plain": () => new Response("plain"),
+      },
+      fetch: req => new Response("fallback:" + new URL(req.url).pathname),
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("matches an uppercase-hex route key via fetch()", async () => {
+    const res = await fetch(new URL("/caf%C3%A9", server.url));
+    expect(await res.text()).toBe("cafe-upper:/caf%C3%A9");
+  });
+
+  it("matches the encoded route key when fetch() is given a literal non-ASCII path", async () => {
+    const res = await fetch(new URL("/café", server.url));
+    expect(await res.text()).toBe("cafe-upper:/caf%C3%A9");
+  });
+
+  it.each([
+    // /café as raw UTF-8 bytes, the way curl and node:http send it
+    ["raw UTF-8 bytes", [0x2f, 0x63, 0x61, 0x66, 0xc3, 0xa9]],
+    ["lowercase-hex percent-encoding", Buffer.from("/caf%c3%a9")],
+    ["mixed-case percent-encoding", Buffer.from("/caf%c3%A9")],
+  ])("matches an uppercase-hex route key from %s on the wire", async (_label, pathBytes) => {
+    expect(await rawGet(pathBytes)).toStartWith("cafe-upper:");
+  });
+
+  it("req.url reports the encoded form for raw UTF-8 bytes even though routing matched", async () => {
+    expect(await rawGet([0x2f, 0x63, 0x61, 0x66, 0xc3, 0xa9])).toBe("cafe-upper:/caf%C3%A9");
+  });
+
+  it.each([
+    ["uppercase-hex on the wire", Buffer.from("/t%C3%A9a")],
+    ["raw UTF-8 bytes", [0x2f, 0x74, 0xc3, 0xa9, 0x61]],
+  ])("matches a lowercase-hex route key from %s", async (_label, pathBytes) => {
+    expect(await rawGet(pathBytes)).toBe("tea-lower");
+  });
+
+  it("reaches a lowercase-hex route key via fetch()", async () => {
+    // fetch() emits uppercase hex, so without normalization this key is unreachable.
+    const res = await fetch(new URL("/téa", server.url));
+    expect(await res.text()).toBe("tea-lower");
+  });
+
+  it("matches an encoded emoji route key from raw UTF-8 bytes", async () => {
+    expect(await rawGet([0x2f, 0xf0, 0x9f, 0xa6, 0x8a])).toBe("fox");
+  });
+
+  it("matches a mixed-hex-case route key", async () => {
+    const res = await fetch(new URL("/mïx", server.url));
+    expect(await res.text()).toBe("mix");
+  });
+
+  it("matches the encoded segment before a path parameter and decodes the parameter", async () => {
+    expect(await rawGet([0x2f, 0x63, 0x61, 0x66, 0xc3, 0xa9, 0x2f, 0xc3, 0xa9])).toBe("cafe-id:é");
+  });
+
+  it("matches a lowercase-hex static Response route", async () => {
+    const res = await fetch(new URL("/état", server.url));
+    expect(await res.text()).toBe("static");
+  });
+
+  it("leaves plain-ASCII routes unaffected", async () => {
+    const res = await fetch(new URL("/plain", server.url));
+    expect(await res.text()).toBe("plain");
+  });
+
+  it("does not treat a percent-encoded slash as a path separator", async () => {
+    expect(await rawGet(Buffer.from("/caf%C3%A9%2Fextra"))).toStartWith("fallback:");
+  });
+});
+
 describe("HTTP methods", () => {
   let server: Server;
 

@@ -1303,11 +1303,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
     }
 #ifdef _WIN32
     /* Listen before the socket is duplicated to workers, mirroring libuv's
-     * UV_HANDLE_SHARED_TCP_SOCKET handling (win/tcp.c). A dup of a listening
-     * socket deterministically hits the benign already-listening path in the
-     * worker; racing listen() calls on dups of a bound-only socket
-     * intermittently fail with WSAEINVAL (SO_ACCEPTCONN probes on protocol
-     * info snapshotted pre-listen). */
+     * uv__tcp_xfer_export (UV_HANDLE_SHARED_TCP_SOCKET path):
+     * https://github.com/libuv/libuv/blob/v1.52.1/src/win/tcp.c#L1301-L1330
+     * A dup of a listening socket deterministically hits the benign
+     * already-listening path in the worker; racing listen() calls on dups of a
+     * bound-only socket intermittently fail with WSAEINVAL (SO_ACCEPTCONN
+     * probes on protocol info snapshotted pre-listen). */
     if (listen(fd, 512)) {
         *error = WSAGetLastError();
         bsd_close_socket(fd);

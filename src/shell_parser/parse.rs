@@ -1492,6 +1492,11 @@ impl<'bump> Parser<'bump> {
         let mut has_brace_close = false;
         let mut has_comma = false;
         let mut has_glob_syntax = false;
+        // A `~` expands only at word start. Brace expansion runs first, so each
+        // brace element starts a word iff the brace group did; `brace_word_start`
+        // stacks that entry state per nesting level.
+        let mut at_word_start = true;
+        let mut brace_word_start: Vec<bool> = Vec::new();
         {
             while match self.peek() {
                 Token::Delimit => {
@@ -1515,6 +1520,7 @@ impl<'bump> Parser<'bump> {
                 match peeked {
                     Token::Asterisk => {
                         has_glob_syntax = true;
+                        at_word_start = false;
                         let _ = self.expect(TokenTag::Asterisk);
                         atoms.push(ast::SimpleAtom::Asterisk);
                         if next_delimits {
@@ -1524,6 +1530,7 @@ impl<'bump> Parser<'bump> {
                     }
                     Token::DoubleAsterisk => {
                         has_glob_syntax = true;
+                        at_word_start = false;
                         let _ = self.expect(TokenTag::DoubleAsterisk);
                         atoms.push(ast::SimpleAtom::DoubleAsterisk);
                         if next_delimits {
@@ -1533,6 +1540,7 @@ impl<'bump> Parser<'bump> {
                     }
                     Token::BraceBegin => {
                         has_brace_open = true;
+                        brace_word_start.push(at_word_start);
                         let _ = self.expect(TokenTag::BraceBegin);
                         atoms.push(ast::SimpleAtom::BraceBegin);
                         // TODO in this case we know it can't possibly be the beginning of a brace
@@ -1546,6 +1554,11 @@ impl<'bump> Parser<'bump> {
                     }
                     Token::BraceEnd => {
                         has_brace_close = true;
+                        brace_word_start.pop();
+                        // A non-empty brace group makes anything after `}` a suffix,
+                        // not a word start; empty `{,}` is rare enough to leave to a
+                        // future post-expansion pass.
+                        at_word_start = false;
                         let _ = self.expect(TokenTag::BraceEnd);
                         atoms.push(ast::SimpleAtom::BraceEnd);
                         if next_delimits {
@@ -1555,6 +1568,10 @@ impl<'bump> Parser<'bump> {
                     }
                     Token::Comma => {
                         has_comma = true;
+                        // A new brace element begins here, so its word start matches
+                        // the group's entry state. A bare comma (no braces) is
+                        // literal text and never a word start.
+                        at_word_start = brace_word_start.last().copied().unwrap_or(false);
                         let _ = self.expect(TokenTag::Comma);
                         atoms.push(ast::SimpleAtom::Comma);
                         if next_delimits {
@@ -1575,6 +1592,7 @@ impl<'bump> Parser<'bump> {
                                 return Err(e);
                             }
                         };
+                        at_word_start = false;
                         atoms.push(ast::SimpleAtom::CmdSubst(ast::CmdSubst {
                             script,
                             quoted: is_quoted,
@@ -1590,7 +1608,13 @@ impl<'bump> Parser<'bump> {
                     | Token::Text(txtrng) => {
                         let _ = self.advance();
                         let mut txt = self.text(txtrng);
-                        if peeked.tag() == TokenTag::Text && !txt.is_empty() && txt[0] == b'~' {
+                        let tilde_at_word_start = at_word_start;
+                        at_word_start = false;
+                        if peeked.tag() == TokenTag::Text
+                            && tilde_at_word_start
+                            && !txt.is_empty()
+                            && txt[0] == b'~'
+                        {
                             txt = &txt[1..];
                             atoms.push(ast::SimpleAtom::Tilde);
                             if !txt.is_empty() {
@@ -1613,6 +1637,7 @@ impl<'bump> Parser<'bump> {
                         }
                     }
                     Token::Var(txtrng) => {
+                        at_word_start = false;
                         let _ = self.expect(TokenTag::Var);
                         let txt = self.text(txtrng);
                         atoms.push(ast::SimpleAtom::Var(txt));
@@ -1624,6 +1649,7 @@ impl<'bump> Parser<'bump> {
                         }
                     }
                     Token::VarArgv(int) => {
+                        at_word_start = false;
                         let _ = self.expect(TokenTag::VarArgv);
                         atoms.push(ast::SimpleAtom::VarArgv(int));
                         if next_delimits {
@@ -2895,6 +2921,21 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if self.chars.state != CharState::Double {
                     self.break_word_impl(true, true, false)?;
                 }
+                continue;
+            }
+            // A backslash-escaped leading `~` is quoted, so tilde expansion must
+            // not apply. Flush it as a quoted-text token (like `'~'`/`"~"`) so the
+            // parser does not treat it as a home-directory reference.
+            else if char == u32::from(b'~')
+                && self.chars.state == CharState::Normal
+                && self.j == self.word_start
+            {
+                debug_assert!(input.escaped);
+                let start = self.word_start;
+                self.append_char_to_str_pool(char)?;
+                self.tokens
+                    .push(Token::DoubleQuotedText(TextRange { start, end: self.j }));
+                self.word_start = self.j;
                 continue;
             }
 

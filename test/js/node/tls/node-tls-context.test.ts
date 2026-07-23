@@ -703,6 +703,21 @@ it("rejects an unsupported ecdhCurve with Node's error shape", () => {
   });
 });
 
+it("rejects a non-string ecdhCurve like Node's validateString", () => {
+  // Node: configSecureContext destructures ecdhCurve with a default and passes
+  // it through validateString - only the type is checked in JS, an unsupported
+  // name is left to the native SSL_CTX_set1_groups_list call.
+  for (const bad of [null, 42, {}]) {
+    let err: any;
+    try {
+      tls.createSecureContext({ ecdhCurve: bad as any });
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, input: bad }).toEqual({ code: "ERR_INVALID_ARG_TYPE", input: bad });
+  }
+});
+
 it("rejects an unparseable crl with Node's error shape", () => {
   // Node's SetCRL wraps the parse in ClearErrorOnReturn and throws
   // ERR_CRYPTO_OPERATION_FAILED("Failed to parse CRL"), no OpenSSL decoration:

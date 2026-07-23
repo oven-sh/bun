@@ -1341,11 +1341,15 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     {
+        let owner = bun_io::max_buf::Owner {
+            ptr: subprocess_nn.cast::<()>(),
+            on_overflow: SubprocessT::on_max_buffer_overflow,
+        };
         let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer);
+        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
         subprocess.stderr_maxbuf.set(mb);
         let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer);
+        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
         subprocess.stdout_maxbuf.set(mb);
     }
 
@@ -1456,10 +1460,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         terminal_js_value = info.js_value;
         #[cfg(unix)]
         info.term().mark_inline_spawned();
-        // Windows: ConPTY's conhost buffers output, so the client handle can go
-        // now; EOF is delivered via close_pseudoconsole on exit.
         #[cfg(windows)]
-        info.term().close_slave_fd();
+        {
+            // ConPTY has no slave fd; this just marks inline_spawned.
+            info.term().close_slave_fd();
+            // Release the ConDrv \Reference handle now that the child holds a
+            // copy: conhost then exits on its own once the child disconnects
+            // and the reader observes EOF without us having to tear ConPTY
+            // down from on_process_exit.
+            info.term().release_pseudoconsole_reference();
+        }
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
@@ -1727,7 +1737,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
+        if let Err(err) =
+            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
+        {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1741,7 +1753,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
+        if let Err(err) =
+            Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !IS_SYNC && lazy)
+        {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);

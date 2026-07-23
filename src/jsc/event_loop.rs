@@ -30,7 +30,7 @@ pub use bun_event_loop::ConcurrentTask::{
 };
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::ManagedTask;
-pub use bun_event_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, MiniVM};
+pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
@@ -293,11 +293,6 @@ impl EventLoop {
             self.entered_event_loop_count -= 1;
         }
         result
-    }
-
-    #[inline]
-    pub fn get_vm_impl(&self) -> *mut VirtualMachine {
-        self.vm()
     }
 
     /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
@@ -920,10 +915,9 @@ impl EventLoop {
             }
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
-        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
-        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
-        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
+        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
+        // `EventLoopHandle` already exposes `into_tag_ptr()` — go straight to
+        // the sys-level setter.
         // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
         let self_ptr = core::ptr::from_mut(self).cast::<()>();
         let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
@@ -1184,32 +1178,6 @@ impl EventLoop {
             _ => {}
         }
     }
-
-    pub fn enqueue_task_concurrent_batch(
-        &self,
-        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
-    ) {
-        if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
-                panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
-            }
-        }
-        // Panic on an empty batch; `push_batch`'s first line is
-        // `set_next(last, null)`, so a null `last` would be UB, not a clean fail.
-        assert!(
-            !batch.front.is_null() && !batch.last.is_null(),
-            "enqueue_task_concurrent_batch: empty batch",
-        );
-        // SAFETY: asserted non-null above; `batch` was produced by `pop_batch`,
-        // so `last` is reachable from `front` and every node is live.
-        unsafe {
-            self.concurrent_tasks.push_batch(
-                core::ptr::NonNull::new_unchecked(batch.front),
-                core::ptr::NonNull::new_unchecked(batch.last),
-            )
-        };
-        self.wakeup();
-    }
 }
 
 /// Testing API to expose event loop state
@@ -1332,7 +1300,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         // code paths. Route through `usockets_loop()`.
         iteration_number() => (&*(*this).usockets_loop()).iteration_number(),
         // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM (see `EventLoopHandle::file_polls` doc).
+        // same VM.
         file_polls() => core::ptr::from_mut(
             (*this)
                 .vm_ref()

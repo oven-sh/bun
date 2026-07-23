@@ -7,8 +7,7 @@
 //! `from_api`, `API_NAMES`) remain here as sealed extension traits.
 
 use crate::schema::api;
-use bun_ast::{Loader, LoaderOptional, Target};
-use bun_collections;
+use bun_ast::{Loader, Target};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -40,11 +39,6 @@ pub enum Format {
 
 impl Format {
     pub fn keep_es6_import_export_syntax(self) -> bool {
-        self == Format::Esm
-    }
-
-    #[inline]
-    pub fn is_esm(self) -> bool {
         self == Format::Esm
     }
 
@@ -92,8 +86,6 @@ pub enum BundlePackage {
     Never,
 }
 
-pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
-
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
 /// Set by the process environment to override the JSX configuration. When
@@ -136,8 +128,6 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for bun_ast::Target {}
     impl Sealed for bun_ast::Loader {}
-    impl Sealed for bun_ast::LoaderOptional {}
-    impl Sealed for bun_ast::ImportKind {}
 }
 
 /// `schema::api`-coupled methods on [`bun_ast::Target`]. Import alongside
@@ -256,44 +246,6 @@ impl LoaderExt for Loader {
             api::Loader::sqlite => Loader::Sqlite,
             api::Loader::sqlite_embedded => Loader::SqliteEmbedded,
             api::Loader::md => Loader::Md,
-        }
-    }
-}
-
-/// `schema::api`-coupled methods on [`bun_ast::LoaderOptional`].
-pub trait LoaderOptionalExt: sealed::Sealed {
-    fn from_api(loader: api::Loader) -> LoaderOptional;
-}
-
-impl LoaderOptionalExt for LoaderOptional {
-    fn from_api(loader: api::Loader) -> LoaderOptional {
-        if loader == api::Loader::_none {
-            LoaderOptional::NONE
-        } else {
-            LoaderOptional::from_loader(Loader::from_api(loader))
-        }
-    }
-}
-
-// ─── ImportKind: schema-coupled extension methods ─────────────────────────
-
-/// `schema::api`-coupled methods on [`bun_ast::ImportKind`].
-pub trait ImportKindExt: sealed::Sealed {
-    fn to_api(self) -> api::ImportKind;
-}
-
-impl ImportKindExt for bun_ast::ImportKind {
-    fn to_api(self) -> api::ImportKind {
-        use bun_ast::ImportKind;
-        match self {
-            ImportKind::EntryPointRun | ImportKind::EntryPointBuild => api::ImportKind::entry_point,
-            ImportKind::Stmt => api::ImportKind::stmt,
-            ImportKind::Require => api::ImportKind::require,
-            ImportKind::Dynamic => api::ImportKind::dynamic,
-            ImportKind::RequireResolve => api::ImportKind::require_resolve,
-            ImportKind::At => api::ImportKind::at,
-            ImportKind::Url => api::ImportKind::url,
-            _ => api::ImportKind::internal,
         }
     }
 }

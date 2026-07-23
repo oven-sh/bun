@@ -168,88 +168,69 @@ pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<
 pub struct TagHandler {
     /// CSS selector to match elements
     pub selector: &'static str,
-    /// Whether this tag can have text content that needs to be processed
-    pub has_content: bool,
     /// The attribute to extract the URL from
     pub url_attribute: &'static str,
     /// The kind of import to create
     pub kind: ImportKind,
-
-    pub is_head_or_html: bool,
 }
 
 impl TagHandler {
-    const fn new(
-        selector: &'static str,
-        has_content: bool,
-        url_attribute: &'static str,
-        kind: ImportKind,
-    ) -> Self {
+    const fn new(selector: &'static str, url_attribute: &'static str, kind: ImportKind) -> Self {
         Self {
             selector,
-            has_content,
             url_attribute,
             kind,
-            is_head_or_html: false,
         }
     }
 }
 
 pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
-    TagHandler::new("script[src]", false, "src", ImportKind::Stmt),
+    TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
-    TagHandler::new(
-        "link[rel='stylesheet'][href]",
-        false,
-        "href",
-        ImportKind::At,
-    ),
+    TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
     // CSS Assets
-    TagHandler::new("link[as='style'][href]", false, "href", ImportKind::At),
+    TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
     // Font files
     TagHandler::new(
         "link[as='font'][href], link[type^='font/'][href]",
-        false,
         "href",
         ImportKind::Url,
     ),
     // Image assets
-    TagHandler::new("link[as='image'][href]", false, "href", ImportKind::Url),
+    TagHandler::new("link[as='image'][href]", "href", ImportKind::Url),
     // Audio/Video assets
     TagHandler::new(
         "link[as='video'][href], link[as='audio'][href]",
-        false,
         "href",
         ImportKind::Url,
     ),
     // Web Workers
-    TagHandler::new("link[as='worker'][href]", false, "href", ImportKind::Stmt),
+    TagHandler::new("link[as='worker'][href]", "href", ImportKind::Stmt),
     // Manifest files
-    TagHandler::new("link[rel='manifest'][href]", false, "href", ImportKind::Url),
+    TagHandler::new("link[rel='manifest'][href]", "href", ImportKind::Url),
     // Icons
     TagHandler::new(
         "link[rel='icon'][href], link[rel='apple-touch-icon'][href]",
-        false,
         "href",
         ImportKind::Url,
     ),
     // Images with src
-    TagHandler::new("img[src]", false, "src", ImportKind::Url),
+    TagHandler::new("img[src]", "src", ImportKind::Url),
     // Images with srcset
-    TagHandler::new("img[srcset]", false, "srcset", ImportKind::Url),
+    TagHandler::new("img[srcset]", "srcset", ImportKind::Url),
     // Videos with src
-    TagHandler::new("video[src]", false, "src", ImportKind::Url),
+    TagHandler::new("video[src]", "src", ImportKind::Url),
     // Videos with poster
-    TagHandler::new("video[poster]", false, "poster", ImportKind::Url),
+    TagHandler::new("video[poster]", "poster", ImportKind::Url),
     // Audio with src
-    TagHandler::new("audio[src]", false, "src", ImportKind::Url),
+    TagHandler::new("audio[src]", "src", ImportKind::Url),
     // Source elements with src
-    TagHandler::new("source[src]", false, "src", ImportKind::Url),
+    TagHandler::new("source[src]", "src", ImportKind::Url),
     // Source elements with srcset
-    TagHandler::new("source[srcset]", false, "srcset", ImportKind::Url),
+    TagHandler::new("source[srcset]", "srcset", ImportKind::Url),
     //     // Iframes
-    //     TagHandler::new("iframe[src]", false, "src", ImportKind::Url),
+    //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
 ];
 
 const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;

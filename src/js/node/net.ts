@@ -48,6 +48,7 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
+const MathMin = Math.min;
 
 const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
@@ -1642,22 +1643,32 @@ function Socket(options?) {
     const self = this;
     this[kOnreadTail] = undefined;
     this[kOnreadDraining] = false;
-    this[kOnreadBuffer] = onreadBufferIsFn ? true : onreadBuffer;
+    // Node calls the factory once at initSocketHandle time, then once after
+    // every callback (stream_base_commons onStreamRead): the first delivery
+    // already has a real buffer, and a non-Uint8Array result leaves the prior
+    // value (or the `true` sentinel) in place.
+    if (onreadBufferIsFn) {
+      const first = onreadBuffer();
+      this[kOnreadBuffer] = isUint8Array(first) ? first : true;
+    } else {
+      this[kOnreadBuffer] = onreadBuffer;
+    }
     this[kOnreadDeliver] = function deliver(buffer) {
       try {
         let offset = 0;
         const total = buffer.length;
         while (offset < total) {
-          if (onreadBufferIsFn) {
-            const next = onreadBuffer();
-            if (isUint8Array(next)) self[kOnreadBuffer] = next;
-          }
           const dest = self[kOnreadBuffer];
           if (dest === true) {
-            if (onreadCallback(total - offset, true) === false) {
+            const ret = onreadCallback(total - offset, true);
+            if (onreadBufferIsFn) {
+              const next = onreadBuffer();
+              if (isUint8Array(next)) self[kOnreadBuffer] = next;
+            }
+            if (self.destroyed) return;
+            if (ret === false || self.isPaused()) {
               self[kOnreadTail] = kOnreadEmptyTail;
               self._handle?.pause?.();
-              Duplex.prototype.pause.$call(self);
             }
             return;
           }
@@ -1669,16 +1680,21 @@ function Socket(options?) {
             self.destroy(err);
             return;
           }
-          const n = Math.min(dest.length, total - offset);
+          const n = MathMin(dest.length, total - offset);
           dest.set(buffer.subarray(offset, offset + n));
-          if (onreadCallback(n, dest) === false) {
-            const rest = buffer.subarray(offset + n);
+          offset += n;
+          const ret = onreadCallback(n, dest);
+          if (onreadBufferIsFn) {
+            const next = onreadBuffer();
+            if (isUint8Array(next)) self[kOnreadBuffer] = next;
+          }
+          if (self.destroyed) return;
+          if (ret === false || self.isPaused()) {
+            const rest = buffer.subarray(offset);
             self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
             self._handle?.pause?.();
-            Duplex.prototype.pause.$call(self);
             return;
           }
-          offset += n;
         }
       } catch (e) {
         self.destroy(e);
@@ -2260,6 +2276,10 @@ function drainOnreadTailNT(socket) {
 }
 
 Socket.prototype.resume = function resume() {
+  // Schedule the Readable flow tick first so its read() runs while
+  // kOnreadDraining is still set and does not queue a second drain: Node's
+  // override sets handle.reading synchronously for the same reason.
+  const ret = Duplex.prototype.resume.$call(this);
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();
   }
@@ -2271,7 +2291,7 @@ Socket.prototype.resume = function resume() {
     this._handle?.ref?.();
     this[kPausedUnref] = false;
   }
-  return Duplex.prototype.resume.$call(this);
+  return ret;
 };
 
 Socket.prototype.pause = function pause() {
@@ -3320,7 +3340,7 @@ function afterConnect(status, handle, req, readable, writable) {
     if (localAddress && (localPort = req.localPort)) {
       details = localAddress + ":" + localPort;
     }
-    const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port);
+    const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port, details);
     if (details) {
       ex.localAddress = req.localAddress;
       ex.localPort = req.localPort;
@@ -3382,7 +3402,7 @@ function createConnectionError(req, status) {
     details = localAddress + ":" + localPort;
   }
 
-  const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port);
+  const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port, details);
   if (details) {
     ex.localAddress = req.localAddress;
     ex.localPort = req.localPort;

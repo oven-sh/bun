@@ -44,10 +44,6 @@ impl<const KIND: u8, const SEP_OPT: u8, const CHECK: u8> EnvPathInput
 }
 
 impl EnvPath {
-    pub fn init() -> Self {
-        Self { buf: Vec::new() }
-    }
-
     pub fn init_capacity(capacity: usize) -> Result<Self, AllocError> {
         // `Vec::with_capacity` aborts on OOM under the global mimalloc allocator.
         Ok(Self {
@@ -92,10 +88,6 @@ pub struct PathComponentBuilder<'a> {
 impl<'a> PathComponentBuilder<'a> {
     pub fn append(&mut self, component: &[u8]) {
         let _ = self.path_buf.append(component); // OOM/capacity: fire-and-forget
-    }
-
-    pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        let _ = self.path_buf.append_fmt(args); // OOM/capacity: fire-and-forget
     }
 
     pub fn apply(self) -> Result<(), AllocError> {

@@ -119,7 +119,7 @@ impl ClientSession {
         }
     }
 
-    pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
+    pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) -> bool {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
@@ -129,17 +129,15 @@ impl ClientSession {
             if client.async_http_id != async_http_id {
                 continue;
             }
-            if !client.state.original_request_body.is_stream() {
-                return;
-            }
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
                 s.ended = ended;
+                if let Some(qs) = stream.qstream_mut() {
+                    encode::drain_send_body(stream, qs);
+                }
             }
-            if let Some(qs) = stream.qstream_mut() {
-                encode::drain_send_body(stream, qs);
-            }
-            return;
+            return true;
         }
+        false
     }
 
     pub fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
@@ -375,7 +373,9 @@ impl ClientSession {
             self.detach(stream);
             // SAFETY: re-derive — detach() invalidated the prior Unique tag.
             let client = client_mut(client_ptr);
-            client.state.flags.received_last_chunk = true;
+            if let Err(err) = client.state.finalize_body_on_eof() {
+                return client.fail_from_h2(err);
+            }
             return finish(client);
         }
     }

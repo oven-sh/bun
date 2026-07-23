@@ -2042,6 +2042,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
+        // An earlier callback in this dispatch may have left a termination
+        // pending — on_open's error branch closes the socket from
+        // mark_inactive(), landing here. Entering JS trips assertNoException().
+        if handlers.global_object.has_exception() {
+            drop(cleanup);
+            return Ok(());
+        }
+
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         let scope = handlers.enter();
@@ -2340,11 +2348,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_local_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
+        match this.socket.get().local_port() {
+            Some(p) => JSValue::js_number_from_int32(p as i32),
+            None => JSValue::UNDEFINED,
         }
-
-        JSValue::js_number_from_int32(this.socket.get().local_port())
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2398,11 +2405,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_remote_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
+        match this.socket.get().remote_port() {
+            Some(p) => JSValue::js_number_from_int32(p as i32),
+            None => JSValue::UNDEFINED,
         }
-
-        JSValue::js_number_from_int32(this.socket.get().remote_port())
     }
 
     #[inline]
@@ -3965,29 +3971,25 @@ pub enum NativeCallbacks {
 }
 
 impl NativeCallbacks {
+    /// `&self` borrows the socket's `JsCell<NativeCallbacks>`; the dispatch
+    /// re-enters JS, which can `detach_native_callback` and overwrite that cell.
+    /// Copy the parser pointer out first; the callee's `keepalive()` holds it.
     pub fn on_data(&self, data: &[u8]) -> bool {
-        match self {
-            NativeCallbacks::H2(h2) => {
-                // TODO: properly propagate exception upwards
-                // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_read`
-                // takes `&self`.
-                if h2.on_native_read(data).is_err() {
-                    return false;
-                }
-                true
-            }
-            NativeCallbacks::None => false,
-        }
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return false,
+        };
+        // SAFETY: `on_native_read` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).on_native_read(data).is_ok() }
     }
     pub fn on_writable(&self) -> bool {
-        match self {
-            NativeCallbacks::H2(h2) => {
-                // `on_native_writable(&self)` — Deref through `RefPtr`.
-                h2.on_native_writable();
-                true
-            }
-            NativeCallbacks::None => false,
-        }
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return false,
+        };
+        // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).on_native_writable() };
+        true
     }
 }
 
@@ -4232,6 +4234,12 @@ impl DuplexUpgradeContext {
                 // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
                 // fire on top of that (over-deref → UAF on the JS wrapper's
                 // pointee).
+                //
+                // Neuter the JS listener thunks now, while the wrapper is still
+                // strongly held, so the later `StartTLS` → `deinit` → `Drop`
+                // teardown (after `handle_connect_error` downgrades it) is a
+                // no-op on already-cleared shadows.
+                self.upgrade.teardown();
                 let p = tls.into_this_ptr();
                 let _ =
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int, 0);
@@ -4324,6 +4332,12 @@ impl DuplexUpgradeContext {
                         // `start_tls()` was queued), so `needs_deref =
                         // !is_detached()` is true — and detaches. Null
                         // `this.tls` so `deinit` doesn't deref again.
+                        //
+                        // Neuter the JS listener thunks now, while the wrapper
+                        // is still strongly held, so the `deinit` → `Drop`
+                        // teardown below is a no-op on already-cleared shadows.
+                        // SAFETY: `this` is live; `&mut` ends before `deinit`.
+                        unsafe { (*this).upgrade.teardown() };
                         let p = tls.into_this_ptr();
                         let _ = TLSSocket::handle_connect_error(p, errno, 0);
                     }
@@ -4639,6 +4653,7 @@ pub fn js_upgrade_duplex_to_tls(
         });
         ptr::addr_of_mut!((*duplex_context).upgrade).write(UpgradedDuplex::from(
             global,
+            tls_js_value,
             duplex,
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
@@ -4926,11 +4941,13 @@ pub mod testing_apis {
                 fi::ACCEPT
             } else if syscall_str.eql_comptime(b"ssl_loop_buffer") {
                 fi::SSL_LOOP_BUFFER
+            } else if syscall_str.eql_comptime(b"poll_start") {
+                fi::POLL_START
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start"
                 )));
             };
 

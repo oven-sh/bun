@@ -232,10 +232,36 @@ export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
+  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  // Node's internal/fixed_queue module IS the FixedQueue class.
+  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/freelist": require("internal/freelist"),
+  "internal/validators": require("internal/validators"),
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };
+
+// State of a web ReadableStream/WritableStream for vendored node tests that
+// read Node's `stream[kState].state` / `.storedError` (served through the
+// internal/webstreams/util shim in test/js/node/test/common/index.js).
+// The stream's closed promise is settled from every terminal transition, so its
+// status is the state. A WritableStream mid-`erroring` still reports "writable":
+// erroring is not terminal, and nothing observable distinguishes the two here.
+export function getWebStreamState(stream: ReadableStream | WritableStream): {
+  state: string;
+  storedError: unknown;
+} {
+  const closed = $webStreamClosedPromise(stream);
+  switch (Bun.peek.status(closed)) {
+    case "fulfilled":
+      return { state: "closed", storedError: undefined };
+    case "rejected":
+      return { state: "errored", storedError: Bun.peek(closed) };
+    default:
+      return { state: $inheritsWritableStream(stream) ? "writable" : "readable", storedError: undefined };
+  }
+}
 
 export const fs = require("node:fs/promises").$data;
 
@@ -290,9 +316,10 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 );
 
 /**
- * The syscalls instrumented in bsd.c, plus "ssl_loop_buffer" — not a syscall,
- * but the per-loop TLS plaintext buffer allocation, whose failure path is
- * unreachable on an overcommitting kernel. Arming anything else is rejected.
+ * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
+ * paths are otherwise unreachable without injection ("ssl_loop_buffer",
+ * "poll_start"; see fault_inject.h for the per-hook description). Arming
+ * anything else is rejected.
  */
 export type SocketFaultSyscall =
   | "recv"
@@ -302,7 +329,8 @@ export type SocketFaultSyscall =
   | "recvmsg"
   | "connect"
   | "accept"
-  | "ssl_loop_buffer";
+  | "ssl_loop_buffer"
+  | "poll_start";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

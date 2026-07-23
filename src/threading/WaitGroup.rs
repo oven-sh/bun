@@ -31,10 +31,6 @@ impl WaitGroup {
         }
     }
 
-    pub fn add_unsynchronized(&mut self, n: usize) {
-        *self.raw_count.get_mut() += n;
-    }
-
     pub fn add(&self, n: usize) {
         // Not Acquire because we don't need to synchronize with other tasks (each runs independently).
         // Not Release because there are no side effects that other threads depend on when they see
@@ -47,20 +43,34 @@ impl WaitGroup {
     }
 
     pub fn finish(&self) {
-        let old_count = self.raw_count.fetch_sub(1, Ordering::AcqRel);
-        if old_count > 1 {
-            return;
+        // Fast path: decrement lock-free while there are other outstanding
+        // tasks. We cannot unconditionally `fetch_sub(1)` and then lock/signal
+        // for the last one: the moment `raw_count` reaches 0 a concurrent
+        // `wait()` can observe it, return, and the caller drop the `WaitGroup`,
+        // so any later `self.mutex`/`self.cond` access is a use-after-free.
+        let mut old = self.raw_count.load(Ordering::Relaxed);
+        while old > 1 {
+            match self.raw_count.compare_exchange_weak(
+                old,
+                old - 1,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(cur) => old = cur,
+            }
         }
 
-        // This is the last task, so we need to signal the condition. If we were to call `cond.signal`
-        // right now, a concurrent call to `wait` which has read a non-zero count (from before we
-        // decremented it above) but which has not yet called `cond.wait` will miss the signal and
-        // end up blocking forever. A thread in this state (in between reading the count and calling
-        // `cond.wait`) is necessarily holding the mutex, so by locking and unlocking the mutex here,
-        // we ensure that it reaches the call to `cond.wait` before we call `cond.signal`.
+        // We are (or a concurrent `add` may yet make us not) the last one.
+        // Publish `raw_count == 0` only while holding the mutex so `wait()`,
+        // which checks the count under the same mutex, cannot return until our
+        // `unlock()` below. Signal before unlocking so the waiter's reacquire
+        // serializes after every `self` access we make.
         self.mutex.lock();
-        self.mutex.unlock();
+        let old_count = self.raw_count.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(old_count >= 1);
         self.cond.signal();
+        self.mutex.unlock();
     }
 
     pub fn wait(&self) {
@@ -73,5 +83,38 @@ impl WaitGroup {
         }
 
         self.mutex.unlock();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // After `wait()` returns the caller may drop the `WaitGroup`; `finish()`
+    // must therefore not touch `self` once it has published `raw_count == 0`.
+    #[test]
+    fn wait_returning_means_finish_is_done_with_self() {
+        for _ in 0..10_000 {
+            let wg = Box::into_raw(Box::new(WaitGroup::init_with_count(1)));
+            struct SendPtr(*mut WaitGroup);
+            // SAFETY: `WaitGroup` is `Sync`; the raw pointer is only ever
+            // dereferenced while the pointee is live (joined below).
+            unsafe impl Send for SendPtr {}
+            let p = SendPtr(wg);
+            let t = std::thread::spawn(move || {
+                let p = p;
+                // SAFETY: `wg` is live until `drop(Box::from_raw(..))` below,
+                // which happens-before `join()`, so the pointee outlives this
+                // deref iff `finish()` is done with `self` by the time
+                // `wait()` returns — the property under test.
+                unsafe { (*p.0).finish() };
+            });
+            // SAFETY: `wg` is the freshly-boxed allocation; sole owner here.
+            unsafe {
+                (*wg).wait();
+                drop(Box::from_raw(wg));
+            }
+            t.join().unwrap();
+        }
     }
 }

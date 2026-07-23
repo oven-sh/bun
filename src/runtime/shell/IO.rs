@@ -29,13 +29,6 @@ impl fmt::Display for IO {
 }
 
 impl IO {
-    /// With `Arc` fields, `Clone` increments refcounts and copies the struct
-    /// in one step.
-    #[inline]
-    pub fn copy(&self) -> IO {
-        self.clone()
-    }
-
     /// Sum of stdin/stdout/stderr.
     pub fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<IO>();

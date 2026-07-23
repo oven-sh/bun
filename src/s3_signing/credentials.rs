@@ -382,7 +382,6 @@ impl S3Credentials {
         let protocol: &str = if self.insecure_http { "http" } else { "https" };
 
         // detect service name and host from region or endpoint
-        let mut endpoint_owned: Option<Vec<u8>> = None;
         let mut extra_path: &[u8] = b"";
         let host: Box<[u8]> = 'brk_host: {
             if !self.endpoint.is_empty() {
@@ -419,18 +418,15 @@ impl S3Credentials {
                         BStr::new(bucket),
                         BStr::new(region)
                     )
-                    .unwrap();
-                    endpoint_owned = Some(v.clone());
+                    .expect("infallible: in-memory write");
                     break 'brk_host v.into_boxed_slice();
                 }
                 let mut v = Vec::new();
                 write!(&mut v, "s3.{}.amazonaws.com", BStr::new(region))
                     .expect("infallible: in-memory write");
-                endpoint_owned = Some(v.clone());
                 break 'brk_host v.into_boxed_slice();
             }
         };
-        let _ = endpoint_owned; // not read after this point.
         // `host` (Box<[u8]>) drops on `?`.
 
         let normalized_path: &[u8] = 'brk: {

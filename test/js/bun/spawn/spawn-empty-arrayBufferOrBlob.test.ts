@@ -37,7 +37,7 @@ describe("empty buffer stdin is not the null device", () => {
     `  console.log(JSON.stringify({ chr: fs.fstatSync(0).isCharacterDevice(), n })));`;
 
   for (const mk of [() => new ArrayBuffer(0), () => new Uint8Array(0), () => Buffer.alloc(0)]) {
-    test.concurrent(`Bun.spawnSync stdin: ${mk().constructor.name}`, () => {
+    test(`Bun.spawnSync stdin: ${mk().constructor.name}`, () => {
       const r = Bun.spawnSync({
         cmd: [bunExe(), "-e", probe],
         stdin: mk(),
@@ -66,7 +66,7 @@ describe("empty buffer stdin is not the null device", () => {
     });
   }
 
-  test.concurrent("child_process.spawnSync input: Buffer.alloc(0)", () => {
+  test("child_process.spawnSync input: Buffer.alloc(0)", () => {
     const r = cpSpawnSync(bunExe(), ["-e", probe], { input: Buffer.alloc(0), env: bunEnv });
     expect(r.stderr.toString()).toBe("");
     expect(JSON.parse(r.stdout.toString())).toEqual({ chr: false, n: 0 });

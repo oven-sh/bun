@@ -4746,13 +4746,9 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    path: bun_core::String::default(),
-                    syscall: bun_core::String::default(),
-                    hostname: bun_core::String::default(),
-                    fd: -1,
-                    dest: bun_core::String::default(),
+                    code: bun_core::String::static_(err.code()).into(),
+                    message: bun_core::String::static_(err.label()).into(),
+                    ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
             }
@@ -5453,17 +5449,12 @@ impl Resolver {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
-                // SystemError has no Default impl upstream; spell out
-                // the field defaults (empty strings, fd = c_int::MIN).
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    path: bun_core::String::empty(),
-                    syscall,
-                    hostname: bun_core::String::empty(),
-                    fd: c_int::MIN,
-                    dest: bun_core::String::empty(),
+                    code: bun_core::String::static_(err.code()).into(),
+                    message: bun_core::String::static_(err.label()).into(),
+                    syscall: syscall.into(),
+                    ..Default::default()
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
             }

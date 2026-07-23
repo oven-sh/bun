@@ -53,14 +53,14 @@ impl Dirname {
         Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
+    #[allow(clippy::needless_pass_by_value)] // signature fixed by `Builtin::on_io_writer_chunk` dispatch
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = err {
-            e.deref();
+        if err.is_some() {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

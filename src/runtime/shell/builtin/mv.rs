@@ -277,6 +277,7 @@ impl Mv {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)] // signature fixed by `Builtin::on_io_writer_chunk` dispatch
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -285,8 +286,7 @@ impl Mv {
     ) -> Yield {
         match Self::state_mut(interp, cmd).state {
             MvState::WaitingWriteErr { exit_code } => {
-                if let Some(err) = e {
-                    err.deref();
+                if e.is_some() {
                     Self::state_mut(interp, cmd).state = MvState::Err;
                     return Self::next(interp, cmd);
                 }

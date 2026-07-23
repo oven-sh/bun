@@ -23,21 +23,6 @@ use core::ffi::c_int;
 use core::ffi::c_void;
 use core::marker::ConstParamTy;
 
-// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Mapped
-// field-by-field because the two definitions order their fields differently.
-fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
-    jsc::SystemError {
-        errno: e.errno,
-        code: e.code,
-        message: e.message,
-        path: e.path,
-        syscall: e.syscall,
-        hostname: e.hostname,
-        fd: e.fd,
-        dest: e.dest,
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────
@@ -132,14 +117,14 @@ impl<'a> CopyFile<'a> {
         ) && system_error.path.is_empty()
         {
             system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
+                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice()).into();
         }
 
         if system_error.message.is_empty() {
-            system_error.message = bun_core::String::static_("Failed to copy file");
+            system_error.message = bun_core::String::static_("Failed to copy file").into();
         }
 
-        let instance = to_jsc_system_error(&system_error)
+        let instance = jsc::SystemError::from(system_error)
             .to_error_instance_with_async_stack(self.global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
@@ -1867,8 +1852,8 @@ pub enum IOWhich {
 fn unsupported_directory_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,
-        message: bun_core::String::static_("That doesn't work on folders"),
-        syscall: bun_core::String::static_("fstat"),
+        message: bun_core::String::static_("That doesn't work on folders").into(),
+        syscall: bun_core::String::static_("fstat").into(),
         ..SystemError::default()
     }
 }
@@ -1877,8 +1862,8 @@ fn unsupported_directory_error() -> SystemError {
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,
-        message: bun_core::String::static_("Non-regular files aren't supported yet"),
-        syscall: bun_core::String::static_("fstat"),
+        message: bun_core::String::static_("Non-regular files aren't supported yet").into(),
+        syscall: bun_core::String::static_("fstat").into(),
         ..SystemError::default()
     }
 }

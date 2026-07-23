@@ -360,14 +360,6 @@ impl PendingSystemError {
     }
 }
 
-impl Drop for PendingSystemError {
-    fn drop(&mut self) {
-        if let Some(err) = self.0.take() {
-            err.deref();
-        }
-    }
-}
-
 /// `needs_deref` releases the ref the now-detached native socket held. The idle
 /// teardown is gated on the socket still holding the `Handlers` we entered with:
 /// `onConnectError` can reconnect, and we must not tear that connection down.
@@ -1177,13 +1169,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
             SystemError {
                 errno: -errno_,
-                message: BunString::static_("Failed to connect"),
-                syscall: BunString::static_("connect"),
-                code: code_,
-                path: BunString::EMPTY,
-                hostname: BunString::EMPTY,
-                fd: c_int::MIN,
-                dest: BunString::EMPTY,
+                message: BunString::static_("Failed to connect").into(),
+                syscall: BunString::static_("connect").into(),
+                code: code_.into(),
+                ..Default::default()
             }
         };
 
@@ -1204,10 +1193,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
                 let err_value = err.to_error_instance_with_async_stack(&global, js_promise);
                 js_promise.reject(&global, Ok(err_value))?;
-            } else {
-                // No callback and no promise (the duplex TLS upgrade flow):
-                // nothing consumed `err`, so release the strings it holds.
-                err.deref();
             }
 
             return Ok(());
@@ -1219,7 +1204,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // callback returns. The on-stack `this_value` keeps it alive for the call.
         this.this_value.with_mut(|r| r.downgrade());
 
-        let mut err_for_promise = PendingSystemError(Some(err.dupe()));
+        let mut err_for_promise = PendingSystemError(Some(err.clone()));
         let err_value = err.to_error_instance(&global);
         let result = match callback.call(&global, this_value, &[this_value, err_value]) {
             Ok(v) => v,
@@ -2213,14 +2198,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn stored_verify_error_to_js(&self, global: &JSGlobalObject) -> Option<JSValue> {
         self.verify_error.get().as_ref().map(|stored| {
             let err = SystemError {
-                errno: 0,
-                code: BunString::clone_utf8(&stored.code),
-                message: BunString::clone_utf8(&stored.reason),
-                path: BunString::EMPTY,
-                syscall: BunString::EMPTY,
-                hostname: BunString::EMPTY,
-                fd: c_int::MIN,
-                dest: BunString::EMPTY,
+                code: BunString::clone_utf8(&stored.code).into(),
+                message: BunString::clone_utf8(&stored.reason).into(),
+                ..Default::default()
             };
             err.to_error_instance(global)
         })
@@ -2254,14 +2234,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let reason: &[u8] = ssl_error.reason_bytes();
 
         let fallback = SystemError {
-            errno: 0,
-            code: BunString::clone_utf8(code),
-            message: BunString::clone_utf8(reason),
-            path: BunString::EMPTY,
-            syscall: BunString::EMPTY,
-            hostname: BunString::EMPTY,
-            fd: c_int::MIN,
-            dest: BunString::EMPTY,
+            code: BunString::clone_utf8(code).into(),
+            message: BunString::clone_utf8(reason).into(),
+            ..Default::default()
         };
 
         Ok(fallback.to_error_instance(global))

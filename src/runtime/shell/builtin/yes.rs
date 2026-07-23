@@ -157,16 +157,14 @@ impl Yes {
         Builtin::write_failing_error(interp, cmd, buf, exit_code)
     }
 
+    #[allow(clippy::needless_pass_by_value)] // signature fixed by `Builtin::on_io_writer_chunk` dispatch
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = e {
-            // Release the SystemError's owned BunString fields (no `Drop`
-            // impl on `bun_sys::SystemError`).
-            e.deref();
+        if e.is_some() {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

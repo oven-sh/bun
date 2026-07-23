@@ -251,7 +251,6 @@ pub enum BuiltinIO {
         buf: PinnedArrayBuf,
         i: u32,
     },
-    Blob(Arc<BuiltinBlob>),
     Ignore,
 }
 
@@ -316,15 +315,14 @@ impl BuiltinIO {
 
     /// Bump refcounts and return a shallow copy. Only reachable from the
     /// `duplicate_out` path, which fires before any `.jsbuf` redirect, so
-    /// `ArrayBuf`/`Blob` are unreachable here. The `Buf` target is copied
-    /// verbatim so stderr writes accumulate in (and flush from) stdout's
-    /// buffer; that aliasing is the carried `IoKind`.
+    /// `ArrayBuf` is unreachable here. The `Buf` target is copied verbatim so
+    /// stderr writes accumulate in (and flush from) stdout's buffer; that
+    /// aliasing is the carried `IoKind`.
     fn dup_ref(&self) -> BuiltinIO {
         match self {
             BuiltinIO::Fd(fd) => BuiltinIO::Fd(fd.clone()),
             BuiltinIO::Buf(target) => BuiltinIO::Buf(*target),
             BuiltinIO::Ignore => BuiltinIO::Ignore,
-            BuiltinIO::Blob(b) => BuiltinIO::Blob(Arc::clone(b)),
             BuiltinIO::ArrayBuf { .. } => {
                 unreachable!("duplicate_out precedes jsbuf redirects")
             }
@@ -395,7 +393,7 @@ impl BuiltinIO {
                 *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
-            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
+            BuiltinIO::Ignore => Ok(buf.len()),
         }
     }
 
@@ -788,8 +786,7 @@ impl Builtin {
     /// A file-backed blob (`Bun.file(path)` / `Bun.file(fd)`) is opened via
     /// `open_file_redirect` / wrapped in an `IOWriter`/`IOReader` so reads and
     /// writes go to disk. An in-memory blob is only valid for stdin; as a
-    /// stdout/stderr target it would silently discard output (`write_no_io_to`
-    /// treats `BuiltinIO::Blob` as a no-op), so we reject it up front.
+    /// stdout/stderr target it is rejected (there is no writable sink).
     fn setup_blob_redirect(
         interp: &Interpreter,
         cmd: NodeId,

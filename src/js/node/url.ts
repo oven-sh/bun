@@ -486,7 +486,7 @@ function urlFormat(urlObject: unknown) {
   return urlObject.format();
 }
 
-Url.prototype.format = function format() {
+Url.prototype.format = function format(options?: { fragment?: boolean; unicode?: boolean; search?: boolean; auth?: boolean }) {
   var auth: string = this.auth || "";
   if (auth) {
     auth = encodeURIComponent(auth);
@@ -496,7 +496,7 @@ Url.prototype.format = function format() {
 
   var protocol: string = this.protocol || "",
     pathname: string = this.pathname || "",
-    hash: string = this.hash || "",
+    hash: string = (options?.fragment === false ? "" : (this.hash || "")),
     host = "",
     query = "";
 

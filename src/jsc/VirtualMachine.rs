@@ -5210,7 +5210,9 @@ impl VirtualMachine {
                 let writer = unsafe { &mut *ctx.writer };
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
-                if formatter.depth > formatter.max_depth {
+                if formatter.depth > formatter.max_depth
+                    || !formatter.stack_check.is_safe_to_recurse()
+                {
                     let _ = if ctx.allow_ansi_color {
                         writer.write_all(
                             bun_core::pretty_fmt!("<r><cyan>[Error ...]<r>\n", true).as_bytes(),

@@ -395,7 +395,13 @@ async function worker(w: number) {
       standalone: [`verified ${bad}/3`],
       lastStage: null,
       termChain: null,
-      stacks: stacks.length ? stacks.slice(0, 12) : stallStacks.length ? stallStacks.slice(0, 12) : null,
+      stacks: stacks.length
+        ? stacks.slice(0, 12)
+        : stallStacks.length
+          ? stallStacks.slice(0, 12)
+          : (crash?.frames ?? []).length
+            ? crash!.frames.slice(0, 24)
+            : null,
       findings: join(dir, "minimal-schedule.txt"),
       workDir: dir,
     };

@@ -951,43 +951,24 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (pauseOnConnect) {
       self.pause();
     }
-    try {
-      if (server) {
-        // onServerSocketSecure hands the socket to the user before emitting
-        // 'secureConnection': from here on errors reach the user's 'error'
-        // listener instead of the server's 'tlsClientError'. A socket destroyed
-        // mid-handshake, or one whose control was already released by an earlier
-        // completion, is dropped here.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1227
-        if (!self.destroyed && self._releaseControl()) {
-          const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-          if (typeof connectionListener === "function") {
-            server.prependOnceListener("secureConnection", connectionListener);
-          }
-          server.emit("secureConnection", self);
+    if (!pauseOnConnect && !self.destroyed) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L524
+      self.read(0);
+    }
+    if (server) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
+      if (!self.destroyed && self._releaseControl()) {
+        const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+        if (typeof connectionListener === "function") {
+          server.prependOnceListener("secureConnection", connectionListener);
         }
-      }
-      if (self.destroyed) return;
-      // after secureConnection event we emmit secure and secureConnect
-      self.emit("secure", self);
-      self.emit("secureConnect", verifyError);
-    } catch (err) {
-      // Node emits these straight from the C++ handshake-done callback with no
-      // try/catch (lib/internal/tls/wrap.js _finishInit / onServerSocketSecure),
-      // so a throwing listener reaches InternalCallbackScope and becomes an
-      // uncaught exception. Bun's native dispatch would otherwise route a throw
-      // here to the socket error handler; reportError matches Node's observable
-      // behaviour (test-tls-handshake-exception.js).
-      reportError(err);
-    } finally {
-      if (!pauseOnConnect && !self.destroyed) {
-        // Node's server-side TLSSocket is manualStart: initRead() only read(0)s
-        // the handle, leaving readableFlowing null, so bytes that arrive before
-        // a 'data' listener attaches are buffered instead of dropped.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L524
-        self.read(0);
+        server.emit("secureConnection", self);
       }
     }
+    if (self.destroyed) return;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+    self.emit("secure", self);
+    self.emit("secureConnect", verifyError);
   },
   error(socket, error) {
     const data = this.data;
@@ -1209,9 +1190,7 @@ function onconnection(err, clientHandle) {
   }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
-  // Mark server-accepted sockets as candidates for abandoned-socket teardown
-  // (SocketEmitEndNT schedules destroyAbandonedNT only when this is exactly
-  // false; client sockets never have it set so are excluded).
+  // destroyAbandonedNT gate: === false (server-accepted only).
   _socket[kReaderInterest] = false;
   self.emit("connection", _socket);
   if (!pauseOnConnect && !isTLS) {

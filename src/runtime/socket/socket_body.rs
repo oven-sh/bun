@@ -142,10 +142,9 @@ extern "C" fn select_alpn_callback(
             // different TLS socket on the same loop re-points the per-loop BIO
             // routing state, and this handshake's next flight would land on
             // that other socket's fd. Snapshot and restore it around every
-            // JS-running region. Only a real usockets socket uses the shared
-            // loop BIO; an UpgradedDuplex or named pipe owns private mem BIOs
-            // whose BIO_get_data is a BUF_MEM*, so there is nothing to save
-            // and the C-side deref would read garbage.
+            // JS-running region. Only a Connected usockets socket uses the
+            // shared loop BIO; UpgradedDuplex/Pipe own mem BIOs (BIO_get_data
+            // is a BUF_MEM*), so skip the save there.
             let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
             if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
@@ -1850,8 +1849,15 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
         }
 
+        // Node's handshake-done path (_finishInit -> 'secure' -> 'secureConnection')
+        // has no try/catch; a throwing listener reaches InternalCallbackScope and
+        // becomes an uncaught exception, not a socket 'error'.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
         if let Some(err_value) = result.to_error() {
-            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            let _ = global
+                .bun_vm()
+                .as_mut()
+                .uncaught_exception(&global, err_value, false);
         }
         this.exit_scope(scope);
         if reject_unauthorized {

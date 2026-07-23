@@ -462,7 +462,9 @@ describe("node:inspector", () => {
       const session = new inspector.Session();
       session.connect();
       session.post("Profiler.enable");
-      await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow("Precise coverage has not been started.");
+      await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow(
+        "Precise coverage has not been started.",
+      );
       session.disconnect();
     });
 
@@ -473,7 +475,9 @@ describe("node:inspector", () => {
       session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
       session.post("Profiler.disable");
       session.post("Profiler.enable");
-      await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow("Precise coverage has not been started.");
+      await expect(post(session, "Profiler.takePreciseCoverage")).rejects.toThrow(
+        "Precise coverage has not been started.",
+      );
       session.disconnect();
     });
 

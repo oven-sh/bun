@@ -191,7 +191,7 @@ describe("path.parse", () => {
         assert.strictEqual(path.format(element), expect);
       });
 
-      [null, undefined, 1, true, false, "string"].forEach(pathObject => {
+      [null, undefined, 1, true, false, "string", () => {}, class {}].forEach(pathObject => {
         assert.throws(
           () => {
             path.format(pathObject);

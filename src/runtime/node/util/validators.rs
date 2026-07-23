@@ -339,51 +339,19 @@ pub(crate) fn validate_object(
     name: impl fmt::Display + Copy,
     options: ValidateObjectOptions,
 ) -> JsResult<()> {
-    if !options.allow_nullable() && !options.allow_array() && !options.allow_function() {
-        if value.is_null() || value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-
-        if !value.is_object() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-    } else {
-        if !options.allow_nullable() && value.is_null() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-
-        if !options.allow_array() && value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-
-        if !value.is_object() && (!options.allow_function() || !value.js_type().is_function()) {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
+    // In JSC a function cell satisfies `is_object()` (JSType >= Object), so the callable check
+    // cannot be folded into `!is_object()` the way Node's `typeof !== 'object'` does.
+    if (!options.allow_nullable() && value.is_null())
+        || (!options.allow_array() && value.js_type().is_array())
+        || (!options.allow_function() && value.is_callable())
+        || !value.is_object()
+    {
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "object",
+            value,
+        ));
     }
     Ok(())
 }

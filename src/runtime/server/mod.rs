@@ -1333,10 +1333,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 break 'brk HttpResult::Success;
                             }
 
-                            nhr.promise.set(core::mem::replace(
-                                &mut strong_promise,
-                                jsc::StrongOptional::empty(),
-                            ));
+                            node_http_response::js::promise_set_cached(strong_self, global, result);
+                            nhr.flags
+                                .set(nhr.flags.get() | NhrFlags::HAS_HANDLER_PROMISE);
                             // `#[host_fn(export = …)]` emits its
                             // C-ABI shim as `__jsc_host_<fn>`; the export name
                             // is link-only.
@@ -1420,7 +1419,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
                     // release the pending-request accounting now - a half-open
                     // tunnel never closes, which stranded `pending_requests`.
-                    nhr.mark_request_as_done_if_necessary();
+                    nhr.mark_request_as_done_if_necessary(JSValue::ZERO);
                 }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
                 // The socket was adopted by the WebSocket context inside the

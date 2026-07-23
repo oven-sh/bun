@@ -238,7 +238,7 @@ export default [
     klass: {},
     finalize: true,
     noConstructor: true,
-    values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
+    values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer", "promise"],
   }),
 
   define({

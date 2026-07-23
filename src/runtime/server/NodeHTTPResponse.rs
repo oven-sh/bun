@@ -15,7 +15,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::server::jsc::{
-    self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
+    self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, VirtualMachine,
 };
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
@@ -44,7 +44,6 @@ pub struct NodeHTTPResponse {
 
     pub body_read_state: Cell<BodyReadState>,
     pub body_read_ref: JsCell<jsc::Ref>,
-    pub promise: JsCell<StrongOptional>, // Strong.Optional
     pub server: AnyServer,
 
     /// When you call pause() on the node:http IncomingMessage
@@ -96,6 +95,11 @@ bitflags! {
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
+        /// The async dispatch path stored the handler's pending promise in the
+        /// wrapper's `m_promise` slot and left the server-handler ref (one of
+        /// the initial 3) for on_resolve/on_reject/mark_request_as_done to
+        /// release; whichever runs first clears this flag and derefs.
+        const HAS_HANDLER_PROMISE                 = 1 << 9;
     }
 }
 
@@ -355,7 +359,7 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
 /// thin wrappers over the C++ `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue`
 /// `WriteBarrier<Unknown>` slots.
 pub mod js {
-    bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable, pendingWriteBuffer);
+    bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable, pendingWriteBuffer, promise);
 }
 
 /// A large `res.write()` whose unwritten tail is held by reference instead of
@@ -625,7 +629,7 @@ impl NodeHTTPResponse {
             self.body_read_state.set(BodyReadState::Done);
 
             if had_ref {
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(this_value);
             }
         }
     }
@@ -677,31 +681,41 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn mark_request_as_done(&self) {
+    /// `js_this` follows the `clear_pending_pinned_write` convention: the
+    /// wrapper cell handed in by C++ on terminal paths where
+    /// `get_this_value()` is already ZERO (abort), or ZERO to look it up.
+    fn mark_request_as_done(&self, js_this: JSValue) {
         scoped_log!(NodeHTTPResponse, "markRequestAsDone()");
         // defer this.deref(); — moved to end of fn body.
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
 
         // The async path (`on_node_http_request_with_upgrade_ctx`) stashes the
-        // handler's pending promise here and registers `then2` reactions that
-        // are responsible for releasing the server-handler ref (one of the
-        // initial 3). When the request is torn down via abort/socket-close
-        // those reactions may never fire (the JS-side resolve chain is broken
-        // once the socket is gone), which would strand that ref forever and
-        // leak the whole `NodeHTTPResponse` allocation. Treat a still-held
-        // promise as the ownership token for that ref: drop the strong root
-        // and release the ref here. `on_resolve`/`on_reject` observe the
-        // empty slot and skip their own deref, so a late settlement is a
-        // no-op rather than a double release.
-        let had_async_promise = self.promise.with_mut(|p| {
-            let had = p.has();
-            p.deinit();
-            had
-        });
+        // handler's pending promise in the wrapper's `m_promise` slot and
+        // registers `then2` reactions that are responsible for releasing the
+        // server-handler ref (one of the initial 3). When the request is torn
+        // down via abort/socket-close those reactions may never fire (the
+        // JS-side resolve chain is broken once the socket is gone), which
+        // would strand that ref forever and leak the whole `NodeHTTPResponse`
+        // allocation. Treat `HAS_HANDLER_PROMISE` as the ownership token for
+        // that ref: clear the flag + slot and release the ref here.
+        // `on_resolve`/`on_reject` observe the cleared flag and skip their own
+        // deref, so a late settlement is a no-op rather than a double release.
+        let had_async_promise = self.flags.get().contains(Flags::HAS_HANDLER_PROMISE);
+        if had_async_promise {
+            self.update_flags(|f| f.remove(Flags::HAS_HANDLER_PROMISE));
+        }
 
         let vm = vm_get();
-        self.clear_on_data_callback(self.get_this_value(), vm.global());
-        self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
+        let this_value = if js_this.is_empty() {
+            self.get_this_value()
+        } else {
+            js_this
+        };
+        if had_async_promise && !this_value.is_empty() {
+            js::promise_set_cached(this_value, vm.global(), JSValue::ZERO);
+        }
+        self.clear_on_data_callback(this_value, vm.global());
+        self.clear_pending_pinned_write(vm.global(), this_value);
         self.upgrade_context.with_mut(|c| c.reset());
 
         self.buffered_request_body_data_during_pause
@@ -718,10 +732,10 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
-    pub(crate) fn mark_request_as_done_if_necessary(&self) {
+    pub(crate) fn mark_request_as_done_if_necessary(&self, js_this: JSValue) {
         if self.flags.get().contains(Flags::IS_REQUEST_PENDING) && !self.should_request_be_pending()
         {
-            self.mark_request_as_done();
+            self.mark_request_as_done(js_this);
         }
     }
 
@@ -1256,7 +1270,7 @@ impl NodeHTTPResponse {
                 // `clear_on_data_callback` reached from `mark_request_as_done`
                 // can't touch the dead socket.
                 self.raw_response.set(None);
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(js_value);
             }
             return;
         }
@@ -1306,7 +1320,7 @@ impl NodeHTTPResponse {
         // ref when the JS wrapper has already finalized; nothing between them
         // reads `raw_response`, so clearing first avoids a post-destroy write.
         if EVENT == AbortEvent::Abort {
-            self.mark_request_as_done_if_necessary();
+            self.mark_request_as_done_if_necessary(js_this);
             self.raw_response.set(None);
         }
         self.deref();
@@ -1452,7 +1466,7 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
-        self.mark_request_as_done_if_necessary();
+        self.mark_request_as_done_if_necessary(JSValue::ZERO);
     }
 }
 
@@ -1463,25 +1477,23 @@ pub(crate) fn node_http_request_on_resolve(
 ) -> JSValue {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let arguments = callframe.arguments_old::<2>();
+    let this_jsvalue = arguments.ptr[1];
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
-    // `promise` non-empty is the ownership token for the server-handler ref;
+    let this: &NodeHTTPResponse = this_jsvalue.as_class_ref::<NodeHTTPResponse>().unwrap();
+    // `HAS_HANDLER_PROMISE` is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
-    let had_promise = this.promise.with_mut(|p| {
-        let had = p.has();
-        p.deinit();
-        had
-    });
+    let had_promise = this.flags.get().contains(Flags::HAS_HANDLER_PROMISE);
+    if had_promise {
+        this.update_flags(|f| f.remove(Flags::HAS_HANDLER_PROMISE));
+    }
+    js::promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
     // defer this.deref(); — moved to tail.
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), this_jsvalue);
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !flags.contains(Flags::SOCKET_CLOSED) {
-        let this_value = this.get_this_value();
-        if !this_value.is_empty() {
-            js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
-        }
+        js::on_aborted_set_cached(this_jsvalue, global_object, JSValue::ZERO);
         scoped_log!(NodeHTTPResponse, "clearOnData");
         // Put any held zero-copy tail on the wire before terminating so the
         // chunked stream stays well-formed.
@@ -1510,17 +1522,18 @@ pub(crate) fn node_http_request_on_reject(
 ) -> JSValue {
     let arguments = callframe.arguments_old::<2>();
     let err = arguments.ptr[0];
+    let this_jsvalue = arguments.ptr[1];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
-    // `promise` non-empty is the ownership token for the server-handler ref;
+    let this: &NodeHTTPResponse = this_jsvalue.as_class_ref::<NodeHTTPResponse>().unwrap();
+    // `HAS_HANDLER_PROMISE` is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
-    let had_promise = this.promise.with_mut(|p| {
-        let had = p.has();
-        p.deinit();
-        had
-    });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    let had_promise = this.flags.get().contains(Flags::HAS_HANDLER_PROMISE);
+    if had_promise {
+        this.update_flags(|f| f.remove(Flags::HAS_HANDLER_PROMISE));
+    }
+    js::promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), this_jsvalue);
 
     // defer this.deref(); — moved to tail.
 
@@ -1529,10 +1542,7 @@ pub(crate) fn node_http_request_on_reject(
         && !flags.contains(Flags::SOCKET_CLOSED)
         && !flags.contains(Flags::UPGRADED)
     {
-        let this_value = this.get_this_value();
-        if !this_value.is_empty() {
-            js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
-        }
+        js::on_aborted_set_cached(this_jsvalue, global_object, JSValue::ZERO);
         scoped_log!(NodeHTTPResponse, "clearOnData");
         // Put any held zero-copy tail on the wire before the terminating chunk
         // so the client's chunked decoder stays in sync.
@@ -1607,7 +1617,7 @@ impl NodeHTTPResponse {
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(JSValue::ZERO);
             }
         }
     }
@@ -1694,7 +1704,7 @@ impl NodeHTTPResponse {
         if last {
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
+                self.mark_request_as_done_if_necessary(this_value);
             }
             self.deref();
         }
@@ -2562,7 +2572,6 @@ impl NodeHTTPResponse {
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
         self.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
-        self.promise.with_mut(|p| p.deinit());
         // SAFETY: self was allocated via `heap::into_raw` in `createForJS`;
         // refcount is zero so no other references remain — `self` is the unique
         // owner at count==0, so the `*const → *mut` cast is sound.
@@ -2708,7 +2717,6 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
         flags: Cell::new(Flags::default()),
         poll_ref: JsCell::new(jsc::Ref::default()),
         body_read_ref: JsCell::new(jsc::Ref::default()),
-        promise: JsCell::new(StrongOptional::empty()),
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
         raw_request_headers: JsCell::new(Vec::new()),

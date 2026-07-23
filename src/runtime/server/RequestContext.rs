@@ -3472,6 +3472,11 @@ where
         status: u16,
     ) {
         jsc::mark_binding!();
+        // The route handler failed: any `req.cookies` mutations it queued must
+        // not leak onto the error Response (a session cookie set before a
+        // crash would otherwise be granted on the 500). render_production_error
+        // already bypasses this, so dropping here keeps both paths consistent.
+        drop(self.cookies.take());
         if let Some(server) = self.server {
             // SAFETY: BACKREF
             let server = &*server;

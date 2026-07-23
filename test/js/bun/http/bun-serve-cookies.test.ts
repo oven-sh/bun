@@ -1,6 +1,76 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
+describe("cookies on error path", () => {
+  type BunRequest = Request & { cookies: Bun.CookieMap };
+
+  async function setCookieHeaders(
+    handler: (req: BunRequest) => Response | Promise<Response>,
+    errorHandler: () => Response | Promise<Response>,
+  ) {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: { "/login": handler },
+      error: errorHandler,
+    });
+    const res = await fetch(new URL("/login", server.url));
+    await res.arrayBuffer();
+    return { status: res.status, setCookie: res.headers.getSetCookie() };
+  }
+
+  const handlers = [
+    [
+      "sync throw",
+      (req: BunRequest) => {
+        req.cookies.set("session", "TOKEN-abc123", { httpOnly: true, secure: true });
+        throw new Error("db timeout after granting the session");
+      },
+    ],
+    [
+      "async reject",
+      async (req: BunRequest) => {
+        req.cookies.set("session", "TOKEN-abc123", { httpOnly: true, secure: true });
+        await 1;
+        throw new Error("db timeout after granting the session");
+      },
+    ],
+  ] as const;
+
+  const errorHandlers = [
+    ["sync error()", () => new Response("Internal error", { status: 500 })],
+    ["async error()", async () => new Response("Internal error", { status: 500 })],
+  ] as const;
+
+  for (const [handlerLabel, handler] of handlers) {
+    for (const [errorLabel, errorHandler] of errorHandlers) {
+      it(`${handlerLabel} + ${errorLabel}: does not apply req.cookies mutations to the error Response`, async () => {
+        const { status, setCookie } = await setCookieHeaders(handler, errorHandler);
+        expect({ status, setCookie }).toEqual({ status: 500, setCookie: [] });
+      });
+    }
+  }
+
+  it("still applies req.cookies mutations on the success path", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/ok": req => {
+          req.cookies.set("session", "TOKEN-abc123", { httpOnly: true, secure: true });
+          return new Response("ok");
+        },
+      },
+      error: () => new Response("Internal error", { status: 500 }),
+    });
+    const res = await fetch(new URL("/ok", server.url));
+    expect(await res.text()).toBe("ok");
+    expect(res.headers.getSetCookie()).toEqual([
+      "session=TOKEN-abc123; Path=/; Secure; HttpOnly; SameSite=Lax",
+    ]);
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("request cookies", () => {
   let server: Server;
 

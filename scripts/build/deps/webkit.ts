@@ -9,9 +9,10 @@
 // typed-array constructor ClassInfo kept address-unique under LTO, the
 // Windows ICU data table filtered + per-item zstd compressed, eager timezone
 // prewarm skipped under USE_BUN_JSC_ADDITIONS, the stray simdutf scalar/base64
-// <iostream> include dropped, and <iostream> banned at compile time for
-// non-Debug USE_BUN_JSC_ADDITIONS builds (see src/banned-includes/iostream).
-export const WEBKIT_VERSION = "2f7e89c84f818b07b27d4702813a37db543c298a";
+// <iostream> include dropped, <iostream> banned at compile time for non-Debug
+// USE_BUN_JSC_ADDITIONS builds (see src/banned-includes/iostream), and the
+// WebAssembly namespace object created lazily.
+export const WEBKIT_VERSION = "af2e8dc6393ce244eb1865e34e7636225744cfba";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

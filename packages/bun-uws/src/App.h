@@ -21,6 +21,7 @@
 #include <string>
 #include <charconv>
 #include <string_view>
+#include <cstdio>
 
 namespace uWS {
     /* Safari 15.0 - 15.3 has a completely broken compression implementation (client_no_context_takeover not

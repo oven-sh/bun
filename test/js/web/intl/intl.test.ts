@@ -334,15 +334,18 @@ test.concurrent("timezone lazy-init is consistent across concurrent Workers", as
       "  postMessage((" + probe.toString() + ")());" +
       "};";
     const url = URL.createObjectURL(new Blob([body]));
-    const threads = [];
-    const results = Array.from({ length: N }, (_, i) => new Promise((resolve, reject) => {
+    const results = Array.from({ length: N }, () => new Promise((resolve, reject) => {
       const w = new Worker(url);
-      threads.push(w);
       w.onmessage = e => { resolve(e.data); w.terminate(); };
       w.onerror = reject;
       w.postMessage(gate);
     }));
-    while (Atomics.load(gate, 0) < N) await Bun.sleep(0);
+    // Race the barrier against the Worker promises so a startup error surfaces
+    // instead of spinning until the outer test times out.
+    await Promise.race([
+      (async () => { while (Atomics.load(gate, 0) < N) await Bun.sleep(0); })(),
+      Promise.all(results),
+    ]);
     Atomics.store(gate, 1, 1);
     Atomics.notify(gate, 1);
     const worker = await Promise.all(results);
@@ -354,7 +357,7 @@ test.concurrent("timezone lazy-init is consistent across concurrent Workers", as
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: { ...bunEnv, TZ: "America/New_York" },
+    env: { ...bunEnv, TZ: "America/New_York", LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -362,6 +365,9 @@ test.concurrent("timezone lazy-init is consistent across concurrent Workers", as
   const result = JSON.parse(stdout.trim());
   expect(result.zone).toBe("America/New_York");
   expect(result.count).toBeGreaterThan(400);
+  expect(result.date).toContain("GMT-0500");
+  // The parenthesized long name exercises the host-zone display-name cache; pinning
+  // LANG above keeps this locale-independent across developer machines.
   expect(result.date).toContain("Eastern Standard Time");
   expect(exitCode).toBe(0);
 });

@@ -1044,3 +1044,80 @@ describe.concurrent("false route with no fetch handler", () => {
     await proc.exited;
   });
 });
+
+describe("many routes", () => {
+  function buildFlatTable(n: number) {
+    const routes: Record<string, () => Response> = {};
+    for (let i = 0; i < n; i++) {
+      routes[`/leaf${i}`] = () => new Response(String(i));
+    }
+    return routes;
+  }
+
+  // Route registration used to linear-scan sibling nodes in the uWS router and
+  // an `any` route fans out to every supported HTTP method, so an N-entry flat
+  // table cost ~36*N^2 string compares to build (and again on every reload()).
+  // This asserts registration scales linearly in N. A perf outlier, hence the
+  // explicit per-test timeout: before the fix the 2400-route build alone took
+  // several seconds under ASAN.
+  test(
+    "route registration time scales linearly with route count",
+    async () => {
+      function timeBuild(n: number) {
+        const routes = buildFlatTable(n);
+        const t0 = performance.now();
+        const srv = Bun.serve({ port: 0, routes });
+        const dt = performance.now() - t0;
+        srv.stop(true);
+        return dt;
+      }
+
+      // Warm up JIT + allocator so the small sample is not dominated by
+      // first-call overhead.
+      timeBuild(300);
+      timeBuild(300);
+
+      // Best of three for the small sample to cut scheduling jitter; the ratio
+      // is what matters, not the absolute times.
+      const small = Math.min(timeBuild(300), timeBuild(300), timeBuild(300));
+      const large = timeBuild(2400);
+      const ratio = large / small;
+
+      // 8x the routes. Linear ~= 8x; the old O(N^2) path measured 50-80x here.
+      // Printed alongside the assertion so a failure shows the raw timings.
+      expect({ small, large, ratio, linear: ratio < 24 }).toMatchObject({ linear: true });
+    },
+    30_000,
+  );
+
+  test("routes to the right handler in a large flat table", async () => {
+    const n = 1200;
+    using server = Bun.serve({ port: 0, routes: buildFlatTable(n) });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    const results = await Promise.all(
+      [0, 1, 123, n - 2, n - 1].map(i => fetch(`${base}/leaf${i}`).then(r => r.text())),
+    );
+    expect(results).toEqual(["0", "1", "123", String(n - 2), String(n - 1)]);
+
+    const miss = await fetch(`${base}/leaf${n}`);
+    expect(miss.status).toBe(404);
+  });
+
+  test("param and wildcard precedence is preserved in a large table", async () => {
+    const routes: Record<string, (req: BunRequest) => Response> = {};
+    for (let i = 0; i < 1000; i++) {
+      routes[`/api/static${i}`] = () => new Response(`static${i}`);
+    }
+    routes["/api/:id"] = req => new Response(`param:${req.params.id}`);
+    routes["/api/*"] = () => new Response("wild");
+
+    using server = Bun.serve({ port: 0, routes });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    expect(await fetch(`${base}/api/static0`).then(r => r.text())).toBe("static0");
+    expect(await fetch(`${base}/api/static999`).then(r => r.text())).toBe("static999");
+    expect(await fetch(`${base}/api/other`).then(r => r.text())).toBe("param:other");
+    expect(await fetch(`${base}/api/a/b`).then(r => r.text())).toBe("wild");
+  });
+});

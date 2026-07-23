@@ -963,6 +963,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           server.prependOnceListener("secureConnection", connectionListener);
         }
         server.emit("secureConnection", self);
+        // Same post-emit reader check onconnection does for plain net sockets:
+        // the 'connection' emit runs no user code for natively-accepted TLS.
+        if (self.readableFlowing !== null || self.listenerCount("data") > 0 || self.listenerCount("readable") > 0) {
+          self[kReaderInterest] = true;
+        }
       }
     }
     if (self.destroyed) return;

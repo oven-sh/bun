@@ -2018,6 +2018,71 @@ it("request body and signal life cycle", async () => {
   }
 }, 30_000);
 
+describe("content-type on detached/empty responses", () => {
+  // Zig sends no content-type here; the Rust port wrote a spurious
+  // application/octet-stream because a `const` pointer-identity sentinel
+  // never matched the fallback MimeType.
+  const suppressed: Array<[string, () => Response]> = [
+    ["new Response()", () => new Response()],
+    ["Response.redirect()", () => Response.redirect("http://example.com/", 302)],
+    ["new Response(null, { status: 204 })", () => new Response(null, { status: 204 })],
+    ["new Response(null, { status: 304 })", () => new Response(null, { status: 304 })],
+    ["new Response(null, { status: 302 })", () => new Response(null, { status: 302, headers: { location: "/x" } })],
+    [
+      "untyped ReadableStream",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("hi"));
+              c.close();
+            },
+          }),
+        ),
+    ],
+  ];
+  for (const [name, make] of suppressed) {
+    it(`no spurious content-type for ${name}`, async () => {
+      using server = Bun.serve({ port: 0, fetch: () => make() });
+      const res = await fetch(server.url, { redirect: "manual" });
+      const contentType = res.headers.get("content-type");
+      await res.text().catch(() => {});
+      expect(contentType).toBeNull();
+    });
+  }
+
+  // An explicit content-type whose top-level category Bun doesn't recognize
+  // (MimeType::init falls through to Category::Other) must still be sent on
+  // an empty body — suppression targets the application/octet-stream
+  // *fallback*, not every Category::Other.
+  const preserved: Array<[string, () => Response, string]> = [
+    [
+      "empty Blob with multipart/form-data",
+      () => new Response(new Blob([], { type: "multipart/form-data" })),
+      "multipart/form-data",
+    ],
+    [
+      "empty Blob with model/gltf-binary",
+      () => new Response(new Blob([], { type: "model/gltf-binary" })),
+      "model/gltf-binary",
+    ],
+    [
+      "empty body with multipart/form-data header",
+      () => new Response(null, { headers: { "content-type": "multipart/form-data" } }),
+      "multipart/form-data",
+    ],
+  ];
+  for (const [name, make, expected] of preserved) {
+    it(`preserves explicit ${name}`, async () => {
+      using server = Bun.serve({ port: 0, fetch: () => make() });
+      const res = await fetch(server.url);
+      const contentType = res.headers.get("content-type");
+      await res.text().catch(() => {});
+      expect(contentType).toBe(expected);
+    });
+  }
+});
+
 it("propagates content-type from a Bun.file()'s file path in fetch()", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
   const bodyText = await body.text();

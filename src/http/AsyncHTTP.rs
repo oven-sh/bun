@@ -108,6 +108,48 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
+/// Derive a `Basic <base64(user:pass)>` header value from percent-encoded URL
+/// userinfo components. Returns `None` if both are empty. A malformed
+/// %-sequence falls back to the raw bytes (per WHATWG percent-decode).
+pub fn basic_auth_from_url_userinfo(username: &[u8], password: &[u8]) -> Option<Vec<u8>> {
+    if username.is_empty() && password.is_empty() {
+        return None;
+    }
+    let user = PercentEncoding::decode_alloc(username).unwrap_or_else(|_| username.into());
+    let pass = PercentEncoding::decode_alloc(password).unwrap_or_else(|_| password.into());
+    let mut plain = Vec::with_capacity(user.len() + 1 + pass.len());
+    plain.extend_from_slice(&user);
+    plain.push(b':');
+    plain.extend_from_slice(&pass);
+    let size = bun_base64::encode_len_from_size(plain.len());
+    let mut out = vec![0u8; b"Basic ".len() + size];
+    out[..b"Basic ".len()].copy_from_slice(b"Basic ");
+    let n = bun_base64::encode(&mut out[b"Basic ".len()..], &plain);
+    out.truncate(b"Basic ".len() + n);
+    Some(out)
+}
+
+/// Return a copy of a WHATWG-serialized `href` with the userinfo (`user:pass@`)
+/// removed. The input is assumed to be a WHATWG-serialized URL, which never
+/// contains a literal `@` in the userinfo or host.
+pub fn href_without_userinfo(href: &[u8]) -> Vec<u8> {
+    if let Some(scheme_end) = bun_core::strings::index_of(href, b"://") {
+        let authority_start = scheme_end + 3;
+        let rest = &href[authority_start..];
+        let authority_end = rest
+            .iter()
+            .position(|&b| matches!(b, b'/' | b'?' | b'#'))
+            .unwrap_or(rest.len());
+        if let Some(at) = rest[..authority_end].iter().position(|&b| b == b'@') {
+            let mut out = Vec::with_capacity(href.len() - (at + 1));
+            out.extend_from_slice(&href[..authority_start]);
+            out.extend_from_slice(&rest[at + 1..]);
+            return out;
+        }
+    }
+    href.to_vec()
+}
+
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
 pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {

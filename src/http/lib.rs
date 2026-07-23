@@ -48,6 +48,7 @@ pub mod websocket;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
+pub use async_http::{basic_auth_from_url_userinfo, href_without_userinfo};
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
@@ -5379,6 +5380,13 @@ impl<'a> HTTPClient<'a> {
                                 self.prev_redirect =
                                     core::mem::replace(&mut self.redirect, new_url);
                             }
+                        }
+
+                        // https://fetch.spec.whatwg.org/#http-redirect-fetch step 10-11
+                        if !self.flags.is_node_http_client
+                            && (!self.url.username.is_empty() || !self.url.password.is_empty())
+                        {
+                            return Err(err!(RedirectURLCredentials));
                         }
 
                         // If one of the following is true

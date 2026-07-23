@@ -1295,6 +1295,12 @@ impl FetchTasklet {
             ));
         }
 
+        if fail == err!("RedirectURLCredentials") {
+            return BodyValueError::TypeError(BunString::static_(
+                "Redirect was rejected because the Location header URL includes credentials",
+            ));
+        }
+
         // some times we don't have metadata so we also check http.url
         let path = if let Some(metadata) = &self.metadata {
             BunString::clone_utf8(metadata.url.slice())

@@ -286,7 +286,10 @@ async function worker(w: number) {
         const m = /^gencrash\{(.+)\}$/.exec(key);
         if (!m) continue;
         const need = m[1].split(" ; ");
-        if (need.length && need.every(c => rawCalls.has(c))) {
+        // A short cause set (Bun.file+Bun.write) is contained in almost
+        // every program - only a SPECIFIC cause (>=4 calls) may
+        // short-circuit; smaller ones must be settled by real reduction.
+        if (need.length >= 4 && need.every(c => rawCalls.has(c))) {
           matched = key;
           break;
         }

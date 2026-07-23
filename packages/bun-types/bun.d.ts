@@ -555,6 +555,18 @@ declare module "bun" {
      * @default true
      */
     ambiguousIsNarrow?: boolean;
+
+    /**
+     * If `true`, measure every Unicode code point individually (East Asian
+     * Width plus emoji presentation, the algorithm Node.js uses for
+     * `console.table` and `util.inspect` alignment), so each member of an
+     * emoji ZWJ sequence is counted: `"👨‍👩‍👧‍👦"` measures 8. If `false`,
+     * emoji sequences and other grapheme clusters count once: `"👨‍👩‍👧‍👦"`
+     * measures 2.
+     *
+     * @default false
+     */
+    perCodePoint?: boolean;
   }
 
   /**

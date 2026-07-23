@@ -223,96 +223,6 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
-// node's getStringWidth counts each code point of an emoji ZWJ sequence (family
-// emoji = 8) where grapheme-based Bun.stringWidth sees one cluster (= 2); mirror
-// node's ICU algorithm (inspect.js wrapper + node_i18n.cc) for the exposed internal.
-// node's ansi matcher: Bun.stripANSI also eats bare ESC/CSI + trailing chars.
-const nodeAnsiRe = new RegExp(
-  "[\\u001B\\u009B][[\\]()#;?]*" +
-    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
-    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
-    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
-    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
-    "[\\dA-PR-TZcf-nq-uy=><~]))",
-  "g",
-);
-const nodeZeroWidthRe = /[\p{Cc}\p{Cf}\p{Me}\p{Mn}]/u;
-const nodeEmojiPresentationRe = /\p{Emoji_Presentation}/u;
-const nodeEmojiModifierRe = /\p{Emoji_Modifier}/u;
-const nodeUnassignedRe = /\p{Cn}/u;
-
-// East_Asian_Width Fullwidth/Wide ranges, from node's isFullWidthCodePoint.
-function isFullWidthCodePoint(code: number): boolean {
-  // prettier-ignore
-  return code >= 0x1100 && (
-    code <= 0x115f ||  // Hangul Jamo
-    code === 0x2329 || // LEFT-POINTING ANGLE BRACKET
-    code === 0x232a || // RIGHT-POINTING ANGLE BRACKET
-    // CJK Radicals Supplement .. Enclosed CJK Letters and Months
-    (code >= 0x2e80 && code <= 0x3247 && code !== 0x303f) ||
-    // Enclosed CJK Letters and Months .. CJK Unified Ideographs Extension A
-    (code >= 0x3250 && code <= 0x4dbf) ||
-    // CJK Unified Ideographs .. Yi Radicals
-    (code >= 0x4e00 && code <= 0xa4c6) ||
-    // Hangul Jamo Extended-A
-    (code >= 0xa960 && code <= 0xa97c) ||
-    // Hangul Syllables
-    (code >= 0xac00 && code <= 0xd7a3) ||
-    // CJK Compatibility Ideographs
-    (code >= 0xf900 && code <= 0xfaff) ||
-    // Vertical Forms
-    (code >= 0xfe10 && code <= 0xfe19) ||
-    // CJK Compatibility Forms .. Small Form Variants
-    (code >= 0xfe30 && code <= 0xfe6b) ||
-    // Halfwidth and Fullwidth Forms
-    (code >= 0xff01 && code <= 0xff60) ||
-    (code >= 0xffe0 && code <= 0xffe6) ||
-    // Kana Supplement
-    (code >= 0x1b000 && code <= 0x1b001) ||
-    // Enclosed Ideographic Supplement
-    (code >= 0x1f200 && code <= 0x1f251) ||
-    // Miscellaneous Symbols and Pictographs .. Emoticons
-    (code >= 0x1f300 && code <= 0x1f64f) ||
-    // CJK Unified Ideographs Extension B .. Tertiary Ideographic Plane
-    (code >= 0x20000 && code <= 0x3fffd)
-  );
-}
-
-// node's GetColumnWidth with ambiguous_as_full_width=false: EAW first, then
-// Emoji_Presentation, then the Cc/Cf/Me/Mn + Emoji_Modifier zero-width check.
-function nodeGetColumnWidth(char: string, code: number): number {
-  if (isFullWidthCodePoint(code) && !nodeUnassignedRe.test(char)) {
-    return 2;
-  }
-  if (nodeEmojiPresentationRe.test(char)) {
-    return 2;
-  }
-  if (code !== 0x00ad && (nodeZeroWidthRe.test(char) || nodeEmojiModifierRe.test(char))) {
-    return 0;
-  }
-  return 1;
-}
-
-function nodeGetStringWidth(str: string, removeControlChars: boolean = true): number {
-  let width = 0;
-  if (removeControlChars) {
-    str = str.replace(nodeAnsiRe, "");
-  }
-  for (let i = 0; i < str.length; i++) {
-    // ASCII fast path, as in node's ICU-mode wrapper.
-    const code = str.charCodeAt(i);
-    if (code >= 127) {
-      const rest: string = str.slice(i).normalize("NFC");
-      for (const char of rest) {
-        width += nodeGetColumnWidth(char, char.codePointAt(0)!);
-      }
-      break;
-    }
-    width += code >= 32 ? 1 : 0;
-  }
-  return width;
-}
-
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
@@ -538,10 +448,7 @@ export const exposedInternals = {
   "internal/dgram": require("internal/dgram"),
   // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
-  "internal/util/inspect": {
-    ...require("internal/util/inspect"),
-    getStringWidth: nodeGetStringWidth,
-  },
+  "internal/util/inspect": require("internal/util/inspect"),
   "internal/freelist": require("internal/freelist"),
   // Node's internal/fixed_queue module IS the FixedQueue class.
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,

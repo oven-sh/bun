@@ -2798,7 +2798,6 @@ function formatWithOptionsInternal(inspectOptions, args) {
   }
   return str;
 }
-const stripANSI = Bun.stripANSI;
 const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
@@ -2806,12 +2805,34 @@ const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBun
 function getStringWidth(str, removeControlChars = true) {
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize(str, "NFC");
-  return internalGetStringWidth(str);
+  // node measures every code point individually (icu.getStringWidth with
+  // expandEmojiSequence defaulting on), not grapheme clusters. ANSI was
+  // already stripped above; node's binding has no ANSI awareness, so any
+  // residual escape bytes count as their own code points (Cc = 0).
+  return internalGetStringWidth(str, { perCodePoint: true, countAnsiEscapeCodes: true });
 }
+
+// node's ansi matcher (lib/internal/util/inspect.js, from chalk/ansi-regex):
+// only complete, validly-terminated sequences are stripped — Bun.stripANSI
+// also eats bare/invalid ESC/CSI prefixes, which node keeps.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js
+const ansi = new RegExp(
+  "[\\u001B\\u009B][[\\]()#;?]*" +
+    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
+    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
+    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
+    "[\\dA-PR-TZcf-nq-uy=><~]))",
+  "g",
+);
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw new codes.ERR_INVALID_ARG_TYPE("str", "string", str);
-  return stripANSI(str);
+  // All ANSI escape sequences start with ESC (7-bit) or CSI (8-bit).
+  if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) {
+    return str;
+  }
+  return RegExpPrototypeSymbolReplace(ansi, str, "");
 }
 
 // utils

@@ -646,6 +646,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
     String timeZoneName = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (auto canonical = Bun::canonicalizeLegacyTimeZoneName(timeZoneName); !canonical.isNull())
+        timeZoneName = WTF::move(canonical);
+
     if (!WTF::setTimeZoneOverride(timeZoneName)) {
         throwTypeError(globalObject, scope,
             makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));

@@ -3327,7 +3327,11 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+    String timeZoneString = Zig::toString(*timeZone);
+    if (auto canonical = Bun::canonicalizeLegacyTimeZoneName(timeZoneString); !canonical.isNull())
+        timeZoneString = WTF::move(canonical);
+
+    if (WTF::setTimeZoneOverride(timeZoneString)) {
         WTF::timeZoneDidChange();
         vm.dateCache.clearForTimeZoneChange();
         return true;

@@ -614,6 +614,24 @@ CallCtx::CallCtx(uint32_t sysId, uintptr_t retAddr, ULONG_PTR* args, int argc)
     // sits within a small window above SP; a value beyond that window may
     // still be a display CANDIDATE but is never trusted as the identity.
     uintptr_t* keyWindow = sp + 64; // 512 bytes: the wrapper frame + our hook's
+    // The KEY (proven wrapper caller) is searched over a WIDER span than
+    // the display candidates: the wrapper caller's stack offset from our
+    // hook varies with the caller's own frame depth, and bounding the key
+    // search by the small candidate window made the chosen frame flip
+    // between runs (a hot GetFinalPathNameByHandle call keyed 1f6484c in
+    // one run and a different proven frame the next). Proven callers are
+    // cheap and exact to test, so look up to 2 KB for the NEAREST one; the
+    // display-candidate limit stays at g_frames*32.
+    uintptr_t* keyLimit = sp + 256;
+    if (keyLimit > end) keyLimit = end;
+    if (keyLimit > limit) {
+      for (uintptr_t* p = sp; p < keyLimit && bunFrame_ == 0; p++) {
+        uintptr_t v = *p;
+        if (v < g_txtBase || v >= g_txtEnd) continue;
+        if (!AfterCall(v)) continue;
+        if (CallTargetKind(v) == CallTarget::Wrapper) bunFrame_ = v;
+      }
+    }
     for (uintptr_t* p = sp; p < limit && nframes_ < kMaxFrames; p++) {
       uintptr_t v = *p;
       if (v < g_txtBase || v >= g_txtEnd) continue;

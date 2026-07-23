@@ -273,7 +273,10 @@ function argList(c: Callable): string {
   // Draw the source only from files the preamble actually CREATED so the
   // engine explores past the reported family; hostile paths still reach
   // every other API.
-  if (c.path === "Bun.write" && args.length >= 2 && /Bun\.file\(/.test(args[1])) {
+  // Any BunFile source - inline OR pooled (a pooled BunFile may name a
+  // hostile/missing/ADS path built earlier in the program) - is redrawn
+  // from files the preamble created; the missing-source family is reported.
+  if (c.path === "Bun.write" && args.length >= 2 && /Bun\.file\(|\$pool\("BunFile"\)/.test(args[1])) {
     args[1] = pick([`Bun.file(P("data.txt"))`, `Bun.file(P("big.bin"))`, `Bun.file(P("empty.txt"))`]);
   }
   // Known-reported: Bun.write(x, x) with one pooled object as both

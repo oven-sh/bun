@@ -191,7 +191,7 @@ describe("node:inspector", () => {
     });
   });
 
-  describe("Profiler", async () => {
+  describe("Profiler", () => {
     let session: inspector.Session;
 
     beforeEach(() => {
@@ -395,7 +395,7 @@ describe("node:inspector", () => {
     });
   });
 
-  describe("callback API", async () => {
+  describe("callback API", () => {
     test("post() with callback receives result", async () => {
       const session = new inspector.Session();
       session.connect();
@@ -427,7 +427,7 @@ describe("node:inspector", () => {
     });
   });
 
-  describe("unsupported methods", async () => {
+  describe("unsupported methods", () => {
     // Like Node, post() is asynchronous: without a callback it returns
     // undefined and never throws for a backend error; the protocol error is
     // delivered to the callback instead.
@@ -449,7 +449,7 @@ describe("node:inspector", () => {
     });
   });
 
-  describe("precise coverage", async () => {
+  describe("precise coverage", () => {
     test("startPreciseCoverage requires Profiler.enable", async () => {
       const session = new inspector.Session();
       session.connect();
@@ -632,25 +632,25 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
     });
   });
 
-  describe("exports", async () => {
-    test("url() returns undefined", async () => {
+  describe("exports", () => {
+    test("url() returns undefined", () => {
       expect(inspector.url()).toBeUndefined();
     });
 
-    test("console is exported", async () => {
+    test("console is exported", () => {
       expect(inspector.console).toBeObject();
       expect(inspector.console.log).toBe(globalThis.console.log);
     });
 
     // open()/close()/waitForDebugger() behavior is covered in inspector.test.ts;
     // opening a server is process-global state, so it is not exercised here.
-    test("open(), close() and waitForDebugger() are functions", async () => {
+    test("open(), close() and waitForDebugger() are functions", () => {
       expect(inspector.open).toBeInstanceOf(Function);
       expect(inspector.close).toBeInstanceOf(Function);
       expect(inspector.waitForDebugger).toBeInstanceOf(Function);
     });
 
-    test("waitForDebugger() throws when the inspector is not active", async () => {
+    test("waitForDebugger() throws when the inspector is not active", () => {
       expect(() => inspector.waitForDebugger()).toThrow("Inspector is not active");
     });
   });

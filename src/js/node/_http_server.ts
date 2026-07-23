@@ -1553,6 +1553,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   // connection whose pipelined responses have buffered past the high water mark.
   _paused = false;
   #pendingCallback = null;
+  #pendingAbortMessage;
   constructor(server: Server, handle, encrypted) {
     // allowHalfOpen: node's connectionListener sockets never auto-end the
     // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1658,15 +1659,14 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
   #closeHandle(handle, callback, err?: Error) {
     this[kHandle] = undefined;
+    // Capture the in-flight response before detachSocket() can clear it: a
+    // synchronous res.destroy() inside the request handler runs detachSocket()
+    // between here and the native close delivering #onClose. The abort itself
+    // is deferred to #onClose so the dispatch promise resolves only after the
+    // native on_abort has released the pending-request ref.
+    this.#pendingAbortMessage = this._httpMessage;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
     handle.close();
-    // lets sync check and destroy the request if it's not complete
-    const message = this._httpMessage;
-    const req = message?.req;
-    if (req && !req.complete) {
-      // at this point the handle is not destroyed yet, lets destroy the request
-      req.destroy();
-    }
   }
   #onClose() {
     // freeParser equivalent: runs before 'close' listeners so they observe the
@@ -1698,7 +1698,16 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     // flips `complete` before the response is written, so an aborted
     // connection would otherwise never reach `req.destroy()` →
     // `emit("close")` (test-http-should-emit-close-when-connection-is-aborted).
-    const message = this._httpMessage;
+    //
+    // `#pendingAbortMessage` is the `_httpMessage` captured when the destroy
+    // was initiated from JS (`#closeHandle`). It is only honoured when the
+    // captured response was itself destroy()ed: a `res.end()` followed by a
+    // JS-initiated socket.destroy() also reaches detachSocket() via the
+    // dispatcher's finished branch, and Node.js does not abort the request
+    // once the response has finished (resOnFinish shifts state.incoming).
+    const pending = this.#pendingAbortMessage;
+    this.#pendingAbortMessage = undefined;
+    const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
     const req = message?.req;
 
     if (req && !req.destroyed && !req[kHandle]?.upgraded) {

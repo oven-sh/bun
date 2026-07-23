@@ -570,10 +570,7 @@ impl HttpThread {
                 client.set_custom_ssl_ctx(ctx_nn);
                 // Keepalive is now supported for custom SSL contexts
                 let result = if let Some(url) = client.http_proxy.clone() {
-                    if url.protocol.is_empty()
-                        || url.protocol == b"https"
-                        || url.protocol == b"http"
-                    {
+                    if url.protocol.is_empty() || url.has_http_like_protocol() {
                         custom_context.connect(client, url.hostname, url.get_port_auto())
                     } else {
                         return Err(crate::Error::UnsupportedProxyProtocol);
@@ -589,7 +586,7 @@ impl HttpThread {
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
-                if url.protocol.is_empty() || url.protocol == b"https" || url.protocol == b"http" {
+                if url.protocol.is_empty() || url.has_http_like_protocol() {
                     return self.context::<IS_SSL>().connect(
                         client,
                         url.hostname,

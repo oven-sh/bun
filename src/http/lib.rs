@@ -5219,8 +5219,18 @@ impl<'a> HTTPClient<'a> {
                                 } else {
                                     &location[0..i]
                                 };
-                                let is_http = protocol_name == b"http";
-                                if is_http || protocol_name == b"https" {
+                                let is_http = strings::eql_case_insensitive_ascii(
+                                    protocol_name,
+                                    b"http",
+                                    true,
+                                );
+                                if is_http
+                                    || strings::eql_case_insensitive_ascii(
+                                        protocol_name,
+                                        b"https",
+                                        true,
+                                    )
+                                {
                                 } else {
                                     return Err(crate::Error::UnsupportedRedirectProtocol);
                                 }
@@ -5293,7 +5303,11 @@ impl<'a> HTTPClient<'a> {
                                     return Err(crate::Error::RedirectURLTooLong);
                                 }
 
-                                let is_http = protocol_name == b"http";
+                                let is_http = strings::eql_case_insensitive_ascii(
+                                    protocol_name,
+                                    b"http",
+                                    true,
+                                );
 
                                 if is_http {
                                     string_builder.count(b"http:");

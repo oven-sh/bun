@@ -292,6 +292,13 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
+    /// When set, `print_error_instance_body` calls this with the remapped
+    /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
+    /// so observers can read name/message/stack without re-running the
+    /// formatter. Installed by `bun test --reporter=junit` around
+    /// `run_error_handler`.
+    pub on_print_error_zig_exception: Option<fn(*mut c_void, &ZigException)>,
+    pub on_print_error_zig_exception_ctx: *mut c_void,
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
 
@@ -5602,6 +5609,9 @@ impl VirtualMachine {
         if allow_side_effects {
             if let Some(debugger) = self.debugger.as_deref_mut() {
                 debugger.lifecycle_reporter_agent.report_error(exception);
+            }
+            if let Some(cb) = self.on_print_error_zig_exception {
+                cb(self.on_print_error_zig_exception_ctx, exception);
             }
         }
 

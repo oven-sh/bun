@@ -32,6 +32,7 @@ const {
   isWeakSet,
   isWeakMap,
   isAnyArrayBuffer,
+  isSharedArrayBuffer,
 } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
 const { validateFunction } = require("internal/validators");
@@ -46,6 +47,7 @@ const NumberIsNaN = Number.isNaN;
 const ObjectAssign = Object.assign;
 const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const ReflectHas = Reflect.has;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -54,6 +56,11 @@ const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const SymbolIterator = Symbol.iterator;
+const TypedArrayPrototypeGetSymbolToStringTag = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  Symbol.toStringTag,
+)!.get!;
+const Uint8ArrayFromBuffer = (view: ArrayBufferView) => new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
 
 type nodeAssert = typeof import("node:assert");
 
@@ -376,7 +383,7 @@ function isSpecial(obj) {
   return obj == null || typeof obj !== "object" || Error.isError(obj) || isRegExp(obj) || isDate(obj);
 }
 
-const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
+const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap];
 const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
 const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
 const SafeMapPrototypeHas = SafeMap.prototype.has;
@@ -405,14 +412,27 @@ function compareBranch(actual, expected, comparedObjects?) {
     return withCycleGuard(actual, expected, comparedObjects, compareBranchMap);
   }
 
-  // Check for ArrayBuffer object equality
-  if (
-    ArrayBufferIsView(actual) ||
-    isAnyArrayBuffer(actual) ||
-    ArrayBufferIsView(expected) ||
-    isAnyArrayBuffer(expected)
-  ) {
-    return Bun.deepEquals(actual, expected, true);
+  // ArrayBufferView / ArrayBuffer: Node matches the expected bytes as an in-order
+  // subsequence of the actual bytes (isPartialArrayBufferView / isPartialUint8Array).
+  if (ArrayBufferIsView(actual) || ArrayBufferIsView(expected)) {
+    if (
+      !ArrayBufferIsView(actual) ||
+      !ArrayBufferIsView(expected) ||
+      TypedArrayPrototypeGetSymbolToStringTag.$call(actual) !== TypedArrayPrototypeGetSymbolToStringTag.$call(expected)
+    ) {
+      return false;
+    }
+    return isPartialUint8Array(Uint8ArrayFromBuffer(actual), Uint8ArrayFromBuffer(expected));
+  }
+  if (isAnyArrayBuffer(actual) || isAnyArrayBuffer(expected)) {
+    if (
+      !isAnyArrayBuffer(actual) ||
+      !isAnyArrayBuffer(expected) ||
+      isSharedArrayBuffer(actual) !== isSharedArrayBuffer(expected)
+    ) {
+      return false;
+    }
+    return isPartialUint8Array(new Uint8Array(actual), new Uint8Array(expected));
   }
 
   for (const type of typesToCallDeepStrictEqualWith) {
@@ -421,27 +441,13 @@ function compareBranch(actual, expected, comparedObjects?) {
     }
   }
 
-  // Check for Set object equality
+  // Set: every expected member must partially match a distinct actual member.
   if (isSet(actual) && isSet(expected)) {
     if (expected.size > actual.size) {
       return false; // `expected` can't be a subset if it has more elements
     }
 
-    const actualArray = ArrayFrom(SafeSetPrototypeIterator.$call(actual));
-    const expectedIterator = SafeSetPrototypeIterator.$call(expected);
-    const usedIndices = new SafeSet();
-
-    expectedIteration: for (const expectedItem of expectedIterator) {
-      for (let actualIdx = 0; actualIdx < actualArray.length; actualIdx++) {
-        if (!usedIndices.has(actualIdx) && isDeepStrictEqual(actualArray[actualIdx], expectedItem)) {
-          usedIndices.add(actualIdx);
-          continue expectedIteration;
-        }
-      }
-      return false;
-    }
-
-    return true;
+    return withCycleGuard(actual, expected, comparedObjects, compareBranchSet);
   }
 
   // The expected array must match a subsequence of the actual array, in order,
@@ -493,17 +499,73 @@ function compareBranchMap(actual, expected, comparedObjects) {
   return true;
 }
 
+function isPartialUint8Array(a, b) {
+  const lenA = a.byteLength;
+  const lenB = b.byteLength;
+  if (lenA < lenB) return false;
+  let offsetA = 0;
+  for (let offsetB = 0; offsetB < lenB; offsetB++) {
+    while (a[offsetA] !== b[offsetB]) {
+      offsetA++;
+      if (offsetA > lenA - lenB + offsetB) return false;
+    }
+    offsetA++;
+  }
+  return true;
+}
+
+function compareBranchSet(actual, expected, comparedObjects) {
+  const actualArray = ArrayFrom(SafeSetPrototypeIterator.$call(actual));
+  const expectedIterator = SafeSetPrototypeIterator.$call(expected);
+  const usedIndices = new SafeSet();
+
+  expectedIteration: for (const expectedItem of expectedIterator) {
+    for (let actualIdx = 0; actualIdx < actualArray.length; actualIdx++) {
+      if (!usedIndices.has(actualIdx) && compareBranch(actualArray[actualIdx], expectedItem, comparedObjects)) {
+        usedIndices.add(actualIdx);
+        continue expectedIteration;
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
 function compareBranchArray(actual, expected, comparedObjects) {
   let actualPos = 0;
   for (let i = 0; i < expected.length; i++) {
-    const lastCandidate = actual.length - expected.length + i;
-    while (actualPos <= lastCandidate && !compareBranch(actual[actualPos], expected[i], comparedObjects)) {
-      actualPos++;
+    let isSparse = expected[i] === undefined && !ObjectPrototypeHasOwnProperty.$call(expected, i);
+    if (isSparse) {
+      return compareBranchSparseArray(actual, expected, comparedObjects, actualPos, i);
     }
-    if (actualPos > lastCandidate) {
-      return false;
+    while (
+      !(isSparse = actual[actualPos] === undefined && !ObjectPrototypeHasOwnProperty.$call(actual, actualPos)) &&
+      !compareBranch(actual[actualPos], expected[i], comparedObjects)
+    ) {
+      actualPos++;
+      if (actualPos > actual.length - expected.length + i) return false;
+    }
+    if (isSparse) {
+      return compareBranchSparseArray(actual, expected, comparedObjects, actualPos, i);
     }
     actualPos++;
+  }
+  return true;
+}
+
+function compareBranchSparseArray(actual, expected, comparedObjects, startA, startB) {
+  let aPos = startA;
+  const keysA = ObjectKeys(actual);
+  const keysB = ObjectKeys(expected);
+  const lenB = keysB.length - startB;
+  if (keysA.length - startA < lenB) return false;
+  for (let i = 0; i < lenB; i++) {
+    const keyB = keysB[startB + i];
+    while (!compareBranch(actual[keysA[aPos]], expected[keyB], comparedObjects)) {
+      aPos++;
+      if (aPos > keysA.length - lenB + i) return false;
+    }
+    aPos++;
   }
   return true;
 }

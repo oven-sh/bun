@@ -2776,15 +2776,29 @@ pub fn cron_to_task_xml(
   <Triggers>\n",
     );
 
-    // Use semantic checks (bitfield values) not syntax flags for wildcard detection.
-    // e.g. "*/1" sets all bits just like "*" but has _is_wildcard=false.
-    let days_is_wild = cron.days == cron_parser::ALL_DAYS;
-    let weekdays_is_wild = cron.weekdays == cron_parser::ALL_WEEKDAYS;
+    // Two distinct notions of "wild" are needed here:
+    //   - Syntactic (`_is_wildcard`): was the literal `*` written? This drives the
+    //     POSIX DOM/DOW OR-vs-AND rule, so the emitted triggers match next().
+    //   - Semantic (bitfield == all): does the field cover every value? `*/1` and
+    //     `0-6` set every bit without being `*`, and a full range still fires daily.
+    let days_is_wild = cron.days_is_wildcard;
+    let weekdays_is_wild = cron.weekdays_is_wildcard;
     let months_is_wild = cron.months == cron_parser::ALL_MONTHS;
+
+    // Does the job fire every calendar day? Mirror next()'s OR/AND rule exactly:
+    // when both DOM and DOW are syntactically restricted, EITHER covering its full
+    // range means every day fires; otherwise (AND semantics) BOTH must be full.
+    let days_all = cron.days == cron_parser::ALL_DAYS;
+    let weekdays_all = cron.weekdays == cron_parser::ALL_WEEKDAYS;
+    let fires_every_day = if !days_is_wild && !weekdays_is_wild {
+        days_all || weekdays_all
+    } else {
+        days_all && weekdays_all
+    };
 
     // Try to use a single trigger with Repetition for simple repeating patterns.
     // This avoids the 48-trigger limit for high-frequency expressions.
-    // Only valid when: (a) all days/weekdays/months are wild, AND
+    // Only valid when: (a) the job fires every day of every month, AND
     // (b) the pattern is expressible as a single PT interval that doesn't drift.
     let minute_interval = compute_step_interval::<u64>(cron.minutes, 0, 59);
     let hour_interval = compute_step_interval::<u32>(cron.hours, 0, 23);
@@ -2795,8 +2809,7 @@ pub fn cron_to_task_xml(
     //   e.g. "* * * * *" → PT1M, "*/5 * * * *" → PT5M, "*/15 * * * *" → PT15M
     // Case 2: Single minute, evenly-spaced hours that divide 24
     //   e.g. "0 * * * *" → PT1H, "0 */2 * * *" → PT2H, "30 */6 * * *" → PT6H
-    let can_use_repetition = days_is_wild
-        && weekdays_is_wild
+    let can_use_repetition = fires_every_day
         && months_is_wild
         && 'blk: {
             if hours_count == 24
@@ -2869,7 +2882,13 @@ pub fn cron_to_task_xml(
     } else {
         // Complex pattern: emit CalendarTriggers for each hour×minute pair.
         // Cap at 48 triggers (Task Scheduler limit).
-        let needs_or_split = !days_is_wild && !weekdays_is_wild;
+        //
+        // The OR-split (two triggers per time: one by-day-of-month, one by-weekday)
+        // only applies when the job does NOT already fire every day. A full explicit
+        // range on both fields (e.g. `1-31` + `0-6`) fires daily by POSIX OR, so it
+        // needs a single "every day" trigger, not an OR-split — matching next() and
+        // avoiding a redundant/over-limit second trigger.
+        let needs_or_split = !days_is_wild && !weekdays_is_wild && !fires_every_day;
         let triggers_per_time: u32 = if needs_or_split { 2 } else { 1 };
         let total_triggers = minutes_count * hours_count * triggers_per_time;
         if total_triggers > 48 {
@@ -2888,44 +2907,44 @@ pub fn cron_to_task_xml(
                 let sb = buf_print(&mut sb_buf, format_args!("2000-01-01T{:02}:{:02}:00", h, m))
                     .map_err(|_| TaskXmlError::InvalidCron)?;
 
-                // Emit day-of-month trigger if needed
-                if !days_is_wild {
-                    append_calendar_trigger_with_schedule(
-                        &mut xml,
-                        sb,
-                        ScheduleType::ByMonth { cron: *cron },
-                    )?;
-                }
-
-                // Emit day-of-week trigger if needed
-                if !weekdays_is_wild {
-                    if months_is_wild {
-                        append_calendar_trigger_with_schedule(
-                            &mut xml,
-                            sb,
-                            ScheduleType::ByWeek(cron.weekdays),
-                        )?;
-                    } else {
-                        // Use ScheduleByMonthDayOfWeek to include month restrictions
-                        append_calendar_trigger_with_schedule(
-                            &mut xml,
-                            sb,
-                            ScheduleType::ByMonthDow { cron: *cron },
-                        )?;
-                    }
-                }
-
-                // Both wildcard: every day (with optional month restriction)
-                if days_is_wild && weekdays_is_wild {
+                if fires_every_day {
+                    // Every day (with optional month restriction). Covers both `*`
+                    // fields and full explicit ranges that OR to "every day".
                     if months_is_wild {
                         append_calendar_trigger_with_schedule(&mut xml, sb, ScheduleType::ByDay)?;
                     } else {
-                        // Daily but restricted months → use ScheduleByMonth with all days
                         append_calendar_trigger_with_schedule(
                             &mut xml,
                             sb,
                             ScheduleType::ByMonthAllDays(cron.months),
                         )?;
+                    }
+                } else {
+                    // Emit day-of-month trigger if the field is restricted.
+                    if !days_is_wild {
+                        append_calendar_trigger_with_schedule(
+                            &mut xml,
+                            sb,
+                            ScheduleType::ByMonth { cron: *cron },
+                        )?;
+                    }
+
+                    // Emit day-of-week trigger if the field is restricted.
+                    if !weekdays_is_wild {
+                        if months_is_wild {
+                            append_calendar_trigger_with_schedule(
+                                &mut xml,
+                                sb,
+                                ScheduleType::ByWeek(cron.weekdays),
+                            )?;
+                        } else {
+                            // Use ScheduleByMonthDayOfWeek to include month restrictions
+                            append_calendar_trigger_with_schedule(
+                                &mut xml,
+                                sb,
+                                ScheduleType::ByMonthDow { cron: *cron },
+                            )?;
+                        }
                     }
                 }
             }

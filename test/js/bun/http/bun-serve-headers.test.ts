@@ -2,6 +2,94 @@ import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import * as net from "node:net";
 
+// An empty (or whitespace-only) header value must be treated as absent for the
+// well-known headers Bun fills in automatically, so the response head carries
+// exactly one Content-Type and exactly one Date (RFC 9110 forbids duplicate
+// Content-Type; an origin server MUST send a valid Date).
+describe("empty header value does not duplicate auto-headers", () => {
+  async function rawHead(makeResponse: () => Response): Promise<string> {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      fetch: makeResponse,
+    });
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      let raw = "";
+      await new Promise<void>(resolve => {
+        socket.on("data", c => (raw += c.toString("latin1")));
+        socket.on("close", resolve);
+      });
+      return raw.split("\r\n\r\n")[0];
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  const lines = (head: string, name: string) => head.split("\r\n").filter(l => l.toLowerCase().startsWith(name + ":"));
+
+  for (const [label, value] of [
+    ["empty", ""],
+    ["whitespace", "  \t "],
+  ] as const) {
+    test(`content-type: ${label}`, async () => {
+      const head = await rawHead(() => new Response("x", { headers: { "content-type": value } }));
+      const ct = lines(head, "content-type");
+      expect(ct).toHaveLength(1);
+      expect(ct[0].toLowerCase()).toBe("content-type: text/plain;charset=utf-8");
+    });
+
+    test(`date: ${label}`, async () => {
+      const head = await rawHead(() => new Response("x", { headers: { date: value } }));
+      const date = lines(head, "date");
+      expect(date).toHaveLength(1);
+      // auto Date is a valid IMF-fixdate, never an empty value
+      expect(date[0]).toMatch(/^Date: \S/);
+      expect(Number.isFinite(new Date(date[0].slice(6)).getTime())).toBe(true);
+    });
+  }
+
+  test("headers.set('content-type', '')", async () => {
+    const head = await rawHead(() => {
+      const r = new Response("x");
+      r.headers.set("content-type", "");
+      return r;
+    });
+    const ct = lines(head, "content-type");
+    expect(ct).toHaveLength(1);
+    expect(ct[0].toLowerCase()).toBe("content-type: text/plain;charset=utf-8");
+  });
+
+  test("Response.json with empty content-type", async () => {
+    const head = await rawHead(() => Response.json({ a: 1 }, { headers: { "content-type": "" } }));
+    expect(lines(head, "content-type")).toHaveLength(1);
+  });
+
+  test("both empty at once: one of each", async () => {
+    const head = await rawHead(() => new Response("x", { headers: { "content-type": "", "date": "" } }));
+    expect(lines(head, "content-type")).toHaveLength(1);
+    expect(lines(head, "date")).toHaveLength(1);
+  });
+
+  test("non-empty user values are still preserved", async () => {
+    const head = await rawHead(
+      () => new Response("x", { headers: { "content-type": "text/html", "date": "Sun, 06 Oct 2024 13:37:01 GMT" } }),
+    );
+    expect(lines(head, "content-type")).toEqual(["Content-Type: text/html"]);
+    expect(lines(head, "date")).toEqual(["Date: Sun, 06 Oct 2024 13:37:01 GMT"]);
+  });
+
+  test("uncommon header with empty value is unaffected", async () => {
+    const head = await rawHead(() => new Response("x", { headers: { "x-custom": "", "content-type": "text/html" } }));
+    expect(lines(head, "x-custom")).toEqual(["x-custom: "]);
+    expect(lines(head, "content-type")).toEqual(["Content-Type: text/html"]);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {
   using server = Bun.serve({

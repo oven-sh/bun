@@ -795,6 +795,15 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
 
+        // FetchHeaders strips leading/trailing HTTP whitespace, so an empty value here
+        // covers `""` and whitespace-only. Treat it as absent: don't write the line and
+        // don't set the wrote-this-header state bits, so the matching auto-header (Date,
+        // Content-Type from render_metadata) is emitted exactly once instead of alongside
+        // an empty duplicate.
+        if (value.isEmpty()) {
+            continue;
+        }
+
         // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
         // Otherwise, you get this when using Fastify;
         //
@@ -1533,6 +1542,9 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
     }
 
     for (const auto& header : internalHeaders.commonHeaders()) {
+        if (header.value.isEmpty()) {
+            continue;
+        }
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
             if (!(data->state & uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
                 data->state |= uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;

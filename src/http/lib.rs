@@ -198,6 +198,12 @@ pub struct Flags {
     /// once on a fresh connection but never loops.
     pub h3_retried: bool,
     pub is_node_http_client: bool,
+    /// Set by `maybe_pause_receive` when it decrements `ACTIVE_REQUESTS_COUNT`
+    /// for a backpressure pause (JS has not pulled the buffered body yet);
+    /// cleared by `resume_receive` when it re-increments. Checked in
+    /// `on_async_http_callback_raw`'s terminal branch so a request that ends
+    /// while still paused (abort/close/GC) skips the second decrement.
+    pub released_active_slot: bool,
 }
 
 impl Default for Flags {
@@ -221,6 +227,7 @@ impl Default for Flags {
             force_http3: false,
             h3_retried: false,
             is_node_http_client: false,
+            released_active_slot: false,
         }
     }
 }
@@ -4116,6 +4123,20 @@ impl<'a> HTTPClient<'a> {
         self.state.flags.receive_paused = true;
         socket.set_timeout(0);
         let _ = socket.pause_stream();
+        // A socket parked for JS-side backpressure is no longer doing I/O, so it
+        // must not count against `MAX_SIMULTANEOUS_REQUESTS`: otherwise `max`
+        // retained-but-unread Responses permanently starve every later fetch
+        // (any origin) until GC finalizes them. `resume_receive` re-acquires
+        // the slot; the terminal callback checks `released_active_slot` so a
+        // request that ends while still paused is not double-decremented. Runs
+        // on the HTTP thread inside `tick()`, so the next loop iteration's
+        // `drain_events` observes the freed slot without an explicit wakeup.
+        if !self.flags.released_active_slot {
+            self.flags.released_active_slot = true;
+            let prev = crate::async_http::ACTIVE_REQUESTS_COUNT
+                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            debug_assert!(prev > 0);
+        }
         bun_core::scoped_log!(fetch, "pause receive {}", self.async_http_id);
     }
 
@@ -4124,6 +4145,14 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         self.state.flags.receive_paused = false;
+        // Re-acquire the slot released in `maybe_pause_receive`. Admission is
+        // one-way (the request is already in flight), so this may briefly push
+        // the count above `max`; `drain_events` only gates NEW requests on it.
+        if self.flags.released_active_slot {
+            self.flags.released_active_slot = false;
+            crate::async_http::ACTIVE_REQUESTS_COUNT
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
         if socket.is_closed() {
             return;
         }

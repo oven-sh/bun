@@ -379,3 +379,77 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
     }
   });
 });
+
+// Runs in a child so BUN_CONFIG_MAX_HTTP_REQUESTS can be capped without
+// affecting the rest of the suite. Before the fix the retain loop wedged at
+// the cap and both probes reported HUNG, even the one to a fresh origin.
+test("retained unread Responses do not starve later fetch() requests", async () => {
+  const fixture = /* js */ `
+    import { createServer } from "node:http";
+    import { once } from "node:events";
+
+    const body = Buffer.alloc(512 * 1024, 97);
+    async function mk() {
+      const s = createServer((_, w) => { w.setHeader("content-length", body.length); w.end(body); });
+      s.listen(0, "127.0.0.1");
+      await once(s, "listening");
+      return s;
+    }
+    const s1 = await mk(), s2 = await mk();
+    const O1 = "http://127.0.0.1:" + s1.address().port;
+    const O2 = "http://127.0.0.1:" + s2.address().port;
+
+    const race = (p, ms) => Promise.race([
+      p.then(v => ({ ok: true, v })),
+      new Promise(r => setTimeout(() => r({ ok: false }), ms)),
+    ]);
+
+    const hold = [];
+    let wedgedAt = 0;
+    for (let i = 1; i <= 12; i++) {
+      const r = await race(fetch(O1 + "/x" + i), 3000);
+      if (!r.ok) { wedgedAt = i; break; }
+      hold.push(r.v);
+    }
+
+    const same   = await race(fetch(O1 + "/same").then(r => r.arrayBuffer()), 3000);
+    const second = await race(fetch(O2 + "/second").then(r => r.arrayBuffer()), 3000);
+
+    // Draining a retained Response must re-acquire the slot and let the
+    // body finish so the counter stays balanced.
+    const drained = hold[0] ? (await hold[0].arrayBuffer()).byteLength : 0;
+
+    process.stdout.write(JSON.stringify({
+      wedgedAt,
+      retained: hold.length,
+      same: same.ok,
+      second: second.ok,
+      drained,
+    }));
+
+    hold.length = 0;
+    s1.closeAllConnections(); s1.close();
+    s2.closeAllConnections(); s2.close();
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "4" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    wedgedAt: 0,
+    retained: 12,
+    same: true,
+    second: true,
+    drained: 512 * 1024,
+  });
+  expect(exitCode).toBe(0);
+}, 30_000);

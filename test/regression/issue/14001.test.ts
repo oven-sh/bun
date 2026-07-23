@@ -1,4 +1,7 @@
 // https://github.com/oven-sh/bun/issues/14001
+// TextDecoder.decode DOMJIT is currently disabled (class-definitions.ts nulls DOMJIT on
+// every generated signature), so this passes on released bun too. It exists to guard the
+// exception-return protocol once that signature is re-enabled.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 

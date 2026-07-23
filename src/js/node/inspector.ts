@@ -14,17 +14,6 @@ const { isAbsolute } = require("node:path");
 // receives the plain `{ code, message }` object (Node delivers protocol
 // errors as plain objects, not Error instances).
 const kProtocolError = Symbol("kProtocolError");
-// Protocol errors from paths added with the in-process backend follow
-// node's contract: delivered to the callback, unobservable without one.
-// Legacy locally-handled methods (Profiler.*, DOMStorage.*) keep Bun's
-// pre-existing sync-throw extension, pinned by tests since before this
-// backend existed.
-const kCallbackOnlyError = Symbol("kCallbackOnlyError");
-function callbackOnlyCommandError(message: string) {
-  const error = $ERR_INSPECTOR_COMMAND(message);
-  error[kCallbackOnlyError] = true;
-  return error;
-}
 // #handleMethod return marker: the method is not handled locally and must be
 // dispatched through the in-process CDP backend by post().
 const kInProcess = Symbol("kInProcess");
@@ -1255,7 +1244,7 @@ class Session extends EventEmitter {
     // keep Node's method-not-found protocol error instead.
     if (result === kInProcess) {
       if (!Bun.isMainThread) {
-        result = callbackOnlyCommandError(`-32601: '${method}' wasn't found`);
+        result = $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
       } else {
         // Node's post() is asynchronous: with a callback the reply arrives
         // through it; without one nothing is returned and a protocol error
@@ -1312,7 +1301,7 @@ class Session extends EventEmitter {
         const state = networkEnabledSessions.$get(this);
         const requestId = (params as any)?.requestId;
         const entry = state?.requests.$get(requestId);
-        if (state === undefined || entry === undefined) return callbackOnlyCommandError("-32602: Request not found");
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
         entry.isStreaming = true;
         const buffered = concatBlobs(entry.responseDataBlobs);
         entry.bufferSize -= buffered.byteLength;
@@ -1326,9 +1315,9 @@ class Session extends EventEmitter {
         const state = networkEnabledSessions.$get(this);
         const requestId = (params as any)?.requestId;
         const entry = state?.requests.$get(requestId);
-        if (state === undefined || entry === undefined) return callbackOnlyCommandError("-32602: Request not found");
-        if (entry.isStreaming) return callbackOnlyCommandError("-32602: Response body of the request is been streamed");
-        if (!entry.isResponseFinished) return callbackOnlyCommandError("-32602: Response data is not finished yet");
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        if (entry.isStreaming) return $ERR_INSPECTOR_COMMAND("-32602: Response body of the request is been streamed");
+        if (!entry.isResponseFinished) return $ERR_INSPECTOR_COMMAND("-32602: Response data is not finished yet");
         const body = concatBlobs(entry.responseDataBlobs);
         dropNetworkEntry(state, requestId, entry);
         if (entry.responseIsUTF8) return { body: Buffer.from(body).toString("utf8"), base64Encoded: false };
@@ -1339,9 +1328,9 @@ class Session extends EventEmitter {
         const state = networkEnabledSessions.$get(this);
         const requestId = (params as any)?.requestId;
         const entry = state?.requests.$get(requestId);
-        if (state === undefined || entry === undefined) return callbackOnlyCommandError("-32602: Request not found");
-        if (!entry.isRequestFinished) return callbackOnlyCommandError("-32602: Request data is not finished yet");
-        if (!entry.requestIsUTF8) return callbackOnlyCommandError("-32000: Unable to serialize binary request body");
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        if (!entry.isRequestFinished) return $ERR_INSPECTOR_COMMAND("-32602: Request data is not finished yet");
+        if (!entry.requestIsUTF8) return $ERR_INSPECTOR_COMMAND("-32000: Unable to serialize binary request body");
         return { postData: Buffer.from(concatBlobs(entry.requestDataBlobs)).toString("utf8") };
       }
 
@@ -1489,7 +1478,7 @@ class Session extends EventEmitter {
         // like every other protocol error.
         const wt = require("node:worker_threads");
         if (wt.isMainThread) {
-          return callbackOnlyCommandError("-32000: NodeWorker.enable is not supported on the main thread yet");
+          return $ERR_INSPECTOR_COMMAND("-32000: NodeWorker.enable is not supported on the main thread yet");
         }
         const title = `[worker ${wt.threadId}] ${wt.threadName}`;
         const workerInfo = { workerId: String(wt.threadId), type: "worker", title };

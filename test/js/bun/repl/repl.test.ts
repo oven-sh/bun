@@ -1664,33 +1664,43 @@ describe.concurrent("--interactive", () => {
 });
 
 // ts-node does `require("repl")` at import time but only touches
-// repl.start/repl.Recoverable inside createRepl(); the implementation is
-// deferred so that bare require stays near-free.
-test("require('node:repl') is lazy until an export is read", async () => {
+// repl.start/repl.Recoverable inside createRepl(); those (plus the REPL_MODE
+// symbols and isValidSyntax) are data properties so the destructure is free,
+// and only calling start() or reading REPLServer/writer loads the body.
+test("require('node:repl') is hollow until start() or REPLServer is used", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
         const repl = require("node:repl");
-        const d = Object.getOwnPropertyDescriptor(repl, "start");
+        const shape = n => "value" in Object.getOwnPropertyDescriptor(repl, n) ? "data" : "accessor";
         console.log(JSON.stringify({
           keys: Object.keys(repl).sort(),
-          startIsGetter: typeof d.get === "function" && !("value" in d),
+          desc: {
+            start: shape("start"),
+            Recoverable: shape("Recoverable"),
+            REPL_MODE_SLOPPY: shape("REPL_MODE_SLOPPY"),
+            isValidSyntax: shape("isValidSyntax"),
+            REPLServer: shape("REPLServer"),
+            writer: shape("writer"),
+          },
         }));
-        // Reading an export runs the implementation exactly once.
-        const types = {
-          start: typeof repl.start,
-          Recoverable: typeof repl.Recoverable,
-          REPLServer: typeof repl.REPLServer,
-          REPL_MODE_SLOPPY: typeof repl.REPL_MODE_SLOPPY,
-          writer: typeof repl.writer,
-        };
-        console.log(JSON.stringify(types));
-        // Writable: Node lets repl.repl be reassigned.
+        // Reading the cheap five must not throw and must not require readline.
+        const {start, Recoverable, REPL_MODE_SLOPPY, REPL_MODE_STRICT, isValidSyntax} = repl;
+        console.log(JSON.stringify({
+          start: typeof start,
+          Recoverable: typeof Recoverable,
+          REPL_MODE_SLOPPY: typeof REPL_MODE_SLOPPY,
+          isValidSyntax: typeof isValidSyntax,
+        }));
+        console.log("recoverable-is-error=" + (new Recoverable(new SyntaxError("m")) instanceof SyntaxError));
+        // Now force the full load and check REPLServer is real.
+        console.log("REPLServer=" + typeof repl.REPLServer);
+        // Recoverable identity: the one exposed before load is the one the impl uses.
+        console.log("same-Recoverable=" + (repl.Recoverable === Recoverable));
         repl.repl = "x";
         console.log("repl.repl=" + repl.repl);
-        console.log("recoverable-is-error=" + (new repl.Recoverable(new SyntaxError("m")) instanceof SyntaxError));
       `,
     ],
     env: bunEnv,
@@ -1711,17 +1721,25 @@ test("require('node:repl') is lazy until an export is read", async () => {
       "start",
       "writer",
     ],
-    startIsGetter: true,
+    desc: {
+      start: "data",
+      Recoverable: "data",
+      REPL_MODE_SLOPPY: "data",
+      isValidSyntax: "data",
+      REPLServer: "accessor",
+      writer: "accessor",
+    },
   });
   expect(JSON.parse(lines[1])).toEqual({
     start: "function",
     Recoverable: "function",
-    REPLServer: "function",
     REPL_MODE_SLOPPY: "symbol",
-    writer: "function",
+    isValidSyntax: "function",
   });
-  expect(lines[2]).toBe("repl.repl=x");
-  expect(lines[3]).toBe("recoverable-is-error=true");
+  expect(lines[2]).toBe("recoverable-is-error=true");
+  expect(lines[3]).toBe("REPLServer=function");
+  expect(lines[4]).toBe("same-Recoverable=true");
+  expect(lines[5]).toBe("repl.repl=x");
   expect(exitCode).toBe(0);
 });
 
@@ -1821,6 +1839,30 @@ describe.concurrent("node:repl process-global side effects", () => {
       const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
       r.on("exit", () => { console.log(buf); process.exit(0); });
       inp.write("RegExp.prototype[Symbol.split] = () => { throw 0 }\\n");
+      inp.write("oops\\n");
+      inp.write("1+1\\n");
+      inp.end();
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("Uncaught ReferenceError");
+      expect(stdout).toContain("> 2");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  test(
+    "REPL survives a tampered RegExp.prototype[Symbol.replace]",
+    async () => {
+      const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const inp = new PassThrough(), out = new PassThrough();
+      let buf = ""; out.on("data", d => buf += d);
+      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
+      r.on("exit", () => { console.log(buf); process.exit(0); });
+      inp.write("RegExp.prototype[Symbol.replace] = () => { throw 0 }\\n");
       inp.write("oops\\n");
       inp.write("1+1\\n");
       inp.end();

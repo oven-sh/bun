@@ -391,8 +391,9 @@ class ReusePortHandle {
     if (!this.workers.has(worker.id)) return false;
     this.workers.delete(worker.id);
     if (this.workers.size !== 0) return false;
-    if (this.handle) {
-      this.handle.close();
+    const { handle } = this;
+    if (handle) {
+      handle.close();
       this.#settle();
     }
     return true;

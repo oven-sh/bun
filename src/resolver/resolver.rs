@@ -1948,6 +1948,49 @@ impl<'a> Resolver<'a> {
         }
 
         if check_package {
+            // Check for external packages first, so that `--external` wins
+            // over the node builtin browser polyfills below.
+            if self.opts.external.node_modules.count() > 0
+            // Imports like "process/" need to resolve to the filesystem, not a builtin
+            && !import_path.ends_with(b"/")
+            {
+                let mut query = import_path;
+                loop {
+                    // Marking "zlib" as external also applies to "node:zlib",
+                    // since both resolve to the same builtin.
+                    if self.opts.external.node_modules.contains(query)
+                        || (query.starts_with(b"node:")
+                            && self
+                                .opts
+                                .external
+                                .node_modules
+                                .contains(&query[b"node:".len()..]))
+                    {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "The path \"{}\" was marked as external by the user",
+                                bstr::BStr::new(query)
+                            ));
+                        }
+                        return ResultUnion::Success(Result {
+                            path_pair: PathPair {
+                                primary: Path::init(query),
+                                secondary: None,
+                            },
+                            flags: ResultFlags::IS_EXTERNAL,
+                            ..Default::default()
+                        });
+                    }
+
+                    // If the module "foo" has been marked as external, we also want to treat
+                    // paths into that module such as "foo/bar" as external too.
+                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
+                        break;
+                    };
+                    query = &query[0..slash];
+                }
+            }
+
             if self.opts.polyfill_node_globals {
                 result.jsx = self.opts.jsx.clone();
                 let had_node_prefix = import_path.starts_with(b"node:");
@@ -2002,39 +2045,6 @@ impl<'a> Resolver<'a> {
                     result.flags.set_is_from_node_modules(true);
                     result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
                     return ResultUnion::Success(result);
-                }
-            }
-
-            // Check for external packages first
-            if self.opts.external.node_modules.count() > 0
-            // Imports like "process/" need to resolve to the filesystem, not a builtin
-            && !import_path.ends_with(b"/")
-            {
-                let mut query = import_path;
-                loop {
-                    if self.opts.external.node_modules.contains(query) {
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "The path \"{}\" was marked as external by the user",
-                                bstr::BStr::new(query)
-                            ));
-                        }
-                        return ResultUnion::Success(Result {
-                            path_pair: PathPair {
-                                primary: Path::init(query),
-                                secondary: None,
-                            },
-                            flags: ResultFlags::IS_EXTERNAL,
-                            ..Default::default()
-                        });
-                    }
-
-                    // If the module "foo" has been marked as external, we also want to treat
-                    // paths into that module such as "foo/bar" as external too.
-                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                        break;
-                    };
-                    query = &query[0..slash];
                 }
             }
 

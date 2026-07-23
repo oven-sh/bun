@@ -222,7 +222,6 @@ describe("bundler", () => {
     },
   });
   itBundled("browser/NodePolyfillExternal", {
-    todo: true,
     skipOnEsbuild: true,
     files: {
       "/entry.js": NodePolyfills.options.files["/entry.js"],
@@ -238,6 +237,25 @@ describe("bundler", () => {
           path: "node:" + x,
         })),
       );
+    },
+  });
+
+  itBundled("browser/NodePolyfillExternalNodePrefix#35210", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function go(data) {
+          const { deflateSync } = await import("node:zlib");
+          return new Uint8Array(deflateSync(data));
+        }
+      `,
+    },
+    target: "browser",
+    external: ["node:zlib"],
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([{ kind: "dynamic-import", path: "node:zlib" }]);
     },
   });
 

@@ -34,11 +34,11 @@ extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const Bu
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 
 #if !OS(WINDOWS)
-extern "C" bool Bun__Process__getOSEnv(const BunString* name, BunString* out);
+extern "C" bool Bun__Process__getOSEnv(JSGlobalObject* globalObject, const BunString* name, BunString* out);
 extern "C" void Bun__Process__setOSEnv(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" void Bun__Process__unsetOSEnv(JSGlobalObject* globalObject, const BunString* name);
 extern "C" void Bun__Process__enumerateOSEnv(void* ctx, void (*cb)(void*, const unsigned char*, size_t));
-extern "C" void Bun__Process__seedOSEnvFromMap(JSGlobalObject* globalObject);
+extern "C" void Bun__Process__initOSEnvOverlay(JSGlobalObject* globalObject);
 #endif
 
 namespace Bun {
@@ -762,10 +762,12 @@ bool JSRealEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
     String keyStr = String(uid);
     BunString name = Bun::toString(keyStr);
     BunString value = { BunStringTag::Dead };
-    if (!Bun__Process__getOSEnv(&name, &value))
+    if (!Bun__Process__getOSEnv(globalObject, &name, &value))
         return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 
-    slot.setValue(object, 0, jsString(vm, value.toWTFString(BunString::ZeroCopy)));
+    // Bun__Process__getOSEnv writes an owned clone_utf8 (WTFStringImpl at +1);
+    // transferToWTFString adopts it, toWTFString(ZeroCopy) would ref and leak.
+    slot.setValue(object, 0, jsString(vm, value.transferToWTFString()));
     return true;
 }
 
@@ -835,8 +837,8 @@ bool JSRealEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObj
             String keyStr = String(uid);
             BunString name = Bun::toString(keyStr);
             BunString existing = { BunStringTag::Dead };
-            if (Bun__Process__getOSEnv(&name, &existing))
-                object->putDirect(vm, propertyName, jsString(vm, existing.toWTFString(BunString::ZeroCopy)), 0);
+            if (Bun__Process__getOSEnv(globalObject, &name, &existing))
+                object->putDirect(vm, propertyName, jsString(vm, existing.transferToWTFString()), 0);
             Bun__Process__unsetOSEnv(globalObject, &name);
         }
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
@@ -955,8 +957,10 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     // copy, not the RealEnvStore).
     auto* context = globalObject->scriptExecutionContext();
     if (context && context->isMainThread()) {
-        // Push `.env`-file values into environ so getenv() is the single source of truth.
-        Bun__Process__seedOSEnvFromMap(globalObject);
+        // Record which DotEnv-map keys are `.env`-only so reads can fall back
+        // to the map for them without masking a native unsetenv of a real
+        // environ var.
+        Bun__Process__initOSEnvOverlay(globalObject);
         auto* structure = JSRealEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
         return JSRealEnvMap::create(vm, structure);
     }

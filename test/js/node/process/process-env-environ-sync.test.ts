@@ -6,10 +6,10 @@
 // POSIX only: Windows already routes JS->OS through SetEnvironmentVariableW
 // and has no libc `environ` contract to test against via bun:ffi.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, libcPathForDlopen } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, libcPathForDlopen } from "harness";
 
 describe.skipIf(!isPosix)("process.env <-> libc environ on the main thread", () => {
-  const libc = JSON.stringify(libcPathForDlopen());
+  const libc = JSON.stringify(isPosix ? libcPathForDlopen() : "");
   const ffiPrelude = `
     const { dlopen } = require("bun:ffi");
     const libc = dlopen(${libc}, {
@@ -111,6 +111,35 @@ describe.skipIf(!isPosix)("process.env <-> libc environ on the main thread", () 
     `,
     );
     expect(out).toEqual({ a: true, b: false, c: false });
+  });
+
+  // Every process.env.X read allocates a fresh WTFStringImpl from getenv();
+  // the C++ side must adopt (transferToWTFString), not ref-and-leak. With a
+  // 4KB value the leaked case is ~80MB here; the fixed case is the per-read
+  // transient-allocation overhead only (value-size-independent).
+  test.concurrent("reading process.env in a tight loop does not leak", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.env.ENVSYNC_LEAK = Buffer.alloc(4096, "x").toString();
+         for (let i = 0; i < 5000; i++) process.env.ENVSYNC_LEAK;
+         Bun.gc(true);
+         const before = process.memoryUsage().rss;
+         for (let i = 0; i < 20000; i++) process.env.ENVSYNC_LEAK;
+         Bun.gc(true);
+         const after = process.memoryUsage().rss;
+         console.log(JSON.stringify({ deltaMB: (after - before) / 1024 / 1024 }));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { deltaMB } = JSON.parse(stdout);
+    const threshold = isASAN || isDebug ? 40 : 20;
+    expect(deltaMB).toBeLessThan(threshold);
   });
 });
 

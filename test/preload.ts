@@ -10,6 +10,10 @@ for (let key in process.env) {
 
 for (let key in harness.bunEnv) {
   if (key === "TZ") continue;
+  // process.env writes now reach setenv(); a spawned child that passed
+  // CI=false to exercise test.only() would otherwise be overwritten to CI=1
+  // here and is_ci() (which reads getenv) would flip back.
+  if (key === "CI" && process.env.CI !== undefined) continue;
   if (harness.bunEnv[key] === undefined) continue;
   process.env[key] = harness.bunEnv[key] + "";
 }

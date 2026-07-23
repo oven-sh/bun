@@ -308,6 +308,159 @@ describe("Script", () => {
       message: "Class constructor Script cannot be invoked without 'new'",
     });
   });
+
+  test("can specify displayErrors", () => {
+    const src = 'throw new Error("boom")';
+    // displayErrors: false — no source-line/caret decoration on the stack.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("boom");
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+    // displayErrors: true (default) — stack is decorated with the source line.
+    try {
+      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: true });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).toMatch(/^t\.vm:1\nthrow new Error/);
+    }
+    // Same for runInContext.
+    try {
+      new Script(src, { filename: "t.vm" }).runInContext(createContext({}), { displayErrors: false });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
+    }
+  });
+  test("throws SyntaxError at construction like Node", () => {
+    // Node's vm.Script parses eagerly; the REPL depends on this.
+    expect(() => new Script("function {")).toThrow(SyntaxError);
+    expect(() => new Script("const x = ")).toThrow(SyntaxError);
+  });
+  test("compile-time SyntaxError has arrow-decorated stack (Node DecorateErrorStack)", () => {
+    // Node prepends `<url>:<line>\n<source>\n^\n\n` to compile-time SyntaxErrors
+    // from `new vm.Script`, unconditionally (independent of displayErrors).
+    for (const opts of [undefined, { displayErrors: true }, { displayErrors: false }]) {
+      let err: any;
+      try {
+        new Script("%%", opts);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+    }
+
+    // Custom filename + lineOffset: reported line is offset-adjusted, source
+    // line and caret still come from the physical position.
+    let err: any;
+    try {
+      new Script("1;\n%%", { filename: "foo.js", lineOffset: 5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["foo.js:7", "%%", "^", ""]);
+
+    // Negative lineOffset: Node renders a signed line, still with source + caret.
+    // JSC clamps a negative provider start line to zero, so the offset is
+    // re-applied to the physical line when building the header.
+    err = undefined;
+    try {
+      new Script("1;\n%%", { lineOffset: -5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:-3", "%%", "^", ""]);
+
+    // columnOffset on line 1 is subtracted from the caret; on later lines it
+    // is not (Node applies it only to the first physical line).
+    err = undefined;
+    try {
+      new Script("   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "   %%", "   ^", ""]);
+
+    err = undefined;
+    try {
+      new Script("1;\n   %%", { columnOffset: 10 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
+  });
+
+  test("vm.compileFunction compile-time SyntaxError is arrow-decorated like new Script", () => {
+    // Node decorates both compile paths, but compileFunction defaults filename to
+    // "" where new Script defaults to "evalmachine.<anonymous>". An explicitly
+    // empty filename is honored by both and renders as ":<line>".
+    const header = (fn: () => unknown) => {
+      let err: any;
+      try {
+        fn();
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      return err.stack.split("\n").slice(0, 4);
+    };
+
+    expect(header(() => compileFunction("%%"))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], {}))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], { filename: "" }))).toEqual([":1", "%%", "^", ""]);
+    expect(header(() => compileFunction("%%", [], { filename: "foo.js" }))).toEqual(["foo.js:1", "%%", "^", ""]);
+    expect(header(() => compileFunction("1;\n%%", [], { filename: "f.js", lineOffset: 5 }))).toEqual([
+      "f.js:7",
+      "%%",
+      "^",
+      "",
+    ]);
+    expect(header(() => compileFunction("1;\n%%", [], { lineOffset: -5 }))).toEqual([":-3", "%%", "^", ""]);
+
+    // An explicitly empty filename is not the same as an absent one.
+    expect(header(() => new Script("%%", { filename: "" }))).toEqual([":1", "%%", "^", ""]);
+
+    // The string-options form counts as "provided" too, "" included.
+    expect(header(() => new Script("%%", "myfile.js"))).toEqual(["myfile.js:1", "%%", "^", ""]);
+    expect(header(() => new Script("%%", ""))).toEqual([":1", "%%", "^", ""]);
+  });
+
+  test("a throwing Error.prepareStackTrace does not escape the compile-time SyntaxError", () => {
+    // Building the error materializes its stack, running a user
+    // prepareStackTrace; if that throws, the SyntaxError must still be what is
+    // thrown (node does the same) and the arrow header must survive.
+    const prev = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom-from-prepareStackTrace");
+    };
+    try {
+      let err: any;
+      try {
+        new Script("%%");
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Unexpected token '%'");
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+
+      // Same eager-materialization path via vm.compileFunction.
+      let fnErr: any;
+      try {
+        compileFunction("%%");
+      } catch (e) {
+        fnErr = e;
+      }
+      expect(fnErr).toBeInstanceOf(SyntaxError);
+      expect(fnErr.message).toBe("Unexpected token '%'");
+      expect(fnErr.stack.split("\n").slice(0, 4)).toEqual([":1", "%%", "^", ""]);
+    } finally {
+      Error.prepareStackTrace = prev;
+    }
+  });
 });
 
 type TestRunInContextArg =
@@ -524,159 +677,6 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   test.todo("can specify columnOffset", () => {
     //
   });
-  test("can specify displayErrors", () => {
-    const src = 'throw new Error("boom")';
-    // displayErrors: false — no source-line/caret decoration on the stack.
-    try {
-      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: false });
-      expect.unreachable();
-    } catch (e: any) {
-      expect(e.message).toBe("boom");
-      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
-    }
-    // displayErrors: true (default) — stack is decorated with the source line.
-    try {
-      new Script(src, { filename: "t.vm" }).runInThisContext({ displayErrors: true });
-      expect.unreachable();
-    } catch (e: any) {
-      expect(e.stack).toMatch(/^t\.vm:1\nthrow new Error/);
-    }
-    // Same for runInContext.
-    try {
-      new Script(src, { filename: "t.vm" }).runInContext(createContext({}), { displayErrors: false });
-      expect.unreachable();
-    } catch (e: any) {
-      expect(e.stack).not.toMatch(/^t\.vm:1\n/);
-    }
-  });
-  test("throws SyntaxError at construction like Node", () => {
-    // Node's vm.Script parses eagerly; the REPL depends on this.
-    expect(() => new Script("function {")).toThrow(SyntaxError);
-    expect(() => new Script("const x = ")).toThrow(SyntaxError);
-  });
-  test("compile-time SyntaxError has arrow-decorated stack (Node DecorateErrorStack)", () => {
-    // Node prepends `<url>:<line>\n<source>\n^\n\n` to compile-time SyntaxErrors
-    // from `new vm.Script`, unconditionally (independent of displayErrors).
-    for (const opts of [undefined, { displayErrors: true }, { displayErrors: false }]) {
-      let err: any;
-      try {
-        new Script("%%", opts);
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(SyntaxError);
-      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
-    }
-
-    // Custom filename + lineOffset: reported line is offset-adjusted, source
-    // line and caret still come from the physical position.
-    let err: any;
-    try {
-      new Script("1;\n%%", { filename: "foo.js", lineOffset: 5 });
-    } catch (e) {
-      err = e;
-    }
-    expect(err.stack.split("\n").slice(0, 4)).toEqual(["foo.js:7", "%%", "^", ""]);
-
-    // Negative lineOffset: Node renders a signed line, still with source + caret.
-    // JSC clamps a negative provider start line to zero, so the offset is
-    // re-applied to the physical line when building the header.
-    err = undefined;
-    try {
-      new Script("1;\n%%", { lineOffset: -5 });
-    } catch (e) {
-      err = e;
-    }
-    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:-3", "%%", "^", ""]);
-
-    // columnOffset on line 1 is subtracted from the caret; on later lines it
-    // is not (Node applies it only to the first physical line).
-    err = undefined;
-    try {
-      new Script("   %%", { columnOffset: 10 });
-    } catch (e) {
-      err = e;
-    }
-    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "   %%", "   ^", ""]);
-
-    err = undefined;
-    try {
-      new Script("1;\n   %%", { columnOffset: 10 });
-    } catch (e) {
-      err = e;
-    }
-    expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
-  });
-
-  test("vm.compileFunction compile-time SyntaxError is arrow-decorated like new Script", () => {
-    // Node decorates both compile paths, but compileFunction defaults filename to
-    // "" where new Script defaults to "evalmachine.<anonymous>". An explicitly
-    // empty filename is honored by both and renders as ":<line>".
-    const header = (fn: () => unknown) => {
-      let err: any;
-      try {
-        fn();
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(SyntaxError);
-      return err.stack.split("\n").slice(0, 4);
-    };
-
-    expect(header(() => compileFunction("%%"))).toEqual([":1", "%%", "^", ""]);
-    expect(header(() => compileFunction("%%", [], {}))).toEqual([":1", "%%", "^", ""]);
-    expect(header(() => compileFunction("%%", [], { filename: "" }))).toEqual([":1", "%%", "^", ""]);
-    expect(header(() => compileFunction("%%", [], { filename: "foo.js" }))).toEqual(["foo.js:1", "%%", "^", ""]);
-    expect(header(() => compileFunction("1;\n%%", [], { filename: "f.js", lineOffset: 5 }))).toEqual([
-      "f.js:7",
-      "%%",
-      "^",
-      "",
-    ]);
-    expect(header(() => compileFunction("1;\n%%", [], { lineOffset: -5 }))).toEqual([":-3", "%%", "^", ""]);
-
-    // An explicitly empty filename is not the same as an absent one.
-    expect(header(() => new Script("%%", { filename: "" }))).toEqual([":1", "%%", "^", ""]);
-
-    // The string-options form counts as "provided" too, "" included.
-    expect(header(() => new Script("%%", "myfile.js"))).toEqual(["myfile.js:1", "%%", "^", ""]);
-    expect(header(() => new Script("%%", ""))).toEqual([":1", "%%", "^", ""]);
-  });
-
-  test("a throwing Error.prepareStackTrace does not escape the compile-time SyntaxError", () => {
-    // Building the error materializes its stack, running a user
-    // prepareStackTrace; if that throws, the SyntaxError must still be what is
-    // thrown (node does the same) and the arrow header must survive.
-    const prev = Error.prepareStackTrace;
-    Error.prepareStackTrace = () => {
-      throw new Error("boom-from-prepareStackTrace");
-    };
-    try {
-      let err: any;
-      try {
-        new Script("%%");
-      } catch (e) {
-        err = e;
-      }
-      expect(err).toBeInstanceOf(SyntaxError);
-      expect(err.message).toBe("Unexpected token '%'");
-      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
-
-      // Same eager-materialization path via vm.compileFunction.
-      let fnErr: any;
-      try {
-        compileFunction("%%");
-      } catch (e) {
-        fnErr = e;
-      }
-      expect(fnErr).toBeInstanceOf(SyntaxError);
-      expect(fnErr.message).toBe("Unexpected token '%'");
-      expect(fnErr.stack.split("\n").slice(0, 4)).toEqual([":1", "%%", "^", ""]);
-    } finally {
-      Error.prepareStackTrace = prev;
-    }
-  });
-
   test.todo("can specify timeout", () => {
     //
   });

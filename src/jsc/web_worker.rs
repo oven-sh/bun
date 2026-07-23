@@ -1001,6 +1001,13 @@ impl WebWorker {
 
         // SAFETY: see post-publish note above.
         unsafe {
+            // The main-thread entry points (run/test/repl) set this before
+            // configure_defines(); without it the worker's transpiler inherits
+            // the `Target::Bun` default of LoadAll and inlines `process.env.X`
+            // as a string literal from the cloned DotEnv map, so a worker
+            // spawned with `env: {X: "v"}` reads the *parent's* value instead.
+            (*vm).transpiler.options.env.behavior =
+                bun_dotenv::DotEnvBehavior::LoadAllWithoutInlining;
             if (*vm).transpiler.configure_defines().is_err() {
                 // Fall through to spin() → shutdown() for full teardown under
                 // the API lock (flushLogs runs JS). Set terminate so spin()

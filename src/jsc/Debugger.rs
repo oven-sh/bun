@@ -430,6 +430,7 @@ impl Debugger {
         // `init` installs the freshly-boxed VM as this thread's singleton.
         let vm = VirtualMachine::get().as_mut();
 
+        vm.transpiler.options.env.behavior = bun_dotenv::DotEnvBehavior::LoadAllWithoutInlining;
         vm.transpiler
             .configure_defines()
             .unwrap_or_else(|_| panic!("Failed to configure defines"));

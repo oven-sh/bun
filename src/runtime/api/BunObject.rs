@@ -2302,6 +2302,174 @@ pub mod environment_variables {
         let value = vm.env_loader().get(sliced.slice())?;
         Some(ZigString::init_utf8(value))
     }
+
+    // ─────────────────── live libc `environ` bridge (POSIX) ───────────────────
+    //
+    // Node's main-thread `process.env` is its RealEnvStore: every get/set/
+    // delete/enumerate is a live getenv/setenv/unsetenv/environ call. Bun's
+    // `process.env` previously sat on the DotEnv snapshot taken at startup, so
+    // a native library's `getenv()` never observed a JS write and a native
+    // `setenv()` never reached `process.env`.
+    //
+    // glibc's setenv/unsetenv are not thread-safe and getenv races with them;
+    // Node serializes through `per_process::env_var_mutex`. We do the same so
+    // two JS threads (main + a worker holding a main-rooted SHARE_ENV store)
+    // cannot corrupt `environ`. A user FFI `setenv` that bypasses this lock is
+    // outside our control, same as in Node.
+
+    #[cfg(not(windows))]
+    static ENVIRON_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
+
+    /// NUL-terminate `s` into `buf`, rejecting embedded NULs (libc would
+    /// truncate at them and a later getenv would read back a different value).
+    #[cfg(not(windows))]
+    fn make_cstr(buf: &mut Vec<u8>, s: &[u8]) -> Option<*const core::ffi::c_char> {
+        if bun_core::strings::index_of_char(s, 0).is_some() {
+            return None;
+        }
+        buf.clear();
+        buf.reserve(s.len() + 1);
+        buf.extend_from_slice(s);
+        buf.push(0);
+        Some(buf.as_ptr().cast())
+    }
+
+    /// Live `getenv()` under the environ lock. On success writes an owned
+    /// `BunString` (`clone_utf8`) the C++ side consumes into a `WTF::String`.
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__getOSEnv(
+        name: &BunString,
+        out: &mut core::mem::MaybeUninit<BunString>,
+    ) -> bool {
+        let name_slice = name.to_utf8();
+        let mut name_buf = Vec::new();
+        let Some(name_c) = make_cstr(&mut name_buf, name_slice.slice()) else {
+            return false;
+        };
+        let _guard = ENVIRON_LOCK.lock();
+        // SAFETY: name_c is NUL-terminated; getenv reads until NUL. The returned
+        // pointer borrows the env block and is only valid while the lock is held.
+        let p = unsafe { libc::getenv(name_c) };
+        if p.is_null() {
+            return false;
+        }
+        // SAFETY: getenv returns a NUL-terminated string.
+        let bytes = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
+        out.write(BunString::clone_utf8(bytes));
+        true
+    }
+
+    /// Apply a JS `process.env` write to both libc `environ` (so native
+    /// `getenv` observes it) and the DotEnv map (so Bun-internal consumers
+    /// like `Bun.spawn` without `env:` and `Bun.which` observe it).
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__setOSEnv(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &BunString,
+    ) {
+        let name_slice = name.to_utf8();
+        let value_slice = value.to_utf8();
+        let name_bytes = name_slice.slice();
+        if name_bytes.is_empty() {
+            return;
+        }
+        let mut name_buf = Vec::new();
+        let mut value_buf = Vec::new();
+        let (Some(name_c), Some(value_c)) = (
+            make_cstr(&mut name_buf, name_bytes),
+            make_cstr(&mut value_buf, value_slice.slice()),
+        ) else {
+            return;
+        };
+        {
+            let _guard = ENVIRON_LOCK.lock();
+            // SAFETY: both pointers are NUL-terminated for the duration of the call.
+            unsafe { libc::setenv(name_c, value_c, 1) };
+        }
+        let vm = global_object.bun_vm().as_mut();
+        let env_map = &mut *vm.transpiler.env_mut().map;
+        bun_core::handle_oom(env_map.put(name_bytes, value_slice.slice()));
+    }
+
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__unsetOSEnv(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+    ) {
+        let name_slice = name.to_utf8();
+        let name_bytes = name_slice.slice();
+        let mut name_buf = Vec::new();
+        let Some(name_c) = make_cstr(&mut name_buf, name_bytes) else {
+            return;
+        };
+        {
+            let _guard = ENVIRON_LOCK.lock();
+            // SAFETY: name_c is NUL-terminated for the duration of the call.
+            unsafe { libc::unsetenv(name_c) };
+        }
+        let vm = global_object.bun_vm().as_mut();
+        let env_map = &mut *vm.transpiler.env_mut().map;
+        env_map.remove(name_bytes);
+    }
+
+    /// Walk live `environ` and yield each key to `cb`. Keys are copied out
+    /// under the lock so a concurrent `setenv` cannot invalidate a pointer
+    /// mid-callback.
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__enumerateOSEnv(
+        ctx: *mut core::ffi::c_void,
+        cb: extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
+    ) {
+        let keys: Vec<Box<[u8]>> = {
+            let _guard = ENVIRON_LOCK.lock();
+            bun_sys::environ()
+                .iter()
+                .filter_map(|&entry| {
+                    // SAFETY: environ entries are NUL-terminated C strings.
+                    let line = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
+                    let eq = bun_core::strings::index_of_char(line, b'=')? as usize;
+                    (eq > 0).then(|| Box::<[u8]>::from(&line[..eq]))
+                })
+                .collect()
+        };
+        for key in &keys {
+            cb(ctx, key.as_ptr(), key.len());
+        }
+    }
+
+    /// Seed `environ` with any DotEnv-map entries that are not already present
+    /// (i.e. values from `.env` files), so `getenv()` becomes the single source
+    /// of truth for the main-thread `process.env` and native libraries observe
+    /// `.env` values. Called once when the main-thread env object is created.
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__seedOSEnvFromMap(global_object: &JSGlobalObject) {
+        let vm = global_object.bun_vm().as_mut();
+        let env_map = &mut *vm.transpiler.env_mut().map;
+        let mut name_buf = Vec::new();
+        let mut value_buf = Vec::new();
+        let _guard = ENVIRON_LOCK.lock();
+        let mut it = env_map.map.iterator();
+        while let Some(pair) = it.next() {
+            let Some(name_c) = make_cstr(&mut name_buf, pair.key_ptr) else {
+                continue;
+            };
+            // SAFETY: name_c is NUL-terminated.
+            if !unsafe { libc::getenv(name_c) }.is_null() {
+                continue;
+            }
+            let Some(value_c) = make_cstr(&mut value_buf, &pair.value_ptr.value) else {
+                continue;
+            };
+            // SAFETY: both pointers are NUL-terminated for the duration of the call.
+            unsafe { libc::setenv(name_c, value_c, 1) };
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

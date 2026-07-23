@@ -2919,7 +2919,7 @@ impl<'a> LinkerContext<'a> {
 
         let note_text: std::borrow::Cow<'static, [u8]> = match se {
             SideEffects::NoSideEffectsPackageJson => std::borrow::Cow::Borrowed(
-                b"\"sideEffects\" is false in the enclosing \"package.json\" file",
+                b"This is because of \"sideEffects\" in the enclosing \"package.json\" file",
             ),
             SideEffects::NoSideEffectsPureData => std::borrow::Cow::Borrowed(
                 b"This file is considered to have no side effects because of the loader used",

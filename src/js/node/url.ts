@@ -893,30 +893,6 @@ Url.prototype.parseHost = function parseHost() {
   if (host) this.hostname = host;
 };
 
-// function fileURLToPath(...args) {
-//   // Since we use WTF::URL::fileSystemPath directly in Bun.fileURLToPath, we don't get invalid windows
-//   // path checking. We patch this in to `node:url` for compatibility. Note that
-//   // this behavior is missing from WATWG URL.
-//   if (process.platform === "win32") {
-//     var url: string;
-//     if ($isObject(args[0]) && args[0] instanceof Url) {
-//       url = (args[0] as { href: string }).href;
-//     } else if (typeof args[0] === "string") {
-//       url = args[0];
-//     } else {
-//       throw $ERR_INVALID_ARG_TYPE("url", ["string", "URL"], args[0]);
-//     }
-
-//     for (var i = 0; i < url.length; i++) {
-//       if (url.charCodeAt(i) === Char.PERCENT && (i + 1) < url.length) {
-//         switch (url.charCodeAt(i + 1)) {
-//         break;
-//       }
-//     }
-//   }
-//   return Bun.fileURLToPath.$call(args);
-// }
-
 /**
  * Add new characters as needed from
  * [here](https://github.com/nodejs/node/blob/main/lib/internal/constants.js).
@@ -933,7 +909,6 @@ const enum Char {
   FORWARD_SLASH = 47,        // /
   HASH = 35,                 // #
   QUESTION_MARK = 63,        // ?
-  PERCENT = 37,              // %
   LEFT_SQUARE_BRACKET = 91,  // [
   RIGHT_SQUARE_BRACKET = 93, // ]
 

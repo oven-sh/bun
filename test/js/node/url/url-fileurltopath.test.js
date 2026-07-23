@@ -151,4 +151,106 @@ describe("url.fileURLToPath", () => {
       assert.strictEqual(fromURL, path);
     }
   });
+
+  describe("percent-decoding is validated", () => {
+    // Escape sequences that decodeURIComponent rejects must reject here too, instead of
+    // passing through verbatim or collapsing into the empty string.
+    const malformed = [
+      "file:///%", // truncated escape
+      "file:///%c", // truncated escape
+      "file:///%zz", // not hex digits
+      "file:///%c3", // truncated UTF-8 sequence
+      "file:///%c3%28", // invalid UTF-8 continuation byte
+      "file:///%80", // lone UTF-8 continuation byte
+      "file:///%ff", // never valid in UTF-8
+      "file:///%C0%80", // overlong encoding of U+0000
+      "file:///%ED%A0%80", // UTF-8 encoded surrogate
+      "file:///%F5%80%80%80", // beyond U+10FFFF
+    ];
+
+    for (const input of malformed) {
+      for (const windows of [false, true]) {
+        test(`${input} (windows: ${windows})`, () => {
+          assert.throws(() => url.fileURLToPath(input, { windows }), {
+            name: "URIError",
+            message: "URI malformed",
+          });
+          assert.throws(() => url.fileURLToPath(new URL(input), { windows }), {
+            name: "URIError",
+            message: "URI malformed",
+          });
+        });
+      }
+    }
+
+    test("well-formed escapes still decode", () => {
+      assert.strictEqual(url.fileURLToPath("file:///%41", { windows: false }), "/A");
+      assert.strictEqual(url.fileURLToPath("file:///caf%C3%A9", { windows: false }), "/café");
+      assert.strictEqual(url.fileURLToPath("file:///%F0%9F%9A%80", { windows: false }), "/🚀");
+      // A percent sign that is not an escape sequence has to be encoded, and round-trips.
+      assert.strictEqual(url.fileURLToPath("file:///100%25", { windows: false }), "/100%");
+    });
+  });
+
+  describe("windows option", () => {
+    test("applies win32 path rules regardless of platform", () => {
+      assert.strictEqual(url.fileURLToPath("file:///C:/foo", { windows: true }), "C:\\foo");
+      assert.strictEqual(url.fileURLToPath("file:///C:/dir/foo%20bar", { windows: true }), "C:\\dir\\foo bar");
+      assert.strictEqual(
+        url.fileURLToPath("file://nas/My%20Docs/File.doc", { windows: true }),
+        "\\\\nas\\My Docs\\File.doc",
+      );
+    });
+
+    test("decodes punycode UNC server names", () => {
+      // The URL parser stores the host punycode-encoded, the UNC path uses the Unicode form.
+      assert.strictEqual(url.fileURLToPath("file://münchen/foo", { windows: true }), "\\\\münchen\\foo");
+      assert.strictEqual(url.fileURLToPath("file://xn--mnchen-3ya/foo", { windows: true }), "\\\\münchen\\foo");
+      assert.strictEqual(url.fileURLToPath("file://xn--e1awd7f.com/x", { windows: true }), "\\\\еріс.com\\x");
+      assert.strictEqual(url.fileURLToPath("file://127.0.0.1/x", { windows: true }), "\\\\127.0.0.1\\x");
+    });
+
+    test("rejects encoded separators", () => {
+      assert.throws(() => url.fileURLToPath("file:///C:/a%5Cb", { windows: true }), {
+        code: "ERR_INVALID_FILE_URL_PATH",
+        message: "File URL path must not include encoded \\ or / characters",
+      });
+      assert.throws(() => url.fileURLToPath("file:///C:/a%2Fb", { windows: true }), {
+        code: "ERR_INVALID_FILE_URL_PATH",
+        message: "File URL path must not include encoded \\ or / characters",
+      });
+      // On posix only '/' is rejected, '\' is a legal filename character.
+      assert.strictEqual(url.fileURLToPath("file:///a%5Cb", { windows: false }), "/a\\b");
+      assert.throws(() => url.fileURLToPath("file:///a%2Fb", { windows: false }), {
+        code: "ERR_INVALID_FILE_URL_PATH",
+        message: "File URL path must not include encoded / characters",
+      });
+    });
+
+    test("rejects paths without a drive letter", () => {
+      for (const input of ["file:///foo", "file:///", "file:///1:/foo", "file:///C|foo"]) {
+        assert.throws(() => url.fileURLToPath(input, { windows: true }), {
+          code: "ERR_INVALID_FILE_URL_PATH",
+          message: "File URL path must be absolute",
+        });
+      }
+    });
+
+    test("applies posix path rules regardless of platform", () => {
+      assert.strictEqual(url.fileURLToPath("file:///foo/bar", { windows: false }), "/foo/bar");
+      assert.throws(() => url.fileURLToPath("file://host/a", { windows: false }), {
+        code: "ERR_INVALID_FILE_URL_HOST",
+      });
+    });
+
+    test("absent, null and undefined fall back to the platform", () => {
+      const expected = url.fileURLToPath("file:///C:/foo", { windows: isWindows });
+      assert.strictEqual(url.fileURLToPath("file:///C:/foo"), expected);
+      assert.strictEqual(url.fileURLToPath("file:///C:/foo", {}), expected);
+      assert.strictEqual(url.fileURLToPath("file:///C:/foo", { windows: undefined }), expected);
+      assert.strictEqual(url.fileURLToPath("file:///C:/foo", { windows: null }), expected);
+      assert.strictEqual(url.fileURLToPath("file:///C:/foo", null), expected);
+      assert.strictEqual(url.fileURLToPath("file:///C:/foo", 5), expected);
+    });
+  });
 });

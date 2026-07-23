@@ -1906,6 +1906,7 @@ declare module "bun" {
    * Convert a {@link URL} to a filesystem path.
    *
    * @param url The URL to convert.
+   * @param options.windows When `true`, the path is returned in Windows format. Defaults to the current platform.
    * @returns A filesystem path.
    * @throws If `url` is not a valid URL.
    *
@@ -1917,7 +1918,7 @@ declare module "bun" {
    * console.log(path); // "/foo/bar.txt"
    * ```
    */
-  function fileURLToPath(url: URL | string): string;
+  function fileURLToPath(url: URL | string, options?: { windows?: boolean }): string;
 
   /**
    * Fast incremental writer that becomes an {@link ArrayBuffer} on end().

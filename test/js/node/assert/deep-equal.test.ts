@@ -660,7 +660,9 @@ describe("detached ArrayBuffer", () => {
     // expected has {x:1} that actual lacks: node throws ERR_ASSERTION.
     expect(() => assert.partialDeepStrictEqual(key, key2)).toThrow(assert.AssertionError);
     // subset direction: extra own prop on actual is fine.
-    expect(() => assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret")))).not.toThrow();
+    expect(() =>
+      assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret"))),
+    ).not.toThrow();
   });
 
   test("error matches Node's message", () => {

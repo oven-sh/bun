@@ -831,9 +831,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        // `lower_class` may rewrite/hoist static members, so decide this first.
+                        // `lower_class` / server-components wrapping mutate `class.class`
+                        // in place; capture what keep-names needs first.
                         let has_custom_static_name =
                             Self::class_has_custom_static_name(&class.class);
+                        let keep_name: &[u8] = match class.class.class_name {
+                            Some(n) if !n.ref_.is_empty() => p.load_name_from_ref(n.ref_),
+                            _ => js_ast::ClauseItem::DEFAULT_ALIAS,
+                        };
 
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
@@ -872,10 +877,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !has_custom_static_name {
-                            let keep_name: &[u8] = match class.class.class_name {
-                                Some(n) if !n.ref_.is_empty() => p.load_name_from_ref(n.ref_),
-                                _ => js_ast::ClauseItem::DEFAULT_ALIAS,
-                            };
                             if let Some(keep) =
                                 p.keep_stmt_symbol_name(stmt.loc, data.default_name.ref_, keep_name)
                             {

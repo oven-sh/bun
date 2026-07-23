@@ -1,5 +1,5 @@
 import { RedisClient } from "bun";
-import { describe, expect, mock, test } from "bun:test";
+import { beforeAll, describe, expect, mock, test } from "bun:test";
 import net from "net";
 import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
@@ -11,8 +11,17 @@ import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../t
  * - Error propagation
  */
 describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
-  // Use invalid port to force connection failure
-  const BAD_CONNECTION_URL = "redis://localhost:12345";
+  // A port with nothing listening so the connect is refused. bind(0)->close
+  // instead of a fixed port so an unrelated process occupying 12345 can't turn
+  // this into a protocol-parse failure ("Failed to read data (stack path)").
+  let BAD_CONNECTION_URL!: string;
+  beforeAll(async () => {
+    const server = net.createServer();
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as net.AddressInfo).port;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    BAD_CONNECTION_URL = `redis://127.0.0.1:${port}`;
+  });
 
   describe("Connection Failure Handling", () => {
     test("should handle initial connection failure gracefully", async () => {

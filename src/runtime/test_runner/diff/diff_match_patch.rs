@@ -678,6 +678,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct HalfMatchResult<Unit: DiffUnit> {
     pub prefix_before: Box<[Unit]>,
     pub suffix_before: Box<[Unit]>,
@@ -1396,17 +1397,31 @@ mod tests {
         }
     }
 
+    fn dmp(config: Config) -> Dmp {
+        Dmp {
+            config,
+            _unit: core::marker::PhantomData,
+        }
+    }
+
+    /// Builds a `DiffList<u8>` from `(Operation variant, byte string)` pairs.
+    macro_rules! diffs {
+        ($(($op:ident, $text:expr)),* $(,)?) => {
+            vec![$(d(Operation::$op, $text)),*]
+        };
+    }
+
     #[test]
-    fn test_diff_eql() {
+    fn test_diff_eq() {
         let equal_a = d(Operation::Equal, b"a");
         let insert_a = d(Operation::Insert, b"a");
         let equal_b = d(Operation::Equal, b"b");
         let delete_b = d(Operation::Delete, b"b");
 
-        assert!(equal_a.eql(&equal_a));
-        assert!(!insert_a.eql(&equal_a));
-        assert!(!equal_a.eql(&equal_b));
-        assert!(!equal_a.eql(&delete_b));
+        assert_eq!(equal_a, d(Operation::Equal, b"a"));
+        assert_ne!(insert_a, equal_a);
+        assert_ne!(equal_a, equal_b);
+        assert_ne!(equal_a, delete_b);
     }
 
     #[test]
@@ -1443,7 +1458,7 @@ mod tests {
 
     #[test]
     fn test_diff_bisect() {
-        let this = Dmp::new(Config {
+        let this = dmp(Config {
             diff_timeout: 0,
             ..Config::default()
         });
@@ -1470,15 +1485,428 @@ mod tests {
 
     #[test]
     fn test_diff_half_match_leak_regression() {
-        let dmp = Dmp::DEFAULT;
+        let this = Dmp::default();
         let text1 = b"The quick brown fox jumps over the lazy dog.";
         let text2 = b"That quick brown fox jumped over a lazy dog.";
-        let _diffs = dmp.diff(text2, text1, true).unwrap();
+        let _diffs = this.diff(text2, text1, true).unwrap();
+    }
+
+    fn hm(
+        prefix_before: &[u8],
+        suffix_before: &[u8],
+        prefix_after: &[u8],
+        suffix_after: &[u8],
+        common_middle: &[u8],
+    ) -> Option<HalfMatchResult<u8>> {
+        Some(HalfMatchResult {
+            prefix_before: dupe(prefix_before),
+            suffix_before: dupe(suffix_before),
+            prefix_after: dupe(prefix_after),
+            suffix_after: dupe(suffix_after),
+            common_middle: dupe(common_middle),
+        })
+    }
+
+    #[test]
+    fn test_diff_half_match() {
+        let one_timeout = dmp(Config {
+            diff_timeout: 1,
+            ..Config::default()
+        });
+
+        // No match #1
+        assert_eq!(
+            None,
+            one_timeout
+                .diff_half_match(b"1234567890", b"abcdef")
+                .unwrap()
+        );
+
+        // No match #2
+        assert_eq!(None, one_timeout.diff_half_match(b"12345", b"23").unwrap());
+
+        // Single match #1
+        assert_eq!(
+            hm(b"12", b"90", b"a", b"z", b"345678"),
+            one_timeout
+                .diff_half_match(b"1234567890", b"a345678z")
+                .unwrap()
+        );
+
+        // Single match #2
+        assert_eq!(
+            hm(b"a", b"z", b"12", b"90", b"345678"),
+            one_timeout
+                .diff_half_match(b"a345678z", b"1234567890")
+                .unwrap()
+        );
+
+        // Single match #3
+        assert_eq!(
+            hm(b"abc", b"z", b"1234", b"0", b"56789"),
+            one_timeout
+                .diff_half_match(b"abc56789z", b"1234567890")
+                .unwrap()
+        );
+
+        // Single match #4
+        assert_eq!(
+            hm(b"a", b"xyz", b"1", b"7890", b"23456"),
+            one_timeout
+                .diff_half_match(b"a23456xyz", b"1234567890")
+                .unwrap()
+        );
+
+        // Multiple matches #1
+        assert_eq!(
+            hm(b"12123", b"123121", b"a", b"z", b"1234123451234"),
+            one_timeout
+                .diff_half_match(b"121231234123451234123121", b"a1234123451234z")
+                .unwrap()
+        );
+
+        // Multiple matches #2
+        assert_eq!(
+            hm(b"", b"-=-=-=-=-=", b"x", b"", b"x-=-=-=-=-=-=-="),
+            one_timeout
+                .diff_half_match(b"x-=-=-=-=-=-=-=-=-=-=-=-=", b"xx-=-=-=-=-=-=-=")
+                .unwrap()
+        );
+
+        // Multiple matches #3
+        assert_eq!(
+            hm(b"-=-=-=-=-=", b"", b"", b"y", b"-=-=-=-=-=-=-=y"),
+            one_timeout
+                .diff_half_match(b"-=-=-=-=-=-=-=-=-=-=-=-=y", b"-=-=-=-=-=-=-=yy")
+                .unwrap()
+        );
+
+        // Optimal diff would be -q+x=H-i+e=lloHe+Hu=llo-Hew+y not
+        // -qHillo+x=HelloHe-w+Hulloy
+        // Non-optimal halfmatch
+        assert_eq!(
+            hm(b"qHillo", b"w", b"x", b"Hulloy", b"HelloHe"),
+            one_timeout
+                .diff_half_match(b"qHilloHelloHew", b"xHelloHeHulloy")
+                .unwrap()
+        );
+
+        // Non-optimal halfmatch with unlimited time
+        let no_timeout = dmp(Config {
+            diff_timeout: 0,
+            ..Config::default()
+        });
+        assert_eq!(
+            None,
+            no_timeout
+                .diff_half_match(b"qHilloHelloHew", b"xHelloHeHulloy")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_diff_lines_to_chars() {
+        // Convert lines down to characters.
+        let result =
+            diff_lines_to_chars::<u8>(b"alpha\nbeta\nalpha\n", b"beta\nalpha\nbeta\n").unwrap();
+        assert_eq!(*result.chars_1, [1usize, 2, 1]); // Shared lines #1
+        assert_eq!(*result.chars_2, [2usize, 1, 2]); // Shared lines #2
+        assert_eq!(result.line_array, [b"" as &[u8], b"alpha\n", b"beta\n"]); // Shared lines #3
+
+        let result = diff_lines_to_chars::<u8>(b"", b"alpha\r\nbeta\r\n\r\n\r\n").unwrap();
+        assert!(result.chars_1.is_empty()); // Empty string and blank lines #1
+        assert_eq!(*result.chars_2, [1usize, 2, 3, 3]); // Empty string and blank lines #2
+        assert_eq!(
+            result.line_array,
+            [b"" as &[u8], b"alpha\r\n", b"beta\r\n", b"\r\n"]
+        ); // Empty string and blank lines #3
+
+        let result = diff_lines_to_chars::<u8>(b"a", b"b").unwrap();
+        assert_eq!(*result.chars_1, [1usize]); // No linebreaks #1
+        assert_eq!(*result.chars_2, [2usize]); // No linebreaks #2
+        assert_eq!(result.line_array, [b"" as &[u8], b"a", b"b"]); // No linebreaks #3
+    }
+
+    #[test]
+    fn test_diff_lines_to_chars_many_lines() {
+        // 254 two-byte "lines"; the i == '\n' entry splits into two "\n" lines
+        // sharing one line_array slot, so 255 lines map to 254 unique entries.
+        let mut line_list: Vec<u8> = Vec::new();
+        for i in 1u8..255 {
+            line_list.push(i);
+            line_list.push(b'\n');
+        }
+        let result = diff_lines_to_chars::<u8>(&line_list, b"").unwrap();
+        assert_eq!(255, result.chars_1.len());
+        assert!(result.chars_2.is_empty());
+        assert_eq!(255, result.line_array.len());
+
+        // Round-trip back through diff_chars_to_lines.
+        let char_diffs: DiffList<usize> = vec![Diff {
+            operation: Operation::Equal,
+            text: result.chars_1.clone(),
+        }];
+        let rebuilt = diff_chars_to_lines::<u8>(&char_diffs, &result.line_array).unwrap();
+        assert_eq!(1, rebuilt.len());
+        assert_eq!(*rebuilt[0].text, *line_list);
+    }
+
+    #[test]
+    fn test_diff_chars_to_lines() {
+        // Convert chars up to lines.
+        let char_diffs: DiffList<usize> = vec![
+            Diff {
+                operation: Operation::Equal,
+                text: dupe(&[1usize, 2, 1]),
+            },
+            Diff {
+                operation: Operation::Insert,
+                text: dupe(&[2usize, 1, 2]),
+            },
+        ];
+        let line_array: [&[u8]; 3] = [b"", b"alpha\n", b"beta\n"];
+        let diffs = diff_chars_to_lines::<u8>(&char_diffs, &line_array).unwrap();
+        assert_eq!(
+            diffs![
+                (Equal, b"alpha\nbeta\nalpha\n"),
+                (Insert, b"beta\nalpha\nbeta\n"),
+            ],
+            diffs
+        );
+    }
+
+    fn check_cleanup_merge(mut diffs: DiffList<u8>, expected: DiffList<u8>) {
+        diff_cleanup_merge(&mut diffs).unwrap();
+        assert_eq!(expected, diffs);
+    }
+
+    #[test]
+    fn test_diff_cleanup_merge() {
+        // Cleanup a messy diff.
+
+        // No change case
+        check_cleanup_merge(
+            diffs![(Equal, b"a"), (Delete, b"b"), (Insert, b"c")],
+            diffs![(Equal, b"a"), (Delete, b"b"), (Insert, b"c")],
+        );
+
+        // Merge equalities
+        check_cleanup_merge(
+            diffs![(Equal, b"a"), (Equal, b"b"), (Equal, b"c")],
+            diffs![(Equal, b"abc")],
+        );
+
+        // Merge deletions
+        check_cleanup_merge(
+            diffs![(Delete, b"a"), (Delete, b"b"), (Delete, b"c")],
+            diffs![(Delete, b"abc")],
+        );
+
+        // Merge insertions
+        check_cleanup_merge(
+            diffs![(Insert, b"a"), (Insert, b"b"), (Insert, b"c")],
+            diffs![(Insert, b"abc")],
+        );
+
+        // Merge interweave
+        check_cleanup_merge(
+            diffs![
+                (Delete, b"a"),
+                (Insert, b"b"),
+                (Delete, b"c"),
+                (Insert, b"d"),
+                (Equal, b"e"),
+                (Equal, b"f"),
+            ],
+            diffs![(Delete, b"ac"), (Insert, b"bd"), (Equal, b"ef")],
+        );
+
+        // Prefix and suffix detection
+        check_cleanup_merge(
+            diffs![(Delete, b"a"), (Insert, b"abc"), (Delete, b"dc")],
+            diffs![(Equal, b"a"), (Delete, b"d"), (Insert, b"b"), (Equal, b"c"),],
+        );
+
+        // Prefix and suffix detection with equalities
+        check_cleanup_merge(
+            diffs![
+                (Equal, b"x"),
+                (Delete, b"a"),
+                (Insert, b"abc"),
+                (Delete, b"dc"),
+                (Equal, b"y"),
+            ],
+            diffs![
+                (Equal, b"xa"),
+                (Delete, b"d"),
+                (Insert, b"b"),
+                (Equal, b"cy"),
+            ],
+        );
+
+        // Slide edit left
+        check_cleanup_merge(
+            diffs![(Equal, b"a"), (Insert, b"ba"), (Equal, b"c")],
+            diffs![(Insert, b"ab"), (Equal, b"ac")],
+        );
+
+        // Slide edit right
+        check_cleanup_merge(
+            diffs![(Equal, b"c"), (Insert, b"ab"), (Equal, b"a")],
+            diffs![(Equal, b"ca"), (Insert, b"ba")],
+        );
+
+        // Slide edit left recursive
+        check_cleanup_merge(
+            diffs![
+                (Equal, b"a"),
+                (Delete, b"b"),
+                (Equal, b"c"),
+                (Delete, b"ac"),
+                (Equal, b"x"),
+            ],
+            diffs![(Delete, b"abc"), (Equal, b"acx")],
+        );
+
+        // Slide edit right recursive
+        check_cleanup_merge(
+            diffs![
+                (Equal, b"x"),
+                (Delete, b"ca"),
+                (Equal, b"c"),
+                (Delete, b"b"),
+                (Equal, b"a"),
+            ],
+            diffs![(Equal, b"xca"), (Delete, b"cba")],
+        );
+
+        // Empty merge
+        check_cleanup_merge(
+            diffs![(Delete, b"b"), (Insert, b"ab"), (Equal, b"c")],
+            diffs![(Insert, b"a"), (Equal, b"bc")],
+        );
+
+        // Empty equality
+        check_cleanup_merge(
+            diffs![(Equal, b""), (Insert, b"a"), (Equal, b"b")],
+            diffs![(Insert, b"a"), (Equal, b"b")],
+        );
+    }
+
+    fn check_cleanup_semantic_lossless(mut diffs: DiffList<u8>, expected: DiffList<u8>) {
+        diff_cleanup_semantic_lossless(&mut diffs).unwrap();
+        assert_eq!(expected, diffs);
+    }
+
+    #[test]
+    fn test_diff_cleanup_semantic_lossless() {
+        // Null case
+        check_cleanup_semantic_lossless(Vec::new(), Vec::new());
+
+        // Blank lines
+        check_cleanup_semantic_lossless(
+            diffs![
+                (Equal, b"AAA\r\n\r\nBBB"),
+                (Insert, b"\r\nDDD\r\n\r\nBBB"),
+                (Equal, b"\r\nEEE"),
+            ],
+            diffs![
+                (Equal, b"AAA\r\n\r\n"),
+                (Insert, b"BBB\r\nDDD\r\n\r\n"),
+                (Equal, b"BBB\r\nEEE"),
+            ],
+        );
+
+        // Line boundaries
+        check_cleanup_semantic_lossless(
+            diffs![
+                (Equal, b"AAA\r\nBBB"),
+                (Insert, b" DDD\r\nBBB"),
+                (Equal, b" EEE"),
+            ],
+            diffs![
+                (Equal, b"AAA\r\n"),
+                (Insert, b"BBB DDD\r\n"),
+                (Equal, b"BBB EEE"),
+            ],
+        );
+
+        // Word boundaries
+        check_cleanup_semantic_lossless(
+            diffs![
+                (Equal, b"The c"),
+                (Insert, b"ow and the c"),
+                (Equal, b"at."),
+            ],
+            diffs![
+                (Equal, b"The "),
+                (Insert, b"cow and the "),
+                (Equal, b"cat."),
+            ],
+        );
+
+        // Alphanumeric boundaries
+        check_cleanup_semantic_lossless(
+            diffs![
+                (Equal, b"The-c"),
+                (Insert, b"ow-and-the-c"),
+                (Equal, b"at."),
+            ],
+            diffs![
+                (Equal, b"The-"),
+                (Insert, b"cow-and-the-"),
+                (Equal, b"cat."),
+            ],
+        );
+
+        // Hitting the start
+        check_cleanup_semantic_lossless(
+            diffs![(Equal, b"a"), (Delete, b"a"), (Equal, b"ax")],
+            diffs![(Delete, b"a"), (Equal, b"aax")],
+        );
+
+        // Hitting the end
+        check_cleanup_semantic_lossless(
+            diffs![(Equal, b"xa"), (Delete, b"a"), (Equal, b"a")],
+            diffs![(Equal, b"xaa"), (Delete, b"a")],
+        );
+
+        // Sentence boundaries
+        check_cleanup_semantic_lossless(
+            diffs![
+                (Equal, b"The xxx. The "),
+                (Insert, b"zzz. The "),
+                (Equal, b"yyy."),
+            ],
+            diffs![
+                (Equal, b"The xxx."),
+                (Insert, b" The zzz."),
+                (Equal, b" The yyy."),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_rebuildtexts() {
+        let diffs = diffs![(Insert, b"abcabc"), (Equal, b"defdef"), (Delete, b"ghighi"),];
+        let texts = rebuildtexts(&diffs);
+        assert_eq!(*texts[0], *b"defdefghighi");
+        assert_eq!(*texts[1], *b"abcabcdefdef");
+
+        let diffs = diffs![(Insert, b"xxx"), (Delete, b"yyy")];
+        let texts = rebuildtexts(&diffs);
+        assert_eq!(*texts[0], *b"yyy");
+        assert_eq!(*texts[1], *b"xxx");
+
+        let diffs = diffs![(Equal, b"xyz"), (Equal, b"pdq")];
+        let texts = rebuildtexts(&diffs);
+        assert_eq!(*texts[0], *b"xyzpdq");
+        assert_eq!(*texts[1], *b"xyzpdq");
     }
 
     #[test]
     fn test_diff_basic() {
-        let this = Dmp::new(Config {
+        let this = dmp(Config {
             diff_timeout: 0,
             ..Config::default()
         });
@@ -1489,17 +1917,355 @@ mod tests {
 
         // Equality.
         let diffs = this.diff(b"abc", b"abc", false).unwrap();
-        assert_eq!(vec![d(Operation::Equal, b"abc")], diffs);
+        assert_eq!(diffs![(Equal, b"abc")], diffs);
 
         // Simple insertion.
         let diffs = this.diff(b"abc", b"ab123c", false).unwrap();
         assert_eq!(
-            vec![
-                d(Operation::Equal, b"ab"),
-                d(Operation::Insert, b"123"),
-                d(Operation::Equal, b"c"),
+            diffs![(Equal, b"ab"), (Insert, b"123"), (Equal, b"c")],
+            diffs
+        );
+
+        // Simple deletion.
+        let diffs = this.diff(b"a123bc", b"abc", false).unwrap();
+        assert_eq!(
+            diffs![(Equal, b"a"), (Delete, b"123"), (Equal, b"bc")],
+            diffs
+        );
+
+        // Two insertions.
+        let diffs = this.diff(b"abc", b"a123b456c", false).unwrap();
+        assert_eq!(
+            diffs![
+                (Equal, b"a"),
+                (Insert, b"123"),
+                (Equal, b"b"),
+                (Insert, b"456"),
+                (Equal, b"c"),
             ],
             diffs
+        );
+
+        // Two deletions.
+        let diffs = this.diff(b"a123b456c", b"abc", false).unwrap();
+        assert_eq!(
+            diffs![
+                (Equal, b"a"),
+                (Delete, b"123"),
+                (Equal, b"b"),
+                (Delete, b"456"),
+                (Equal, b"c"),
+            ],
+            diffs
+        );
+
+        // Simple case #1
+        let diffs = this.diff(b"a", b"b", false).unwrap();
+        assert_eq!(diffs![(Delete, b"a"), (Insert, b"b")], diffs);
+
+        // Simple case #2
+        let diffs = this
+            .diff(b"Apples are a fruit.", b"Bananas are also fruit.", false)
+            .unwrap();
+        assert_eq!(
+            diffs![
+                (Delete, b"Apple"),
+                (Insert, b"Banana"),
+                (Equal, b"s are a"),
+                (Insert, b"lso"),
+                (Equal, b" fruit."),
+            ],
+            diffs
+        );
+
+        // Simple case #3
+        let diffs = this
+            .diff(b"ax\t", "\u{0680}x\u{0000}".as_bytes(), false)
+            .unwrap();
+        assert_eq!(
+            diffs![
+                (Delete, b"a"),
+                (Insert, "\u{0680}".as_bytes()),
+                (Equal, b"x"),
+                (Delete, b"\t"),
+                (Insert, b"\x00"),
+            ],
+            diffs
+        );
+
+        // Overlap #1
+        let diffs = this.diff(b"1ayb2", b"abxab", false).unwrap();
+        assert_eq!(
+            diffs![
+                (Delete, b"1"),
+                (Equal, b"a"),
+                (Delete, b"y"),
+                (Equal, b"b"),
+                (Delete, b"2"),
+                (Insert, b"xab"),
+            ],
+            diffs
+        );
+
+        // Overlap #2
+        let diffs = this.diff(b"abcy", b"xaxcxabc", false).unwrap();
+        assert_eq!(
+            diffs![(Insert, b"xaxcx"), (Equal, b"abc"), (Delete, b"y")],
+            diffs
+        );
+
+        // Overlap #3
+        let diffs = this
+            .diff(
+                b"ABCDa=bcd=efghijklmnopqrsEFGHIJKLMNOefg",
+                b"a-bcd-efghijklmnopqrs",
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            diffs![
+                (Delete, b"ABCD"),
+                (Equal, b"a"),
+                (Delete, b"="),
+                (Insert, b"-"),
+                (Equal, b"bcd"),
+                (Delete, b"="),
+                (Insert, b"-"),
+                (Equal, b"efghijklmnopqrs"),
+                (Delete, b"EFGHIJKLMNOefg"),
+            ],
+            diffs
+        );
+
+        // Large equality
+        let diffs = this
+            .diff(
+                b"a [[Pennsylvania]] and [[New",
+                b" and [[Pennsylvania]]",
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            diffs![
+                (Insert, b" "),
+                (Equal, b"a"),
+                (Insert, b"nd"),
+                (Equal, b" [[Pennsylvania]]"),
+                (Delete, b" and [[New"),
+            ],
+            diffs
+        );
+    }
+
+    #[test]
+    fn test_diff_timeout() {
+        let with_timeout = dmp(Config {
+            diff_timeout: 100, // 100ms
+            ..Config::default()
+        });
+
+        // Increase the text lengths by 1024 times to ensure a timeout.
+        let a = "`Twas brillig, and the slithy toves\nDid gyre and gimble in the wabe:\nAll mimsy were the borogoves,\nAnd the mome raths outgrabe.\n"
+            .repeat(1024);
+        let b = "I am the very model of a modern major general,\nI've information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"
+            .repeat(1024);
+
+        // Use the same clock as the diff deadline so a wall-clock step can't flake the bounds.
+        let start = milli_timestamp();
+        let _diffs = with_timeout
+            .diff(a.as_bytes(), b.as_bytes(), false)
+            .unwrap();
+        let elapsed = milli_timestamp().saturating_sub(start);
+
+        assert!(with_timeout.config.diff_timeout <= elapsed); // diff: Timeout min.
+        // Generous upper bound (200x) for slow ASAN/CI machines.
+        assert!(with_timeout.config.diff_timeout * 100 * 2 > elapsed); // diff: Timeout max.
+    }
+
+    #[test]
+    fn test_diff_line_mode_equivalence() {
+        let this = dmp(Config {
+            diff_timeout: 0,
+            ..Config::default()
+        });
+
+        // Test the linemode speedup.
+        // Must be long to pass the 100 char cutoff.
+        {
+            // diff: Simple line-mode.
+            let a = "1234567890\n".repeat(13);
+            let b = "abcdefghij\n".repeat(13);
+            let diff_checked = this.diff(a.as_bytes(), b.as_bytes(), true).unwrap();
+            let diff_unchecked = this.diff(a.as_bytes(), b.as_bytes(), false).unwrap();
+            assert_eq!(diff_checked, diff_unchecked);
+        }
+
+        {
+            // diff: Single line-mode.
+            let a = "1234567890".repeat(13);
+            let b = "abcdefghij".repeat(13);
+            let diff_checked = this.diff(a.as_bytes(), b.as_bytes(), true).unwrap();
+            let diff_unchecked = this.diff(a.as_bytes(), b.as_bytes(), false).unwrap();
+            assert_eq!(diff_checked, diff_unchecked);
+        }
+
+        {
+            // diff: Overlap line-mode.
+            let a = "1234567890\n".repeat(13);
+            let b = "abcdefghij\n1234567890\n1234567890\n1234567890\n".repeat(3) + "abcdefghij\n";
+
+            let diffs_linemode = this.diff(a.as_bytes(), b.as_bytes(), true).unwrap();
+            let texts_linemode = rebuildtexts(&diffs_linemode);
+
+            let diffs_textmode = this.diff(a.as_bytes(), b.as_bytes(), false).unwrap();
+            let texts_textmode = rebuildtexts(&diffs_textmode);
+
+            assert_eq!(texts_textmode, texts_linemode);
+        }
+    }
+
+    #[test]
+    fn test_diff_line_mode() {
+        let this = dmp(Config {
+            diff_timeout: 0,
+            diff_check_lines_over: 20,
+            ..Config::default()
+        });
+
+        let before = b"1234567890\n1234567890\n1234567890\n";
+        let after = b"abcdefghij\nabcdefghij\nabcdefghij\n";
+
+        let diff_checked = this.diff(before, after, true).unwrap();
+        let diff_unchecked = this.diff(before, after, false).unwrap();
+        assert_eq!(diff_checked, diff_unchecked); // diff: Simple line-mode.
+    }
+
+    fn check_cleanup_semantic(mut diffs: DiffList<u8>, expected: DiffList<u8>) {
+        diff_cleanup_semantic(&mut diffs).unwrap();
+        assert_eq!(expected, diffs);
+    }
+
+    #[test]
+    fn test_diff_cleanup_semantic() {
+        // Null case.
+        check_cleanup_semantic(Vec::new(), Vec::new());
+
+        // No elimination #1
+        check_cleanup_semantic(
+            diffs![
+                (Delete, b"ab"),
+                (Insert, b"cd"),
+                (Equal, b"12"),
+                (Delete, b"e"),
+            ],
+            diffs![
+                (Delete, b"ab"),
+                (Insert, b"cd"),
+                (Equal, b"12"),
+                (Delete, b"e"),
+            ],
+        );
+
+        // No elimination #2
+        check_cleanup_semantic(
+            diffs![
+                (Delete, b"abc"),
+                (Insert, b"ABC"),
+                (Equal, b"1234"),
+                (Delete, b"wxyz"),
+            ],
+            diffs![
+                (Delete, b"abc"),
+                (Insert, b"ABC"),
+                (Equal, b"1234"),
+                (Delete, b"wxyz"),
+            ],
+        );
+
+        // Simple elimination
+        check_cleanup_semantic(
+            diffs![(Delete, b"a"), (Equal, b"b"), (Delete, b"c")],
+            diffs![(Delete, b"abc"), (Insert, b"b")],
+        );
+
+        // Backpass elimination
+        check_cleanup_semantic(
+            diffs![
+                (Delete, b"ab"),
+                (Equal, b"cd"),
+                (Delete, b"e"),
+                (Equal, b"f"),
+                (Insert, b"g"),
+            ],
+            diffs![(Delete, b"abcdef"), (Insert, b"cdfg")],
+        );
+
+        // Multiple elimination
+        check_cleanup_semantic(
+            diffs![
+                (Insert, b"1"),
+                (Equal, b"A"),
+                (Delete, b"B"),
+                (Insert, b"2"),
+                (Equal, b"_"),
+                (Insert, b"1"),
+                (Equal, b"A"),
+                (Delete, b"B"),
+                (Insert, b"2"),
+            ],
+            diffs![(Delete, b"AB_AB"), (Insert, b"1A2_1A2")],
+        );
+
+        // Word boundaries
+        check_cleanup_semantic(
+            diffs![
+                (Equal, b"The c"),
+                (Delete, b"ow and the c"),
+                (Equal, b"at."),
+            ],
+            diffs![
+                (Equal, b"The "),
+                (Delete, b"cow and the "),
+                (Equal, b"cat."),
+            ],
+        );
+
+        // No overlap elimination
+        check_cleanup_semantic(
+            diffs![(Delete, b"abcxx"), (Insert, b"xxdef")],
+            diffs![(Delete, b"abcxx"), (Insert, b"xxdef")],
+        );
+
+        // Overlap elimination
+        check_cleanup_semantic(
+            diffs![(Delete, b"abcxxx"), (Insert, b"xxxdef")],
+            diffs![(Delete, b"abc"), (Equal, b"xxx"), (Insert, b"def")],
+        );
+
+        // Reverse overlap elimination
+        check_cleanup_semantic(
+            diffs![(Delete, b"xxxabc"), (Insert, b"defxxx")],
+            diffs![(Insert, b"def"), (Equal, b"xxx"), (Delete, b"abc")],
+        );
+
+        // Two overlap eliminations
+        check_cleanup_semantic(
+            diffs![
+                (Delete, b"abcd1212"),
+                (Insert, b"1212efghi"),
+                (Equal, b"----"),
+                (Delete, b"A3"),
+                (Insert, b"3BC"),
+            ],
+            diffs![
+                (Delete, b"abcd"),
+                (Equal, b"1212"),
+                (Insert, b"efghi"),
+                (Equal, b"----"),
+                (Delete, b"A"),
+                (Equal, b"3"),
+                (Insert, b"BC"),
+            ],
         );
     }
 }

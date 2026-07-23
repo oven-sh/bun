@@ -135,9 +135,16 @@ async function worker(w: number) {
     const vprogram = join(vdir, "program.js");
     await Bun.write(vprogram, await Bun.file(program).text());
     await Bun.sleep(300);
-    const r2 = await runProgram(vprogram, vdir);
-    const j2 = judge(r2);
-    const verified = j2.kind === j.kind && (j.kind !== "crash" || j2.sig === j.sig);
+    // Race/lifecycle crashes recur intermittently: the seed is an exact
+    // reproducer, so a crash that recurs in ANY of a few attempts is
+    // verified. (Requiring the very next run to crash discarded ~all of
+    // the intermittent - i.e. concurrency - findings.)
+    let verified = false;
+    for (let a = 0; a < 4 && !verified; a++) {
+      const r2 = await runProgram(vprogram, vdir);
+      const j2 = judge(r2);
+      verified = j2.kind === j.kind && (j.kind !== "crash" || j2.sig === j.sig);
+    }
     if (j.kind === "crash") crashes++;
     else hangs++;
     console.log(`!! [seed ${seed}] ${j.kind} ${verified ? "VERIFIED" : "unverified"}: ${j.detail.slice(0, 90)}`);

@@ -90,9 +90,19 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
   // unescape first, or the signature swallows the escaped backtrace and
   // the same crash gets two keys depending on which layer printed it.
   const text = (stderr + "\n" + stdout).replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+  // Anchor: a REAL crash comes with the handler's own trailer/backtrace
+  // block. Test files DESCRIBE past crashes in comments and expected-error
+  // strings ("abort the process with \`panic: ...\`") and the runner prints
+  // failing-test source context - a bare panic-family line with no crash
+  // anchor anywhere in the output is quoted text, not a crash.
+  const hasCrashAnchor =
+    /oh no: Bun has crashed|Bun v[0-9.]+.*(Windows|Linux|macOS)|panicked at |0x7[Ff][0-9A-Fa-f]{9,}|Crash report saved to|trace at |SIGSEGV|Segmentation fault|Illegal instruction/.test(text);
   for (const { re, kind } of CRASH_SIGNATURES) {
     const m = re.exec(text);
     if (m) {
+      // Panic-family and assertion-family signatures are only crashes when
+      // the real handler's anchor accompanies them (see hasCrashAnchor).
+      if (!hasCrashAnchor && /panic|assert|unreachable|crash-banner/.test(kind)) continue;
       const detail = m[1].trim();
       // Fold volatile addresses/counts so identical crashes dedupe:
       // "Segmentation fault at address 0x24" keeps the low offset (a

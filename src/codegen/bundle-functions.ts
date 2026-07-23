@@ -314,7 +314,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       entrypoints: [tmpFile],
       define,
       target: "bun",
-      minify: { syntax: true, whitespace: false, keepNames: true },
+      // keepNames is intentionally off: it emits __name() calls whose runtime
+      // helper lands outside the $$capture_start$$/$$capture_end$$ window, and
+      // identifiers are not minified here so .name inference from bindings
+      // already gives the right value.
+      minify: { syntax: true, whitespace: false },
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {
@@ -327,19 +331,12 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
-    // keepNames emits its `var __name = ...` helper outside the capture window;
-    // re-inject a tamper-safe (@Object.@defineProperty) copy inside when the
-    // captured body references it.
-    const usesKeepNames = /\b__name\(/.test(captured);
     const finalReplacement =
       (fn.directives.sloppy
         ? captured
         : captured.replace(
             /function\s*\(.*?\)\s*{/,
             '$&"use strict";' +
-              (usesKeepNames
-                ? 'var __name=(t,n)=>(__intrinsic__Object.__intrinsic__defineProperty(t,"name",{value:n,configurable:!0}),t);'
-                : "") +
               (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
               (usesAssert ? createAssertClientJS(fn.name) : ""),
           )

@@ -519,6 +519,14 @@ impl ReadFile {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
             }
+            if !self.could_block {
+                // Regular file: positioned read so an fd-backed Blob's bytes
+                // match its fstat-derived `.size` and do not depend on (or
+                // advance) the caller's file cursor.
+                let pos =
+                    i64::try_from(self.offset.saturating_add(self.read_off)).unwrap_or(i64::MAX);
+                break 'brk bun_sys::pread(self.opened_fd, buf, pos);
+            }
             break 'brk bun_sys::read(self.opened_fd, buf);
         };
 
@@ -711,9 +719,10 @@ impl ReadFile {
             self.size = self.max_length.min(4096);
         }
 
-        if self.offset > 0 {
-            // We DO support offset in Bun.file()
-            // we ignore errors because it should continue to work even if its a pipe
+        if self.offset > 0 && self.could_block {
+            // Regular files use pread() (above), so skip the seek to avoid
+            // mutating a caller-supplied fd's cursor. Keep it for seekable
+            // non-regular files; errors are ignored (pipes return ESPIPE).
             let _ = bun_sys::set_file_offset(fd, self.offset);
         }
     }
@@ -817,6 +826,8 @@ impl ReadFile {
                     let mut retry = false;
                     let continue_reading =
                         self.do_read((buf_ptr, buf_len), &mut read_amount, &mut retry);
+
+                    self.read_off = self.read_off.saturating_add(read_amount as SizeType);
 
                     // We might read into the stack buffer, so we need to copy it into the heap.
                     if buf_ptr == stack_ptr {
@@ -1243,8 +1254,9 @@ impl<'a> ReadFileUV<'a> {
             this.size = this.max_length.min(4096);
         }
 
-        if this.offset > 0 {
-            // We DO support offset in Bun.file()
+        if this.offset > 0 && !this.is_regular_file {
+            // Regular files are read positionally via uv_fs_read() below, so
+            // skip the seek to avoid mutating a caller-supplied fd's cursor.
             match bun_sys::set_file_offset(this.opened_fd, this.offset) {
                 // we ignore errors because it should continue to work even if its a pipe
                 Err(_) | Ok(_) => {}

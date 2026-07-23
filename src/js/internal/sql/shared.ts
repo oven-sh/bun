@@ -1059,7 +1059,15 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   release(connection: PooledConnection, connectingEvent: boolean = false) {
     if (!connectingEvent) {
-      connection.queryCount--;
+      // A slot can be returned after the connection already closed (a query
+      // settling, or the reserved wrapper's close handler). #finishClose
+      // zeroed queryCount at that point, so only decrement what is still
+      // checked out; a negative count corrupts the reserved-flag handling
+      // below once the slot reconnects. The pool-level counter always drops:
+      // every release pairs with exactly one checkout that incremented it.
+      if (connection.queryCount > 0) {
+        connection.queryCount--;
+      }
       this.totalQueries--;
     }
     const currentQueryCount = connection.queryCount;

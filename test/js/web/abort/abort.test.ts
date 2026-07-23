@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -86,6 +86,35 @@ describe("AbortSignal", () => {
     expect(ac.reason).toBeInstanceOf(DOMException);
     expect(fmt(ac.reason)).toEqual(fmt(new DOMException("The operation timed out.", "TimeoutError")));
     expect(ac.reason.code).toBe(23);
+  });
+
+  // #33334: with nothing else ref'd, uv_run() skipped its body on Windows so
+  // uv__run_timers never ran and the whole file hung. Subprocess so a
+  // regression is an attributable failure, not a file-level timeout.
+  test("awaiting AbortSignal.timeout(n) abort event with nothing else ref'd does not hang (#33334)", async () => {
+    using dir = tempDir("abort-33334", {
+      "timeout.test.ts": `import { expect, test } from "bun:test";
+        test("AbortSignal.timeout fires", async () => {
+          const signal = AbortSignal.timeout(1);
+          const { promise, resolve } = Promise.withResolvers<Event>();
+          signal.addEventListener("abort", resolve, { once: true });
+          await promise;
+          expect(signal.aborted).toBe(true);
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "timeout.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr: stderr.includes("1 pass") ? "1 pass" : stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "1 pass",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   // https://wpt.fyi/results/dom/abort/timeout.any.html "AbortSignal timeouts fire in order"

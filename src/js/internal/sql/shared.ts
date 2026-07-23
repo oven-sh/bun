@@ -762,7 +762,9 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
-      this.queryCount = 0;
+      // queryCount is NOT zeroed here: every bound query has a paired
+      // release() scheduled that will decrement it back to 0; zeroing it
+      // now would let those releases drive the count negative.
       this.flags &= ~PooledConnectionFlags.reserved;
 
       // notify all queries that the connection is closed
@@ -1039,7 +1041,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
     while (true) {
       const nonReservedConnections = Array.from(this.readyConnections).filter(
-        c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
+        c =>
+          !(c.flags & (PooledConnectionFlags.preReserved | PooledConnectionFlags.reserved)) &&
+          c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
         return;
@@ -1362,8 +1366,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
-        if (queryCount > 0) {
-          if (queryCount < leastQueries) {
+        if (queryCount !== 0) {
+          if (queryCount > 0 && queryCount < leastQueries) {
             leastQueries = queryCount;
             connectionWithLeastQueries = connection;
           }

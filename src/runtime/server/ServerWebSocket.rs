@@ -1398,7 +1398,7 @@ impl ServerWebSocket {
             global_this,
             callframe,
             "subscribe",
-            JSValue::TRUE,
+            JSValue::FALSE,
             AnyWebSocket::subscribe,
         )
     }
@@ -1413,7 +1413,7 @@ impl ServerWebSocket {
             global_this,
             callframe,
             "unsubscribe",
-            JSValue::TRUE,
+            JSValue::FALSE,
             AnyWebSocket::unsubscribe,
         )
     }

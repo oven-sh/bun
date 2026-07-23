@@ -30,6 +30,8 @@ type FSStream = import("node:fs").ReadStream &
      * sink = FileSink
      */
     [kWriteStreamFastPath]?: undefined | true | FileSink;
+    [kBackpressurePromise]?: undefined | Promise<number>;
+    [kPendingReports]?: number;
   };
 type FD = number;
 
@@ -40,6 +42,11 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The promise the sink handed back for writes it is still buffering, and how many
+// completion reports are still queued on it. The sink hands back the same promise
+// for every write it parks, so counting is the only way to know the last has reported.
+const kBackpressurePromise = Symbol("kBackpressurePromise");
+const kPendingReports = Symbol("kPendingReports");
 const kFs = Symbol("kFs");
 
 const {
@@ -473,6 +480,8 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   // Enable fast path
   if (fastPath) {
     this[kWriteStreamFastPath] = fd ? Bun.file(fd).writer() : true;
+    this[kBackpressurePromise] = undefined;
+    this[kPendingReports] = 0;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
@@ -631,6 +640,13 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
 }
 
+// Every report queued on the parked promise decrements on its way out. Only the last
+// one unparks, so a write accepted while any of them is still queued chains behind it
+// rather than reporting from a tick of its own.
+function unparkWhenDrained(stream: FSStream) {
+  if (--stream[kPendingReports]! === 0) stream[kBackpressurePromise] = undefined;
+}
+
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
@@ -648,7 +664,8 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     cb = encoding;
     encoding = undefined;
   }
-  if (typeof cb !== "function") {
+  const hasCallback = typeof cb === "function";
+  if (!hasCallback) {
     cb = streamNoop;
   }
 
@@ -656,23 +673,55 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
+      // The sink drains in FIFO order, so what it is still buffering completes before
+      // anything written after it. Park that promise: a write the sink later accepts
+      // outright must report completion behind the reports already queued on it.
+      this[kBackpressurePromise] = maybePromise;
+      this[kPendingReports]!++;
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
       maybePromise.then(
         () => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
+          // Unpark after the user code below, never before: a write re-entered from
+          // the drain listener or from cb has to chain onto this promise too. The
+          // finally guarantees the decrement pairs even when that user code throws.
+          try {
+            this.emit("drain"); // Emit drain event
+            cb(null);
+          } finally {
+            unparkWhenDrained(this);
+          }
         },
         err => {
-          cb(err);
-          // Node.js onwriteError: callback AND destroy are both invoked; the
-          // callback is additive, not a replacement for the 'error' event.
-          require("internal/streams/destroy").errorOrDestroy(this, err);
+          try {
+            cb(err);
+            // Node.js onwriteError: callback AND destroy are both invoked; the
+            // callback is additive, not a replacement for the 'error' event.
+            require("internal/streams/destroy").errorOrDestroy(this, err);
+          } finally {
+            unparkWhenDrained(this);
+          }
         },
       );
       return false; // Indicate backpressure
     } else {
-      cb(null);
+      if (hasCallback) {
+        const backpressurePromise = this[kBackpressurePromise];
+        if (backpressurePromise === undefined) {
+          // node never invokes a write callback during write().
+          process.nextTick(cb, null);
+        } else {
+          // The reports already queued on that promise have not run. A tick lands
+          // behind them either way, and keeps a throwing callback an uncaught
+          // exception, not an unhandled rejection.
+          this[kPendingReports]!++;
+          const report = () => {
+            process.nextTick(cb, null);
+            unparkWhenDrained(this);
+          };
+          backpressurePromise.then(report, report);
+        }
+      }
       return true; // No backpressure
     }
   } else {

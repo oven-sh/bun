@@ -1316,14 +1316,10 @@ impl JSTranspiler {
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
-
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
-        };
-        // defer code_holder.deinit() → Drop
-        let code = code_holder.slice();
         args.eat();
 
+        // Coerce `loader` before reading `code`'s bytes: `loader_from_js` may run a
+        // user `toString()` that detaches the code ArrayBuffer.
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
                 args.eat();
@@ -1335,6 +1331,12 @@ impl JSTranspiler {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
+
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
+        };
+        // defer code_holder.deinit() → Drop
+        let code = code_holder.slice();
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1475,20 +1477,10 @@ impl JSTranspiler {
             ));
         };
 
-        let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
-            return Err(global.throw_invalid_argument_type(
-                "transformSync",
-                "code",
-                "string or Uint8Array",
-            ));
-        };
-        // defer code_holder.deinit() → Drop
-        let code = code_holder.slice();
-        arguments.ptr[0].ensure_still_alive();
-        let _keep0 = bun_jsc::EnsureStillAlive(arguments.ptr[0]);
-
         args.eat();
+
+        // Coerce `loader` before reading `code`'s bytes: `loader_from_js` may run a
+        // user `toString()` that detaches the code ArrayBuffer.
         let mut js_ctx_value: JSValue = JSValue::ZERO;
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
@@ -1504,6 +1496,19 @@ impl JSTranspiler {
             }
             break 'brk None;
         };
+
+        let arena = Arena::new();
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "transformSync",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+        // defer code_holder.deinit() → Drop
+        let code = code_holder.slice();
+        arguments.ptr[0].ensure_still_alive();
+        let _keep0 = bun_jsc::EnsureStillAlive(arguments.ptr[0]);
 
         if let Some(arg) = args.next_eat() {
             if arg.is_object() {
@@ -1688,6 +1693,18 @@ impl JSTranspiler {
             ));
         };
 
+        args.eat();
+
+        // Coerce `loader` before reading `code`'s bytes: `loader_from_js` may run a
+        // user `toString()` that detaches the code ArrayBuffer.
+        let mut loader: Loader = self.config.get().default_loader;
+        if let Some(arg) = args.next() {
+            if let Some(l) = loader_from_js(global, arg)? {
+                loader = l;
+            }
+            args.eat();
+        }
+
         let code_holder = match StringOrBuffer::from_js(global, code_arg)? {
             Some(h) => h,
             None => {
@@ -1701,17 +1718,8 @@ impl JSTranspiler {
                 return Ok(JSValue::ZERO);
             }
         };
-        args.eat();
         // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
-
-        let mut loader: Loader = self.config.get().default_loader;
-        if let Some(arg) = args.next() {
-            if let Some(l) = loader_from_js(global, arg)? {
-                loader = l;
-            }
-            args.eat();
-        }
 
         if !loader.is_java_script_like() {
             return Err(global.throw_invalid_arguments(format_args!(

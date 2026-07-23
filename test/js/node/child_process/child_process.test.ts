@@ -4,6 +4,7 @@ import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
+import { constants as osConstants } from "node:os";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -542,6 +543,55 @@ describe("execFileSync()", () => {
       env: process.env,
     });
     expect(result.trim()).toBe("data: hello world!");
+  });
+});
+
+describe.skipIf(isWindows)("spawnSync/execFileSync input option: child closes stdin early", () => {
+  // Node.js reports the parent's EPIPE write failure via result.error (and
+  // execFileSync re-throws it) while still returning the child's real
+  // status/stdout. See libuv src/spawn_sync.cc SyncProcessRunner::SetError.
+  const input = Buffer.alloc(4 << 20, "a");
+
+  it("spawnSync sets result.error to EPIPE when input is not fully consumed", () => {
+    const r = spawnSync("head", ["-c", "10"], { input });
+    expect(r.stdout?.toString()).toBe("aaaaaaaaaa");
+    expect(r.status).toBe(0);
+    expect(r.error).toBeInstanceOf(Error);
+    expect({
+      code: r.error?.code,
+      errno: r.error?.errno,
+      syscall: r.error?.syscall,
+      path: r.error?.path,
+      spawnargs: r.error?.spawnargs,
+      message: r.error?.message,
+    }).toEqual({
+      code: "EPIPE",
+      errno: osConstants.errno.EPIPE * -1,
+      syscall: "spawnSync head",
+      path: "head",
+      spawnargs: ["-c", "10"],
+      message: "spawnSync head EPIPE",
+    });
+  });
+
+  it("spawnSync leaves result.error unset when input is fully consumed", () => {
+    const r = spawnSync("cat", [], { input: "hello" });
+    expect(r.stdout?.toString()).toBe("hello");
+    expect(r.error).toBeUndefined();
+    expect(r.status).toBe(0);
+  });
+
+  it("execFileSync throws when input is not fully consumed", () => {
+    let thrown: any;
+    try {
+      execFileSync("head", ["-c", "10"], { input });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown.code).toBe("EPIPE");
+    expect(thrown.syscall).toBe("spawnSync head");
+    expect(thrown.stdout?.toString()).toBe("aaaaaaaaaa");
   });
 });
 

@@ -14,7 +14,7 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
 };
-use bun_jsc::{JsCell, SysErrorJsc as _};
+use bun_jsc::{JsCell, StringJsc as _, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
@@ -934,7 +934,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let _ = &inherited_env_storage;
 
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd() {
+        if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index == 0) {
             if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
             }
@@ -1331,6 +1331,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        stdin_write_err: JsCell::new(None),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
@@ -2025,6 +2026,25 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     };
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
+    let stdin_write_error: JSValue = match subprocess.stdin_write_err.replace(None) {
+        Some(err) => {
+            // Read errno/code directly instead of going through
+            // `to_system_error()`, which allocates a WTFStringImpl message
+            // that nothing here would deref (bun_core::String is Copy).
+            // Report the libuv-style errno (matches the sibling ETIMEDOUT /
+            // ENOBUFS helpers and Node.js on Windows, where UV_EPIPE != -32).
+            let errno = match err.get_errno() {
+                bun_sys::E::EPIPE => -UV_E::PIPE,
+                e => -(e as i32),
+            };
+            let obj = JSValue::create_empty_object(global_this, 2);
+            obj.put(global_this, b"errno", JSValue::js_number_from_int32(errno));
+            let code = BunString::static_(err.name());
+            obj.put(global_this, b"code", code.to_js(global_this)?);
+            obj
+        }
+        None => JSValue::UNDEFINED,
+    };
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
@@ -2065,6 +2085,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 JSValue::FALSE
             },
         );
+    }
+    if !stdin_write_error.is_undefined() {
+        sync_value.put(global_this, b"stdinWriteError", stdin_write_error);
     }
     sync_value.put(global_this, b"pid", result_pid);
 

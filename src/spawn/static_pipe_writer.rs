@@ -26,6 +26,12 @@ pub trait StaticPipeWriterProcess {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
+    /// Called when writing the buffered stdin input fails (e.g. EPIPE when the
+    /// child closes its stdin before the whole buffer is written). Default is a
+    /// no-op; `Subprocess` records the error so `spawnSync` can surface it.
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_stdin_write_error(_this: *mut Self, _err: &bun_sys::Error) {}
 }
 
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
@@ -248,6 +254,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             std::ptr::from_ref(self) as usize,
             err
         );
+        // SAFETY: `process` is a backref to the owning process, guaranteed
+        // alive for the lifetime of this writer (see `on_close`).
+        unsafe { P::on_stdin_write_error(self.process, err) };
         // Clear the buffer before detaching: `buffer` aliases `self.source`'s
         // storage, and `detach()` frees it. `drain_buffered_data` calls
         // on_error() then Parent::on_write(), which would otherwise re-slice

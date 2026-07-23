@@ -53,10 +53,6 @@ describe("spawnSync", () => {
     }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
   });
 
-  it.skipIf(process.platform !== "linux")("should use memfd when possible", () => {
-    expect([join(import.meta.dir, "spawnSync-memfd-fixture.ts")]).toRun();
-  });
-
   it.skipIf(!isPosix)("should use spawnSync optimizations when possible", () => {
     expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
   });

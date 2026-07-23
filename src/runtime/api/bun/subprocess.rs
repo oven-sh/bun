@@ -93,6 +93,10 @@ impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
     }
+    unsafe fn on_stdin_write_error(this: *mut Self, err: &bun_sys::Error) {
+        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
+        unsafe { (*this).stdin_write_err.set(Some(err.clone())) };
+    }
 }
 
 #[derive(EnumSetType, strum::IntoStaticStr)]
@@ -166,6 +170,9 @@ pub struct Subprocess<'a> {
     pub stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+    /// Set when writing a buffered stdin (`Writable::Buffer`) fails, so
+    /// `Bun.spawnSync` can report it like Node.js does (`result.error`).
+    pub stdin_write_err: JsCell<Option<bun_sys::Error>>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -1010,7 +1017,19 @@ impl Subprocess<'_> {
         // We won't be sending any more data.
         let pending_start = self.take_pending_start_writer();
         if let Writable::Buffer(buffer) = self.stdin.get() {
-            Writable::buffer_writer_mut(buffer).close();
+            let writer = Writable::buffer_writer_mut(buffer);
+            // Process exited before the whole stdin buffer was written. The
+            // writer normally records the failing write(), but if this exit
+            // event dispatched before stdin's POLLHUP in the same batch,
+            // close() below would skip that write. Record EPIPE here so the
+            // `result.error` guarantee is structural, not event-order based.
+            if !writer.get_buffer().is_empty() && self.stdin_write_err.get().is_none() {
+                self.stdin_write_err.set(Some(bun_sys::Error::new(
+                    bun_sys::E::EPIPE,
+                    bun_sys::Tag::write,
+                )));
+            }
+            writer.close();
         }
         if let Some(writer) = pending_start {
             // SAFETY: `started` ⇒ start +1 was live entering; last use.

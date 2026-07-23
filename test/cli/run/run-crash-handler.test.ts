@@ -410,11 +410,12 @@ test("process.dlopen inside a resolver auto-install frame does not trip CURRENT_
   expect(stderr).toBe("");
   const lines = stdout.trim().split("\n");
   expect(lines).toHaveLength(2);
-  // The microtask runs inside the resolver's auto-install tick: it must observe
-  // Action::Resolver both before the nested dlopen installs Action::Dlopen and
-  // after the dlopen clear restores it. `after` being undefined would mean the
-  // clear path reverted to `set(None)` and clobbered the enclosing action.
-  expect(JSON.parse(lines[0])).toEqual({ before: "resolver", after: "resolver" });
+  // The microtask runs inside the resolver's auto-install tick: the dlopen
+  // clear must restore whatever action was current before it, not force None.
+  // Action::Resolver is only installed under #[cfg(debug_assertions)] (debug
+  // and ASAN builds); on plain release the enclosing action is None.
+  const enclosing = isDebug || isASAN ? "resolver" : undefined;
+  expect(JSON.parse(lines[0])).toEqual({ before: enclosing, after: enclosing });
   expect(lines[1]).toBe("survived");
   expect(exitCode).toBe(0);
 });

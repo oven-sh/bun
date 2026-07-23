@@ -2246,7 +2246,10 @@ describe("tls.createServer ecdhCurve", () => {
     server.on("tlsClientError", () => {});
     try {
       const port = await listen(server);
-      expect(await handshake(port, "X25519")).toBe("ok");
+      expect({
+        x25519: await handshake(port, "X25519"),
+        p384: await handshake(port, "P-384"),
+      }).toEqual({ x25519: "ok", p384: "ok" });
     } finally {
       server.close();
     }

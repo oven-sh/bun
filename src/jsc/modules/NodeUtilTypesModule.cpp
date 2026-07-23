@@ -493,8 +493,6 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         if (!materialize())
             return false;
         RETURN_IF_EXCEPTION(scope, false);
-        if (usedIndices.size() < entryCount)
-            usedIndices.fill(false, entryCount);
         bool matched = false;
         for (size_t i = 0; i < entryCount; i++) {
             if (usedIndices[i])

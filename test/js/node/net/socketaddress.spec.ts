@@ -183,6 +183,7 @@ describe("SocketAddress constructor", () => {
     } catch {
       throw new Error(`subprocess did not report growth\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
     }
+    expect(stderr).toBe("");
     for (const [name, mb] of Object.entries(growth)) {
       expect(mb, `RSS growth for '${name}' error path: ${mb.toFixed(2)} MB`).toBeLessThan(20);
     }

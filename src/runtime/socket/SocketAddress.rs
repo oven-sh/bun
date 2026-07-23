@@ -49,13 +49,12 @@ impl SocketAddress {
     }
 }
 
-#[derive(Copy, Clone)]
 pub struct Options {
     pub family: AF,
     /// When `None`, default is determined by address family.
     /// - `127.0.0.1` for IPv4
     /// - `::1` for IPv6
-    pub address: Option<BunString>,
+    pub address: Option<OwnedString>,
     pub port: u16,
     /// IPv6 flow label. JS getters for v4 addresses always return `0`.
     pub flowlabel: Option<u32>,
@@ -141,7 +140,7 @@ impl Options {
 
         Ok(Options {
             family: _family,
-            address: address_str.map(OwnedString::into_inner),
+            address: address_str,
             port: _port,
             flowlabel: _flowlabel,
         })
@@ -360,7 +359,7 @@ impl SocketAddress {
         Self::init_js(
             global,
             Options {
-                address: Some(address_.into_inner()),
+                address: Some(address_),
                 family: family_,
                 ..Default::default()
             },
@@ -369,19 +368,13 @@ impl SocketAddress {
 
     /// Semi-structured JS api for creating a `SocketAddress`. If you have raw
     /// socket address data, prefer `SocketAddress::new`.
-    ///
-    /// ## Safety
-    /// - `options.address` gets moved, much like `adoptRef`. Do not `deref` it
-    ///   after passing it in.
     pub fn create(global: &JSGlobalObject, options: Options) -> JsResult<Box<SocketAddress>> {
         Ok(Self::new(Self::init_js(global, options)?))
     }
 
     pub fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        // `options.address` is adopted (+1); wrap immediately so a `pton` failure
-        // releases it. Transferred into `_presentation` on success.
-        let presentation: OwnedString =
-            OwnedString::new(options.address.unwrap_or(BunString::empty()));
+        let had_address = options.address.is_some();
+        let presentation: OwnedString = options.address.unwrap_or_default();
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
@@ -395,7 +388,7 @@ impl SocketAddress {
                     addr: 0, // undefined → overwritten below
                     ..inet::sockaddr_in::ZEROED
                 };
-                if options.address.is_some() {
+                if had_address {
                     let slice = presentation.to_owned_slice_z();
                     // Box<ZStr> drops at scope exit
                     pton(
@@ -418,7 +411,7 @@ impl SocketAddress {
                     scope_id: 0,
                     ..inet::sockaddr_in6::ZEROED
                 };
-                if options.address.is_some() {
+                if had_address {
                     let slice = presentation.to_owned_slice_z();
                     pton(
                         global,

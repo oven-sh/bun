@@ -19,7 +19,7 @@ test.concurrent.each(["./src/worker.ts", "../src/worker.ts", "/abs/path", "/$bun
       threw = e;
     }
     expect(String((threw as AggregateError)?.errors?.[0] ?? threw)).toContain(
-      `define value "${value}" must be a valid JSON literal or identifier`,
+      `define value for "X" must be a valid JSON literal or identifier: ${value}`,
     );
 
     const result = await Bun.build({
@@ -44,7 +44,7 @@ test.concurrent("--define CLI rejects a bare path value with an actionable error
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain('define value "./src/worker.ts" must be a valid JSON literal or identifier');
+  expect(stderr).toContain('define value for "X" must be a valid JSON literal or identifier: ./src/worker.ts');
   expect(stdout).not.toContain("./src/worker.ts");
   expect(exitCode).not.toBe(0);
 });

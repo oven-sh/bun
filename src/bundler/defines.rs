@@ -515,9 +515,11 @@ impl DefineDataExt for DefineData {
             path: defines_path(),
             ..Default::default()
         };
-        // Parse into a scratch log: on failure we want a single
-        // `define value "…" must be …` error, not the JSON parser's
+        // Parse into a scratch log so the user sees a single `define value for
+        // "…" must be …` error naming the key, not the JSON parser's
         // `Unexpected <token>` pointing into the synthetic defines.json source.
+        // Success-path warnings (duplicate keys in an object literal) are
+        // suppressed via `json_warn_duplicate_keys: false` in the parser.
         let mut scratch = bun_ast::Log::default();
         let parsed = if value_str.is_empty() {
             None
@@ -532,7 +534,8 @@ impl DefineDataExt for DefineData {
                 None,
                 bun_ast::Loc::default(),
                 format_args!(
-                    "define value \"{}\" must be a valid JSON literal or identifier",
+                    "define value for \"{}\" must be a valid JSON literal or identifier: {}",
+                    bstr::BStr::new(key),
                     bstr::BStr::new(value_str)
                 ),
             );
@@ -550,11 +553,7 @@ impl DefineDataExt for DefineData {
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,
-            original_name: if !value_str.is_empty() {
-                Some(Box::<[u8]>::from(value_str))
-            } else {
-                None
-            },
+            original_name: Some(Box::<[u8]>::from(value_str)),
             flags: Flags::new(
                 /* valueless: */ false,
                 /* can_be_removed_if_unused: */ can_be_removed_if_unused,

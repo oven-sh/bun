@@ -16,7 +16,6 @@ use crate::json_stage2::Parser;
 pub struct JSONOptions {
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
-    pub ignore_leading_escape_sequences: bool,
     pub json_warn_duplicate_keys: bool,
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
@@ -27,7 +26,6 @@ impl JSONOptions {
     pub const DEFAULT: JSONOptions = JSONOptions {
         allow_comments: false,
         allow_trailing_commas: false,
-        ignore_leading_escape_sequences: false,
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
         guess_indentation: false,
@@ -42,12 +40,6 @@ impl Default for JSONOptions {
 }
 
 const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
-
-const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
-    allow_trailing_commas: true,
-    ignore_leading_escape_sequences: true,
-    ..JSONOptions::DEFAULT
-};
 
 const TSCONFIG_OPTS: JSONOptions = JSONOptions {
     allow_comments: true,
@@ -534,128 +526,10 @@ pub fn parse_define_value(
 ) -> crate::Result<Expr> {
     const OPTS: JSONOptions = JSONOptions {
         allow_trailing_commas: true,
+        json_warn_duplicate_keys: false,
         ..JSONOptions::DEFAULT
     };
     Ok(parse_classic(source, log, bump, OPTS, true)?.root)
-}
-
-/// `.env` values: JSON, keywords, or an implicitly-quoted string.
-pub fn parse_env_json(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> crate::Result<Expr> {
-    let contents: &[u8] = &source.contents;
-    if contents.is_empty() {
-        return Ok(empty_object_expr());
-    }
-
-    if contents.len() >= 2 && contents[0] == b'\\' && matches!(contents[1], b'"' | b'\'') {
-        let quote = contents[1];
-        let mut unescaped: Vec<u8> = Vec::with_capacity(contents.len());
-        unescaped.extend_from_slice(&contents[1..]);
-        let n = unescaped.len();
-        if n >= 3 && unescaped[n - 2] == b'\\' && unescaped[n - 1] == quote {
-            unescaped.truncate(n - 2);
-            unescaped.push(quote);
-        }
-        let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
-        let rw_source = bun_ast::Source::init_path_string("", rewritten);
-        return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
-    }
-
-    match contents[0] {
-        b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
-        }
-        b'-' | b'.' if leads_a_number(contents) => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
-        }
-        _ => {
-            let word_len = contents
-                .iter()
-                .position(|c| !c.is_ascii_alphanumeric() && *c != b'_' && *c != b'$')
-                .unwrap_or(contents.len());
-            match &contents[..word_len] {
-                b"true" => {
-                    return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: js_ast::expr::Data::EBoolean(E::Boolean { value: true }),
-                    });
-                }
-                b"false" => {
-                    return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: js_ast::expr::Data::EBoolean(E::Boolean { value: false }),
-                    });
-                }
-                b"null" => {
-                    return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: js_ast::expr::Data::ENull(E::Null {}),
-                    });
-                }
-                b"undefined" => {
-                    return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: js_ast::expr::Data::EUndefined(E::Undefined {}),
-                    });
-                }
-                _ => {}
-            }
-            parse_auto_quoted_string(source, log, bump)
-        }
-    }
-}
-
-fn leads_a_number(contents: &[u8]) -> bool {
-    let after_sign = if contents[0] == b'-' {
-        match skip_ws_and_comments(contents, 1) {
-            Some(p) => &contents[p..],
-            None => return false,
-        }
-    } else {
-        contents
-    };
-    match after_sign.first() {
-        Some(b'0'..=b'9') => true,
-        Some(b'.') => matches!(after_sign.get(1), Some(b'0'..=b'9')),
-        _ => false,
-    }
-}
-
-fn parse_auto_quoted_string(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> crate::Result<Expr> {
-    let contents: &[u8] = &source.contents;
-    let loc = bun_ast::Loc { start: 0 };
-
-    let mut needs_decode = false;
-    let mut i = 0;
-    while i < contents.len() {
-        match contents[i] {
-            b'\\' => {
-                needs_decode = true;
-                i += 2;
-            }
-            c if c >= 0x80 => {
-                needs_decode = true;
-                i += 1;
-            }
-            _ => i += 1,
-        }
-    }
-    let body = contents;
-    if !needs_decode {
-        return Ok(Expr::allocate(bump, E::String::init(body), loc));
-    }
-    let opts = DOTENV_JSON_OPTS;
-    match crate::json_stage2::decode_auto_quoted(source, log, bump, body, opts) {
-        Ok(s) => Ok(Expr::allocate(bump, s, loc)),
-        Err(e) => Err(e),
-    }
 }
 
 /// Extracts the top-level `name` and `version` strings from a package.json.
@@ -1098,7 +972,6 @@ mod tests {
         let r = match which {
             Which::Utf8 => parse_utf8(&source, &mut log, &bump),
             Which::TsConfig => parse_ts_config(&source, &mut log, &bump),
-            Which::Env => parse_env_json(&source, &mut log, &bump),
             Which::PackageJson => parse_package_json_utf8(&source, &mut log, &bump),
             Which::Jsonc => ParsedJson::parse_jsonc(&source, &mut log).map(|p| {
                 tape = p.tape;
@@ -1131,7 +1004,6 @@ mod tests {
     enum Which {
         Utf8,
         TsConfig,
-        Env,
         PackageJson,
         Jsonc,
         Immutable,
@@ -2130,46 +2002,6 @@ mod tests {
         let p = run(s.as_bytes(), Which::Utf8);
         assert!(p.root.is_none());
         assert!(p.first_msg.contains("too deeply nested"), "{}", p.first_msg);
-    }
-
-    #[test]
-    fn env_json() {
-        for (src, want) in [
-            ("production", "production"),
-            ("hello world", "hello world"),
-            ("*{box-sizing:border-box}", "*{box-sizing:border-box}"),
-            ("a\\nb", "a\nb"),
-            ("first line\nsecond", "first line\nsecond"),
-            ("(\nrest", "(\nrest"),
-            ("*\nrest", "*\nrest"),
-            ("a\\nb\nc", "a\nb\nc"),
-            ("caf\u{e9}\tx\nrest", "caf\u{e9}\tx\nrest"),
-            ("-abc", "-abc"),
-            (".env-like", ".env-like"),
-            (r#"\"hello\""#, "hello"),
-        ] {
-            let p = run(src.as_bytes(), Which::Env);
-            assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
-            assert_eq!(root_string(&p), want, "{src}");
-        }
-        for (src, want) in [("-1", -1.0), (".5", 0.5), ("-.25", -0.25), ("- 5", -5.0)] {
-            let p = run(src.as_bytes(), Which::Env);
-            let Some(Data::ENumber(n)) = p.root.as_ref().map(|r| &r.data) else {
-                panic!("{src}: expected a number ({})", p.first_msg);
-            };
-            assert_eq!(n.value(), want, "{src}");
-        }
-        let p = run(b"true", Which::Env);
-        assert!(matches!(
-            p.root.as_ref().unwrap().data,
-            Data::EBoolean(E::Boolean { value: true })
-        ));
-        let p = run(b"undefined", Which::Env);
-        assert!(matches!(p.root.as_ref().unwrap().data, Data::EUndefined(_)));
-        let p = run(b"\"quoted\"", Which::Env);
-        assert_eq!(root_string(&p), "quoted");
-        let p = run(b"{\"a\": [1]}", Which::Env);
-        assert_eq!(p.errors, 0);
     }
 
     #[test]

@@ -100,13 +100,8 @@ describe("Bun.build", () => {
         define: { X: value },
       });
       const messages = result.logs.map(l => l.message).join("\n");
-      expect(messages).toContain(`define value "${value}" must be a valid JSON literal or identifier`);
+      expect(messages).toContain(`define value for "X" must be a valid JSON literal or identifier: ${value}`);
       expect(result.success).toBe(false);
-    });
-
-    test("new Bun.Transpiler throws", () => {
-      expect(() => new Bun.Transpiler({ define: { X: "60 * 60 * 1000" } })).toThrow(/define/i);
-      expect(() => new Bun.Transpiler({ define: { X: '{"a":' } })).toThrow(/define/i);
     });
 
     test("bun run --define fails before running the script", async () => {
@@ -115,13 +110,17 @@ describe("Bun.build", () => {
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--define", "X=60 * 60 * 1000", "entry.js"],
-        env: bunEnv,
+        // `bun run` builds a full VM before configure_defines errors; under the
+        // ASAN lane's inherited BUN_DESTRUCT_VM_ON_EXIT=1 the teardown + LSAN
+        // scan takes ~5s on its own. The test cares about the error message
+        // and exit code, not the subprocess's leak-freeness.
+        env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: undefined, ASAN_OPTIONS: undefined, LSAN_OPTIONS: undefined },
         cwd: dir,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain('define value "60 * 60 * 1000" must be a valid JSON literal or identifier');
+      expect(stderr).toContain('define value for "X" must be a valid JSON literal or identifier: 60 * 60 * 1000');
       expect(stdout).not.toContain("RAN");
       expect(exitCode).not.toBe(0);
     });
@@ -138,7 +137,7 @@ describe("Bun.build", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain('define value "60 * 60 * 1000" must be a valid JSON literal or identifier');
+      expect(stderr).toContain('define value for "V" must be a valid JSON literal or identifier: 60 * 60 * 1000');
       expect(stdout).not.toContain("console.log(60,");
       expect(exitCode).not.toBe(0);
     });

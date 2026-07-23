@@ -970,6 +970,11 @@ impl<'a> Repl<'a> {
             // Cleared in disable_signals_during_wait; Release pairs with the
             // Acquire load in `sigint_handler`.
             SIGINT_VM.store(vm.jsc_vm, core::sync::atomic::Ordering::Release);
+            // `wait_for_promise` refs the loop (see `EventLoop::ref_loop_scoped`),
+            // so `auto_tick` parks in epoll/kqueue instead of polling. Setting
+            // `execution_forbidden` from the handler is therefore not observable
+            // on its own — the handler must also wake the loop.
+            SIGINT_LOOP.store(vm.uws_loop(), core::sync::atomic::Ordering::Release);
         }
 
         #[cfg(unix)]
@@ -993,6 +998,7 @@ impl<'a> Repl<'a> {
     /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
         SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+        SIGINT_LOOP.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
@@ -2439,6 +2445,11 @@ impl<'a> Drop for Repl<'a> {
 static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+/// The uws loop the interrupted `wait_for_promise` is parked in. See
+/// `enable_signals_during_wait`.
+static SIGINT_LOOP: core::sync::atomic::AtomicPtr<bun_uws::Loop> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
     let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
@@ -2446,6 +2457,16 @@ extern "C" fn sigint_handler(_: c_int) {
         // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
         // blocked in wait while the handler runs, so it stays valid).
         jsc::VM::opaque_ref(vm).set_execution_forbidden(true);
+    }
+    let loop_ = SIGINT_LOOP.load(core::sync::atomic::Ordering::Acquire);
+    if !loop_.is_null() {
+        // Wake the parked `auto_tick` so `wait_for_promise` re-checks
+        // `execution_forbidden`. `wakeup_raw` takes a raw pointer (the parked
+        // thread holds `&mut Loop`) and bottoms out in an atomic increment
+        // plus a `write()` to the wakeup eventfd — async-signal-safe.
+        // SAFETY: `loop_` is the VM's loop, live while the JS thread is
+        // parked in the wait this handler interrupts.
+        unsafe { bun_uws::Loop::wakeup_raw(loop_) };
     }
 }
 

@@ -243,6 +243,22 @@ impl PosixLoop {
         unsafe { c::us_wakeup_loop(self) };
     }
 
+    /// [`Self::wakeup`] from a signal handler or a thread that may already
+    /// hold a `&mut Loop`.
+    ///
+    /// Takes `*mut Self` so a signal handler interrupting a thread parked
+    /// inside `tick_with_timeout` (which holds `&mut Loop` across the FFI
+    /// call) does not mint a second, aliasing `&mut`. `us_wakeup_loop` is an
+    /// atomic increment plus a `write()` to the wakeup eventfd, so it is
+    /// async-signal-safe.
+    ///
+    /// # Safety
+    /// `this` must be a live loop pointer for the duration of the call.
+    pub unsafe fn wakeup_raw(this: *mut Self) {
+        // SAFETY: per fn contract.
+        unsafe { c::us_wakeup_loop(this) };
+    }
+
     #[inline]
     pub fn wake(&mut self) {
         self.wakeup();
@@ -442,6 +458,15 @@ impl WindowsLoop {
     pub fn wakeup(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_wakeup_loop(self) };
+    }
+
+    /// See [`PosixLoop::wakeup_raw`].
+    ///
+    /// # Safety
+    /// `this` must be a live loop pointer for the duration of the call.
+    pub unsafe fn wakeup_raw(this: *mut Self) {
+        // SAFETY: per fn contract.
+        unsafe { c::us_wakeup_loop(this) };
     }
 
     #[inline]

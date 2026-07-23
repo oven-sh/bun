@@ -2418,6 +2418,10 @@ impl VirtualMachine {
         if self.is_watcher_enabled() {
             // accessed here (no overlapping `&mut EventLoop`).
             self.event_loop_mut().perform_gc();
+            // See `EventLoop::ref_loop_scoped` — this drive loop keeps
+            // ticking until the module promise settles, so ref the loop so
+            // `auto_tick` parks on timer deadlines instead of spinning.
+            let _loop_ref = self.event_loop_shared().ref_loop_scoped();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -4557,6 +4561,9 @@ impl VirtualMachine {
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
             self.event_loop_mut().perform_gc();
+            // See `EventLoop::ref_loop_scoped` — park instead of spin while
+            // waiting on the module promise.
+            let _loop_ref = self.event_loop_shared().ref_loop_scoped();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;

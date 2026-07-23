@@ -132,7 +132,11 @@ class Session extends EventEmitter {
         if (isCPUProfilerRunning()) return new Error("Cannot change sampling interval while profiler is running");
         const interval = (params as any)?.interval;
         if (typeof interval !== "number" || interval <= 0) return new Error("interval must be a positive number");
-        setCPUSamplingInterval(interval);
+        try {
+          setCPUSamplingInterval(interval);
+        } catch (e) {
+          return e;
+        }
         return {};
       }
 

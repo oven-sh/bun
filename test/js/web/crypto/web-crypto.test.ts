@@ -622,13 +622,14 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     }
   });
 
-  it("decrypt of undersized ChaCha20-Poly1305 input rejects with Node's generic message", async () => {
-    const key = await crypto.subtle.importKey("raw-secret", new Uint8Array(32), "ChaCha20-Poly1305", false, [
-      "decrypt",
-    ]);
-    await expect(
-      crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: new Uint8Array(12) }, key, new Uint8Array(5)),
-    ).rejects.toThrow("The operation failed for an operation-specific reason");
+  it.each([
+    ["ChaCha20-Poly1305", "raw-secret"],
+    ["AES-GCM", "raw"],
+  ])("decrypt of undersized %s input rejects with Node's generic message", async (name, format) => {
+    const key = await crypto.subtle.importKey(format as KeyFormat, new Uint8Array(32), { name }, false, ["decrypt"]);
+    await expect(crypto.subtle.decrypt({ name, iv: new Uint8Array(12) }, key, new Uint8Array(5))).rejects.toThrow(
+      "The operation failed for an operation-specific reason",
+    );
   });
 
   it("encapsulateBits and encapsulateKey enumerate results in Node's order", async () => {

@@ -128,6 +128,11 @@ pub fn write_request(
         stream.request_body_done = true;
     }
 
+    // SAFETY: re-derive — `drain_send_body` forms its own `&mut HTTPClient`
+    // from this same backref, which invalidates the prior Unique tag under
+    // Stacked Borrows (same shape as the `detach()` notes in
+    // `ClientSession::deliver`).
+    let client = super::client_session::client_mut(client_ptr);
     client.state.request_stage = if stream.request_body_done {
         HTTPStage::Done
     } else {

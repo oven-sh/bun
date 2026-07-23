@@ -289,8 +289,9 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   }
 
   // Options whose semantics we cannot honor yet must fail loudly rather than be
-  // silently ignored. testTagFilters is the deliberate exception: validated for
-  // node's error contract but not yet forwarded, pending the native reporter hook.
+  // silently ignored. testTagFilters and timeout are the deliberate exceptions:
+  // validated for node's error contract but not yet forwarded (node's own
+  // test-runner-filetest-location.js passes timeout).
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
@@ -298,6 +299,8 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
+  if (opts.forceExit) throwNotImplemented("run({ forceExit: true })", 5090);
+  if (opts.concurrency != null) throwNotImplemented("run({ concurrency })", 5090);
 
   if (opts.isolation === "none") {
     // Set synchronously so an overlapping run() hits the recursion guard
@@ -570,6 +573,9 @@ async function runOneFile(
     const fileFailed = exitCode !== 0 && fileSucceeded;
     const subtestsFailed = !fileSucceeded;
     const fileDuration = roundDurationMs(performance.now() - fileStarted);
+    // Captured before the file-level increments below so it reflects only the
+    // child-reported count.
+    const reportedChildren = fileCounts.tests + fileCounts.suites;
     let error: Error | undefined;
 
     if (subtestsFailed) {
@@ -577,7 +583,9 @@ async function runOneFile(
       error = makeTestFailure(`${n} subtest${n === 1 ? "" : "s"} failed`, "subtestsFailed");
     }
 
-    if (!fileFailed) {
+    // The per-file summary republishes the child's own; a zero-test child
+    // emits none (observed on node v26.3.0).
+    if (!fileFailed && reportedChildren > 0) {
       reporter.emitMessage("test:summary", {
         __proto__: null,
         success: fileSucceeded,
@@ -585,11 +593,6 @@ async function runOneFile(
         duration_ms: fileDuration,
         file: absolute,
       });
-    } else {
-      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
-      fileCounts.tests++;
-      fileCounts.failed++;
-      fileCounts.topLevel++;
     }
 
     // node emits the file node's completion before its verdict, and a failed
@@ -618,6 +621,21 @@ async function runOneFile(
         type: undefined,
         testNumber: ++state.verdictNumber,
         details: { __proto__: null, duration_ms: fileDuration, type: "test", error },
+      });
+    } else if (reportedChildren === 0) {
+      // node's FileTest.report(): a file that registers zero tests and exits 0
+      // is itself a passing test — start then pass, counted as tests=1/passed=1
+      // (observed on v26.3.0; the pass details carry no error or passed flag).
+      fileCounts.tests++;
+      fileCounts.passed++;
+      fileCounts.topLevel++;
+      reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
+      reporter.emitMessage("test:pass", {
+        __proto__: null,
+        ...fileNode,
+        type: undefined,
+        testNumber: ++state.verdictNumber,
+        details: { __proto__: null, duration_ms: fileDuration, type: "test" },
       });
     }
     addRunCounts(counts, fileCounts);
@@ -3872,7 +3890,7 @@ function addTest(
     // directive it reports. bun:test only runs todo bodies under --todo, so a
     // run() child registers them as ordinary tests and marks the result at the
     // end (what createTopLevelTestRunner already does for a runtime t.todo()).
-    if (runChildReporterEnabled && effectiveMode === "todo" && !node.skipped) {
+    if (runChildReporterEnabled && effectiveMode === "todo") {
       // The test.todo() spelling carries the directive in `mode`, not in the
       // options, so the node has to be marked for the runner to report it.
       node.todoFlag = true;

@@ -63,11 +63,13 @@ static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& i
 // SEPARATOR and the deprecated format characters U+206A..U+206F changed from
 // disallowed to ignored, U+04C0 and U+2183 gained lowercase mappings, and
 // five CJK compatibility ideographs got their corrected (non-NFC) mappings.
-// Node v26 follows Unicode 16 through ada::idna (the ICU path was removed in
-// nodejs/node#55156), while the ICU bundled with WebKit (75.1, Unicode 15.1
-// data) predates all of these. Apply the delta before any IDNA processing so
-// every node:url surface matches node (WPT url/resources/toascii.json cases
-// 66/74/81/82/83 pin this).
+// Unicode 15.1 earlier retargeted U+1E9E LATIN CAPITAL LETTER SHARP S from
+// "ss" to U+00DF. Node v26 follows Unicode 16 through ada::idna (the ICU path
+// was removed in nodejs/node#55156), while the ICU bundled with WebKit is at
+// 75.1 (Unicode 15.1) on most platforms but 73.2 (Unicode 15.0) on Windows.
+// Apply the delta before any IDNA processing so every node:url surface matches
+// node regardless of which ICU data the platform ships (WPT toascii.json cases
+// 66/74/81/82/83/87/88 pin this).
 static String applyUnicode16IDNADelta(const String& input)
 {
     if (input.is8Bit())
@@ -78,7 +80,7 @@ static String applyUnicode16IDNADelta(const String& input)
     for (size_t i = 0; i < view.length(); i++) {
         char16_t u = view[i];
         // 0xD87E is the shared lead surrogate of the five CJK sources.
-        if (u == 0x04C0 || u == 0x180E || (u >= 0x206A && u <= 0x206F) || u == 0x2183 || u == 0xD87E) {
+        if (u == 0x04C0 || u == 0x180E || u == 0x1E9E || (u >= 0x206A && u <= 0x206F) || u == 0x2183 || u == 0xD87E) {
             needsDelta = true;
             break;
         }
@@ -99,6 +101,9 @@ static String applyUnicode16IDNADelta(const String& input)
             break; // disallowed -> ignored
         case 0x04C0:
             builder.append(static_cast<char32_t>(0x04CF));
+            break;
+        case 0x1E9E:
+            builder.append(static_cast<char32_t>(0x00DF));
             break;
         case 0x2183:
             builder.append(static_cast<char32_t>(0x2184));

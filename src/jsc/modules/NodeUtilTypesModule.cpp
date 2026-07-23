@@ -897,15 +897,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
 }
 
 extern "C" bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
+extern "C" bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 
 // util.isDeepStrictEqual / assert.deepStrictEqual: node semantics, including
 // the [[Prototype]] identity check that Bun.deepEquals(a, b, true) omits.
+// argument(2) truthy = Assert class skipPrototype option (node's
+// kStrictWithoutPrototypes: same node semantics, prototype identity skipped).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    bool result = Bun__deepEqualsNodeStrict(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject);
+    bool skipPrototype = callframe->argument(2).toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool result = skipPrototype
+        ? Bun__deepEqualsNodeStrictSkipProto(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject)
+        : Bun__deepEqualsNodeStrict(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(result));
 }

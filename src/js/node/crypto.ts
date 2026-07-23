@@ -339,19 +339,7 @@ crypto_exports.getHashes = getHashes;
 crypto_exports.randomInt = randomInt;
 crypto_exports.randomFill = randomFill;
 crypto_exports.randomFillSync = randomFillSync;
-const nativeRandomBytes = randomBytes;
-let asyncHooksHub;
-crypto_exports.randomBytes = function randomBytes(size, callback) {
-  if (typeof callback === "function") {
-    // Async-hooks users see the request as its own resource: init here,
-    // before/after + execution ids around the callback, destroy after.
-    const hooksHub = (asyncHooksHub ??= require("internal/async_hooks_tick"));
-    if (hooksHub.state.tracking) {
-      return nativeRandomBytes(size, hooksHub.wrapRequestCallback("RANDOMBYTESREQUEST", callback));
-    }
-  }
-  return nativeRandomBytes.$apply(this, arguments);
-};
+crypto_exports.randomBytes = randomBytes;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomUUIDv7 = randomUUIDv7;
 
@@ -382,7 +370,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: deprecate(crypto_exports.randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
+    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });

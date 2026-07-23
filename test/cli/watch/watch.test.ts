@@ -177,3 +177,51 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
 });
+
+// A script that registers a SIGTERM handler and then spins in synchronous
+// code must still restart on file change: the watcher thread posts the reload
+// to the JS thread first (so listeners can run), but forces the reload itself
+// after a bounded grace window when the JS thread never drains the task.
+it("--watch forces a restart when the kill-signal listener thread is stuck in sync code", async () => {
+  using dir = tempDir("watch-busy-sigterm", {
+    "busy.js": `
+      process.on("SIGTERM", () => {});
+      console.log("iter first");
+      // The busy loop never yields to the event loop, so the posted
+      // WatchReloadTask cannot run. The watcher-thread fallback must fire.
+      for (;;) {}
+    `,
+  });
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "busy.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const reader = watchee.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  const waitFor = async (needle: string) => {
+    while (!output.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  };
+
+  await waitFor("iter first");
+  await Bun.write(
+    join(String(dir), "busy.js"),
+    `process.on("SIGTERM", () => {});
+     console.log("iter second");
+     process.exit(0);`,
+  );
+  await waitFor("iter second");
+
+  reader.releaseLock();
+  watchee.kill();
+  await watchee.exited;
+}, 30000);

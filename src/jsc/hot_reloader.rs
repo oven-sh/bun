@@ -710,6 +710,32 @@ where
             );
         }
         self.count = 0;
+
+        // The JS thread will emit the kill-signal listeners then execve. If it's
+        // stuck in synchronous code it never drains the posted task, so saving
+        // the file would stop restarting the process. Give it a bounded window;
+        // if the reload hasn't begun, force it from here (node's watcher
+        // SIGKILLs an unresponsive child after its kill-signal grace period).
+        if RELOAD_IMMEDIATELY {
+            const GRACE_MS: u64 = 500;
+            const STEP_MS: u64 = 10;
+            let mut waited = 0u64;
+            while waited < GRACE_MS
+                && !bun_core::is_process_reload_in_progress_on_another_thread()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(STEP_MS));
+                waited += STEP_MS;
+            }
+            if !bun_core::is_process_reload_in_progress_on_another_thread() {
+                Output::flush();
+                flush_changed_paths_for_reload();
+                bun_core::reload_process(
+                    CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+                    false,
+                );
+                unreachable!();
+            }
+        }
     }
 }
 

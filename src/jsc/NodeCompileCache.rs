@@ -830,9 +830,9 @@ fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
     jobs
 }
 
-/// Phase 3 (locked): write one generated blob to disk and update the entry.
-/// Returns the code buffer when the entry should keep it (write failed and a
-/// later pass may retry).
+/// Phase 3 (locked): write one generated blob to disk. `Ok(())` on success;
+/// on any I/O failure returns `Err(())` and the caller restores the taken
+/// `entry.code` and leaves `persisted` false so a later pass may retry.
 fn write_persist_job_locked(
     state: &mut CacheState,
     job: &PersistJob,

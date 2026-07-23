@@ -23,7 +23,6 @@
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
-const hooksHub = require("internal/async_hooks_tick");
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 // SameValue in pure operators. Node compares stores with the primordial
@@ -353,60 +352,28 @@ if (IS_BUN_DEVELOPMENT) {
   };
 }
 
-// GC-tracked destroy, mirroring node v26.3.0 lib/internal/async_hooks.js
-// registerDestroyHook: an undestroyed resource emits destroy when collected.
-// The record's flag lets emitDestroy() suppress the GC emission, and the hook
-// count is re-checked at emit time so disabled hooks stop GC destroys.
-function onAsyncResourceCollected(rec: any) {
-  if (!rec.destroyed && hooksHub.destroyHooks.length !== 0) {
-    rec.destroyed = true;
-    hooksHub.queueDestroy(rec.asyncId);
-  }
-}
-const destroyRegistry = new FinalizationRegistry(onAsyncResourceCollected);
-
 class AsyncResource {
   type;
   #snapshot;
-  #asyncId;
   #triggerAsyncId;
-  #destroyRec = null;
 
   constructor(type, opts?) {
     validateString(type, "type");
 
-    let requireManualDestroy = false;
-    // Node defaults to getDefaultTriggerAsyncId(), the current execution
-    // async id.
-    let triggerAsyncId;
-    if (typeof opts === "number") {
-      triggerAsyncId = opts;
-    } else {
-      triggerAsyncId = opts?.triggerAsyncId === undefined ? hooksHub.state.exec : opts.triggerAsyncId;
-      requireManualDestroy = !!opts?.requireManualDestroy;
-    }
+    // Node defaults to getDefaultTriggerAsyncId() (the current execution async
+    // id); Bun does not track async ids, so its executionAsyncId() is 0.
+    let triggerAsyncId = typeof opts === "number" ? opts : opts?.triggerAsyncId === undefined ? 0 : opts.triggerAsyncId;
     if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
       throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
     }
-    // node throws only while init hooks are enabled (verified on v26.3.0:
-    // a destroy-only hook does not make the empty type throw).
-    if (type.length === 0 && hooksHub.initHooks.length !== 0) {
+    if (hasEnabledCreateHook && type.length === 0) {
       throw $ERR_ASYNC_TYPE(type);
     }
 
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
-    this.#asyncId = hooksHub.newAsyncId();
     this.#triggerAsyncId = triggerAsyncId;
-    if (hooksHub.initHooks.length !== 0) {
-      hooksHub.emitInit(this.#asyncId, type, triggerAsyncId, this);
-    }
-    if (!requireManualDestroy && hooksHub.destroyHooks.length !== 0) {
-      const rec = { asyncId: this.#asyncId, destroyed: false };
-      this.#destroyRec = rec;
-      destroyRegistry.register(this, rec, rec);
-    }
   }
 
   emitBefore() {
@@ -418,7 +385,7 @@ class AsyncResource {
   }
 
   asyncId() {
-    return this.#asyncId;
+    return 0;
   }
 
   triggerAsyncId() {
@@ -426,36 +393,15 @@ class AsyncResource {
   }
 
   emitDestroy() {
-    const rec = this.#destroyRec;
-    if (rec !== null) {
-      // Suppress the GC emission; a second *manual* emitDestroy still
-      // re-emits (node fires destroy again, no throw).
-      rec.destroyed = true;
-      destroyRegistry.unregister(rec);
-      this.#destroyRec = null;
-    }
-    if (hooksHub.destroyHooks.length !== 0) {
-      hooksHub.queueDestroy(this.#asyncId);
-    }
-    return this;
+    //
   }
 
   runInAsyncScope(fn, thisArg, ...args) {
     var prev = get();
     set(this.#snapshot);
-    const state = hooksHub.state;
-    const asyncId = this.#asyncId;
-    const prevExec = state.exec;
-    const prevTrigger = state.trigger;
-    state.exec = asyncId;
-    state.trigger = this.#triggerAsyncId;
-    if (hooksHub.beforeHooks.length !== 0) hooksHub.emitBefore(asyncId);
     try {
       return fn.$apply(thisArg, args);
     } finally {
-      if (hooksHub.afterHooks.length !== 0) hooksHub.emitAfter(asyncId);
-      state.exec = prevExec;
-      state.trigger = prevTrigger;
       set(prev);
     }
   }
@@ -530,14 +476,12 @@ function isEmptyFunction(f: Function) {
 }
 
 const createHookNotImpl = createWarning(
-  "async_hooks.createHook in Bun does not emit events for promises; promiseResolve hooks are never called.",
+  "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
   true,
 );
 
+let hasEnabledCreateHook = false;
 const kHookEnabled = Symbol("kHookEnabled");
-// Port of node v26.3.0 lib/async_hooks.js createHook/AsyncHook: same
-// validation and enable/disable bookkeeping; events are delivered from Bun's
-// dispatch in internal/async_hooks_tick rather than V8 PromiseHooks.
 function createHook(hook) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
@@ -548,74 +492,55 @@ function createHook(hook) {
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
-  // Per-instance wrappers: two hooks registered with the same callback must
-  // stay independently removable (removal is by identity).
-  let registered;
-  function initHookWrapper(asyncId, type, triggerAsyncId, resource) {
-    return init(asyncId, type, triggerAsyncId, resource);
-  }
-  function beforeHookWrapper(asyncId) {
-    return before(asyncId);
-  }
-  function afterHookWrapper(asyncId) {
-    return after(asyncId);
-  }
-  function destroyHookWrapper(asyncId) {
-    return destroy(asyncId);
-  }
+  let enabledInit;
   return {
     enable() {
-      if (this[kHookEnabled]) return this;
-      this[kHookEnabled] = true;
-      registered = [];
-      if (init !== undefined) {
-        hooksHub.initHooks.push(initHookWrapper);
-        registered.push(hooksHub.initHooks, initHookWrapper);
+      if (init !== undefined && enabledInit === undefined) {
+        // init is delivered for TickObject resources (process.nextTick);
+        // other resource types are still unimplemented.
+        // Per-instance wrapper: two hooks registered with the same init
+        // function must stay independently removable (removal is by
+        // identity, and removing the other instance's entry would reorder
+        // its callback relative to unrelated hooks).
+        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
+        require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
       }
-      if (before !== undefined) {
-        hooksHub.beforeHooks.push(beforeHookWrapper);
-        registered.push(hooksHub.beforeHooks, beforeHookWrapper);
-      }
-      if (after !== undefined) {
-        hooksHub.afterHooks.push(afterHookWrapper);
-        registered.push(hooksHub.afterHooks, afterHookWrapper);
-      }
-      if (destroy !== undefined) {
-        hooksHub.destroyHooks.push(destroyHookWrapper);
-        registered.push(hooksHub.destroyHooks, destroyHookWrapper);
-      }
-      if (promiseResolve !== undefined) {
+      if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
         createHookNotImpl(hook);
       }
-      hooksHub.enableTracking();
-      require("internal/async_hooks").markHookEnabled();
+      hasEnabledCreateHook = true;
+      if (!this[kHookEnabled]) {
+        this[kHookEnabled] = true;
+        require("internal/async_hooks").markHookEnabled();
+      }
       return this;
     },
     disable() {
-      if (!this[kHookEnabled]) return this;
-      this[kHookEnabled] = false;
-      for (let i = 0; i < registered.length; i += 2) {
-        const hooks = registered[i];
-        const idx = hooks.indexOf(registered[i + 1]);
+      if (enabledInit !== undefined) {
+        const hooks = require("internal/async_hooks_tick").tickInitHooks;
+        const idx = hooks.indexOf(enabledInit);
         if (idx !== -1) hooks.splice(idx, 1);
+        enabledInit = undefined;
       }
-      registered = undefined;
-      require("internal/async_hooks").markHookDisabled();
+      if (this[kHookEnabled]) {
+        this[kHookEnabled] = false;
+        require("internal/async_hooks").markHookDisabled();
+      }
       return this;
     },
   };
 }
 
-// Ids advance for TickObject, Immediate, Timeout, AsyncResource and wrapped
-// request callbacks; promise reactions do not push their own frame yet.
+const executionAsyncIdNotImpl = createWarning(
+  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.",
+);
 function executionAsyncId() {
-  hooksHub.enableTracking();
-  return hooksHub.state.exec;
+  executionAsyncIdNotImpl();
+  return 0;
 }
 
 function triggerAsyncId() {
-  hooksHub.enableTracking();
-  return hooksHub.state.trigger;
+  return 0;
 }
 
 const executionAsyncResourceWarning = createWarning(

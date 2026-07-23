@@ -8,14 +8,13 @@ describe("EventEmitterAsyncResource", () => {
     expect(ee).toBeInstanceOf(EventEmitterAsyncResource);
     expect(ee).toBeInstanceOf(EventEmitter);
   });
-  // triggerAsyncId echoes the constructor option like Node; the default is the
-  // current execution async id (1 at the top level, matching node).
+  // triggerAsyncId echoes the constructor option like Node; Bun's default execution async id is 0.
   test("triggerAsyncId reflects the option", () => {
     expect(new EventEmitterAsyncResource({ name: "x", triggerAsyncId: 7 }).triggerAsyncId).toBe(7);
-    expect(new EventEmitterAsyncResource({ name: "x" }).triggerAsyncId).toBe(1);
+    expect(new EventEmitterAsyncResource({ name: "x" }).triggerAsyncId).toBe(0);
     expect(new AsyncResource("x", { triggerAsyncId: 7 }).triggerAsyncId()).toBe(7);
     expect(new AsyncResource("x", 7).triggerAsyncId()).toBe(7);
-    expect(new AsyncResource("x").triggerAsyncId()).toBe(1);
+    expect(new AsyncResource("x").triggerAsyncId()).toBe(0);
     let err;
     try {
       new EventEmitterAsyncResource({ name: "x", triggerAsyncId: -2 });

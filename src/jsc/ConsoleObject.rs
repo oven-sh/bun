@@ -2178,7 +2178,10 @@ pub mod formatter {
         /// the same gate `util.inspect` uses so a class's prototype object is
         /// rendered as a plain object instead of being fed to its own
         /// brand-checked `[nodejs.util.inspect.custom]`.
-        fn is_constructor_prototype(value: JSValue, global_this: &JSGlobalObject) -> JsResult<bool> {
+        fn is_constructor_prototype(
+            value: JSValue,
+            global_this: &JSGlobalObject,
+        ) -> JsResult<bool> {
             let Some(constructor) = value.get_own_truthy(global_this, "constructor")? else {
                 return Ok(false);
             };

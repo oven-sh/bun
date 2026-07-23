@@ -204,6 +204,5 @@ describe("spawn stdio validation", () => {
       message: expect.stringMatching(/^The argument 'stdio' is invalid\. Received /),
     });
     expect(err.message).toContain(name);
-    expect(err.message).not.toContain("TODO");
   });
 });

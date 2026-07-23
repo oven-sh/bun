@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // JavaScriptCore's async bytecode generator only preserves locals that are read
@@ -19,11 +19,7 @@ async function run(source: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   let json: unknown;
   try {
     json = JSON.parse(stdout.trim());
@@ -34,10 +30,8 @@ async function run(source: string) {
 }
 
 describe("FinalizationRegistry keeps itself alive while it has registrations", () => {
-  test.concurrent(
-    "cleanup callbacks fire when the registry local dies before its targets",
-    async () => {
-      const { stdout, stderr, exitCode, json } = await run(/* js */ `
+  test.concurrent("cleanup callbacks fire when the registry local dies before its targets", async () => {
+    const { stdout, stderr, exitCode, json } = await run(/* js */ `
         const sleep = ms => new Promise(r => setTimeout(r, ms));
         const K = 500;
         let cleaned = 0;
@@ -57,17 +51,16 @@ describe("FinalizationRegistry keeps itself alive while it has registrations", (
         const collected = wrs.filter(w => w.deref() === undefined).length;
         console.log(JSON.stringify({ K, collected, cleaned }));
       `);
-      expect(stderr).toBe("");
-      expect(stdout.trim()).not.toBe("");
-      const { K, collected, cleaned } = json as { K: number; collected: number; cleaned: number };
-      expect(collected).toBeGreaterThanOrEqual(K - 1);
-      // Without the rooting fix `cleaned` is 0 here; with it every collected
-      // target's callback runs.
-      expect(cleaned).toBe(collected);
-      expect(cleaned).toBeGreaterThanOrEqual(K - 1);
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(stderr).toBe("");
+    expect(stdout.trim()).not.toBe("");
+    const { K, collected, cleaned } = json as { K: number; collected: number; cleaned: number };
+    expect(collected).toBeGreaterThanOrEqual(K - 1);
+    // Without the rooting fix `cleaned` is 0 here; with it every collected
+    // target's callback runs.
+    expect(cleaned).toBe(collected);
+    expect(cleaned).toBeGreaterThanOrEqual(K - 1);
+    expect(exitCode).toBe(0);
+  });
 
   test.concurrent("same inside an async function (not just module top level)", async () => {
     const { stderr, exitCode, json } = await run(/* js */ `

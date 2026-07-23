@@ -3951,23 +3951,16 @@ pub mod formatter {
                 // A custom inspector that returns its own `this` would recurse
                 // forever; re-tag without the custom hook so it falls through to
                 // default formatting (mirrors util.inspect's `ret !== context`).
-                // `print_private` consults `self.disable_inspect_custom` rather
-                // than the tag option, so the suppression has to flow through
-                // the formatter field as well.
-                if result == self.custom_formatted_object.this {
-                    let prev = self.disable_inspect_custom;
-                    self.disable_inspect_custom = true;
-                    let _restore = defer_restore!(self.disable_inspect_custom, prev);
-                    let tag = Tag::get_advanced(
-                        result,
-                        self.global_this,
-                        TagOptions::DISABLE_INSPECT_CUSTOM,
-                    )?;
-                    self.format::<C>(tag, writer_, result, self.global_this)?;
+                // `print_private`'s own probe compares against
+                // `custom_formatted_object.this` for the same reason; leaving
+                // it set to `result` here is what suppresses re-entry there
+                // without blanket-disabling custom inspect for nested values.
+                let tag = if result == self.custom_formatted_object.this {
+                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
                 } else {
-                    let tag = Tag::get(result, self.global_this)?;
-                    self.format::<C>(tag, writer_, result, self.global_this)?;
-                }
+                    Tag::get(result, self.global_this)?
+                };
+                self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())
         }
@@ -4725,7 +4718,12 @@ pub mod formatter {
             // unconditionally so the hook above retains priority; any
             // `[nodejs.util.inspect.custom]` the value carries is consulted now,
             // covering ReadableStream / AbortSignal / CryptoKey / etc.
-            if !self.disable_inspect_custom {
+            // Re-entry on the exact value a custom inspector just returned (the
+            // `ret === this` opt-out) is suppressed by comparing against
+            // `custom_formatted_object.this`, which `print_custom_formatted_object`
+            // leaves pointing at that value; this keeps custom inspect active
+            // for *nested* values of the same format pass.
+            if !self.disable_inspect_custom && value != self.custom_formatted_object.this {
                 if let Some(callback) =
                     value.fast_get(self.global_this, jsc::BuiltinName::InspectCustom)?
                 {

@@ -714,12 +714,9 @@ export interface DeadPort {
  *
  * The port is held as the *local* side of a live TCP connection: bound, so
  * the kernel's ephemeral allocator will not hand it to a concurrent
- * `listen(0)`, and not listening, so `connect()` to it is refused. The
- * previous bind-close-return implementation raced with the file's other
- * `test.concurrent` `listen(0)` calls, which the kernel happily satisfied
- * with the just-freed port before the caller got to dial it (build 77839:
- * a live origin answered 200, build 78501: an auth-requiring proxy answered
- * 407).
+ * `listen(0)`, and not listening, so `connect()` to it is refused. Do not
+ * simplify to bind-then-close: that frees the port into exactly the pool
+ * `listen(0)` draws from, and a sibling `test.concurrent` will take it.
  */
 export async function deadPort(): Promise<DeadPort> {
   let accepted: net.Socket | undefined;

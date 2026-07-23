@@ -74,13 +74,23 @@ const { BuiltinModule } = require("internal/repl/node-shims");
 // Only offer `node:`-prefixed forms that actually resolve: _builtinLibs now
 // includes bun/bun:*/undici/ws (module.builtinModules parity), and
 // `node:bun:ffi` / `node:undici` are not real specifiers.
-const nodeSchemeBuiltinLibs = ArrayPrototypeFilter(
-  ArrayPrototypeMap(getReplBuiltinLibs(), lib => `node:${lib}`),
-  id => BuiltinModule.canBeRequiredByUsers(id),
+function toNodeSchemeId(lib) {
+  return `node:${lib}`;
+}
+// Module.isBuiltin strips a leading `node:` and re-checks, so it accepts
+// `node:bun:ffi`/`node:undici`/`node:ws` even though those never resolve; the
+// node: scheme only covers node's own namespace, so exclude Bun's extras.
+function isNodeNamespaceLib(lib) {
+  return lib !== "bun" && !StringPrototypeStartsWith(lib, "bun:") && lib !== "undici" && lib !== "ws";
+}
+const nodeSchemeBuiltinLibs = ArrayPrototypeMap(
+  ArrayPrototypeFilter(getReplBuiltinLibs(), isNodeNamespaceLib),
+  toNodeSchemeId,
 );
-ArrayPrototypeForEach(BuiltinModule.getSchemeOnlyModuleNames(), lib =>
-  ArrayPrototypePush(nodeSchemeBuiltinLibs, `node:${lib}`),
-);
+function pushSchemeOnlyId(lib) {
+  ArrayPrototypePush(nodeSchemeBuiltinLibs, `node:${lib}`);
+}
+ArrayPrototypeForEach(BuiltinModule.getSchemeOnlyModuleNames(), pushSchemeOnlyId);
 
 function isIdentifier(str) {
   if (str === "") {

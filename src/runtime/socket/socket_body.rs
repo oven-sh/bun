@@ -2338,11 +2338,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_local_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
+        match this.socket.get().local_port() {
+            Some(p) => JSValue::js_number_from_int32(p as i32),
+            None => JSValue::UNDEFINED,
         }
-
-        JSValue::js_number_from_int32(this.socket.get().local_port())
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2396,11 +2395,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_remote_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
+        match this.socket.get().remote_port() {
+            Some(p) => JSValue::js_number_from_int32(p as i32),
+            None => JSValue::UNDEFINED,
         }
-
-        JSValue::js_number_from_int32(this.socket.get().remote_port())
     }
 
     #[inline]
@@ -3482,8 +3480,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers.vm;
 
         let cfg = ssl_opts.as_ref();
-        let reject_unauthorized =
-            upgrade_reject_policy(vm, cfg, is_server, owned_ctx.as_ref().map(|c| c.as_ptr()));
+        let ctx_ptr = owned_ctx.as_ref().map(|c| c.as_ptr());
+        let reject_unauthorized = upgrade_reject_policy(vm, cfg, is_server, ctx_ptr);
+        let (adopt_request_cert, adopt_reject_unauthorized) = match cfg {
+            Some(c) => (c.request_cert != 0, c.reject_unauthorized != 0),
+            None => (
+                server_ctx_requests_cert(ctx_ptr),
+                server_ctx_rejects_unauthorized(ctx_ptr),
+            ),
+        };
         let mut initial_flags = Flags::initial(reject_unauthorized);
         initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
         initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
@@ -3530,6 +3535,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &mut *(tls.owned_ssl_ctx.get().unwrap()),
                 sni,
                 !is_server,
+                adopt_request_cert,
+                adopt_reject_unauthorized,
                 core::mem::size_of::<*mut c_void>() as i32,
                 core::mem::size_of::<*mut c_void>() as i32,
             )
@@ -4051,6 +4058,12 @@ fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
         boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
     // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
+}
+
+fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
+    let Some(ctx) = ctx else { return false };
+    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
 }
 
 impl Default for Flags {

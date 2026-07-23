@@ -814,8 +814,9 @@ where
         );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
-        if unsafe { (*watcher_ptr).start() }.is_err() {
-            panic!("Failed to start File Watcher");
+        if let Err(err) = unsafe { (*watcher_ptr).start() } {
+            bun_core::handle_error_return_trace(&err);
+            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
         }
     }
 

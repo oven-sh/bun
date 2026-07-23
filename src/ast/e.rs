@@ -807,7 +807,7 @@ macro_rules! impl_number_cast {
         }
     )*};
 }
-impl_number_cast!(u16, u32, usize);
+impl_number_cast!(u32, usize);
 
 pub struct BigInt {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
@@ -1638,8 +1638,8 @@ impl EString {
         // `2 * data.len` bytes and reading `data.len` u16s is in-bounds. Can't be
         // `bytemuck::cast_slice(self.data.slice())` because that would yield
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
-        // `javascript_length()`/`has_prefix_comptime()` and changing it is a
-        // cross-crate refactor (see TODO above).
+        // `javascript_length()` and changing it is a cross-crate refactor (see
+        // TODO above).
         //
         // The `c_void` hop is clippy's documented escape hatch for
         // `cast_ptr_alignment` ("alignment is externally guaranteed" — see the
@@ -1833,7 +1833,6 @@ impl EString {
 
 // ── EString surface ────────────────────────────────────────────────────────
 // Ordering / equality / const-literal / rope-mutation helpers.
-// `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
     pub const EMPTY: EString = EString::from_static(b"");
 

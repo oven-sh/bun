@@ -127,6 +127,18 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
           sock->group->loop->data.fin_deferred_count++;
         }
       }
+    } else if (kind == POLL_TYPE_SOCKET &&
+               !(us_poll_events(wp) & LIBUS_SOCKET_READABLE)) {
+      /* A half-open data socket whose end was already delivered: the EOF path
+       * moved its poll to WRITABLE-only (loop.c), and us_poll_change re-adds
+       * UV_DISCONNECT unconditionally, so AFD keeps reporting it. Re-adding
+       * READABLE here made recv() rediscover the same EOF, which re-armed
+       * WRITABLE+DISCONNECT again - on_end busy-looped once per iteration per
+       * half-open socket, and every subsequent event-loop turn paid that cost.
+       * The re-arm at the top of this branch (uv_poll_start(p, us_poll_events))
+       * already dropped DISCONNECT, so a socket at 0-event polling quiesces.
+       * Non-SOCKET kinds keep the unconditional READABLE below: SEMI_SOCKET
+       * checks error/eof (set from status) and listen polls READABLE only. */
     } else {
       events |= UV_READABLE;
     }

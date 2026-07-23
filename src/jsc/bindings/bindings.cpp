@@ -95,6 +95,12 @@
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/GregorianDateTime.h"
+#include "JavaScriptCore/IntlObject.h"
+#include "JavaScriptCore/ISO8601.h"
+#include "JavaScriptCore/JSCTimeZone.h"
+#include "JavaScriptCore/TemporalCoreTypes.h"
+#include "JavaScriptCore/TemporalEnums.h"
+#include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
@@ -5946,6 +5952,45 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobal
     *minute = dt.minute();
     *second = dt.second();
     *weekday = dt.weekDay();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__resolveTimeZoneID(const uint8_t* name, size_t len)
+{
+    auto id = JSC::intlResolveTimeZoneID(StringView { std::span(reinterpret_cast<const Latin1Character*>(name), len) });
+    return id ? *id : std::numeric_limits<uint32_t>::max();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeInZone(JSC::JSGlobalObject* globalObject, double ms, uint32_t tzID,
+    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
+{
+    UNUSED_PARAM(globalObject);
+    auto tz = JSC::TimeZone::fromID(tzID);
+    auto exact = JSC::ISO8601::ExactTime::fromEpochMilliseconds(static_cast<int64_t>(ms));
+    auto off = JSC::TemporalCore::getOffsetNanosecondsFor(tz, exact);
+    int64_t offNs = off ? *off : 0;
+    auto dt = JSC::TemporalCore::exactTimeToLocalDateAndTime(exact, offNs);
+    *year = dt.date.year();
+    *month = dt.date.month();
+    *day = dt.date.day();
+    *hour = static_cast<int>(dt.time.hour());
+    *minute = static_cast<int>(dt.time.minute());
+    *second = static_cast<int>(dt.time.second());
+    // ISO8601::dayOfWeek: 1=Mon..7=Sun; GregorianDateTime consumers expect 0=Sun..6=Sat.
+    *weekday = JSC::ISO8601::dayOfWeek(dt.date) % 7;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::JSGlobalObject* globalObject,
+    int year, int month, int day, int hour, int minute, int second, int millisecond, uint32_t tzID)
+{
+    UNUSED_PARAM(globalObject);
+    auto tz = JSC::TimeZone::fromID(tzID);
+    JSC::ISO8601::PlainDate date { year, static_cast<unsigned>(month), static_cast<unsigned>(day) };
+    JSC::ISO8601::PlainTime time { static_cast<unsigned>(hour), static_cast<unsigned>(minute),
+        static_cast<unsigned>(second), static_cast<unsigned>(millisecond), 0, 0 };
+    auto r = JSC::TemporalCore::getEpochNanosecondsFor(tz, date, time, JSC::TemporalDisambiguation::Compatible);
+    if (!r)
+        return std::numeric_limits<double>::quiet_NaN();
+    return static_cast<double>(r->epochMilliseconds());
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

@@ -122,9 +122,15 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
         .replace(/\b\d{5,}\b/g, "N");
       // The handler's backtrace: lines like "???:?:?: 0x7ffc... in ??? (???)"
       // or "<file>:<line>:<col>: 0x7ff6... in <symbol> (bun-debug.exe)".
-      const frames = [...text.matchAll(/(?:^|\n)([^\n]*0x7[Ff][0-9A-Fa-f]{10,}[^\n]*)/g)]
-        .map(x => x[1].trim())
-        .slice(0, 24);
+      // Keep the crash's own trace in EITHER form the handler prints: raw
+      // address lines (0x7ff...) OR already-symbolized "path.rs:line: symbol"
+      // lines / "at path:line:col" lines. A Rust panic in a child arrives
+      // symbolized; requiring an address dropped its frames entirely.
+      const traceLine = /^[^\n]*(0x7[Ff][0-9A-Fa-f]{10,}|\.rs:\d+|\.zig:\d+|panicked at |^\s+at .+:\d+)[^\n]*$/gm;
+      const frames = [...text.matchAll(traceLine)]
+        .map(x => x[0].trim())
+        .filter(l => l.length > 3)
+        .slice(0, 32);
       // The FAULTING frame is the top of the printed backtrace: a crash whose
       // top frame is a system DLL is that module's code faulting (often on
       // state we poisoned inside it), even when bun frames sit below - e.g.

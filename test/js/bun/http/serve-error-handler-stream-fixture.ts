@@ -1,10 +1,10 @@
 // Fixture for serve-error-handler-stream.test.ts.
 // Starts one server whose error() returns a streaming Response, exercises every
 // (path × Connection header) combination against it, and prints the observed
-// {status, len, pulls} for each case as a JSON array. Runs in a subprocess so
-// an ASAN crash (the pre-fix UAF in uws_res_has_responded) is observed as a
-// test failure instead of killing the parent test runner before junit is
-// written.
+// {status, len, pulls} for each case as one JSON line per case. Runs in a
+// subprocess so an ASAN crash (the pre-fix UAF in uws_res_has_responded) is
+// observed as a test failure instead of killing the parent test runner before
+// junit is written.
 
 const CHUNK = Buffer.alloc(64, "P").toString();
 const CHUNKS = 12;

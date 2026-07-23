@@ -1652,6 +1652,66 @@ test("MessagePort: transferring a port from inside its own close()'s flush windo
   B2.close();
 });
 
+test("parentPort.postMessage queue is flushed to the parent before 'exit' fires", async () => {
+  // A worker that posts a burst and then falls off the end of its script must
+  // deliver every message (node: the worker's parentPort queue drains before
+  // teardown). The parent's drain loop yields after ~1000 messages and
+  // re-posts itself; without the pre-'close' flush that re-post lands behind
+  // the close task, which flips the Worker to Closed and makes the re-posted
+  // drain's dispatches silent no-ops.
+  //
+  // Subprocess because the handler busy-spins (would stall the test runner).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+       const { Worker } = require("node:worker_threads");
+       const N = 5000;
+       const flag = new Int32Array(new SharedArrayBuffer(8));
+       const w = new Worker(
+         \`const { parentPort, workerData } = require("node:worker_threads");
+          const flag = new Int32Array(workerData);
+          parentPort.postMessage(-1);
+          Atomics.wait(flag, 0, 0);
+          for (let i = 0; i < \${N}; i++) parentPort.postMessage(i);
+          parentPort.postMessage("END");
+          process.on("exit", () => Atomics.store(flag, 1, 1));\`,
+         { eval: true, workerData: flag.buffer },
+       );
+       let got = 0, gotEnd = false, first = true;
+       w.on("message", m => {
+         if (first) {
+           first = false;
+           // Hold this handler (and so the current drain pass) open until the
+           // worker has enqueued the whole burst AND entered shutdown, so the
+           // worker's close task is posted before this drain pass reschedules.
+           Atomics.store(flag, 0, 1);
+           Atomics.notify(flag, 0);
+           while (Atomics.load(flag, 1) === 0);
+           const t = Date.now(); while (Date.now() - t < 500);
+           return;
+         }
+         if (m === "END") gotEnd = true; else got++;
+       });
+       w.on("error", e => { console.error(e); process.exit(1); });
+       w.on("exit", code => {
+         console.log(JSON.stringify({ got, gotEnd, code }));
+         process.exit(gotEnd && got === N && code === 0 ? 0 : 1);
+       });
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: stdout.trim(), stderr, exitCode }).toEqual({
+    out: '{"got":5000,"gotEnd":true,"code":0}',
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("MessagePort: peer closing while a port is in transit still delivers 'close' and doesn't hang", async () => {
   await using proc = Bun.spawn({
     cmd: [

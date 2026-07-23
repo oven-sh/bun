@@ -621,7 +621,9 @@ describe("readFile/writeFile accept AbortSignal-shaped objects", () => {
     expect({ name: readErr?.name, code: readErr?.code, cause: readErr?.cause }).toEqual(expected);
     const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve));
     expect({ name: writeErr?.name, code: writeErr?.code, cause: writeErr?.cause }).toEqual(expected);
-    const appendErr = await new Promise(resolve => fs.appendFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve));
+    const appendErr = await new Promise(resolve =>
+      fs.appendFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve),
+    );
     expect({ name: appendErr?.name, code: appendErr?.code, cause: appendErr?.cause }).toEqual(expected);
     expect(fs.existsSync(join(dir, "o.txt"))).toBe(false);
   });

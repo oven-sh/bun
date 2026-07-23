@@ -910,7 +910,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const pauseOnConnect = server && (server.pauseOnConnect ?? server[bunSocketServerOptions]?.pauseOnConnect);
     if (pauseOnConnect) {
-      self.pause();
+      // Duplex only: the native handle keeps reading so close_notify/FIN still
+      // arrive (Node buffers decrypted bytes on a paused TLSSocket and emits
+      // 'end'); ServerHandlers.data applies native backpressure at HWM.
+      Duplex.prototype.pause.$call(self);
     }
     if (server) {
       const connectionListener = server[bunSocketServerOptions]?.connectionListener;
@@ -922,7 +925,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
-    if (!pauseOnConnect) {
+    // null: no 'connection'/'secureConnection' handler touched the stream
+    // state. A handler that paused (false) or attached 'data'/'readable' is
+    // honored; resume() must not stomp it.
+    if (!pauseOnConnect && self.readableFlowing === null) {
       self.resume();
     }
   },
@@ -2231,7 +2237,10 @@ Socket.prototype.resume = function resume() {
 };
 
 Socket.prototype.pause = function pause() {
-  if (!this.destroyed) {
+  // secureConnecting: the native handle must keep reading so the TLS engine
+  // sees the handshake (Node's TLSWrap reads independently of stream state).
+  // Pause only the Duplex; the data handler applies native backpressure at HWM.
+  if (!this.destroyed && !this.secureConnecting) {
     this._handle?.pause?.();
     // libuv only counts a stream handle as active - and therefore as keeping
     // the event loop alive - while it is reading. A paused socket lets the

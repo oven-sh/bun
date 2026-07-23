@@ -1,6 +1,7 @@
 #include "quic.h"
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #if defined(_WIN32) && !defined(WIN32)
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
@@ -236,8 +237,11 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
     msg.msg_namelen = sa_len(spec->dest_sa);
     msg.msg_iov = spec->iov;
     msg.msg_iovlen = spec->iovlen;
-    ssize_t r;
-    do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    ssize_t r = 0; int unused = 0;
+    if (!US_FAULT_CHECK(US_FAULT_SENDMSG, fd, r, unused)) {
+        do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    }
+    (void) unused;
     return r < 0 ? -1 : 1;
 #endif
 }
@@ -269,7 +273,15 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
             k++;
         }
         int r;
-        do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+        {
+            ssize_t injected = 0; int unused = 0;
+            if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) {
+                r = (int) injected;
+            } else {
+                do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+            }
+            (void) injected; (void) unused;
+        }
         /* sendmmsg(2) BUGS: on a short return the error code is lost and the
          * caller is expected to retry starting at the first failed message.
          * udp(7): an unconnected socket surfaces async ICMP from an earlier
@@ -835,26 +847,6 @@ static void us_quic_set_dontfrag(struct us_udp_socket_t *udp) {
 #endif
 #endif
     (void) on;
-
-#if defined(__linux__)
-    /* bsd_create_udp_socket sets IP_RECVERR for node:dgram's error surfacing.
-     * QUIC doesn't wire an on_recv_error handler, so the option only makes
-     * sendmmsg report stale ICMP (port unreachable from a dead peer on the
-     * shared client socket) as -1 for a datagram bound to a live peer.
-     * lsquic then clears ENPUB_CAN_SEND for the whole engine and only its
-     * 1-second failsafe recovers it, so one abruptly-terminated QUIC
-     * connection stalls every other one on the engine. Turning RECVERR
-     * back off leaves unconnected-socket ICMP at the kernel default
-     * (dropped) and lsquic discovers the dead peer via idle timeout. */
-    int off = 0;
-#ifdef IP_RECVERR
-    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &off, sizeof(off));
-#endif
-#ifdef IPV6_RECVERR
-    setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &off, sizeof(off));
-#endif
-    (void) off;
-#endif
 }
 
 us_quic_listen_socket_t *us_quic_socket_context_listen(

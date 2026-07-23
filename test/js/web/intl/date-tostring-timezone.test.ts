@@ -43,35 +43,48 @@ describe("Date.prototype.toString() parenthesized zone name", () => {
   // +0200 instant.
   const contradicting: [string, [string, string][]][] = [
     // Istanbul was UTC+2/+3 (EET/EEST) until Sep 2016, then permanent UTC+3.
-    ["Europe/Istanbul", [
-      ["2010-01-15T12:00:00Z", "+0200"],
-      ["2010-07-15T12:00:00Z", "+0300"],
-      ["2020-01-15T12:00:00Z", "+0300"],
-    ]],
+    [
+      "Europe/Istanbul",
+      [
+        ["2010-01-15T12:00:00Z", "+0200"],
+        ["2010-07-15T12:00:00Z", "+0300"],
+        ["2020-01-15T12:00:00Z", "+0300"],
+      ],
+    ],
     // Kolkata observed +0630 during WWII; current offset is +0530.
-    ["Asia/Kolkata", [
-      ["1945-01-15T12:00:00Z", "+0630"],
-      ["2020-01-15T12:00:00Z", "+0530"],
-    ]],
+    [
+      "Asia/Kolkata",
+      [
+        ["1945-01-15T12:00:00Z", "+0630"],
+        ["2020-01-15T12:00:00Z", "+0530"],
+      ],
+    ],
     // Bougainville switched from +1000 to +1100 in Dec 2014.
-    ["Pacific/Bougainville", [
-      ["2010-01-15T12:00:00Z", "+1000"],
-      ["2020-01-15T12:00:00Z", "+1100"],
-    ]],
+    [
+      "Pacific/Bougainville",
+      [
+        ["2010-01-15T12:00:00Z", "+1000"],
+        ["2020-01-15T12:00:00Z", "+1100"],
+      ],
+    ],
     // Famagusta split from Nicosia (UTC+2) to UTC+3 in 2016-17, then back.
-    ["Asia/Famagusta", [
-      ["2017-01-15T12:00:00Z", "+0300"],
-    ]],
+    ["Asia/Famagusta", [["2017-01-15T12:00:00Z", "+0300"]]],
     // Astrakhan was UTC+3 until Mar 2016, then UTC+4.
-    ["Europe/Astrakhan", [
-      ["2010-01-15T12:00:00Z", "+0300"],
-      ["2020-01-15T12:00:00Z", "+0400"],
-    ]],
+    [
+      "Europe/Astrakhan",
+      [
+        ["2010-01-15T12:00:00Z", "+0300"],
+        ["2020-01-15T12:00:00Z", "+0400"],
+      ],
+    ],
   ];
 
   for (const [tz, cases] of contradicting) {
     test.concurrent(`${tz}: GMT-literal fallback matches numeric offset`, async () => {
-      const rows = await run(tz, cases.map(c => c[0]));
+      const rows = await run(
+        tz,
+        cases.map(c => c[0]),
+      );
       for (let i = 0; i < cases.length; i++) {
         const expected = cases[i][1];
         const r = rows[i];

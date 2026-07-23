@@ -180,6 +180,9 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // sentinel (user_unique_id: "GetUserNameW failed" -> return 0). The
       // panic never exists in the binary users run.
       if (/GetUserNameW failed/.test(detail)) k = "debug-only";
+      // hot_reloader's watcher error handler logs "Watcher crashed" and
+      // panics ONLY under debug_assertions - release continues.
+      if (/panic: Watcher crash\b/.test(detail)) k = "debug-only";
       // The bake DevServer hashes its own exe's mtime into a debug-only
       // cache-bust key (guarded by IS_DEBUG) and panics if that stat fails:
       // "unhandled EINVAL: <bun>: ... (stat())" on the running binary.

@@ -368,26 +368,23 @@ describe("Response body errors reach error() until the first body byte is writte
     });
   });
 
-  test.concurrent(
-    "iter-throw-first without error(): the default 500 is sent and the failure is reported",
-    async () => {
-      const { result, stderr, exitCode } = await run("iter-throw-first", "no-error-handler");
-      expect({ result, exitCode }).toEqual({
-        result: {
-          statusLine: "HTTP/1.1 500 Internal Server Error",
-          xErr: false,
-          xOrig: false,
-          xCustom: false,
-          body: "Something went wrong!",
-          resetAfterBytes: false,
-          errorCalls: [],
-          unhandled: 0,
-        },
-        exitCode: 1,
-      });
-      expect(stderr).toContain("boom-first");
-    },
-  );
+  test.concurrent("iter-throw-first without error(): the default 500 is sent and the failure is reported", async () => {
+    const { result, stderr, exitCode } = await run("iter-throw-first", "no-error-handler");
+    expect({ result, exitCode }).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 500 Internal Server Error",
+        xErr: false,
+        xOrig: false,
+        xCustom: false,
+        body: "Something went wrong!",
+        resetAfterBytes: false,
+        errorCalls: [],
+        unhandled: 0,
+      },
+      exitCode: 1,
+    });
+    expect(stderr).toContain("boom-first");
+  });
 
   // Yields then throws (both the synchronous and awaited variants): by the time
   // the error is observed the status line and the yielded chunks have been

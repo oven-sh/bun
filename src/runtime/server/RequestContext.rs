@@ -3464,8 +3464,7 @@ where
                             // the normal fetch() path do, so the deferred
                             // `render_metadata()` can still read it. Release
                             // any previously-protected Response first.
-                            if !self.response_jsvalue.is_empty()
-                                && self.flags.response_protected()
+                            if !self.response_jsvalue.is_empty() && self.flags.response_protected()
                             {
                                 self.response_jsvalue.unprotect();
                             }

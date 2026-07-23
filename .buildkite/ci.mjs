@@ -1448,6 +1448,20 @@ async function getPipelineOptions() {
     imageFilter = undefined;
   }
 
+  // Image bake/publish and Windows signing run privileged steps (image
+  // credentials, signing keys), so commit-subject tags from fork PRs are
+  // ignored — only same-repo branches may request them.
+  let signWindows = parseOption(/\[(sign windows)\]/i);
+  if (isFork() && (buildImages || publishImages || signWindows)) {
+    console.log(
+      `Ignoring [${publishImages || buildImages || signWindows}] on a fork pull request — image and signing steps only run for same-repo branches.`,
+    );
+    buildImages = false;
+    publishImages = false;
+    imageFilter = undefined;
+    signWindows = false;
+  }
+
   return {
     canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
@@ -1455,7 +1469,7 @@ async function getPipelineOptions() {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    signWindows: parseOption(/\[(sign windows)\]/i),
+    signWindows,
     buildImages,
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages,

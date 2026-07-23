@@ -2592,8 +2592,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_CONNECTED, "Session is not connected"_s));
     case ErrorCode::ERR_INSPECTOR_NOT_WORKER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_WORKER, "Current thread is not a worker"_s));
-    case ErrorCode::ERR_INSPECTOR_CLOSED:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_CLOSED, "Session was closed"_s));
     case Bun::ErrorCode::ERR_INSPECTOR_COMMAND: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);

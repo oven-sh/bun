@@ -70,9 +70,7 @@ test("print size", () => {
 });
 
 test("Response.redirect with invalid arguments should not crash", () => {
-  // issue #18414: passing a number as URL and a string as init used to
-  // segfault inside fastGet. These now reject the status with a RangeError
-  // (per WebIDL ToNumber), which is still "not a crash".
+  // https://github.com/oven-sh/bun/issues/18414
   expect(() => Response.redirect(400, "a")).toThrow(RangeError);
   expect(() => Response.redirect(42, "test")).toThrow(RangeError);
   expect(() => Response.redirect(true, "string")).toThrow(RangeError);
@@ -103,10 +101,6 @@ test("Response.redirect status code validation", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/2939
-// WebIDL `optional unsigned short status = 302`: the argument is converted
-// via ToNumber and then range-checked. Previously only JS numbers were
-// validated; strings/booleans silently fell back to 302 and `{status:200}`
-// produced a 200 non-redirect with a Location header.
 test("Response.redirect coerces the status argument per WebIDL", () => {
   // string status → ToNumber
   expect(Response.redirect("http://x/", "307").status).toBe(307);
@@ -136,6 +130,16 @@ test("Response.redirect with a ResponseInit object (Bun extension)", () => {
   expect(withHeaders.status).toBe(302);
   expect(withHeaders.headers.get("X-A")).toBe("1");
   expect(withHeaders.headers.get("Location")).toBe("http://x/");
+
+  let reads = 0;
+  const init = {
+    get status() {
+      reads++;
+      return 307;
+    },
+  };
+  expect(Response.redirect("http://x/", init).status).toBe(307);
+  expect(reads).toBe(1);
 });
 
 // https://fetch.spec.whatwg.org/#dom-response-redirect

@@ -1087,20 +1087,19 @@ impl Response {
                     // WebIDL `optional unsigned short status = 302`: omitted.
                 } else if arg_init.is_object() {
                     // Bun extension: accept a ResponseInit-like object for
-                    // headers/statusText. `Init::init` defaults status_code to
-                    // 200 when `status` is absent, so derive the redirect
-                    // status from the property directly.
-                    let status = match arg_init.fast_get(global_this, BuiltinName::status)? {
-                        Some(v) => Self::validate_redirect_status_code(
-                            global_this,
-                            v.coerce_to_i32(global_this)?,
-                        )?,
-                        None => 302,
-                    };
-                    if let Some(init) = Init::init(global_this, arg_init)? {
+                    // headers/statusText. `status` is read once inside
+                    // `init_with_default_status` (default 302 when absent) and
+                    // validated as a redirect status below.
+                    if let Some(init) =
+                        Init::init_with_default_status(global_this, arg_init, 302)?
+                    {
                         // cleanup is handled by Init's drop glue on `?` below
                         response.init.set(init);
                     }
+                    let status = Self::validate_redirect_status_code(
+                        global_this,
+                        i32::from(response.init.get().status_code),
+                    )?;
                     response.init.with_mut(|i| i.status_code = status);
                 } else {
                     // WebIDL `unsigned short status`: ToNumber-convert any
@@ -1342,8 +1341,16 @@ impl Init {
     }
 
     pub fn init(global_this: &JSGlobalObject, response_init: JSValue) -> JsResult<Option<Init>> {
+        Self::init_with_default_status(global_this, response_init, 200)
+    }
+
+    pub fn init_with_default_status(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+        default_status: u16,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
-            status_code: 200,
+            status_code: default_status,
             ..Default::default()
         };
         // Init's drop glue on `result` (HeadersRef + OwnedString)

@@ -278,7 +278,9 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
-    encode::drain_send_body(stream, s);
+    let Some(client_ptr) = stream.client else { return };
+    let client = super::client_session::client_mut(client_ptr);
+    encode::drain_send_body(client, stream, s);
 }
 
 extern "C" fn on_stream_close(s: *mut quic::Stream) {

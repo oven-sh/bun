@@ -132,7 +132,7 @@ impl ClientSession {
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
                 s.ended = ended;
                 if let Some(qs) = stream.qstream_mut() {
-                    encode::drain_send_body(stream, qs);
+                    encode::drain_send_body(client, stream, qs);
                 }
             }
             return true;

@@ -120,19 +120,14 @@ pub fn write_request(
 
     if has_inline_body {
         stream.pending_body = req_body;
-        drain_send_body(stream, qs);
+        drain_send_body(client, stream, qs);
     } else if is_streaming {
         stream.is_streaming_body = true;
-        drain_send_body(stream, qs);
+        drain_send_body(client, stream, qs);
     } else {
         stream.request_body_done = true;
     }
 
-    // SAFETY: re-derive — `drain_send_body` forms its own `&mut HTTPClient`
-    // from this same backref, which invalidates the prior Unique tag under
-    // Stacked Borrows (same shape as the `detach()` notes in
-    // `ClientSession::deliver`).
-    let client = super::client_session::client_mut(client_ptr);
     client.state.request_stage = if stream.request_body_done {
         HTTPStage::Done
     } else {
@@ -151,15 +146,14 @@ pub fn write_request(
 /// Push as much of the request body onto `qs` as flow control allows. Called
 /// from `write_request`, `callbacks.on_stream_writable`, and
 /// `ClientSession.stream_body_by_http_id` (when the JS sink delivers more bytes).
-pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
+///
+/// `client` is passed in (like `apply_headers`) rather than re-derived from
+/// `stream.client` so callers may keep using their `&mut HTTPClient` after the
+/// call without a Stacked-Borrows re-derive.
+pub(crate) fn drain_send_body(client: &mut HTTPClient, stream: &mut Stream, qs: &mut quic::Stream) {
     if stream.request_body_done {
         return;
     }
-    let Some(client_ptr) = stream.client else {
-        return;
-    };
-    // `stream.client` is a live backref while attached — see `client_mut` doc.
-    let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
 
     if stream.is_streaming_body {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {

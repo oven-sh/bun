@@ -48,7 +48,6 @@ public:
 
     WEBCORE_EXPORT static ExceptionOr<CryptoKeyPair> generatePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     WEBCORE_EXPORT static RefPtr<CryptoKeyOKP> importRaw(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyOKP> importPublicJwk(CryptoAlgorithmIdentifier, NamedCurve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyOKP> importJwk(CryptoAlgorithmIdentifier, NamedCurve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
     // On failure, `keyTypeMismatch` (when given) reports whether the data held a
     // well-formed key of another type, surfaced as "Invalid key type".
@@ -91,7 +90,6 @@ private:
     Vector<uint8_t> platformExportRaw() const;
     Vector<uint8_t> platformExportSpki() const;
     Vector<uint8_t> platformExportPkcs8() const;
-    static RefPtr<CryptoKeyOKP> importJwkInternal(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool onlyPublic);
 
     NamedCurve m_curve;
     KeyMaterial m_data;

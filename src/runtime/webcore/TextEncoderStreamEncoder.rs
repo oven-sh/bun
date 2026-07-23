@@ -28,8 +28,7 @@ impl TextEncoderStreamEncoder {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = frame.arguments();
         if arguments.is_empty() {
             return Err(global.throw_not_enough_arguments(
                 "TextEncoderStreamEncoder.encode",

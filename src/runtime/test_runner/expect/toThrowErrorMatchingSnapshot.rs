@@ -15,8 +15,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = _arguments.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 

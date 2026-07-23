@@ -469,8 +469,7 @@ mod _jsc_host_fns {
         _global: *mut JSGlobalObject,
         callframe: &CallFrame,
     ) -> JSValue {
-        let arguments = callframe.arguments_old::<1>();
-        let this_value = arguments.ptr[0];
+        let [this_value] = callframe.arguments_as_array::<1>();
         if this_value.is_empty_or_undefined_or_null() {
             return JSValue::FALSE;
         }
@@ -496,8 +495,7 @@ mod _jsc_host_fns {
             bun_opaque::opaque_deref(global_object),
             bun_opaque::opaque_deref(callframe),
         );
-        let arguments = callframe.arguments_old::<1>();
-        let this_value = arguments.ptr[0];
+        let [this_value] = callframe.arguments_as_array::<1>();
         if this_value.is_empty_or_undefined_or_null() {
             return JSValue::UNDEFINED;
         }
@@ -909,12 +907,10 @@ impl Response {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<2>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
-        let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         // `Init`'s field drop glue (HeadersRef + OwnedString)
         // releases its refs on `?`. `Body` has NO `Drop` and its
@@ -1055,11 +1051,9 @@ impl Response {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Response> {
-        let args_list = callframe.arguments_old::<4>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: see `construct_json`.
-        let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         // url_string drops (derefs the WTF string) at scope exit
         let url_string: OwnedString;

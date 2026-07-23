@@ -4033,8 +4033,7 @@ pub mod bindings {
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = call_frame.arguments_old::<1>();
-        let args = arguments.slice();
+        let args = call_frame.arguments();
         if args.len() < 1 || !args[0].is_string() {
             return Err(global.throw(format_args!("expected tarball path string argument")));
         }

@@ -134,16 +134,15 @@ pub enum UnixOrHost {
 impl Listener {
     #[bun_jsc::host_fn(method)]
     pub fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = frame.arguments_old::<1>();
+        let [opts] = frame.arguments_as_array::<1>();
 
-        if args.len < 1
+        if frame.arguments_count() < 1
             || (matches!(this.listener.get(), ListenerType::None)
                 && this.handlers.active_connections.get() == 0)
         {
             return Err(global.throw(format_args!("Expected 1 argument")));
         }
 
-        let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
@@ -786,13 +785,13 @@ impl Listener {
 
     #[bun_jsc::host_fn(method)]
     pub fn stop(this: &Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
+        let [arg0] = frame.arguments_as_array::<1>();
         log!("close");
 
         Self::do_stop(
             this,
-            if arguments.len > 0 && arguments.ptr[0].is_boolean() {
-                arguments.ptr[0].to_boolean()
+            if frame.arguments_count() > 0 && arg0.is_boolean() {
+                arg0.to_boolean()
             } else {
                 false
             },
@@ -1601,13 +1600,16 @@ fn connect_finish<const IS_SSL: bool>(
 pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let arguments = frame.arguments_old::<3>();
-    if arguments.len < 3 {
-        return Err(global.throw_not_enough_arguments("addServerName", 3, arguments.len));
+    let [listener, hostname, tls] = frame.arguments_as_array::<3>();
+    if frame.arguments_count() < 3 {
+        return Err(global.throw_not_enough_arguments(
+            "addServerName",
+            3,
+            frame.arguments_count() as usize,
+        ));
     }
-    let listener = arguments.ptr[0];
     if let Some(this) = listener.as_class_ref::<Listener>() {
-        return Listener::add_server_name(this, global, arguments.ptr[1], arguments.ptr[2]);
+        return Listener::add_server_name(this, global, hostname, tls);
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }

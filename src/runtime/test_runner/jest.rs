@@ -477,8 +477,7 @@ pub mod Jest {
         if vm.is_in_preload || runner().is_none() {
             // in preload, no arguments needed
         } else {
-            let arguments = callframe.arguments_old::<2>();
-            let arguments = arguments.slice();
+            let arguments = callframe.arguments();
 
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
@@ -502,8 +501,7 @@ pub mod Jest {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
         if arguments.len() < 1 || !arguments[0].is_number() {
             return Err(global_object.throw(format_args!("setTimeout() expects a number (milliseconds)")));
         }

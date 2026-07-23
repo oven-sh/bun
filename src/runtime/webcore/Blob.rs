@@ -1286,9 +1286,8 @@ impl BlobExt for Blob {
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1359,9 +1358,8 @@ impl BlobExt for Blob {
     }
 
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1704,12 +1702,8 @@ impl BlobExt for Blob {
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
-        // Index the fixed-size buffer (`arguments.ptr[0]`), not the
-        // len-bounded view, so the slot reads `.zero` when no arg was passed
-        // instead of panicking on `arguments[0]`.
-        let arg0 = arguments_.ptr[0];
-        let has_args = arguments_.len > 0;
+        let [arg0] = callframe.arguments_as_array::<1>();
+        let has_args = callframe.arguments_count() > 0;
 
         if !arg0.is_empty_or_undefined_or_null() && !arg0.is_object() {
             return Err(global_this
@@ -1998,9 +1992,9 @@ impl BlobExt for Blob {
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let mut arguments_ = callframe.arguments_old::<3>();
+        let mut arguments_ = callframe.arguments_as_array::<3>();
         // index the full fixed-3 array (args[2] is written below regardless of len).
-        let args = &mut arguments_.ptr[..];
+        let args = &mut arguments_[..];
 
         if self.size.get() == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
@@ -2024,7 +2018,7 @@ impl BlobExt for Blob {
             args[1] = JSValue::ZERO;
         }
 
-        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
+        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_[..3]);
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
                 let start = start_.to_int64();
@@ -2380,8 +2374,7 @@ impl BlobExt for Blob {
     }
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
         let blob: Blob;
-        let arguments = callframe.arguments_old::<2>();
-        let args = arguments.slice();
+        let args = callframe.arguments();
 
         match args.len() {
             0 => {
@@ -5582,8 +5575,7 @@ pub fn jsdom_file_construct_(
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
     let blob: Blob;
-    let arguments = callframe.arguments_old::<3>();
-    let args = arguments.slice();
+    let args = callframe.arguments();
 
     if args.len() < 2 {
         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -5691,8 +5683,7 @@ pub fn construct_bun_file(
 ) -> JsResult<JSValue> {
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
     let vm = global_object.bun_vm();
-    let arguments = callframe.arguments_old::<2>();
-    let arguments_slice = arguments.slice();
+    let arguments_slice = callframe.arguments();
     let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
@@ -5958,10 +5949,10 @@ pub fn on_file_stream_resolve_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old::<2>();
+    let args = callframe.arguments();
     // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
     let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
+        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get(global_this) {
@@ -5975,15 +5966,15 @@ pub fn on_file_stream_reject_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old::<2>();
+    let args = callframe.arguments();
     // Take ownership via Box so Drop runs `sink.deref()`
     // and frees the wrapper.
     // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
     // through `then()` from the resolve path; we are the sole consumer here.
     let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
+        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
-    let err = args.ptr[0];
+    let err = args[0];
 
     let strong = core::mem::take(&mut this.readable_stream_ref);
 

@@ -263,10 +263,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<Self>> {
-        let arguments = callframe.arguments_old::<1>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
         // only to lazily memoize — single-threaded JS event-loop discipline applies.
@@ -344,10 +343,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -389,10 +387,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -432,10 +429,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -473,10 +469,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -514,10 +509,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -555,10 +549,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -641,10 +634,9 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -711,10 +703,9 @@ impl S3Client {
     }
 
     pub(crate) fn static_file(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
 
         let Some(path) = PathLike::from_js(global, &mut args)? else {
             return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));

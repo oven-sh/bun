@@ -106,8 +106,7 @@ impl BuildMessage {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_ = callframe.arguments_old::<1>();
-        let args = &args_.ptr[0..args_.len];
+        let args = callframe.arguments();
         if !args.is_empty() {
             if !args[0].is_string() {
                 return Ok(JSValue::NULL);

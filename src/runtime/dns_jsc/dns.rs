@@ -4991,16 +4991,17 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments.len));
+        let arguments = callframe.arguments_as_array::<3>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments_len));
         }
 
-        let record_type: RecordType = if arguments.len <= 1 {
+        let record_type: RecordType = if arguments_len <= 1 {
             RecordType::DEFAULT
         } else {
             'brk: {
-                let record_type_value = arguments.ptr[1];
+                let record_type_value = arguments[1];
                 if record_type_value.is_empty_or_undefined_or_null()
                     || !record_type_value.is_string()
                 {
@@ -5024,7 +5025,7 @@ impl Resolver {
             }
         };
 
-        let name_value = arguments.ptr[0];
+        let name_value = arguments[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
@@ -5082,12 +5083,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments_len));
         }
 
-        let ip_value = arguments.ptr[0];
+        let ip_value = arguments[0];
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
@@ -5148,12 +5150,13 @@ impl Resolver {
 
     // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments_len));
         }
 
-        let name_value = arguments.ptr[0];
+        let name_value = arguments[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
@@ -5170,8 +5173,8 @@ impl Resolver {
         let mut options = GetAddrInfoOptions::default();
         let mut port: u16 = 0;
 
-        if arguments.len > 1 && arguments.ptr[1].is_object() {
-            let options_object = arguments.ptr[1];
+        if arguments_len > 1 && arguments[1].is_object() {
+            let options_object = arguments[1];
 
             if let Some(port_value) = options_object.get_truthy(global_this, "port")? {
                 port = port_value.to_port_number(global_this)?;
@@ -5287,11 +5290,12 @@ macro_rules! resolve_record_fn {
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_old::<2>();
-            if arguments.len < 1 {
-                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments.len));
+            let arguments = callframe.arguments_as_array::<2>();
+            let arguments_len = callframe.arguments_count() as usize;
+            if arguments_len < 1 {
+                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments_len));
             }
-            let name_value = arguments.ptr[0];
+            let name_value = arguments[0];
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
@@ -5937,12 +5941,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 2 {
-            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 2 {
+            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments_len));
         }
 
-        let addr_value = arguments.ptr[0];
+        let addr_value = arguments[0];
         if addr_value.is_empty_or_undefined_or_null() || !addr_value.is_string() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
@@ -5961,7 +5966,7 @@ impl Resolver {
         let addr_slice = addr_str.to_slice(global_this);
         let addr_s = addr_slice.slice();
 
-        let port_value = arguments.ptr[1];
+        let port_value = arguments[1];
         let port: u16 = port_value.to_port_number(global_this)?;
 
         let mut sa: SockaddrStorage = bun_core::ffi::zeroed();

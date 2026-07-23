@@ -113,10 +113,9 @@ impl ParsedShellScript {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_cwd(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, arguments.slice());
+        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let Some(str_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };
@@ -223,8 +222,7 @@ fn create_parsed_shell_script_impl(
     // so no scopeguard is needed.
     let mut shargs: Box<ShellArgs> = ShellArgs::init();
 
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = arguments_.slice();
+    let arguments = callframe.arguments();
     if arguments.len() < 2 {
         return Err(global.throw_not_enough_arguments("Bun.$", 2, arguments.len()));
     }

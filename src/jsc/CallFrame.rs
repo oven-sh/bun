@@ -129,24 +129,6 @@ impl CallFrame {
     }
 
     /// Do not use this function. Migration path:
-    /// arguments(n).ptr[k] -> arguments_as_array::<n>()[k]
-    /// arguments(n).slice() -> arguments()
-    /// arguments(n).mut() -> `let mut args = arguments_as_array::<n>(); &mut args`
-    pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
-        let slice = self.arguments();
-        debug_assert!(MAX <= 15);
-        let count = slice.len().min(MAX);
-        if count == 0 {
-            Arguments {
-                ptr: [JSValue::ZERO; MAX],
-                len: 0,
-            }
-        } else {
-            Arguments::<MAX>::init(count.min(MAX), slice)
-        }
-    }
-
-    /// Do not use this function. Migration path:
     /// arguments_as_array::<n>()
     pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
@@ -220,13 +202,6 @@ pub struct Arguments<const MAX: usize> {
 }
 
 impl<const MAX: usize> Arguments<MAX> {
-    #[inline]
-    pub fn init(i: usize, src: &[JSValue]) -> Self {
-        let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
-        args[0..i].copy_from_slice(&src[0..i]);
-        Self { ptr: args, len: i }
-    }
-
     #[inline]
     pub fn init_undef(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];

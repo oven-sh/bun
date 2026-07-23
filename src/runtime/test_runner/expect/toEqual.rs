@@ -14,8 +14,7 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, frame.this(), "toEqual", "<green>expected<r>")?;
 
-        let _arguments = frame.arguments_old::<1>();
-        let arguments: &[JSValue] = _arguments.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!("toEqual() requires 1 argument")));

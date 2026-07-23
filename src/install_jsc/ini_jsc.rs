@@ -193,8 +193,7 @@ impl IniTestingAPIs {
         use bun_ini::Parser;
         use bun_jsc::JsError;
 
-        let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
 
         let jsstr = arguments[0];
         let bunstr = bun_core::OwnedString::new(jsstr.to_bun_string(global)?);

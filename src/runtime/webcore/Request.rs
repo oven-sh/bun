@@ -1517,8 +1517,7 @@ impl Request {
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<Box<Request>> {
-        let arguments_ = callframe.arguments_old::<2>();
-        let arguments = &arguments_.ptr[0..arguments_.len];
+        let arguments = callframe.arguments();
 
         let request = Self::construct_into(global_this, arguments, this_value)?;
         Ok(Request::new(request))

@@ -963,7 +963,7 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<*mut JSTranspiler> {
-        let arguments = callframe.arguments_old::<3>();
+        let [config_arg] = callframe.arguments_as_array::<1>();
 
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
@@ -990,11 +990,6 @@ impl JSTranspiler {
         // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
         // no-op when we never handed out refs. `bun.destroy(this)` → Box not yet created.
 
-        let config_arg = if arguments.len > 0 {
-            arguments.ptr[0]
-        } else {
-            JSValue::UNDEFINED
-        };
         config.from_js(global, config_arg, arena_ref)?;
 
         if global.has_exception() {
@@ -1308,10 +1303,9 @@ impl JSTranspiler {
     #[bun_jsc::host_fn(method)]
     pub fn scan(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
         // defer args.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
@@ -1395,10 +1389,9 @@ impl JSTranspiler {
     #[bun_jsc::host_fn(method)]
     pub fn transform(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
         // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
@@ -1461,11 +1454,11 @@ impl JSTranspiler {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
-        let arguments = callframe.arguments_old::<3>();
+        let arguments = callframe.arguments();
 
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, arguments);
         // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
@@ -1485,8 +1478,8 @@ impl JSTranspiler {
         };
         // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
-        arguments.ptr[0].ensure_still_alive();
-        let _keep0 = bun_jsc::EnsureStillAlive(arguments.ptr[0]);
+        arguments[0].ensure_still_alive();
+        let _keep0 = bun_jsc::EnsureStillAlive(arguments[0]);
 
         args.eat();
         let mut js_ctx_value: JSValue = JSValue::ZERO;
@@ -1674,10 +1667,9 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
-        let mut args = ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
         // defer args.deinit() → Drop
 
         let Some(code_arg) = args.next() else {

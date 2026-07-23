@@ -468,8 +468,7 @@ pub mod expect {
             let this = scopeguard::guard(self, |this| this.post_match(global));
 
             let this_value = frame.this();
-            let args_buf = frame.arguments_old::<1>();
-            let arguments: &[JSValue] = args_buf.slice();
+            let arguments: &[JSValue] = frame.arguments();
 
             if arguments.is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(

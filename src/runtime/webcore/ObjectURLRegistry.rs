@@ -108,11 +108,15 @@ pub(crate) fn bun_create_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    if arguments.len < 1 {
-        return Err(global_object.throw_not_enough_arguments("createObjectURL", 1, arguments.len));
+    let [blob_arg] = callframe.arguments_as_array::<1>();
+    if callframe.arguments_count() < 1 {
+        return Err(global_object.throw_not_enough_arguments(
+            "createObjectURL",
+            1,
+            callframe.arguments_count() as usize,
+        ));
     }
-    let Some(blob) = arguments.ptr[0].as_class_ref::<Blob>() else {
+    let Some(blob) = blob_arg.as_class_ref::<Blob>() else {
         return Err(global_object
             .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
     };
@@ -128,22 +132,23 @@ pub(crate) fn bun_revoke_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    if arguments.len < 1 {
-        return Err(global_object.throw_not_enough_arguments("revokeObjectURL", 1, arguments.len));
+    let [url_arg] = callframe.arguments_as_array::<1>();
+    if callframe.arguments_count() < 1 {
+        return Err(global_object.throw_not_enough_arguments(
+            "revokeObjectURL",
+            1,
+            callframe.arguments_count() as usize,
+        ));
     }
-    if !arguments.ptr[0].is_string() {
+    if !url_arg.is_string() {
         return Err(
             global_object.throw_invalid_arguments(format_args!("revokeObjectURL expects a string"))
         );
     }
     // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
     // so wrap in `OwnedString` for scope-exit `deref()`.
-    let str = bun_core::OwnedString::new(
-        arguments.ptr[0]
-            .to_bun_string(global_object)
-            .expect("unreachable"),
-    );
+    let str =
+        bun_core::OwnedString::new(url_arg.to_bun_string(global_object).expect("unreachable"));
     if !str.has_prefix_comptime(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
@@ -164,17 +169,17 @@ pub(crate) fn js_function_resolve_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
+    let [url_arg] = callframe.arguments_as_array::<1>();
 
     // Errors are ignored.
     // Not thrown.
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/blob.js#L441
-    if arguments.len < 1 {
+    if callframe.arguments_count() < 1 {
         return Ok(JSValue::UNDEFINED);
     }
     // `to_bun_string` returns a +1 ref; wrap in `OwnedString` so every exit
     // path (exception, non-blob prefix, success) releases it.
-    let str = bun_core::OwnedString::new(arguments.ptr[0].to_bun_string(global_object)?);
+    let str = bun_core::OwnedString::new(url_arg.to_bun_string(global_object)?);
 
     if global_object.has_exception() {
         return Ok(JSValue::ZERO);

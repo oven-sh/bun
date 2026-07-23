@@ -9,8 +9,7 @@ use bun_dotenv::env_loader as envloader;
 
 #[bun_jsc::host_fn]
 pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = frame.arguments();
     if arguments.is_empty() {
         return Err(global.throw_not_enough_arguments("internalErrorName", 1, arguments.len()));
     }

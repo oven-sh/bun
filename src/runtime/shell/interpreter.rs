@@ -2764,10 +2764,9 @@ pub fn create_shell_interpreter(
     use crate::jsc::{ArgumentsSlice, JsClass as _};
     use crate::shell::parsed_shell_script::ParsedShellScript;
 
-    let arguments_ = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global.bun_vm();
-    let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
+    let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
 
     let resolve = arguments
         .next_eat()

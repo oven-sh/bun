@@ -1228,7 +1228,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
 
     let timeout = options?.timeout;
-    if (timeout) {
+    // gate on presence, not truthiness: timeout: 0 means "close immediately",
+    // while undefined/null mean "drain gracefully with no timer"
+    if (timeout != null) {
       timeout = Number(timeout);
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");

@@ -320,7 +320,7 @@ test.skipIf(!isDebug)("Runtime.evaluate does not trip exception-check validation
 
   let stderr = "";
   const decoder = new TextDecoder();
-  const { promise: urlPromise, resolve: resolveUrl } = Promise.withResolvers<URL>();
+  const { promise: urlPromise, resolve: resolveUrl, reject: rejectUrl } = Promise.withResolvers<URL>();
   const drained = (async () => {
     for await (const chunk of child.stderr) {
       stderr += decoder.decode(chunk);
@@ -331,10 +331,12 @@ test.skipIf(!isDebug)("Runtime.evaluate does not trip exception-check validation
         } catch {}
       }
     }
+    rejectUrl(new Error("inspectee exited before printing inspector URL:\n" + stderr));
   })();
 
   const url = await urlPromise;
   const ws = new WebSocket(url);
+  let reply: unknown;
   try {
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve());
@@ -342,17 +344,9 @@ test.skipIf(!isDebug)("Runtime.evaluate does not trip exception-check validation
     });
 
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-    const reply = await new Promise<unknown>(resolve => {
+    reply = await new Promise<unknown>(resolve => {
       ws.addEventListener("message", ({ data }) => resolve(JSON.parse(String(data))));
       ws.addEventListener("close", ({ code, reason }) => resolve({ closed: { code, reason } }));
-    });
-
-    // Without the WebKit-side fix, the inspected process aborts with SIGABRT
-    // ("Unchecked JS exception") before replying, so the socket closes 1006
-    // and this assertion sees { closed: { code: 1006, ... } } instead.
-    expect(reply).toMatchObject({
-      id: 1,
-      result: { result: { type: "number", value: 2 } },
     });
   } finally {
     ws.close();
@@ -360,9 +354,17 @@ test.skipIf(!isDebug)("Runtime.evaluate does not trip exception-check validation
   }
 
   await Promise.all([child.exited, drained]);
+  // Without the WebKit-side fix the inspectee SIGABRTs ("Unchecked JS exception")
+  // before replying, so the socket closes 1006 and reply is { closed: { code: 1006, ... } }.
   if (child.signalCode === "SIGABRT") {
-    throw new Error("inspectee aborted under validateExceptionChecks:\n" + stderr);
+    throw new Error(
+      `inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`,
+    );
   }
+  expect(reply).toMatchObject({
+    id: 1,
+    result: { result: { type: "number", value: 2 } },
+  });
 });
 
 describe("http metadata endpoint", () => {

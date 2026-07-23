@@ -6097,14 +6097,20 @@ impl VirtualMachine {
             }
 
             writer.write_all(b"\n")?;
-            self.print_error_instance_js(
-                err,
-                exception_list.as_deref_mut(),
-                formatter,
-                writer,
-                allow_ansi_color,
-                allow_side_effects,
-            )?;
+            formatter.depth = formatter.depth.saturating_add(1);
+            if formatter.depth > formatter.max_depth {
+                pretty_write!(writer, "<r><cyan>[Error ...]<r>")?;
+            } else {
+                self.print_error_instance_js(
+                    err,
+                    exception_list.as_deref_mut(),
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                )?;
+            }
+            formatter.depth = formatter.depth.saturating_sub(1);
             let _ = formatter.map.remove(&err);
         }
 

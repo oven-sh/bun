@@ -803,3 +803,79 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
+  it("Map respects max_depth", () => {
+    let m = new Map([["leaf", 1]]);
+    for (let i = 0; i < 10; i++) m = new Map([[m, i]]);
+    expect(Bun.inspect(m, { depth: 2 })).toBe(
+      "Map(1) {\n  Map(1) {\n    Map(1) {\n      [Map ...]: 7,\n    }: 8,\n  }: 9,\n}",
+    );
+    expect(Bun.inspect(m, { depth: 0 })).toBe("Map(1) {\n  [Map ...]: 9,\n}");
+    expect(Bun.inspect(m, { depth: Infinity })).toContain('"leaf": 1');
+  });
+
+  it("Set respects max_depth", () => {
+    let s = new Set([1]);
+    for (let i = 0; i < 10; i++) s = new Set([s]);
+    expect(Bun.inspect(s, { depth: 2 })).toBe("Set(1) {\n  Set(1) {\n    Set(1) {\n      [Set ...],\n    },\n  },\n}");
+    expect(Bun.inspect(s, { depth: 0 })).toBe("Set(1) {\n  [Set ...],\n}");
+  });
+
+  it("Array respects max_depth", () => {
+    let a = [1];
+    for (let i = 0; i < 10; i++) a = [a];
+    expect(Bun.inspect(a, { depth: 2 })).toBe("[\n  [\n    [\n      [Array ...]\n    ]\n  ]\n]");
+    expect(Bun.inspect(a, { depth: 0 })).toBe("[\n  [Array ...]\n]");
+  });
+
+  it("console.log of deeply nested Map/Set/Array/Error does not blow up or throw", async () => {
+    const src = `
+      let m = new Map([["leaf", 1]]);
+      for (let i = 0; i < 1000; i++) m = new Map([[m, i]]);
+      console.log(m);
+
+      let s = new Set([1]);
+      for (let i = 0; i < 1000; i++) s = new Set([s]);
+      console.log(s);
+
+      let a = [1];
+      for (let i = 0; i < 1000; i++) a = [a];
+      console.log(a);
+
+      let e = new Error("leaf");
+      for (let i = 0; i < 1000; i++) e = new Error("retry " + i, { cause: e });
+      console.log(e);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("[Map ...]");
+    expect(stdout).toContain("[Set ...]");
+    expect(stdout).toContain("[Array ...]");
+    expect(stdout).toContain("[Error ...]");
+    // Previously each of these produced megabytes of output or threw RangeError.
+    expect(stdout.length).toBeLessThan(4096);
+    expect(exitCode).toBe(0);
+  });
+
+  it("Error cause chain truncates at max_depth", () => {
+    let e = new Error("leaf");
+    for (let i = 0; i < 10; i++) e = new Error("retry " + i, { cause: e });
+    const out = Bun.inspect(e, { depth: 2 });
+    expect(out).toContain("error: retry 9");
+    expect(out).toContain("error: retry 8");
+    expect(out).toContain("error: retry 7");
+    expect(out).toContain("[Error ...]");
+    expect(out).not.toContain("error: retry 6");
+    expect(out).not.toContain("error: leaf");
+
+    const full = Bun.inspect(e, { depth: Infinity });
+    expect(full).toContain("error: leaf");
+    expect(full).not.toContain("[Error ...]");
+  });
+});

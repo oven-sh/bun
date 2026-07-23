@@ -522,12 +522,21 @@ function treeToXML(tree) {
   return `${indentation}<${tag} ${attrsString}>\n${childrenString}${indentation}</${tag}>\n`;
 }
 
+function isFailureChild(child) {
+  return child.tag === "failure";
+}
+function isSkippedChild(child) {
+  return child.tag === "skipped";
+}
+function isNonCommentChild(child) {
+  return child.comment == null;
+}
 function isFailure(node) {
-  return (node?.children && node.children.some(child => child.tag === "failure")) || node?.attrs?.failures;
+  return (node?.children && node.children.some(isFailureChild)) || node?.attrs?.failures;
 }
 
 function isSkipped(node) {
-  return (node?.children && node.children.some(child => child.tag === "skipped")) || node?.attrs?.skipped;
+  return (node?.children && node.children.some(isSkippedChild)) || node?.attrs?.skipped;
 }
 
 async function* junit(source) {
@@ -572,7 +581,7 @@ async function* junit(source) {
           currentSuite = currentSuite.parent;
         }
         currentTest.attrs.time = (event.data.details.duration_ms / 1000).toFixed(6);
-        const nonCommentChildren = currentTest.children.filter(child => child.comment == null);
+        const nonCommentChildren = currentTest.children.filter(isNonCommentChild);
         const childCount = nonCommentChildren.length;
         if (childCount > 0) {
           currentTest.tag = "testsuite";

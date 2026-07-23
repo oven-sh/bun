@@ -86,6 +86,9 @@ function fatal(err: unknown): never {
 // two globs: Bun.Glob mis-parses `test/**/*` nested inside a brace group.
 const kDefaultPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
 const kGlobMagic = /[*?[\]{}!]/;
+function hasNoGlobMagic(pattern) {
+  return !kGlobMagic.test(pattern);
+}
 
 function createTestFileList(patterns: string[], cwd: string): string[] {
   const { statSync } = require("node:fs");
@@ -124,7 +127,7 @@ function createTestFileList(patterns: string[], cwd: string): string[] {
     }
   }
 
-  if (!usingDefault && results.size === 0 && patterns.every(pattern => !kGlobMagic.test(pattern))) {
+  if (!usingDefault && results.size === 0 && patterns.every(hasNoGlobMagic)) {
     console.error(`Could not find '${patterns.join(", ")}'`);
     process.exit(1);
   }
@@ -200,7 +203,7 @@ function destinationFor(dest: string) {
 function attachReporter(reporter, source, destination): Promise<void> {
   const { compose } = require("node:stream");
   const endDestination = destination !== process.stdout && destination !== process.stderr;
-  return new Promise((resolvePromise, rejectPromise) => {
+  function reporterExecutor(resolvePromise, rejectPromise) {
     const composed = compose(source, reporter);
     composed.on("error", rejectPromise);
     const out = composed.pipe(destination, { end: endDestination });
@@ -211,7 +214,8 @@ function attachReporter(reporter, source, destination): Promise<void> {
     } else {
       composed.on("end", resolvePromise);
     }
-  });
+  }
+  return new Promise(reporterExecutor);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +263,10 @@ async function main() {
       (error as { code?: string }).code = "ERR_OUT_OF_RANGE";
       fatal(error);
     }
-    files = files.filter((_, i) => i % total === index - 1);
+    function isThisShard(_, i: number) {
+      return i % total === index - 1;
+    }
+    files = files.filter(isThisShard);
   }
 
   const runOptions: Record<string, unknown> = { __proto__: null, files, cwd };
@@ -343,9 +350,10 @@ async function main() {
   }
 
   let success = true;
-  stream.on("test:summary", data => {
+  function onTestSummary(data) {
     if (data.file === undefined) success = data.success;
-  });
+  }
+  stream.on("test:summary", onTestSummary);
 
   const reporterPromises: Promise<void>[] = [];
   for (let i = 0; i < resolved.length; i++) {

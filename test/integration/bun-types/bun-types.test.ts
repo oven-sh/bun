@@ -707,7 +707,7 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2339,
-          line: "spawn.ts:107:38",
+          line: "spawn.ts:103:38",
           message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
         },
         {

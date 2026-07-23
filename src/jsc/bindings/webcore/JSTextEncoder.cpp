@@ -63,6 +63,7 @@
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include "BunClientData.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -433,10 +434,9 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     auto source = str->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto* destination = dynamicDowncast<JSC::JSArrayBufferView>(argument1.value());
+    auto* destination = dynamicDowncast<JSC::JSUint8Array>(argument1.value());
     if (!destination) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE_INSTANCE(throwScope, lexicalGlobalObject, "dest"_s, "Uint8Array"_s, argument1.value());
     }
 
     size_t res = 0;

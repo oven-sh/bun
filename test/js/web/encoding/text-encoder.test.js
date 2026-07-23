@@ -13,6 +13,54 @@ const getByteLength = str => {
   return s;
 };
 
+describe("encodeInto rejects non-Uint8Array destinations", () => {
+  // WebIDL: encodeInto(USVString source, [AllowShared] Uint8Array destination)
+  const encoder = new TextEncoder();
+  const buf = new ArrayBuffer(8);
+
+  it.each([
+    ["Int8Array", new Int8Array(buf)],
+    ["Int16Array", new Int16Array(buf)],
+    ["Int32Array", new Int32Array(buf)],
+    ["Uint16Array", new Uint16Array(buf)],
+    ["Uint32Array", new Uint32Array(buf)],
+    ["Uint8ClampedArray", new Uint8ClampedArray(buf)],
+    ["BigInt64Array", new BigInt64Array(buf)],
+    ["BigUint64Array", new BigUint64Array(buf)],
+    ["Float16Array", new Float16Array(buf)],
+    ["Float32Array", new Float32Array(buf)],
+    ["Float64Array", new Float64Array(buf)],
+    ["DataView", new DataView(buf)],
+    ["ArrayBuffer", buf],
+    ["SharedArrayBuffer", new SharedArrayBuffer(8)],
+    ["Array", [0, 0, 0, 0]],
+    ["plain object", {}],
+    ["null", null],
+  ])("throws TypeError for %s", (name, dest) => {
+    expect(() => encoder.encodeInto("hi", dest)).toThrow(TypeError);
+    expect(() => encoder.encodeInto("hi", dest)).toThrow("must be an instance of Uint8Array");
+  });
+
+  it("does not write into a rejected destination's backing buffer", () => {
+    const backing = new ArrayBuffer(8);
+    const f64 = new Float64Array(backing);
+    expect(() => encoder.encodeInto("hi", f64)).toThrow(TypeError);
+    expect(Array.from(new Uint8Array(backing))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it("accepts Uint8Array and Buffer", () => {
+    expect(encoder.encodeInto("hi", new Uint8Array(8))).toEqual({ read: 2, written: 2 });
+    expect(encoder.encodeInto("hi", Buffer.alloc(8))).toEqual({ read: 2, written: 2 });
+  });
+
+  it("accepts Uint8Array backed by SharedArrayBuffer", () => {
+    const dest = new Uint8Array(new SharedArrayBuffer(8));
+    expect(encoder.encodeInto("hi", dest)).toEqual({ read: 2, written: 2 });
+    expect(dest[0]).toBe(0x68);
+    expect(dest[1]).toBe(0x69);
+  });
+});
+
 it("not enough space for replacement character", () => {
   const encoder = new TextEncoder();
   const bytes = new Uint8Array(2);

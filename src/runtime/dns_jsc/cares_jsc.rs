@@ -783,6 +783,44 @@ pub(crate) fn error_to_js_with_syscall(
     Ok(instance)
 }
 
+/// libuv's platform-invariant `EAI_*` errno for a c-ares resolver failure.
+/// Node's getaddrinfo errors carry this negative value in `err.errno`, and
+/// `util.getSystemErrorName()` / `ExceptionWithHostPort` reject a non-negative
+/// number with `ERR_OUT_OF_RANGE`, so the raw positive c-ares discriminant is
+/// never a valid errno on a getaddrinfo-shaped error.
+pub(crate) fn uv_eai_errno(e: c_ares::Error) -> i32 {
+    // uv/errno.h EAI_* — platform-invariant ABI constants.
+    const UV_EAI_AGAIN: i32 = -3001;
+    const UV_EAI_BADFLAGS: i32 = -3002;
+    const UV_EAI_CANCELED: i32 = -3003;
+    const UV_EAI_FAIL: i32 = -3004;
+    const UV_EAI_FAMILY: i32 = -3005;
+    const UV_EAI_MEMORY: i32 = -3006;
+    const UV_EAI_NODATA: i32 = -3007;
+    const UV_EAI_NONAME: i32 = -3008;
+    const UV_EAI_SERVICE: i32 = -3010;
+    const UV_EAI_SOCKTYPE: i32 = -3011;
+    const UV_EAI_BADHINTS: i32 = -3013;
+    match e {
+        c_ares::Error::ENODATA => UV_EAI_NODATA,
+        // `c_ares::Error::code()` aliases ENOTFOUND/ENONAME/EBADNAME to
+        // "DNS_ENOTFOUND"; keep errno in lockstep with code.
+        c_ares::Error::ENOTFOUND | c_ares::Error::ENONAME | c_ares::Error::EBADNAME => {
+            UV_EAI_NONAME
+        }
+        c_ares::Error::EBADFAMILY => UV_EAI_FAMILY,
+        c_ares::Error::EBADFLAGS => UV_EAI_BADFLAGS,
+        c_ares::Error::EBADHINTS => UV_EAI_BADHINTS,
+        c_ares::Error::ENOMEM => UV_EAI_MEMORY,
+        c_ares::Error::ESERVICE => UV_EAI_SERVICE,
+        c_ares::Error::ECONNREFUSED => UV_EAI_SOCKTYPE,
+        c_ares::Error::ETIMEOUT => UV_EAI_AGAIN,
+        c_ares::Error::ECANCELLED => UV_EAI_CANCELED,
+        c_ares::Error::EBADSTR => UV_EAI_BADHINTS,
+        _ => UV_EAI_FAIL,
+    }
+}
+
 /// `SystemError` fields for a resolver failure, in the shape `node:dns`
 /// reports them: `code`/`errno` derived from the DNS error, message
 /// `"<syscall> <CODE> <hostname>"`, plus `syscall` and `hostname`.
@@ -795,7 +833,7 @@ pub(crate) fn system_error_with_syscall_and_hostname(
 ) -> SystemError {
     let code = this.code();
     SystemError {
-        errno: this as i32,
+        errno: uv_eai_errno(this),
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",

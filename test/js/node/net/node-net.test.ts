@@ -684,6 +684,36 @@ it("should handle connection error (unix)", done => {
   });
 });
 
+// isIP() accepts an IPv6 scoped literal that the native IP parser may not;
+// the getaddrinfo fallback then reports a c-ares error whose errno is the
+// positive enum discriminant. ExceptionWithHostPort threw ERR_OUT_OF_RANGE on
+// that, kConnectDispatch's promise.catch swallowed the throw, and the socket
+// was left with connecting=false and no 'error'/'close' ever emitted.
+it("emits 'error' when the native connect error carries a non-libuv errno", async () => {
+  const fixture = `
+    const net = require("node:net");
+    const s = net.connect({ host: "fe80::1%bun-no-such-iface", port: 1 });
+    s.on("error", e => console.log("error", e.code, e.errno < 0 ? "neg" : e.errno));
+    s.on("close", () => console.log("close"));
+    s.on("connect", () => { console.log("connect"); s.destroy(); });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const lines = stdout.trim().split("\n");
+  // The exact code is platform/resolver dependent (EAI_FAMILY, EINVAL, ...);
+  // the invariant is that an error surfaced with a negative errno and the
+  // socket closed instead of silently draining the event loop.
+  expect(lines[0]).toMatch(/^error \S+ neg$/);
+  expect(lines[1]).toBe("close");
+  expect(exitCode).toBe(0);
+});
+
 it("Socket has a prototype", () => {
   function Connection() {}
   function Connection2() {}

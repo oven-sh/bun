@@ -1337,14 +1337,23 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
     socket.data.req = undefined;
+    // Both paths feed this errno to ExceptionWithHostPort (directly in
+    // afterConnect/internalConnect, or via kConnectDispatch's sync return),
+    // which requires a negative libuv code; anything else throws
+    // ERR_OUT_OF_RANGE inside the constructor. Native can land here with a
+    // resolver failure whose errno is a positive c-ares discriminant (or no
+    // errno), and the throw is swallowed by kConnectDispatch's catch, leaving
+    // the socket with connecting=false and no 'error'/'close'.
+    let errno = error.errno;
+    if (typeof errno !== "number" || errno >= 0) errno = UV_ECANCELED;
     // doConnect dispatches this synchronously when connect()/bind() fails at
     // the syscall; surface it as kConnectTcp/Pipe's return value (callers'
     // Node-derived `if (err)` expects that) instead of re-entering oncomplete.
     if (req!.dispatching) {
-      req.errno = error.errno || UV_ECANCELED;
+      req.errno = errno;
       return;
     }
-    req!.oncomplete(error.errno, self._handle, req, true, true);
+    req!.oncomplete(errno, self._handle, req, true, true);
   },
 };
 

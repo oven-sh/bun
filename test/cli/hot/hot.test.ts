@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +786,91 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// /proc/<pid>/fd only exists on Linux.
+it.skipIf(!isLinux)(
+  "does not leak a file descriptor of the entrypoint on each reload",
+  async () => {
+    using dir = tempDir("hot-fd-leak", {
+      "dep.ts": "export const value = 0;\n",
+      "entry.ts": 'import { value } from "./dep.ts";\nconsole.log("RELOAD", value);\n',
+    });
+    const entryReal = realpathSync(join(String(dir), "entry.ts"));
+    const depPath = join(String(dir), "dep.ts");
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    // Drain stderr concurrently so the pipe never fills up and blocks the child.
+    const stderrText = runner.stderr.text();
+
+    // Resolve once stdout has printed `RELOAD <n>`; the entrypoint logs that
+    // line every time the module graph is re-evaluated.
+    const seen = new Set<number>();
+    let pending: { n: number; resolve: () => void } | null = null;
+    const pump = (async () => {
+      const decoder = new TextDecoder();
+      let buffered = "";
+      for await (const chunk of runner.stdout) {
+        buffered += decoder.decode(chunk, { stream: true });
+        let newline: number;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          const match = /^RELOAD (\d+)$/.exec(line);
+          if (!match) continue;
+          const n = Number(match[1]);
+          seen.add(n);
+          if (pending?.n === n) {
+            pending.resolve();
+            pending = null;
+          }
+        }
+      }
+    })();
+    const waitForReload = (n: number) =>
+      new Promise<void>((resolve, reject) => {
+        if (seen.has(n)) return resolve();
+        pending = { n, resolve };
+        runner.exited.then(code => reject(new Error(`--hot exited early with code ${code}`)));
+      });
+
+    const countEntrypointFds = () => {
+      let count = 0;
+      for (const fd of readdirSync(`/proc/${runner.pid}/fd`)) {
+        try {
+          if (readlinkSync(`/proc/${runner.pid}/fd/${fd}`) === entryReal) count++;
+        } catch {}
+      }
+      return count;
+    };
+
+    await waitForReload(0);
+    const before = countEntrypointFds();
+    expect(before).toBeGreaterThan(0);
+
+    const reloads = 20;
+    for (let i = 1; i <= reloads; i++) {
+      const reloaded = waitForReload(i);
+      writeFileSync(depPath, `export const value = ${i};\n`);
+      await reloaded;
+    }
+    const after = countEntrypointFds();
+
+    // `kill()` can abort the stream readers; the teardown must never mask
+    // the assertion below, so settle instead of propagating.
+    runner.kill();
+    await Promise.allSettled([pump, stderrText, runner.exited]);
+
+    // Every rebuild re-opens the entrypoint; the watcher must close the
+    // descriptor it replaces instead of accumulating one per reload.
+    expect({ before, after }).toEqual({ before, after: before });
+  },
+  timeout,
 );

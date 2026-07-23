@@ -803,6 +803,18 @@ pub(crate) extern "C" fn Bun__onExit() {
         callback();
     }
     run_exit_callbacks();
+
+    // Bun builds mimalloc with MI_NO_PROCESS_DETACH, disabling its automatic
+    // stats output on exit. Print them when MIMALLOC_SHOW_STATS=1 or
+    // MIMALLOC_VERBOSE=1 is set.
+    if bun_alloc::mimalloc::mi_option_is_enabled(bun_alloc::mimalloc::Option::show_stats)
+        || bun_alloc::mimalloc::mi_option_is_enabled(bun_alloc::mimalloc::Option::verbose)
+    {
+        // SAFETY: reads global mimalloc counters and writes to stderr; a null
+        // `out` selects the default stream. No pointer preconditions.
+        unsafe { bun_alloc::mimalloc::mi_stats_print(core::ptr::null_mut()) };
+    }
+
     Output::flush();
     crate::keep_symbols!(Bun__atexit);
 

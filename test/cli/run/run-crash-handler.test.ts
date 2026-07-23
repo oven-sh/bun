@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -126,6 +126,42 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(exitCode).not.toBe(0);
     void stdout;
   });
+});
+
+// Windows: the VEH handler must walk the stack from the fault CONTEXT record
+// (RtlVirtualUnwind), not from inside the handler. When the fault is in an
+// external DLL the old RtlCaptureStackBackTrace path could stop at
+// KiUserExceptionDispatcher on some Windows versions, leaving only the
+// handler's own frames in the trace and none of the bun callers.
+test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures the bun callers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+  expect(exitCode).not.toBe(0);
+
+  // The debug build's fallback printer emits one `???:?:?: 0x<addr>` line per
+  // captured frame. A walk seeded from the fault CONTEXT reaches through the
+  // DLL into the bun call chain (the JS host-fn dispatch is several frames
+  // deep), so a short trace means the unwind stopped at the exception
+  // dispatcher and the handler's own frames are all that was captured.
+  const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => BigInt(m[1]));
+  expect(frameAddrs.length).toBeGreaterThanOrEqual(7);
+
+  // Frame 0 is the fault PC inside ntdll.dll; frames 1+ must be the bun call
+  // chain with no handler or ntdll-dispatch frames interleaved. Frames 1..6 all
+  // coming from one image means their address span fits inside that image's
+  // mapped range; the old RtlCaptureStackBackTrace path left
+  // [handler x3][ntdll-dispatch x3] ahead of the first real caller, so frames
+  // 4-6 landed in ntdll and the span covered the >10 GiB gap between the EXE
+  // and system-DLL HEASLR regions.
+  const callers = frameAddrs.slice(1, 7);
+  const span = callers.reduce((a, b) => (a > b ? a : b)) - callers.reduce((a, b) => (a < b ? a : b));
+  expect(span).toBeLessThan(2n ** 31n);
 });
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {

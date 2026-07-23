@@ -12,7 +12,6 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 10);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -23,6 +22,7 @@ pub mod js_bindings {
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
+            ("segfaultInDll", __jsc_host_js_segfault_in_dll),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -33,6 +33,7 @@ pub mod js_bindings {
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
         ];
+        let obj = JSValue::create_empty_object(global, ENTRIES.len());
         for &(name, func) in ENTRIES {
             obj.put(
                 global,
@@ -92,6 +93,38 @@ pub mod js_bindings {
             core::ptr::write_unaligned(ptr, 0xDEADBEEF);
             core::hint::black_box(ptr);
         }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// Triggers a segfault with the fault PC inside a system DLL rather than
+    /// inside bun.exe. Exercises the Windows fault-context unwinder: the walk
+    /// must recover the bun frames that called into the DLL.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_segfault_in_dll(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        #[cfg(windows)]
+        {
+            // `RtlFillMemory` is exported by ntdll.dll, so the faulting
+            // instruction is outside bun.exe's image.
+            #[link(name = "ntdll")]
+            unsafe extern "system" {
+                fn RtlFillMemory(dest: *mut core::ffi::c_void, length: usize, fill: u8);
+            }
+            // SAFETY: intentionally writing to an invalid address to trigger an
+            // access violation inside ntdll.dll for testing.
+            unsafe { RtlFillMemory(0xDEADBEEFusize as *mut _, 8, 0) };
+        }
+        #[cfg(not(windows))]
+        {
+            // No equivalent on POSIX (the fault-context walk is fp-based and
+            // doesn't care which image the fault is in); fall through to the
+            // in-bun segfault so the test hook is defined everywhere.
+            return js_segfault(_global, _frame);
+        }
+        #[allow(unreachable_code)]
         Ok(JSValue::UNDEFINED)
     }
 

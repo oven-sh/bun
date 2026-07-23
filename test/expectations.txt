@@ -178,9 +178,3 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.
-
-# SIGABRT: ExceptionScope::assertNoException (ExceptionScope.h:61) during the
-# http2 reset-flood loop; same assertion family as #34690 but with no worker
-# involvement. Hits unrelated branches (incl. a deps-bot bump, build 75670)
-# and ~1 in 3 asan runs on this stack. Tracked in #34846.
-[ ASAN ] test/js/node/test/parallel/test-http2-reset-flood.js [ CRASH ] # #34846: assertNoException during reset flood

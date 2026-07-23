@@ -268,7 +268,7 @@ impl StaticRoute {
         unsafe {
             // Evaluate conditional request preconditions for HEAD with 200 status
             if (*this).status_code == 200 {
-                if Self::render_304_if_not_modified(this, &mut req, resp) {
+                if Self::render_precondition(this, &mut req, resp) {
                     return;
                 }
             }
@@ -335,7 +335,7 @@ impl StaticRoute {
         unsafe {
             // Evaluate conditional request preconditions for GET with 200 status
             if (*this).status_code == 200 {
-                if Self::render_304_if_not_modified(this, &mut req, resp) {
+                if Self::render_precondition(this, &mut req, resp) {
                     return;
                 }
             }
@@ -527,43 +527,71 @@ impl StaticRoute {
                 Method::HEAD => Self::on_head(this, resp),
                 _ => {
                     (*this).do_write_status(405, resp); // Method not allowed
+                    resp.write_header(b"Allow", b"GET, HEAD");
+                    resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(resp.should_close_connection());
                 }
             }
         }
     }
 
+    /// RFC 9110 §13.2.2 precondition evaluation. Writes a 412 or 304 response
+    /// and returns `true` when a precondition short-circuits the request.
+    ///
     /// # Safety
     /// See [`on_head_request`]. May free `*this` via `on_response_complete` when it
     /// returns `true`.
-    unsafe fn render_304_if_not_modified(
+    unsafe fn render_precondition(
         this: *mut Self,
         req: &mut AnyRequest,
         resp: AnyResponse,
     ) -> bool {
         // SAFETY: caller contract.
         unsafe {
-            // RFC 9110 §13.2.2: If-None-Match takes precedence; If-Modified-Since
-            // is evaluated only when If-None-Match is absent.
+            let etag = (*this).headers.get(b"etag").filter(|v| !v.is_empty());
+            // Deferred: `parse_http_date` allocates + calls into WTF; only run it
+            // when the client actually sent a date-based conditional header.
+            let last_modified = || {
+                (*this)
+                    .headers
+                    .get(b"last-modified")
+                    .and_then(crate::jsc_hooks::parse_http_date)
+            };
+
+            // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
+            // (only when If-Match is absent).
+            let precondition_failed =
+                if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
+                    !ETag::if_match(etag, im)
+                } else if let Some(ius) = req
+                    .header(b"if-unmodified-since")
+                    .and_then(crate::jsc_hooks::parse_http_date)
+                {
+                    matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
+                } else {
+                    false
+                };
+            if precondition_failed {
+                return Self::render_bodiless(this, req, resp, 412);
+            }
+
+            // Step 3: If-None-Match (weak comparison). Presence suppresses step 4.
             let not_modified = if let Some(if_none_match) = req.header(b"if-none-match") {
-                match (*this).headers.get(b"etag") {
-                    Some(etag) if !if_none_match.is_empty() && !etag.is_empty() => {
+                match etag {
+                    Some(etag) if !if_none_match.is_empty() => {
                         ETag::if_none_match(etag, if_none_match)
                     }
                     _ => false,
                 }
+            // Step 4: If-Modified-Since (only when If-None-Match is absent).
             } else if let Some(ims) = req
                 .header(b"if-modified-since")
                 .and_then(crate::jsc_hooks::parse_http_date)
             {
                 // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
                 // is second-granular, so compare at second precision.
-                match (*this)
-                    .headers
-                    .get(b"last-modified")
-                    .and_then(crate::jsc_hooks::parse_http_date)
-                {
-                    Some(last_modified) => last_modified / 1000 <= ims / 1000,
+                match last_modified() {
+                    Some(lm) => lm / 1000 <= ims / 1000,
                     None => false,
                 }
             } else {
@@ -574,15 +602,31 @@ impl StaticRoute {
                 return false;
             }
 
-            // Return 304 Not Modified
+            Self::render_bodiless(this, req, resp, 304)
+        }
+    }
+
+    /// # Safety
+    /// See [`on_head_request`]. Frees `*this` via `on_response_complete`.
+    unsafe fn render_bodiless(
+        this: *mut Self,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+        status: u16,
+    ) -> bool {
+        // SAFETY: caller contract.
+        unsafe {
             req.set_yield(false);
             (*this).ref_();
             if let Some(mut server) = (*this).server.get() {
                 server.on_pending_request();
                 resp.timeout(server.config().idle_timeout);
             }
-            (*this).do_write_status(304, resp);
+            (*this).do_write_status(status, resp);
             (*this).do_write_headers(resp);
+            if !HTTPStatusText::is_null_body(status) {
+                resp.write_header_int(b"Content-Length", 0);
+            }
             resp.end_without_body(resp.should_close_connection());
             Self::on_response_complete(this, resp);
             true

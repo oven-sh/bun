@@ -108,6 +108,7 @@ pub enum create_bun_socket_error_t {
     invalid_ca_file,
     invalid_ca,
     invalid_ciphers,
+    invalid_crl,
 }
 
 impl create_bun_socket_error_t {
@@ -118,6 +119,7 @@ impl create_bun_socket_error_t {
             Self::invalid_ca_file => Some(b"Invalid CA file"),
             Self::invalid_ca => Some(b"Invalid CA"),
             Self::invalid_ciphers => Some(b"Invalid ciphers"),
+            Self::invalid_crl => Some(b"Invalid CRL"),
         }
     }
 }
@@ -407,6 +409,10 @@ pub mod fault_inject {
     /// Not a syscall: the per-loop TLS plaintext buffer allocation in
     /// `us_internal_init_loop_ssl_data`.
     pub const SSL_LOOP_BUFFER: c_int = 10;
+    /// Not a syscall: poll registration in `us_poll_start_rc`
+    /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
+    /// epoll/kqueue).
+    pub const POLL_START: c_int = 11;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

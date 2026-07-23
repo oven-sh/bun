@@ -1005,6 +1005,7 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
     }
 }
 
@@ -1037,6 +1038,11 @@ impl State {
     #[inline]
     pub fn is_http_connection_close(self) -> bool {
         self.bits() & State::HTTP_CONNECTION_CLOSE.bits() != 0
+    }
+
+    #[inline]
+    pub fn is_node_received_fin(self) -> bool {
+        self.bits() & State::HTTP_NODE_RECEIVED_FIN.bits() != 0
     }
 }
 

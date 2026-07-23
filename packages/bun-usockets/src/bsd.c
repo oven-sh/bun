@@ -1456,8 +1456,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 
 /* Receive-path options every UDP socket needs, whether freshly created or
  * adopted from an existing fd: destination-address and TOS reporting for
- * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR. */
-static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
+ * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR (opt-in). */
+static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family, int options) {
     /* We need destination address for udp packets in both ipv6 and ipv4 */
 
 /* On FreeBSD this option seems to be called like so */
@@ -1500,15 +1500,21 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
 #if defined(__linux__)
     /* IP_RECVERR/IPV6_RECVERR queues ICMP errors on the socket's error queue
      * for on_recv_error to drain. libuv gates this on UV_UDP_LINUX_RECVERR
-     * (Node's dgram never passes it); Bun opts in for sockets it creates. */
+     * (Node's dgram never passes it). Opt-in only: on a shared unconnected
+     * socket (the HTTP/3 fetch client) it also makes a queued ICMP fail the
+     * next send to a different, live peer. */
+    if (options & LIBUS_UDP_LINUX_RECVERR) {
 #ifdef IP_RECVERR
-    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+        setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
 #endif
 #ifdef IPV6_RECVERR
-    if (family == AF_INET6) {
-        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-    }
+        if (family == AF_INET6) {
+            setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
+        }
 #endif
+    }
+#else
+    (void) options;
 #endif
 }
 
@@ -1643,7 +1649,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 #endif
 
-    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family);
+    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family, options);
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {

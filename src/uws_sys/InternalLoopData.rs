@@ -71,9 +71,8 @@ impl InternalLoopData {
     }
 
     /// Tag values for `parent_tag`: 1 = `jsc::EventLoop`, 2 = `jsc::MiniEventLoop`.
-    /// Low tier stores tag+ptr only; the typed `EventLoopHandle` wrappers
-    /// (`set_parent_event_loop` / `get_parent`) live in the higher-tier crate
-    /// that can name `bun_jsc` — see `bun_runtime::dispatch` (move-in pass).
+    /// Low tier stores tag+ptr only; the typed `EventLoopHandle` wrapper
+    /// (`get_parent`) lives in the higher-tier crate that can name `bun_jsc`.
     #[inline]
     pub fn set_parent_raw(&mut self, tag: c_char, ptr: *mut c_void) {
         self.parent_tag = tag;

@@ -1767,35 +1767,21 @@ dependencies = [
 name = "bun_semver"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
 name = "bun_semver_jsc"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_core",
  "bun_jsc",
  "bun_semver",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]

@@ -115,6 +115,7 @@ export const lsquic: Dependency = {
     // an unrelated alarm (up to a whole idle timeout) instead of the next tick.
     "patches/lsquic/abort-error-tickable.patch",
     "patches/lsquic/disable-gquic.patch",
+    "patches/lsquic/requeue-unsent-coalesced.patch",
     // node:quic accessors: lsquic_engine_conn_count, lsquic_conn_get_ssl,
     // lsquic_conn_transport_params, lsquic_conn_make_uni_stream, and the
     // server-side CONNECTION_CLOSE / IFC_TIMED_OUT immediate-close fixes.

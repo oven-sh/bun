@@ -183,6 +183,8 @@ codegen-for-zig-team.tar.gz
 .buildkite/ci.yml
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
+/a.js
+scratch
 
 *.bun-build
 

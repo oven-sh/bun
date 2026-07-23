@@ -155,6 +155,11 @@ enum {
      * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
      * the server sends the first bytes. */
     LIBUS_LISTEN_DEFER_ACCEPT = 64,
+    /* Enable IP_RECVERR on a UDP socket so ICMP errors land on the error
+     * queue for on_recv_error to drain. Off by default: on a shared
+     * unconnected socket it also makes the next send fail for a datagram
+     * bound to a different, live peer. */
+    LIBUS_UDP_LINUX_RECVERR = 128,
 };
 
 /* Library types publicly available */
@@ -368,7 +373,8 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
  * sni may be NULL. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx, const char *sni,
-    int is_client, int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
+    int is_client, int request_cert, int reject_unauthorized,
+    int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
 /* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
  * by the plain-TCP layer before the socket was adopted into TLS) through the
  * same decrypt path as bytes arriving from the kernel. */
@@ -484,6 +490,16 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    /* Session timeout in seconds applied via SSL_CTX_set_timeout; 0 = library default. */
+    int session_timeout;
+    /* PEM-encoded CRLs added to the context's X509_STORE (enables CRL checking). */
+    const char * const *crl;
+    unsigned int crl_count;
+    /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
+    int allow_partial_trust_chain;
+    /* Colon-separated signature algorithm list applied via
+     * SSL_CTX_set1_sigalgs_list. */
+    const char *sigalgs;
 };
 
 enum create_bun_socket_error_t {
@@ -492,6 +508,7 @@ enum create_bun_socket_error_t {
     CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
     CREATE_BUN_SOCKET_ERROR_INVALID_CA,
     CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
+    CREATE_BUN_SOCKET_ERROR_INVALID_CRL,
 };
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns
@@ -632,6 +649,11 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_tls(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
+/* TLS ciphertext bytes already sealed for this socket and reported as
+ * written by us_socket_write(), still waiting on a writable event to reach
+ * the kernel (the loop-wide spill slot owned by this socket). 0 for
+ * plain-TCP sockets and for TLS sockets with nothing spilled. */
+unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
 

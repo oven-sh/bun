@@ -1717,12 +1717,14 @@ impl<'a> CopyFileWindows<'a> {
         // stashes `*mut task` into the work pool; without `Box::leak` the Box
         // drops at end of statement and the worker dereferences freed memory.
         // Ownership is handed to the work-pool/completion path.
-        Box::leak(node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
-            completion: on_mkdirp_complete_concurrent,
-            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
-            path,
-            ..Default::default()
-        }))
+        Box::leak(node_fs::async_::AsyncMkdirp::new(
+            node_fs::async_::AsyncMkdirp {
+                completion: on_mkdirp_complete_concurrent,
+                completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+                path,
+                ..Default::default()
+            },
+        ))
         .schedule();
     }
 

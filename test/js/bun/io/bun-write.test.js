@@ -151,11 +151,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
           env: bunEnv,
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).toContain("CODE=ENOENT");
         if (isWindows && !IS_UV_FS_COPYFILE_DISABLED) {
           expect(stdout).toContain("PATH_IS_SRC=true");
@@ -182,11 +178,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
           env: bunEnv,
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).toContain("CODE=ENOENT");
         expect(stderr).toBe("");
         expect(exitCode).toBe(0);

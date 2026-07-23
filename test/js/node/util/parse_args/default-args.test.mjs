@@ -55,15 +55,18 @@ describe("parseArgs default args", () => {
     return { stdout };
   }
 
+  // --bun/-b are Bun-launcher flags, not Node engine options, so they are excluded
+  // from execArgv (frameworks commonly serialize execArgv into NODE_OPTIONS for
+  // child workers and real node rejects --bun there).
   test.each([
     ["file-test.js --foo asdf", ["foo"], ["asdf"], []], // implicit run
     ["run file-test.js --foo asdf", ["foo"], ["asdf"], []], // explicit run
-    ["--bun file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]], // implicit run, with bun "--bun" arg (should not appear in argv)
-    ["run --bun file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]], // explicit run, with bun "--bun" arg (after the run)
-    ["--bun run file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]], // explicit run, with bun "--bun" arg (before the run)
-    ["--bun run --env-file='' file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun", "--env-file=''"]], // explicit run, multiple bun args
+    ["--bun file-test.js --foo asdf", ["foo"], ["asdf"], []], // implicit run, with bun "--bun" arg (should not appear in argv or execArgv)
+    ["run --bun file-test.js --foo asdf", ["foo"], ["asdf"], []], // explicit run, with bun "--bun" arg (after the run)
+    ["--bun run file-test.js --foo asdf", ["foo"], ["asdf"], []], // explicit run, with bun "--bun" arg (before the run)
+    ["--bun run --env-file='' file-test.js --foo asdf", ["foo"], ["asdf"], ["--env-file=''"]], // explicit run, multiple bun args
     ["run file-test.js --bun", ["bun"], [], []], // passing --bun only to the program
-    ["--bun run file-test.js --foo asdf -- --foo2 -- --foo3", ["foo"], ["asdf", "--foo2", "--", "--foo3"], ["--bun"]],
+    ["--bun run file-test.js --foo asdf -- --foo2 -- --foo3", ["foo"], ["asdf", "--foo2", "--", "--foo3"], []],
     //[`--bun -e ${evalSrc} --foo asdf`, ["foo"], ["asdf"]], // eval seems to crash when triggered from tests
     //[`--bun --eval ${evalSrc} --foo asdf`, ["foo"], ["asdf"]],
     //[`--eval "require('./file-test.js')" -- --foo asdf -- --bar`, ["foo"], ["asdf"]],

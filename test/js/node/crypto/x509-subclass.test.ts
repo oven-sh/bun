@@ -129,3 +129,69 @@ describe("X509Certificate#checkIssued", () => {
     expect(() => agent1.checkIssued("" as any)).toThrow();
   });
 });
+
+// X509Certificate.ca must be true only for certificates with a basicConstraints
+// extension that sets CA:TRUE (matching Node/OpenSSL's X509_check_ca() == 1).
+// Bun uses BoringSSL, whose X509_check_ca() returns 1 for X.509 v1 certificates
+// too, so the old `== 1` check reported a v1 cert with no basicConstraints as a
+// CA. https://github.com/oven-sh/bun/issues/31810
+describe("X509Certificate#ca", () => {
+  // Self-signed X.509 v1 certificate with no extensions (no basicConstraints).
+  const v1NoExtensions = new X509Certificate(`-----BEGIN CERTIFICATE-----
+MIICAjCCAagCCQDFYI3zR8B/izAKBggqhkjOPQQDAjAPMQ0wCwYDVQQDDAR0ZXN0
+MB4XDTI2MDUyODE3MDYwNVoXDTM2MDUyNTE3MDYwNVowDzENMAsGA1UEAwwEdGVz
+dDCCAUswggEDBgcqhkjOPQIBMIH3AgEBMCwGByqGSM49AQECIQD/////AAAAAQAA
+AAAAAAAAAAAAAP///////////////zBbBCD/////AAAAAQAAAAAAAAAAAAAAAP//
+/////////////AQgWsY12Ko6k+ez671VdpiGvGUdBrDMU7D2O848PifSYEsDFQDE
+nTYIhucEk2pmeOETnSa3gZ9+kARBBGsX0fLhLEJH+Lzm5WOkQPJ3A32BLeszoPSh
+OUXYmMKWT+NC4v4af5uO5+tKfA+eFivOM1drMV7Oy7ZAaDe/UfUCIQD/////AAAA
+AP//////////vOb6racXnoTzucrC/GMlUQIBAQNCAAR1hd/nVei+or93b6B6lA0v
+U52t80TD/E7NVfub7GJbHxbCX48zQH8YzMEsi/C/0G6N0/kf/ilwVuZXzwPVuTM/
+MAoGCCqGSM49BAMCA0gAMEUCIFTzv2XBNlegDgPaDlhmcxwOx9FaIfy/9SF6+qmV
+7IPSAiEAkQ1u46qvg4y2tr47yLzr0PbtPVYgjNS7VYLNDWf/btw=
+-----END CERTIFICATE-----
+`);
+
+  // Self-signed X.509 v3 certificate with basicConstraints CA:TRUE.
+  const v3CaTrue = new X509Certificate(`-----BEGIN CERTIFICATE-----
+MIIBjDCCATGgAwIBAgIUd0nA46zMcwqssVnVDNJ0F1APFuIwCgYIKoZIzj0EAwIw
+EzERMA8GA1UEAwwITXlSb290Q0EwHhcNMjYwNjA0MTYyMDM2WhcNMzYwNjAxMTYy
+MDM2WjATMREwDwYDVQQDDAhNeVJvb3RDQTBZMBMGByqGSM49AgEGCCqGSM49AwEH
+A0IABH5Mm74kubMd96Z5D09xITJcBhAiByKbnzyMRgcA14MlMmRXP9N812rhsyM6
+drajhDSLmtoeaLfdf+0YnndMppWjYzBhMB0GA1UdDgQWBBT/fNxTnDHehlFQZpEt
+DhbKDuhG+DAfBgNVHSMEGDAWgBT/fNxTnDHehlFQZpEtDhbKDuhG+DAPBgNVHRMB
+Af8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjAKBggqhkjOPQQDAgNJADBGAiEAwON8
+/nnAceDckQ0nD3etz11m120RFm0z3yGyPs2jmBQCIQCS7+FmRZYmXNAoqZFGtBmL
+ALUH18cGAJfxlfxayzf4DA==
+-----END CERTIFICATE-----
+`);
+
+  // X.509 v3 certificate with basicConstraints CA:FALSE.
+  const v3CaFalse = new X509Certificate(`-----BEGIN CERTIFICATE-----
+MIIBkDCCATagAwIBAgIUG78W7gb1zr+WfA6NLqonnbC7C0YwCgYIKoZIzj0EAwIw
+EzERMA8GA1UEAwwITXlSb290Q0EwHhcNMjYwNjA0MTYyMDM2WhcNMjcwNjA0MTYy
+MDM2WjAbMRkwFwYDVQQDDBBsZWFmLmV4YW1wbGUuY29tMFkwEwYHKoZIzj0CAQYI
+KoZIzj0DAQcDQgAE0Evk10/eXIG+PdR75ROVkXGsjygjbX+XtChIHDg9FNRdGQ01
+DpqtLuJZ10EA3KfhqcIkC529yYvEpmYBobb+CqNgMF4wDAYDVR0TAQH/BAIwADAO
+BgNVHQ8BAf8EBAMCB4AwHQYDVR0OBBYEFBPT7oz30YdjZ9Hykvt9MX87p7lBMB8G
+A1UdIwQYMBaAFP983FOcMd6GUVBmkS0OFsoO6Eb4MAoGCCqGSM49BAMCA0gAMEUC
+IQCMSgMdAzb2vAAqjc0c5ZSIbx+H6OyzIa47vJJAoL0aXAIgCLUr3IR6L/NJO5Vm
+3yGsEHv16ABxoz4cPe2uxJ2BNsk=
+-----END CERTIFICATE-----
+`);
+
+  test("is false for a v1 certificate with no basicConstraints", () => {
+    expect(v1NoExtensions.ca).toBe(false);
+    expect(v1NoExtensions.toLegacyObject().ca).toBe(false);
+  });
+
+  test("is true for a v3 certificate with basicConstraints CA:TRUE", () => {
+    expect(v3CaTrue.ca).toBe(true);
+    expect(v3CaTrue.toLegacyObject().ca).toBe(true);
+  });
+
+  test("is false for a v3 certificate with basicConstraints CA:FALSE", () => {
+    expect(v3CaFalse.ca).toBe(false);
+    expect(v3CaFalse.toLegacyObject().ca).toBe(false);
+  });
+});

@@ -1274,7 +1274,21 @@ bool X509View::isCA() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return false;
-    return X509_check_ca(const_cast<X509*>(cert_)) == 1;
+
+    // Node reports `ca === true` only when OpenSSL's X509_check_ca() returns 1,
+    // i.e. the certificate has a basicConstraints extension with CA:TRUE and its
+    // keyUsage (if present) allows certificate signing. BoringSSL's
+    // X509_check_ca() also returns 1 for X.509 v1 certificates, so comparing
+    // against 1 would treat a v1 cert (which has no basicConstraints) as a CA,
+    // diverging from Node. Check the extension flags directly to match Node's
+    // semantics on both backends.
+    X509* cert = const_cast<X509*>(cert_);
+    const uint32_t flags = X509_get_extension_flags(cert);
+    if ((flags & (EXFLAG_BCONS | EXFLAG_CA)) != (EXFLAG_BCONS | EXFLAG_CA))
+        return false;
+    // keyUsage, if present, must allow certificate signing. X509_get_key_usage()
+    // returns UINT32_MAX when no keyUsage extension is present.
+    return (X509_get_key_usage(cert) & X509v3_KU_KEY_CERT_SIGN) != 0;
 }
 
 bool X509View::isIssuedBy(const X509View& issuer) const

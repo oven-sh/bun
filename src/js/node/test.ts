@@ -4017,15 +4017,12 @@ function addSuite(
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;
   else if (effectiveMode === "todo") {
-    if (runChildReporterEnabled) {
-      // node runs a todo suite's children and reports each as todo (the todo
-      // directive is inherited). bun:test's describe.todo never executes them,
-      // so a run() child registers a plain describe and relies on todoFlag —
-      // the children report with todo, and the suite completes through them.
-      suiteNode.todoFlag = true;
-    } else {
-      register = describe.todo;
-    }
+    // node runs a todo suite's children and reports each as todo (the todo
+    // directive is inherited). bun:test's describe.todo never executes them,
+    // so a run() child registers a plain describe and relies on todoFlag —
+    // the children report with todo, and the suite completes through them.
+    suiteNode.todoFlag = true;
+    if (!runChildReporterEnabled) register = describe.todo;
   }
   if (effectiveMode === "skip" && runChildReporterEnabled) {
     // Report at execution turn so the event stream keeps declaration order.

@@ -325,7 +325,8 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
   if (opts.forceExit) throwNotImplemented("run({ forceExit: true })", 5090);
-  if (opts.files == null) throwNotImplemented("run() default file discovery", 5090, "Pass { files: [...] } explicitly.");
+  if (opts.files == null)
+    throwNotImplemented("run() default file discovery", 5090, "Pass { files: [...] } explicitly.");
 
   runFiles(opts, reporter);
   return reporter;
@@ -587,7 +588,12 @@ function republishChildEvent(
     const detailType = isSuite ? "suite" : "test";
     const serialized = data.error;
     if (serialized !== undefined) {
-      data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error: rebuildError(serialized) };
+      data.details = {
+        __proto__: null,
+        duration_ms: data.duration_ms,
+        type: detailType,
+        error: rebuildError(serialized),
+      };
     } else {
       data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType };
     }
@@ -2269,7 +2275,10 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
     const { failedSubtests, firstSubtestError } = node;
     if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(`${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`, "subtestsFailed");
+      const error = makeTestFailure(
+        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
+        "subtestsFailed",
+      );
       if (firstSubtestError !== undefined) {
         (error as { cause?: unknown }).cause = firstSubtestError;
       }

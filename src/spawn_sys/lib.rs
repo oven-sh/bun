@@ -93,6 +93,7 @@ pub mod ffi {
         pub safe fn Bun__unregisterSignalsForForwarding();
 
         // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.
+        pub safe fn Bun__noOrphans_openTracker() -> c_int;
         pub safe fn Bun__noOrphans_begin(kq: c_int, root: pid_t);
         pub safe fn Bun__noOrphans_releaseKq();
         pub safe fn Bun__noOrphans_onFork();

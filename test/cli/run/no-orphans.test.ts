@@ -443,15 +443,13 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 );
 
 // Same daemon shape but the outer and the intermediate exit *immediately* —
-// no spinning on the pidfile (that spin is what made the proc_listallpids
-// scan() pass: it gave the wait loop's NOTE_FORK time to fire and observe
-// each link). With NOTE_TRACK xnu attaches to the intermediate inside fork1()
-// before it's schedulable, recursively, so the daemon is captured even if both
-// ancestors are gone before the wait loop drains a single event. Linux:
-// subreaper is also armed pre-spawn, and `killSubreaperAdoptees()` in the
-// disarm defer kills any ppid==bun adoptee that wasn't a pre-arm sibling
-// before subreaper drops, so the daemon can't escape in the disarm →
-// `onProcessExit` window.
+// no spinning on the pidfile. Linux: subreaper is armed pre-spawn so the
+// daemon reparents to us regardless of intermediate timing. macOS: NOTE_TRACK
+// is ENOTSUP since 10.5 and the NOTE_FORK + p_puniqueid scan can miss an
+// intermediate that dies before scan() reads it, so `bun run` also inherits
+// an open fd on a per-spawn sentinel file into the script; fork() carries it
+// across setsid+double-fork, and `proc_listpidspath` at cleanup finds the
+// daemon independent of whether any intermediate was ever observed.
 //
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
@@ -467,6 +465,11 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
             `perl -MPOSIX -e '` +
             `if(fork){exit} ` + // outer exits immediately — bun run sees exit fast
             `setsid; exit if fork; ` + // intermediate exits immediately
+            // Close the inherited stderr so a daemon that outlives `bun run`
+            // (the regression this test guards against) can't hold the test's
+            // `stderr: "pipe"` write end open and wedge `stderr.text()` below
+            // — the failure should be `died === false`, not a timeout.
+            `close STDERR; ` +
             `open F,">","$ENV{OUT}/pid"; print F "$$ ".getpgrp(); close F; ` +
             `sleep 1 while 1'`,
         },

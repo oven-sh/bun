@@ -2866,7 +2866,7 @@ mod spawn_process_body {
         #[cfg(target_os = "macos")]
         use bun_spawn_sys::ffi::{
             Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
-            Bun__noOrphans_releaseKq,
+            Bun__noOrphans_openTracker, Bun__noOrphans_releaseKq,
         };
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
@@ -3087,18 +3087,29 @@ mod spawn_process_body {
             // (which scans via m_kq) and the releaseKq() defer below.
             #[cfg(target_os = "macos")]
             let mut no_orphans_kq = AutoCloseFd::invalid();
+            // Inherited-fd sentinel for the fast-exit-intermediate backstop;
+            // openTracker() owns the fd + path inside NoOrphansTracker and
+            // releaseKq() (in the defer below) closes + unlinks, so no separate
+            // RAII here. -1 when mkstemp failed or when no_orphans is off.
+            #[cfg(target_os = "macos")]
+            let mut no_orphans_tracker_fd = Fd::INVALID;
             #[cfg(target_os = "macos")]
             if no_orphans {
                 let kq = kqueue();
                 if kq >= 0 {
                     no_orphans_kq = AutoCloseFd::new(Fd::from_native(kq));
                 }
+                let tfd = Bun__noOrphans_openTracker();
+                if tfd >= 0 {
+                    no_orphans_tracker_fd = Fd::from_native(tfd);
+                }
             }
             // LIFO: runs after killSyncScriptTree() (which needs m_kq live for
-            // its NOTE_FORK-drain rescan), before `no_orphans_kq` drops/closes.
+            // its NOTE_FORK-drain rescan and the tracker path for the
+            // proc_listpidspath sweep), before `no_orphans_kq` drops/closes.
             #[cfg(target_os = "macos")]
             scopeguard::defer! {
-                if no_orphans_kq.fd() != Fd::INVALID {
+                if no_orphans_kq.fd() != Fd::INVALID || no_orphans_tracker_fd != Fd::INVALID {
                     Bun__noOrphans_releaseKq();
                 }
             }
@@ -3106,11 +3117,15 @@ mod spawn_process_body {
             Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
             let _signals = SignalForwarding::register();
 
+            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+            let mut spawn_opts = options.to_spawn_options(no_orphans);
+            #[cfg(target_os = "macos")]
+            {
+                spawn_opts.no_orphans_tracker_fd = no_orphans_tracker_fd;
+            }
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
-            let process = match unsafe {
-                spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)
-            }? {
+            let process = match unsafe { spawn_process_posix(&spawn_opts, argv, envp) }? {
                 Err(err) => return Ok(Err(err)),
                 Ok(proces) => proces,
             };
@@ -3598,12 +3613,11 @@ mod spawn_process_body {
                 // `scan()` walks `proc_listallpids` for any pid whose
                 // `p_puniqueid` (immutable spawning-parent uniqueid) is in our
                 // seen set, adds it to m_tracked, and EV_ADDs NOTE_FORK|NOTE_EXIT
-                // on it (udata 0) so its own forks wake this loop. Race: a
-                // fast-exit intermediate (fork+setsid+fork+exit) can die before
-                // this scan records its uniqueid, leaving its child's
-                // `p_puniqueid` unlinkable. NOTE_TRACK closed that atomically;
-                // without it the freeze-then-rescan loop in `killTracked()` is
-                // the best-effort backstop.
+                // on it (udata 0) so its own forks wake this loop. A fast-exit
+                // intermediate (fork+setsid+fork+exit) can die before this scan
+                // records its uniqueid, leaving its child's `p_puniqueid`
+                // unlinkable; the inherited-fd `proc_listpidspath` sweep in
+                // `killTracked()` catches that case.
                 if saw_fork {
                     Bun__noOrphans_onFork();
                 }

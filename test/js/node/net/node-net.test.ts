@@ -685,13 +685,18 @@ it("should handle connection error (unix)", done => {
 });
 
 describe("IPv6 scoped address literals (`%zone`)", () => {
-  // The IPv6 loopback interface name differs by platform (lo, lo0, a numeric
-  // index on Windows) so discover it instead of hardcoding.
-  const v6Loopback = Object.entries(require("node:os").networkInterfaces())
-    .filter(([, addrs]) => (addrs as any[]).some(a => a.family === "IPv6" && a.internal))
-    .map(([name]) => name)[0];
-  const zone = isWindows ? "1" : v6Loopback;
-  const host = zone ? `::1%${zone}` : undefined;
+  // The zone identifier is an interface name on POSIX (resolved via
+  // if_nametoindex) and a numeric scope id on Windows; discover the loopback
+  // one instead of hardcoding.
+  let zone: string | undefined;
+  for (const [name, addrs] of Object.entries(require("node:os").networkInterfaces())) {
+    for (const a of addrs as any[]) {
+      if (a.family === "IPv6" && a.internal) {
+        zone = isWindows ? String(a.scopeid) : name;
+      }
+    }
+  }
+  const host = zone !== undefined ? `::1%${zone}` : undefined;
 
   it.skipIf(!host)("net.connect to a `::1%zone` host connects (it used to never settle)", async () => {
     expect(isIP(host!)).toBe(6);
@@ -748,7 +753,7 @@ describe("IPv6 scoped address literals (`%zone`)", () => {
     expect(c.remoteAddress).toContain("::1");
   });
 
-  it.skipIf(!v6Loopback)("an unknown zone resolves to scope_id 0 instead of hanging", async () => {
+  it.skipIf(!host)("an unknown zone resolves to scope_id 0 instead of hanging", async () => {
     const srv = createServer();
     srv.listen(0, "::1");
     await once(srv, "listening");

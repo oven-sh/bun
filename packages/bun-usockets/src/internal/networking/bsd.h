@@ -234,6 +234,8 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 int bsd_would_block();
 int bsd_send_is_transient_error();
 
+int bsd_parse_ip_address(const char *host, int port, struct sockaddr_storage *storage);
+
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error);

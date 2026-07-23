@@ -56,6 +56,8 @@ static void init_debug_logging() {
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 #else /* _WIN32 */
 #include <mstcpip.h>
 #endif
@@ -1181,6 +1183,65 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 #endif
 }
 
+/* Parse an IP literal (v4, or v6 with optional %zone) into a sockaddr_storage.
+ * Returns AF_INET / AF_INET6 on success, 0 if host is not an IP literal.
+ * Zone index is resolved via if_nametoindex() with a numeric fallback; an
+ * unknown zone yields scope_id 0 (matches libuv's uv_ip6_addr). */
+int bsd_parse_ip_address(const char *host, int port, struct sockaddr_storage *storage) {
+    memset(storage, 0, sizeof(struct sockaddr_storage));
+
+    struct sockaddr_in *addr4 = (struct sockaddr_in *)storage;
+    if (inet_pton(AF_INET, host, &addr4->sin_addr) == 1) {
+        addr4->sin_port = htons(port);
+        addr4->sin_family = AF_INET;
+#ifdef __APPLE__
+        addr4->sin_len = sizeof(struct sockaddr_in);
+#endif
+        return AF_INET;
+    }
+
+    memset(storage, 0, sizeof(struct sockaddr_storage));
+    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)storage;
+    const char *ip = host;
+    char address_part[INET6_ADDRSTRLEN];
+    const char *zone = strchr(host, '%');
+    if (zone != NULL) {
+        size_t len = (size_t)(zone - host);
+        if (len >= sizeof(address_part)) len = sizeof(address_part) - 1;
+        memcpy(address_part, host, len);
+        address_part[len] = '\0';
+        ip = address_part;
+        zone++;
+        unsigned int scope_id = 0;
+        if (*zone != '\0') {
+#ifndef _WIN32
+            scope_id = if_nametoindex(zone);
+#endif
+            if (scope_id == 0) {
+                char *end;
+                unsigned long n = strtoul(zone, &end, 10);
+                if (end != zone && *end == '\0' && n <= 0xffffffffUL) scope_id = (unsigned int)n;
+            }
+        }
+        addr6->sin6_scope_id = scope_id;
+    }
+
+    if (inet_pton(AF_INET6, ip, &addr6->sin6_addr) == 1) {
+        addr6->sin6_port = htons(port);
+        addr6->sin6_family = AF_INET6;
+#ifdef __APPLE__
+        addr6->sin6_len = sizeof(struct sockaddr_in6);
+#endif
+        return AF_INET6;
+    }
+
+    return 0;
+}
+
+static socklen_t bsd_sockaddr_len(int family) {
+    return family == AF_INET ? (socklen_t)sizeof(struct sockaddr_in) : (socklen_t)sizeof(struct sockaddr_in6);
+}
+
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
@@ -1193,6 +1254,32 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
+
+    /* IP literals are parsed directly so an IPv6 scoped literal (`::1%lo`,
+     * `fe80::1%eth0`) works uniformly: glibc's getaddrinfo rejects a %zone on
+     * a non-link-local address. */
+    struct sockaddr_storage literal;
+    struct addrinfo literal_ai;
+    if (host != NULL) {
+        int family = bsd_parse_ip_address(host, port, &literal);
+        if (family != 0) {
+            memset(&literal_ai, 0, sizeof(literal_ai));
+            literal_ai.ai_family = family;
+            literal_ai.ai_socktype = SOCK_STREAM;
+            literal_ai.ai_addr = (struct sockaddr *)&literal;
+            literal_ai.ai_addrlen = bsd_sockaddr_len(family);
+
+            LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(family, SOCK_STREAM, 0, NULL);
+            if (listenFd == LIBUS_SOCKET_ERROR) {
+                return LIBUS_SOCKET_ERROR;
+            }
+            if (bsd_bind_listen_fd(listenFd, &literal_ai, port, options, error) != LIBUS_SOCKET_ERROR) {
+                return listenFd;
+            }
+            bsd_close_socket(listenFd);
+            return LIBUS_SOCKET_ERROR;
+        }
+    }
 
     if (getaddrinfo(host, port_string, &hints, &result)) {
         return LIBUS_SOCKET_ERROR;
@@ -1580,12 +1667,26 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    int gai_result = getaddrinfo(host, port_string, &hints, &result);
-    if (gai_result != 0) {
-        if (err != NULL) {
-            *err = -gai_result;
+    struct sockaddr_storage literal;
+    struct addrinfo literal_ai;
+    struct addrinfo *gai_result_to_free = NULL;
+    int family = host != NULL ? bsd_parse_ip_address(host, port, &literal) : 0;
+    if (family != 0) {
+        memset(&literal_ai, 0, sizeof(literal_ai));
+        literal_ai.ai_family = family;
+        literal_ai.ai_socktype = SOCK_DGRAM;
+        literal_ai.ai_addr = (struct sockaddr *)&literal;
+        literal_ai.ai_addrlen = bsd_sockaddr_len(family);
+        result = &literal_ai;
+    } else {
+        int gai_result = getaddrinfo(host, port_string, &hints, &result);
+        if (gai_result != 0) {
+            if (err != NULL) {
+                *err = -gai_result;
+            }
+            return LIBUS_SOCKET_ERROR;
         }
-        return LIBUS_SOCKET_ERROR;
+        gai_result_to_free = result;
     }
 
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
@@ -1605,7 +1706,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
+        if (gai_result_to_free) freeaddrinfo(gai_result_to_free);
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1618,7 +1719,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 #endif
         }
         bsd_close_socket(listenFd);
-        freeaddrinfo(result);
+        if (gai_result_to_free) freeaddrinfo(gai_result_to_free);
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1643,11 +1744,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 #endif
         }
         bsd_close_socket(listenFd);
-        freeaddrinfo(result);
+        if (gai_result_to_free) freeaddrinfo(gai_result_to_free);
         return LIBUS_SOCKET_ERROR;
     }
 
-    freeaddrinfo(result);
+    if (gai_result_to_free) freeaddrinfo(gai_result_to_free);
     if (err != NULL) {
         *err = 0;
     }
@@ -1655,6 +1756,17 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 }
 
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
+    struct sockaddr_storage literal;
+    if (host != NULL) {
+        int family = bsd_parse_ip_address(host, port, &literal);
+        if (family != 0) {
+            if (connect(fd, (struct sockaddr *)&literal, bsd_sockaddr_len(family)) == 0) {
+                return 0;
+            }
+            return (int)LIBUS_SOCKET_ERROR;
+        }
+    }
+
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 

@@ -542,28 +542,7 @@ static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr
 }
 
 static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
-    memset(storage, 0, sizeof(struct sockaddr_storage));
-    struct sockaddr_in *addr4 = (struct sockaddr_in *)storage;
-    if (inet_pton(AF_INET, ip_str, &addr4->sin_addr) == 1) {
-        addr4->sin_port = htons(port);
-        addr4->sin_family = AF_INET;
-#ifdef __APPLE__
-        addr4->sin_len = sizeof(struct sockaddr_in);
-#endif
-        return 1;
-    }
-
-    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)storage;
-    if (inet_pton(AF_INET6, ip_str, &addr6->sin6_addr) == 1) {
-        addr6->sin6_port = htons(port);
-        addr6->sin6_family = AF_INET6;
-#ifdef __APPLE__
-        addr6->sin6_len = sizeof(struct sockaddr_in6);
-#endif
-        return 1;
-    }
-
-    return 0;
+    return bsd_parse_ip_address(ip_str, port, storage) != 0;
 }
 
 void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kind,

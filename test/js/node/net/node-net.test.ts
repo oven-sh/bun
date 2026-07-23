@@ -684,6 +684,90 @@ it("should handle connection error (unix)", done => {
   });
 });
 
+describe("IPv6 scoped address literals (`%zone`)", () => {
+  // The IPv6 loopback interface name differs by platform (lo, lo0, a numeric
+  // index on Windows) so discover it instead of hardcoding.
+  const v6Loopback = Object.entries(require("node:os").networkInterfaces())
+    .filter(([, addrs]) => (addrs as any[]).some(a => a.family === "IPv6" && a.internal))
+    .map(([name]) => name)[0];
+  const zone = isWindows ? "1" : v6Loopback;
+  const host = zone ? `::1%${zone}` : undefined;
+
+  it.skipIf(!host)("net.connect to a `::1%zone` host connects (it used to never settle)", async () => {
+    expect(isIP(host!)).toBe(6);
+
+    const srv = createServer();
+    srv.listen(0, "::1");
+    await once(srv, "listening");
+    const port = (srv.address() as any).port;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const c = connect({ host, port });
+      c.on("connect", () => {
+        c.destroy();
+        resolve();
+      });
+      c.on("error", reject);
+      await promise;
+    } finally {
+      srv.close();
+    }
+  });
+
+  it.skipIf(!host)("net.Server listen on `::1%zone`", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    const s = createServer();
+    s.on("error", reject);
+    s.listen(0, host, () => resolve(s.address()));
+    const addr = await promise;
+    expect(addr.family).toBe("IPv6");
+    s.close();
+  });
+
+  it.skipIf(!host)("dgram bind on `::1%zone`", async () => {
+    const dgram = require("node:dgram");
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    const d = dgram.createSocket("udp6");
+    d.on("error", reject);
+    d.bind(0, host, () => resolve(d.address()));
+    const addr = await promise;
+    expect(addr.family).toBe("IPv6");
+    d.close();
+  });
+
+  it.skipIf(!host)("Bun.udpSocket bind and Bun.connect on `::1%zone`", async () => {
+    await using udp = await Bun.udpSocket({ hostname: host!, port: 0, socket: { data() {} } });
+    expect(udp.port).toBeGreaterThan(0);
+
+    await using srv = Bun.listen({
+      hostname: "::1",
+      port: 0,
+      socket: { data() {}, open() {} },
+    });
+    await using c = await Bun.connect({ hostname: host!, port: srv.port, socket: { data() {} } });
+    expect(c.remoteAddress).toContain("::1");
+  });
+
+  it.skipIf(!v6Loopback)("an unknown zone resolves to scope_id 0 instead of hanging", async () => {
+    const srv = createServer();
+    srv.listen(0, "::1");
+    await once(srv, "listening");
+    const port = (srv.address() as any).port;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const c = connect({ host: "::1%nosuchif0", port });
+      c.on("connect", () => {
+        c.destroy();
+        resolve();
+      });
+      c.on("error", reject);
+      await promise;
+    } finally {
+      srv.close();
+    }
+  });
+});
+
 it("Socket has a prototype", () => {
   function Connection() {}
   function Connection2() {}

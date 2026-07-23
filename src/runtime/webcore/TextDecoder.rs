@@ -220,7 +220,15 @@ impl TextDecoder {
         // `decodeSlice` reading through a stale pointer into memory that may have
         // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
-            if arguments.len() > 1 && arguments[1].is_object() {
+            if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
+                // https://webidl.spec.whatwg.org/#es-dictionary step 1
+                if !arguments[1].is_object() {
+                    return Err(global_this.throw_invalid_argument_type_value(
+                        b"options",
+                        b"object",
+                        arguments[1],
+                    ));
+                }
                 if let Some(stream_value) =
                     arguments[1].fast_get(global_this, jsc::BuiltinName::stream)?
                 {
@@ -607,10 +615,14 @@ impl TextDecoder {
             }
         }
 
-        if !options_value.is_undefined() {
+        if !options_value.is_undefined_or_null() {
+            // https://webidl.spec.whatwg.org/#es-dictionary step 1
             if !options_value.is_object() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("TextDecoder(options) is invalid",)));
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"options",
+                    b"object",
+                    options_value,
+                ));
             }
 
             if let Some(fatal) = options_value.get(global_this, b"fatal")? {

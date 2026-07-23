@@ -996,12 +996,15 @@ impl TranspilerJob {
                 AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
                     let len = bytes.len();
                     if len == 0 {
-                        (ptr::null_mut(), 0)
+                        (ptr::null(), 0)
                     } else {
-                        (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
+                        (
+                            bun_core::heap::into_raw(bytes).cast::<u8>().cast_const(),
+                            len,
+                        )
                     }
                 }
-                _ => (ptr::null_mut(), 0),
+                _ => (ptr::null(), 0),
             };
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),

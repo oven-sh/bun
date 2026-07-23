@@ -33,12 +33,8 @@ bun_opaque::opaque_ffi! {
 }
 
 pub struct StandaloneModuleGraph {
-    /// Raw view over the serialized graph (`[0, offsets.byte_count)`). Stored as a
-    /// raw fat pointer — NOT `&'static [u8]` — because `byte_count` covers the
-    /// bytecode/module_info subranges that JSC mutates in place via
-    /// `File.bytecode`. Holding a `&'static [u8]` over those bytes would freeze
-    /// them under Stacked/Tree Borrows and make the later foreign write UB.
-    pub bytes: *const [u8],
+    /// Immutable view over the serialized graph (`[0, offsets.byte_count)`).
+    pub bytes: &'static [u8],
     pub files: StringArrayHashMap<File>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
@@ -282,11 +278,8 @@ mod macho {
         pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
     }
 
-    /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
-    /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
-    /// collapsing to `&[u8]` here would freeze it to read-only and make the
-    /// later `from_bytes` writable subslices UB under Stacked Borrows.
-    pub(super) fn get_data() -> Option<(*mut u8, usize)> {
+    /// Returns `(base, len)` for the embedded `__BUN` section data.
+    pub(super) fn get_data() -> Option<(*const u8, usize)> {
         // SAFETY: FFI call returns pointer to embedded section header or null.
         let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
         if length_ptr.is_null() {
@@ -311,11 +304,8 @@ mod pe {
         Bun__getStandaloneModuleGraphPEData, Bun__getStandaloneModuleGraphPELength,
     };
 
-    /// Returns `(base, len)` for the embedded `.bun` PE section data. Kept as a
-    /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
-    /// collapsing to `&[u8]` here would freeze it to read-only and make the
-    /// later `from_bytes` writable subslices UB under Stacked Borrows.
-    pub(super) fn get_data() -> Option<(*mut u8, usize)> {
+    /// Returns `(base, len)` for the embedded `.bun` PE section data.
+    pub(super) fn get_data() -> Option<(*const u8, usize)> {
         // SAFETY: FFI calls.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
@@ -339,11 +329,8 @@ mod elf {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
-    /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
-    /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
-    /// `&[u8]` here would freeze it to read-only and make the later
-    /// `from_bytes` writable subslices UB under Stacked Borrows.
-    pub(super) fn get_data() -> Option<(*mut u8, usize)> {
+    /// Returns `(base, len)` for the embedded ELF segment data.
+    pub(super) fn get_data() -> Option<(*const u8, usize)> {
         // SAFETY: FFI call.
         let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
         if vaddr_ptr.is_null() {
@@ -357,9 +344,7 @@ mod elf {
         // BUN_COMPILED.size holds the virtual address of the appended data.
         // The kernel mapped it via PT_LOAD, so we can dereference directly.
         // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
-        let target = vaddr as *mut u8;
+        let target = vaddr as *const u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
@@ -379,9 +364,8 @@ pub struct File {
     pub cached_blob: Option<NonNull<Blob>>,
     pub encoding: Encoding,
     pub wtf_string: BunString,
-    // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
-    pub bytecode: *mut [u8],
-    pub module_info: *mut [u8],
+    pub bytecode: &'static [u8],
+    pub module_info: &'static [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: &'static [u8],
@@ -469,9 +453,8 @@ impl LazySourceMap {
                         .take(source_files_count)
                         .collect();
                 for i in 0..source_files_count {
-                    // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
-                    // (disjoint from bytecode); StringPointer offsets were serialized by
-                    // `to_bytes` and are in-bounds.
+                    // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange;
+                    // StringPointer offsets were serialized by `to_bytes` and are in-bounds.
                     file_names.push(Box::from(unsafe {
                         slice_to(
                             serialized.bytes.as_ptr(),
@@ -533,13 +516,13 @@ const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 impl StandaloneModuleGraph {
     fn from_bytes(
-        raw_ptr: *mut u8,
+        raw_ptr: *const u8,
         raw_len: usize,
         offsets: Offsets,
     ) -> crate::Result<StandaloneModuleGraph> {
         if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
-                bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
+                bytes: b"",
                 files: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
@@ -547,19 +530,9 @@ impl StandaloneModuleGraph {
             });
         }
 
-        // This function hands out read-only subslices
-        // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
-        // mutates in place) into the same allocation. We must not derive the writable
-        // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB), and we
-        // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
-        // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
-        // derive every read-only `&'static [u8]` per-call over its own disjoint subrange only;
-        // the bytecode/module_info regions never have a shared reference formed over them.
-        let raw_const: *const u8 = raw_ptr;
-
-        // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
-        // from bytecode/module_info, serialized by `to_bytes`.
-        let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
+        // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)`,
+        // serialized by `to_bytes`.
+        let modules_list_bytes = unsafe { slice_to(raw_ptr, raw_len, offsets.modules_ptr) };
         // Note: the modules blob sits at an arbitrary byte offset in the section, and
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
@@ -583,15 +556,14 @@ impl StandaloneModuleGraph {
                 )
             };
             let module = &module;
-            // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
-            // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
-            // subranges; section bytes are a live 'static allocation.
+            // SAFETY: each subrange is in-bounds (serialized by `to_bytes`);
+            // section bytes are a live 'static read-only allocation.
             let (name, contents, sourcemap_bytes, bytecode_origin) = unsafe {
                 (
-                    slice_to_z(raw_const, raw_len, module.name),
-                    slice_to_z(raw_const, raw_len, module.contents),
-                    slice_to(raw_const, raw_len, module.sourcemap),
-                    slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
+                    slice_to_z(raw_ptr, raw_len, module.name),
+                    slice_to_z(raw_ptr, raw_len, module.contents),
+                    slice_to(raw_ptr, raw_len, module.sourcemap),
+                    slice_to_z(raw_ptr, raw_len, module.bytecode_origin_path),
                 )
             };
             let _ = modules.put(
@@ -610,21 +582,10 @@ impl StandaloneModuleGraph {
                     } else {
                         LazySourceMap::None
                     },
-                    bytecode: if module.bytecode.length > 0 {
-                        // SAFETY: section bytes are a writable 'static allocation; JSC mutates
-                        // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
-                        // disjoint from every read-only subslice handed out above — no
-                        // `&[u8]` is ever formed over this range.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
-                    } else {
-                        std::ptr::from_mut::<[u8]>(&mut [])
-                    },
-                    module_info: if module.module_info.length > 0 {
-                        // SAFETY: see bytecode above.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
-                    } else {
-                        std::ptr::from_mut::<[u8]>(&mut [])
-                    },
+                    // SAFETY: in-bounds subrange (serialized by `to_bytes`).
+                    bytecode: unsafe { slice_to(raw_ptr, raw_len, module.bytecode) },
+                    // SAFETY: in-bounds subrange (serialized by `to_bytes`).
+                    module_info: unsafe { slice_to(raw_ptr, raw_len, module.module_info) },
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
                         bytecode_origin.as_bytes()
                     } else {
@@ -642,14 +603,13 @@ impl StandaloneModuleGraph {
         modules.lock_pointers(); // make the pointers stable forever
 
         Ok(StandaloneModuleGraph {
-            // Stored as a raw fat pointer — `byte_count` covers the writable
-            // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
-            bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
+            // SAFETY: `[0, byte_count)` is in-bounds of the live 'static read-only section.
+            bytes: unsafe { core::slice::from_raw_parts(raw_ptr, offsets.byte_count) },
             files: modules,
             entry_point_id: offsets.entry_point_id,
-            // SAFETY: read-only argv string subrange, disjoint from writable regions.
+            // SAFETY: in-bounds read-only subrange.
             compile_exec_argv: unsafe {
-                slice_to_z(raw_const, raw_len, offsets.compile_exec_argv_ptr)
+                slice_to_z(raw_ptr, raw_len, offsets.compile_exec_argv_ptr)
             }
             .as_bytes(),
             flags: offsets.flags,
@@ -657,13 +617,8 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
-/// shared reference ever spans the writable bytecode/module_info regions of the same
-/// allocation (which would be invalidated by JSC's in-place writes).
-///
-/// SAFETY: caller guarantees `base[..len]` is a live 'static allocation and
-/// `[ptr.offset, ptr.offset + ptr.length)` is in-bounds and never written through a
-/// `*mut` alias for the lifetime of the returned reference.
+/// SAFETY: caller guarantees `base[..len]` is a live 'static read-only allocation
+/// and `[ptr.offset, ptr.offset + ptr.length)` is in-bounds.
 unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static [u8] {
     if ptr.length == 0 {
         return b"";
@@ -674,21 +629,6 @@ unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static 
     let _ = len;
     // SAFETY: caller contract — `[off, off+n)` lies within a live 'static read-only allocation.
     unsafe { core::slice::from_raw_parts(base.add(off), n) }
-}
-
-/// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
-/// section base so the result carries write provenance — going through `slice_to` (which
-/// returns `&[u8]`) and casting `*const [u8] as *mut [u8]` would be UB on write.
-///
-/// SAFETY: caller guarantees `base[..len]` is a live allocation with write permission and
-/// that `[ptr.offset, ptr.offset + ptr.length)` is in-bounds.
-unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u8] {
-    let off = ptr.offset as usize;
-    let n = ptr.length as usize;
-    debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    let _ = len;
-    // SAFETY: caller contract — `off` is in-bounds of the writable allocation at `base`.
-    core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
 
 /// SAFETY: as `slice_to`, plus `base[ptr.offset + ptr.length] == 0` (written by
@@ -792,31 +732,16 @@ pub(crate) fn to_bytes(
                 // Bytecode alignment for JSC bytecode cache deserialization.
                 // Not aligning correctly causes a runtime assertion error or segfault.
                 //
-                // PLATFORM-SPECIFIC ALIGNMENT:
-                // - PE (Windows) and Mach-O (macOS): The module graph data is embedded in
-                //   a dedicated section with an 8-byte size header. At runtime, the section
-                //   is memory-mapped at a page-aligned address (hence 128-byte aligned).
-                //   The data buffer starts 8 bytes after the section start.
-                //   For bytecode at offset O to be 128-byte aligned:
-                //     (section_va + 8 + O) % 128 == 0
-                //     => O % 128 == 120
-                //
-                // - ELF (Linux): The module graph data is appended to the executable and
-                //   read into a heap-allocated buffer at runtime. The allocator provides
-                //   natural alignment, and there's no 8-byte section header offset.
-                //   However, using target_mod=120 is still safe because:
-                //   - If the buffer is 128-aligned: bytecode at offset 120 is at (128n + 120),
-                //     which when loaded at a 128-aligned address gives proper alignment.
-                //   - The extra 120 bytes of padding is acceptable overhead.
-                //
-                // This alignment strategy (target_mod=120) works for all platforms because
-                // it's the worst-case offset needed for the 8-byte header scenario.
+                // On every platform the payload lives in a dedicated section mapped at a
+                // page-aligned address (PE `.bun`, Mach-O `__BUN,__bun`, ELF `.bun` via
+                // PT_LOAD) with an 8-byte u64 length prefix. The data buffer thus starts
+                // 8 bytes after a page boundary, so for bytecode at offset O to be
+                // 128-byte aligned: (section_va + 8 + O) % 128 == 0 => O % 128 == 120.
                 let bytecode = output_files[output_file.bytecode_index as usize]
                     .value
                     .as_slice();
                 let current_offset = string_builder.len;
                 // Calculate padding so that (current_offset + padding) % 128 == 120
-                // This accounts for the 8-byte section header on PE/Mach-O platforms.
                 let target_mod: usize = 128 - size_of::<u64>(); // 120 = accounts for 8-byte header
                 let current_mod = current_offset % 128;
                 let padding = if current_mod <= target_mod {
@@ -1980,9 +1905,7 @@ impl StandaloneModuleGraph {
                 bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
+            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above).
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
             // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
@@ -2007,9 +1930,7 @@ impl StandaloneModuleGraph {
                 bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
+            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above).
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
             // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
@@ -2034,9 +1955,7 @@ impl StandaloneModuleGraph {
                 bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
-            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
-            // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
-            // ever spans the writable bytecode region carried in `base`'s provenance.
+            // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above).
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
             // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
@@ -2078,7 +1997,7 @@ impl StandaloneModuleGraph {
 
         #[cfg(not(windows))]
         {
-            let (base, len): (*mut u8, usize) = {
+            let (base, len): (*const u8, usize) = {
                 #[cfg(target_os = "macos")]
                 {
                     match macho::get_data() {
@@ -2141,7 +2060,7 @@ impl StandaloneModuleGraph {
 /// Allocates a StandaloneModuleGraph in the process-static `INSTANCE`,
 /// populates it from bytes, sets it globally, and returns the pointer.
 fn from_bytes_alloc(
-    raw_ptr: *mut u8,
+    raw_ptr: *const u8,
     raw_len: usize,
     offsets: Offsets,
 ) -> crate::Result<*mut StandaloneModuleGraph> {

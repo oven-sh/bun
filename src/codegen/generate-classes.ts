@@ -1249,6 +1249,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       !proto[name].DOMJIT
         ? ""
         : `
+    RETURN_IF_EXCEPTION(scope, result);
     JSValue decoded = JSValue::decode(result);
     if (thisObject->m_${fn}_expectedResultType) {
       if (decoded.isCell() && !decoded.isEmpty()) {

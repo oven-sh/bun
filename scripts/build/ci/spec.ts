@@ -33,6 +33,16 @@
 
 import type { AgeSpec, BunSpec, CrossToolchains, LlvmSpec, NodejsSpec, PinnedRelease } from "./types.ts";
 
+/**
+ * Iteration lever: bump to force EVERY image to rebake without changing
+ * any real fact. It is a value in every entry (via the shared bases), so
+ * bumping it changes each entry's value and therefore each name. This
+ * field exists only while the content-addressed image system is being
+ * proven out — the last commit before merge deletes it (which itself
+ * rebakes the fleet one final time from the final code).
+ */
+export const epoch = 1;
+
 /** Packer + provider plugin pins for the Windows bake (azure-arm). */
 export const packer = {
   version: "1.15.0",

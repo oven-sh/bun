@@ -2,7 +2,7 @@
 // come from ./spec.ts; the windows image entries are exported for it to
 // assemble the fleet list.
 
-import { buildkiteAgent, bun, curlH3, llvm, nodejs } from "./spec.ts";
+import { buildkiteAgent, bun, curlH3, epoch, llvm, nodejs } from "./spec.ts";
 import type { WindowsImage, WindowsImageBase, WindowsSharedFields } from "./types.ts";
 
 const scoopCommonPackages = [
@@ -57,6 +57,7 @@ const azureGalleryCommon: WindowsImageBase["gallery"] = {
 
 /** The tools/config every windows image shares. */
 const windowsShared: WindowsSharedFields = {
+  epoch,
   os: "windows",
   cloud: "azure",
   gallery: azureGalleryCommon,

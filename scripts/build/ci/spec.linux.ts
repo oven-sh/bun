@@ -10,6 +10,7 @@ import {
   cmake,
   crossToolchains,
   curlH3,
+  epoch,
   llvm,
   nodejs,
   pythonFuse,
@@ -264,6 +265,7 @@ const linuxBake = (arch: Arch): LinuxImageBase["bake"] => ({
 /** The tools/config every linux image shares, so an entry only spells out
  * what distinguishes it. */
 const linuxShared: LinuxSharedFields = {
+  epoch,
   os: "linux",
   cloud: "aws",
   nodejs,

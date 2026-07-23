@@ -145,6 +145,9 @@ export type CrossToolchains = {
 /** Fields on every linux image. */
 export type LinuxImageBase = {
   readonly key: string;
+  /** Iteration lever (see spec.ts). A value like any other: bumping it
+   * renames the image and forces a rebake. */
+  readonly epoch: number;
   readonly os: "linux";
   readonly arch: Arch;
   readonly distro: LinuxDistro;
@@ -261,6 +264,7 @@ export type LinuxImage = LinuxBuildHostImage | LinuxTestImage;
  * second field list. */
 export type LinuxSharedFields = Pick<
   LinuxImageBase,
+  | "epoch"
   | "os"
   | "cloud"
   | "nodejs"
@@ -286,6 +290,8 @@ export type LinuxSharedFields = Pick<
  * Packer). */
 export type WindowsImageBase = {
   readonly key: string;
+  /** Iteration lever (see spec.ts). */
+  readonly epoch: number;
   readonly os: "windows";
   readonly release: string;
   readonly cloud: "azure";
@@ -401,6 +407,7 @@ export type WindowsImage = WindowsX64Image | WindowsArm64Image;
 /** The fields every windows image shares (see LinuxSharedFields). */
 export type WindowsSharedFields = Pick<
   WindowsImageBase,
+  | "epoch"
   | "os"
   | "cloud"
   | "gallery"

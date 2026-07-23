@@ -75,6 +75,7 @@ export interface CrashSig {
   kind: string;
   signature: string; // stable dedupe key: the matched line, addresses folded
   detail: string; // the raw matched text
+  raw?: string; // identical to detail: the UNFOLDED text (index values, sizes)
   // Whose code faulted, from the report's own backtrace addresses. bun's
   // handler catches ANY in-process fault - even one on a system DLL's
   // private thread - so a signature alone doesn't blame bun. On x64 the
@@ -169,7 +170,7 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
         const bytes = /memory allocation of (\d+) bytes failed/i.exec(text)?.[1];
         if (bytes && Number(bytes) >= 256 * 1024 * 1024) k = "oom-large";
       }
-      return { kind: k, signature, detail, boundary, frames };
+      return { kind: k, signature, detail, boundary, frames, raw: detail };
     }
   }
   return null;

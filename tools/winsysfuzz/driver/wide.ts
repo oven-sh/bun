@@ -316,7 +316,9 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     const crash = rr.crashSig ?? (rr.stdout || rr.stderr ? detectCrash(rr.stdout, rr.stderr) : null);
     if (crash && !/oom|debug-only/.test(crash.kind) && crash.boundary !== "system-module") {
       outcome = "CRASH";
-      detail = crash.signature;
+      // Keep the UNFOLDED matched text (real index/size values are the
+      // diagnosis); the folded signature is only the dedupe key below.
+      detail = crash.detail;
     }
     // No leak oracle in the wide pass: bun fast-exits without closing
     // handles by design, so "named handle open at exit" is only meaningful
@@ -410,7 +412,10 @@ async function runFile(file: string, idx: number): Promise<Hit | null> {
     rr.hangStacks || rr.crashDump
       ? digestStacks(rr.hangStacks ?? rr.crashDump ?? "")
       : (crashSig?.frames ?? []).slice(0, 24);
-  const key = outcome === "CRASH" ? `crash: ${detail}` : `wide ${outcome} @ ${basename(file)}: ${detail.slice(0, 80)}`;
+  const key =
+    outcome === "CRASH"
+      ? `crash: ${crashSig?.signature ?? detail}` // folded signature: stable dedupe
+      : `wide ${outcome} @ ${basename(file)}: ${detail.slice(0, 80)}`;
   return { file, schedule, outcome, key, detail, stacks };
 }
 

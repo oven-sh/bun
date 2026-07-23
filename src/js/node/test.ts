@@ -720,6 +720,10 @@ function emitRunChildEvent(type: string, data: unknown) {
     standaloneSink(type, data);
     return;
   }
+  // The protocol-on-stdout write is only valid when a run() parent is parsing
+  // it. In pure standalone mode the sink may still be null during collection
+  // (describe bodies run before beforeExit sets it); drop rather than leak.
+  if (!runChildReporterEnabled) return;
   // In-process sinks receive the real error object; only the pipe flattens it.
   const record = data as { error?: unknown } | null;
   const wire =
@@ -745,10 +749,12 @@ function runEventsEnabled(): boolean {
 }
 
 // t.diagnostic(): routes through the reporter stream like every other per-test
-// signal; falls back to stdout only under bun:test (no stream to feed).
+// signal when a transport exists (run-child pipe or the in-process sink). A
+// SuiteContext.diagnostic() inside a describe body runs during collection,
+// before runStandalone sets the sink; fall through to console.log there.
 function emitContextDiagnostic(node: TestNode, message: unknown) {
   const text = typeof message === "string" ? message : require("node:util").inspect(message);
-  if (runEventsEnabled()) {
+  if (runChildReporterEnabled || standaloneSink !== null) {
     emitRunChildEvent("test:diagnostic", {
       __proto__: null,
       nesting: nestingOf(node),

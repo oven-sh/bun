@@ -147,12 +147,14 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
-// Node invokes fs/dns callbacks off the libuv completion via InternalMakeCallback
-// (src/api/callback.cc in node v26.3.0: callback->Call empty on throw fails the
-// InternalCallbackScope, the pending exception surfaces through
-// TriggerUncaughtException in src/node_errors.cc; dispatch sites: FSReqCallback
-// Resolve/Reject in src/node_file.cc, cares_wrap.cc for dns). Bun runs them from
-// a promise reaction, where an unguarded throw would only reject that promise.
+// Node invokes fs/dns callbacks off the libuv completion via InternalMakeCallback:
+// a throw leaves callback->Call() empty, failing the InternalCallbackScope, and
+// the pending exception surfaces through TriggerUncaughtException instead of a
+// promise rejection. Bun runs these callbacks from a promise reaction, where an
+// unguarded throw would only reject that promise (an unhandledRejection).
+// https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L255-L268
+// fs dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L724-L741
+// dns dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.cc#L1881
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The

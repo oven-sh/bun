@@ -70,22 +70,23 @@ static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& i
 // Apply the delta before any IDNA processing so every node:url surface matches
 // node regardless of which ICU data the platform ships (WPT toascii.json cases
 // 66/74/81/82/83/87/88 pin this).
-static String applyUnicode16IDNADelta(const String& input)
+bool containsUnicode16IDNADeltaSource(StringView view)
 {
-    if (input.is8Bit())
-        return input;
-
-    StringView view { input };
-    bool needsDelta = false;
+    if (view.is8Bit())
+        return false;
     for (size_t i = 0; i < view.length(); i++) {
         char16_t u = view[i];
         // 0xD87E is the shared lead surrogate of the five CJK sources.
-        if (u == 0x04C0 || u == 0x180E || u == 0x1E9E || (u >= 0x206A && u <= 0x206F) || u == 0x2183 || u == 0xD87E) {
-            needsDelta = true;
-            break;
-        }
+        if (u == 0x04C0 || u == 0x180E || u == 0x1E9E || (u >= 0x206A && u <= 0x206F) || u == 0x2183 || u == 0xD87E)
+            return true;
     }
-    if (!needsDelta)
+    return false;
+}
+
+String applyUnicode16IDNADelta(const String& input)
+{
+    StringView view { input };
+    if (!containsUnicode16IDNADeltaSource(view))
         return input;
 
     StringBuilder builder;

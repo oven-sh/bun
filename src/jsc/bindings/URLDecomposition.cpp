@@ -31,6 +31,11 @@ namespace Bun {
 bool hasValidPunycodeHost(WTF::StringView);
 }
 
+namespace Bun {
+bool containsUnicode16IDNADeltaSource(WTF::StringView);
+WTF::String applyUnicode16IDNADelta(const WTF::String&);
+}
+
 namespace WebCore {
 
 // Like the URL constructor (DOMURL.cpp), reject special-scheme hosts whose
@@ -118,6 +123,13 @@ static unsigned countASCIIDigits(StringView string)
 
 void URLDecomposition::setHost(StringView value)
 {
+    // The value is a host[:port] by definition: apply the Unicode 16 IDNA
+    // delta so old platform ICU data yields node's host (see DOMURL.cpp).
+    String mappedValue;
+    if (Bun::containsUnicode16IDNADeltaSource(value)) {
+        mappedValue = Bun::applyUnicode16IDNADelta(value.toString());
+        value = mappedValue;
+    }
     auto fullURL = this->fullURL();
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
@@ -159,6 +171,12 @@ String URLDecomposition::hostname() const
 
 void URLDecomposition::setHostname(StringView host)
 {
+    // See setHost: the input is a hostname by definition.
+    String mappedHost;
+    if (Bun::containsUnicode16IDNADeltaSource(host)) {
+        mappedHost = Bun::applyUnicode16IDNADelta(host.toString());
+        host = mappedHost;
+    }
     auto fullURL = this->fullURL();
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;

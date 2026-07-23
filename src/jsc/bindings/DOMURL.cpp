@@ -47,6 +47,8 @@ public:
 
 namespace Bun {
 bool hasValidPunycodeHost(WTF::StringView);
+bool containsUnicode16IDNADeltaSource(WTF::StringView);
+WTF::String applyUnicode16IDNADelta(const WTF::String&);
 }
 
 namespace WebCore {
@@ -62,6 +64,67 @@ static bool hasValidParsedHost(const URL& url)
     return !url.hasSpecialScheme();
 }
 
+// WebKit's URLParser runs the host through the platform ICU, whose
+// IdnaMappingTable can predate Unicode 15.1/16.0 (node v26 semantics via
+// ada::idna): old data rejects U+180E outright and maps U+1E9E to "ss".
+// When the authority component of `urlString` contains a delta source code
+// point, return a copy with the Unicode 16 delta applied to the host span
+// only (path/query/fragment are percent-encoded by the parser and must stay
+// untouched). Returns a null String when no rewrite is needed, which is the
+// case for every URL that stays on the common path.
+static String applyIDNADeltaToURLAuthority(const String& urlString)
+{
+    if (urlString.is8Bit() || !urlString.length())
+        return {};
+
+    StringView view { urlString };
+
+    // Locate the start of an explicit authority: "scheme://" or a
+    // scheme-relative "//". Anything else has no IDNA host to fix.
+    size_t authorityStart = notFound;
+    if (view.length() >= 2 && view[0] == '/' && view[1] == '/')
+        authorityStart = 2;
+    else {
+        size_t colon = view.find(':');
+        if (colon != notFound && view.length() >= colon + 3 && view[colon + 1] == '/' && view[colon + 2] == '/')
+            authorityStart = colon + 3;
+    }
+    if (authorityStart == notFound)
+        return {};
+
+    // The authority ends at the first path/query/fragment terminator;
+    // backslash terminates it for special schemes and never appears in a
+    // valid host, so treating it as a terminator is safe for both kinds.
+    size_t authorityEnd = view.length();
+    for (size_t i = authorityStart; i < view.length(); i++) {
+        char16_t ch = view[i];
+        if (ch == '/' || ch == '?' || ch == '#' || ch == '\\') {
+            authorityEnd = i;
+            break;
+        }
+    }
+
+    // Userinfo is percent-encoded, not IDNA-mapped, in node too: only the
+    // host[:port] span after the last '@' gets the delta. The port is ASCII
+    // digits, which the delta maps to themselves.
+    size_t hostStart = authorityStart;
+    auto authority = view.substring(authorityStart, authorityEnd - authorityStart);
+    size_t at = authority.reverseFind('@');
+    if (at != notFound)
+        hostStart = authorityStart + at + 1;
+
+    auto hostView = view.substring(hostStart, authorityEnd - hostStart);
+    if (!Bun::containsUnicode16IDNADeltaSource(hostView))
+        return {};
+
+    auto mappedHost = Bun::applyUnicode16IDNADelta(hostView.toString());
+    StringBuilder builder;
+    builder.append(view.left(hostStart));
+    builder.append(mappedHost);
+    builder.append(view.substring(authorityEnd));
+    return builder.toString();
+}
+
 inline DOMURL::DOMURL(URL&& completeURL)
     : m_url(WTF::move(completeURL))
     , m_initialURLCostForGC(static_cast<uint16_t>(std::min<size_t>(m_url.string().impl()->costDuringGC(), std::numeric_limits<uint16_t>::max())))
@@ -74,7 +137,8 @@ inline DOMURL::DOMURL(URL&& completeURL)
 // ERR_INVALID_URL (see createDOMException).
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 {
-    URL completeURL { url };
+    auto mapped = applyIDNADeltaToURLAuthority(url);
+    URL completeURL { mapped.isNull() ? url : mapped };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL))
         return Exception { InvalidURLError, url };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
@@ -83,7 +147,8 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
 {
     ASSERT(base.isValid() || base.isNull());
-    URL completeURL { base, url };
+    auto mapped = applyIDNADeltaToURLAuthority(url);
+    URL completeURL { base, mapped.isNull() ? url : mapped };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL))
         return Exception { InvalidURLError, url };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
@@ -91,7 +156,8 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 {
-    URL baseURL { base };
+    auto mappedBase = applyIDNADeltaToURLAuthority(base);
+    URL baseURL { mappedBase.isNull() ? base : mappedBase };
     if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL)))
         return Exception { InvalidURLError, url };
     return create(url, baseURL);
@@ -101,10 +167,12 @@ DOMURL::~DOMURL() = default;
 
 static URL parseInternal(const String& url, const String& base)
 {
-    URL baseURL { base };
+    auto mappedBase = applyIDNADeltaToURLAuthority(base);
+    URL baseURL { mappedBase.isNull() ? base : mappedBase };
     if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL)))
         return {};
-    URL result { baseURL, url };
+    auto mapped = applyIDNADeltaToURLAuthority(url);
+    URL result { baseURL, mapped.isNull() ? url : mapped };
     if (result.isValid() && !hasValidParsedHost(result))
         return {};
     return result;
@@ -125,7 +193,8 @@ bool DOMURL::canParse(const String& url, const String& base)
 
 ExceptionOr<void> DOMURL::setHref(const String& url)
 {
-    URL completeURL { URL {}, url };
+    auto mapped = applyIDNADeltaToURLAuthority(url);
+    URL completeURL { URL {}, mapped.isNull() ? url : mapped };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL)) {
 
         return Exception { InvalidURLError, url };

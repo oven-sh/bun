@@ -333,6 +333,24 @@ describe("Ed25519", () => {
       expect(privateKey.algorithm!.namedCurve).toBe(undefined);
     });
   });
+
+  it("keys survive structuredClone with the correct type and stay usable", async () => {
+    const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+
+    const clonedPrivate = structuredClone(privateKey);
+    const clonedPublic = structuredClone(publicKey);
+
+    expect(clonedPrivate.type).toBe("private");
+    expect(clonedPublic.type).toBe("public");
+
+    const message = new TextEncoder().encode("round-trip");
+    const signature = await crypto.subtle.sign("Ed25519", clonedPrivate, message);
+    const verified = await crypto.subtle.verify("Ed25519", clonedPublic, signature, message);
+    expect(verified).toBe(true);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/32613

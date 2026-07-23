@@ -427,7 +427,7 @@ it("deserialize rejects a CryptoKey whose named curve does not match its algorit
     import { serialize, deserialize } from "bun:jsc";
     const { publicKey } = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
     const bytes = new Uint8Array(serialize(publicKey));
-    const pattern = [5, 22, 1, 32, 0, 0, 0];
+    const pattern = [5, 22, 1, 0, 32, 0, 0, 0];
     const offsets = [];
     for (let i = 0; i + pattern.length <= bytes.length; i++) {
       if (pattern.every((byte, j) => bytes[i + j] === byte)) offsets.push(i);

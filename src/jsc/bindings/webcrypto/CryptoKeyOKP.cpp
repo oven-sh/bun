@@ -245,7 +245,8 @@ String CryptoKeyOKP::namedCurveString() const
 
 bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)
 {
-    return algorithm == CryptoAlgorithmIdentifier::Ed25519;
+    return algorithm == CryptoAlgorithmIdentifier::Ed25519
+        || algorithm == CryptoAlgorithmIdentifier::X25519;
 }
 
 auto CryptoKeyOKP::algorithm() const -> KeyAlgorithm

@@ -74,22 +74,31 @@ private:
      *     (':' before '*') and tried after the static match at the same priority.
      * Each is further split by isHighPriority: [1] = HIGH_PRIORITY (upgrade
      * routes), [0] = everything else. Matching tries [1] before [0].
+     *
+     * The child containers live behind a lazily-allocated Children block so a
+     * leaf Node (the vast majority: one per route per method) carries only a
+     * null pointer instead of two empty hash maps and two empty vectors.
      */
     struct Node {
         using ChildMap = std::unordered_map<std::string, std::unique_ptr<Node>, StringViewHash, std::equal_to<>>;
 
+        struct Children {
+            ChildMap staticChildren[2] = {};
+            std::vector<std::unique_ptr<Node>> specialChildren[2] = {};
+        };
+
         std::string name = {};
         std::vector<uint32_t> handlers = {};
+        std::unique_ptr<Children> children = {};
         bool isHighPriority = false;
-
-        ChildMap staticChildren[2] = {};
-        std::vector<std::unique_ptr<Node>> specialChildren[2] = {};
 
         explicit Node(std::string name) : name(std::move(name)) {}
 
-        bool hasChildren() const {
-            return !staticChildren[0].empty() || !staticChildren[1].empty()
-                || !specialChildren[0].empty() || !specialChildren[1].empty();
+        Children &ensureChildren() {
+            if (!children) {
+                children = std::make_unique<Children>();
+            }
+            return *children;
         }
     } root {"rootNode"};
 
@@ -115,9 +124,10 @@ private:
 
     /* Advance from parent to child, adding child if necessary */
     Node *getNode(Node *parent, std::string_view child, bool isHighPriority) {
+        auto &children = parent->ensureChildren();
         unsigned int prio = isHighPriority ? 1 : 0;
         if (!isSpecialName(child)) {
-            auto &map = parent->staticChildren[prio];
+            auto &map = children.staticChildren[prio];
             if (auto it = map.find(child); it != map.end()) {
                 return it->second.get();
             }
@@ -128,7 +138,7 @@ private:
             return ptr;
         }
 
-        auto &vec = parent->specialChildren[prio];
+        auto &vec = children.specialChildren[prio];
         for (const std::unique_ptr<Node> &node : vec) {
             if (node->name == child) {
                 return node.get();
@@ -226,11 +236,16 @@ private:
             return false;
         }
 
+        if (!parent->children) {
+            return false;
+        }
+        auto &children = *parent->children;
+
         /* High-priority tier first, then normal. Within a tier: the (at most one)
          * static match, then ':' param, then '*' wildcard. This is the same order
          * the old sorted children vector produced. */
         for (int prio = 1; prio >= 0; prio--) {
-            auto &staticMap = parent->staticChildren[prio];
+            auto &staticMap = children.staticChildren[prio];
             if (!staticMap.empty()) {
                 if (auto it = staticMap.find(segment); it != staticMap.end()) {
                     if (executeHandlers(it->second.get(), urlSegment + 1, userData)) {
@@ -238,7 +253,7 @@ private:
                     }
                 }
             }
-            for (auto &p : parent->specialChildren[prio]) {
+            for (auto &p : children.specialChildren[prio]) {
                 if (p->name.starts_with('*')) {
                     /* Wildcard match (can be seen as a shortcut) */
                     for (uint32_t handler : p->handlers) {
@@ -268,20 +283,24 @@ private:
         }
         setUrl(pattern);
         for (int i = 0; !getUrlSegment(i).second; i++) {
+            if (!n->children) {
+                return UINT32_MAX;
+            }
+            auto &children = *n->children;
             std::string_view segment = getUrlSegment(i).first;
             Node *next = nullptr;
             if (isSpecialName(segment)) {
                 /* ':' pattern segments match the single ':' child (names were
                  * stripped on insert); '*' matches by exact name. */
                 bool segIsParam = segment[0] == ':';
-                for (auto &c : n->specialChildren[isHighPrio ? 1 : 0]) {
+                for (auto &c : children.specialChildren[isHighPrio ? 1 : 0]) {
                     if (segIsParam ? c->name.starts_with(':') : c->name == segment) {
                         next = c.get();
                         break;
                     }
                 }
             } else {
-                auto &map = n->staticChildren[isHighPrio ? 1 : 0];
+                auto &map = children.staticChildren[isHighPrio ? 1 : 0];
                 if (auto it = map.find(segment); it != map.end()) {
                     next = it->second.get();
                 }
@@ -302,15 +321,19 @@ private:
 
     /* Root's children are method names; all are isHighPriority=false. */
     Node *findMethodNode(std::string_view method) {
+        if (!root.children) {
+            return nullptr;
+        }
+        auto &children = *root.children;
         if (isSpecialName(method)) {
-            for (auto &c : root.specialChildren[0]) {
+            for (auto &c : children.specialChildren[0]) {
                 if (c->name == method) {
                     return c.get();
                 }
             }
             return nullptr;
         }
-        auto &map = root.staticChildren[0];
+        auto &map = children.staticChildren[0];
         auto it = map.find(method);
         return it != map.end() ? it->second.get() : nullptr;
     }
@@ -335,9 +358,14 @@ public:
         setUrl(url);
         routeParameters.reset();
 
+        if (!root.children) [[unlikely]] {
+            return false;
+        }
+        auto &children = *root.children;
+
         /* Begin by finding the method node */
-        auto it = root.staticChildren[0].find(method);
-        if (it != root.staticChildren[0].end()) {
+        auto it = children.staticChildren[0].find(method);
+        if (it != children.staticChildren[0].end()) {
             if (executeHandlers(it->second.get(), 0, userData)) {
                 return true;
             }
@@ -346,7 +374,7 @@ public:
         /* Always test any route last. ANY_METHOD_TOKEN is root's only
          * specialChildren[0] entry in practice, but look it up by name so a
          * cullNode() that removed it cannot leave a stale pointer behind. */
-        for (auto &p : root.specialChildren[0]) {
+        for (auto &p : children.specialChildren[0]) {
             if (p->name == ANY_METHOD_TOKEN) {
                 return executeHandlers(p.get(), 0, userData);
             }
@@ -383,20 +411,27 @@ public:
 
     bool cullNode(Node *parent, Node *node, uint32_t handler) {
         /* For all children of either kind */
-        for (int prio = 0; prio < 2; prio++) {
-            for (auto it = node->staticChildren[prio].begin(); it != node->staticChildren[prio].end(); ) {
-                if (cullNode(node, it->second.get(), handler)) {
-                    it = node->staticChildren[prio].erase(it);
-                } else {
-                    ++it;
+        if (node->children) {
+            auto &children = *node->children;
+            for (int prio = 0; prio < 2; prio++) {
+                for (auto it = children.staticChildren[prio].begin(); it != children.staticChildren[prio].end(); ) {
+                    if (cullNode(node, it->second.get(), handler)) {
+                        it = children.staticChildren[prio].erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                for (unsigned int i = 0; i < children.specialChildren[prio].size(); ) {
+                    if (cullNode(node, children.specialChildren[prio][i].get(), handler)) {
+                        children.specialChildren[prio].erase(children.specialChildren[prio].begin() + i);
+                    } else {
+                        i++;
+                    }
                 }
             }
-            for (unsigned int i = 0; i < node->specialChildren[prio].size(); ) {
-                if (cullNode(node, node->specialChildren[prio][i].get(), handler)) {
-                    node->specialChildren[prio].erase(node->specialChildren[prio].begin() + i);
-                } else {
-                    i++;
-                }
+            if (children.staticChildren[0].empty() && children.staticChildren[1].empty()
+                && children.specialChildren[0].empty() && children.specialChildren[1].empty()) {
+                node->children.reset();
             }
         }
 
@@ -414,7 +449,7 @@ public:
             }
 
             /* Returning true signals the caller to erase us from its container */
-            return node->handlers.empty() && !node->hasChildren();
+            return node->handlers.empty() && !node->children;
         }
 
         return false;

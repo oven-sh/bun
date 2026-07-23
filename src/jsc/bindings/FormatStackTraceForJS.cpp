@@ -6,6 +6,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/FrameTracers.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
@@ -598,11 +599,21 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
+    // finalizeUnconditionally can run this from Heap::runEndPhase at an
+    // arbitrary GC safepoint while the suspended mutator has an unrelated
+    // pending exception (e.g. a module evaluation error captured mid
+    // CyclicModuleRecord::evaluate). Suspend it so tryClearException below
+    // only ever swallows an exception this computation itself raised; a
+    // pre-existing one belongs to the mutator and clearing it crashes the
+    // later reject-with-caught-exception site. Same pattern as
+    // TypeProfilerLog::processLogEntries.
+    JSC::SuspendExceptionScope suspendExceptionScope(vm);
+
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
     if (scope.exception()) {
-        // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
-        // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker
+        // vm.setOnComputeErrorInfo doesn't handle a callback that throws.
+        // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js trips the exception checker.
         (void)scope.tryClearException();
         result = WTF::emptyString();
     }

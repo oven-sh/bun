@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, tempDirWithFiles } from "harness";
-import { realpathSync } from "node:fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 // test:
@@ -75,9 +74,8 @@ test.concurrent("--randomize and --seed work", async () => {
 // Not `test.concurrent`: `Bun.hash` is ~170x slower in debug builds, so the
 // birthday-paradox search takes several seconds and would starve siblings.
 test("--randomize: files whose u32-truncated path hashes collide get distinct per-file orders", async () => {
+  // tempDirWithFiles already realpaths os.tmpdir(), so tmpRoot is canonical.
   const tmpRoot = tempDirWithFiles("randomize-hash-collision", {});
-  // macOS: /tmp symlinks to /private/tmp; the runner resolves the real path.
-  const realRoot = isMacOS ? realpathSync(tmpRoot) : tmpRoot;
 
   // Birthday collision on u32 is ~77k names at 50%; at 400k the miss
   // probability is exp(-400000^2 / 2^33) ~= 8e-9.
@@ -86,7 +84,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
   const seen = new Map<number, number>();
   const mask = 0xffffffffn;
   for (let i = 0; i < 400_000; i++) {
-    const h = Number(Bun.hash(join(realRoot, `f${i}.test.ts`)) & mask);
+    const h = Number(Bun.hash(join(tmpRoot, `f${i}.test.ts`)) & mask);
     if (seen.has(h)) {
       aIdx = seen.get(h)!;
       bIdx = i;

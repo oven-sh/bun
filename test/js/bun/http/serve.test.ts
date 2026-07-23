@@ -3676,3 +3676,132 @@ it.each([
 
   expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });
+
+describe("parser-tier error responses", () => {
+  async function rawRequest(port: number, bytes: string | string[]): Promise<string> {
+    const received: Buffer[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using conn = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(_s, chunk) {
+          received.push(Buffer.from(chunk));
+        },
+        close() {
+          resolve();
+        },
+        end() {
+          resolve();
+        },
+        error() {
+          resolve();
+        },
+      },
+    });
+    for (const piece of Array.isArray(bytes) ? bytes : [bytes]) {
+      conn.write(piece);
+      conn.flush();
+    }
+    await promise;
+    return Buffer.concat(received).toString("latin1");
+  }
+
+  function head(raw: string) {
+    const h = raw.split("\r\n\r\n")[0];
+    const lines = h.split("\r\n");
+    const headers = Object.fromEntries(
+      lines.slice(1).map(l => {
+        const i = l.indexOf(":");
+        return [l.slice(0, i).toLowerCase(), l.slice(i + 1).trim()];
+      }),
+    );
+    return { status: lines[0], headers, body: raw.slice(h.length + 4) };
+  }
+
+  // RFC 9110 6.6.1: an origin server with a clock MUST send Date on every
+  // response; the parser-rejection path used to write only the status line and
+  // Connection: close.
+  it("400/431/505 carry Date and Content-Length: 0", async () => {
+    using server = serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => new Response("ok") });
+    const bigHeader = Buffer.alloc(65536, "a").toString();
+    const got: Record<string, ReturnType<typeof head>> = {};
+    for (const [name, req] of [
+      ["400", "GET / HTTP/1.1\r\nHost: x\r\nNo-Colon-Line\r\n\r\n"],
+      ["431", `GET / HTTP/1.1\r\nHost: x\r\nX-Big: ${bigHeader}\r\n\r\n`],
+      ["505", "GET / HTTP/9.9\r\nHost: x\r\n\r\n"],
+    ] as const) {
+      got[name] = head(await rawRequest(server.port, req));
+    }
+    expect({
+      400: { status: got["400"].status, cl: got["400"].headers["content-length"], conn: got["400"].headers.connection },
+      431: { status: got["431"].status, cl: got["431"].headers["content-length"], conn: got["431"].headers.connection },
+      505: { status: got["505"].status, cl: got["505"].headers["content-length"], conn: got["505"].headers.connection },
+    }).toEqual({
+      400: { status: "HTTP/1.1 400 Bad Request", cl: "0", conn: "close" },
+      431: { status: "HTTP/1.1 431 Request Header Fields Too Large", cl: "0", conn: "close" },
+      505: { status: "HTTP/1.1 505 HTTP Version Not Supported", cl: "0", conn: "close" },
+    });
+    for (const name of ["400", "431", "505"] as const) {
+      expect(got[name].headers.date).toMatch(/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/);
+      expect(got[name].body).toBe("");
+    }
+  });
+
+  // RFC 9110 15.5.15: a request-target that alone exceeds the server's limit is
+  // 414; only oversize header fields are 431. The two are distinguished by
+  // whether the request-line has terminated within the limit.
+  it("an oversize request-target is 414, oversize header fields stay 431", async () => {
+    using server = serve({ port: 0, hostname: "127.0.0.1", development: false, fetch: () => new Response("ok") });
+    const big = Buffer.alloc(65536, "a").toString();
+    const uriOnce = head(await rawRequest(server.port, `GET /${big} HTTP/1.1\r\nHost: x\r\n\r\n`));
+    // Same request-line trickled across writes so the fallback-buffer overflow
+    // path (not the single-read path) is the one that classifies it.
+    const trickled = head(
+      await rawRequest(server.port, ["GET /", Buffer.alloc(10000, "a").toString(), big, " HTTP/1.1\r\nHost: x\r\n\r\n"]),
+    );
+    const hdr = head(await rawRequest(server.port, `GET / HTTP/1.1\r\nHost: x\r\nX-Big: ${big}\r\n\r\n`));
+    expect({ uriOnce: uriOnce.status, trickled: trickled.status, hdr: hdr.status }).toEqual({
+      uriOnce: "HTTP/1.1 414 URI Too Long",
+      trickled: "HTTP/1.1 414 URI Too Long",
+      hdr: "HTTP/1.1 431 Request Header Fields Too Large",
+    });
+    expect(uriOnce.headers.date).toBeTruthy();
+    expect(uriOnce.headers["content-length"]).toBe("0");
+  });
+
+  // A syntactically valid method token that the router has no handler for used
+  // to close the connection with zero response bytes. RFC 9110 9.1: an
+  // unrecognized method SHOULD receive 501. The broad extension set in the
+  // router's method table still dispatches to fetch().
+  it("an unknown method token gets 501; router-known extension methods dispatch", async () => {
+    let dispatched: string[] = [];
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      fetch(req) {
+        dispatched.push(req.method);
+        return new Response("ok");
+      },
+    });
+    const statuses: Record<string, string> = {};
+    for (const m of ["FROB", "get", "BREW", "GETS", "PROPFIND", "PURGE"]) {
+      const raw = await rawRequest(server.port, `${m} / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      expect(raw.length).toBeGreaterThan(0);
+      statuses[m] = head(raw).status;
+    }
+    expect(statuses).toEqual({
+      FROB: "HTTP/1.1 501 Not Implemented",
+      get: "HTTP/1.1 501 Not Implemented",
+      BREW: "HTTP/1.1 501 Not Implemented",
+      GETS: "HTTP/1.1 501 Not Implemented",
+      PROPFIND: "HTTP/1.1 200 OK",
+      PURGE: "HTTP/1.1 200 OK",
+    });
+    expect(dispatched).toEqual(["PROPFIND", "PURGE"]);
+    const h = head(await rawRequest(server.port, "FROB / HTTP/1.1\r\nHost: x\r\n\r\n"));
+    expect({ cl: h.headers["content-length"], conn: h.headers.connection }).toEqual({ cl: "0", conn: "close" });
+    expect(h.headers.date).toBeTruthy();
+  });
+});

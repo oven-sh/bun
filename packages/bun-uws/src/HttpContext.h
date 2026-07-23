@@ -147,6 +147,23 @@ public:
     }
 
 private:
+    /* Best-effort write of a parser-tier error response (400/413/414/431/501/505)
+     * and connection teardown. RFC 9110 6.6.1 says an origin server MUST send
+     * Date on every response if it has a clock, so these carry the loop's cached
+     * Date and an explicit Content-Length: 0 like every handler-path response. */
+    static void writeHttpErrorAndClose(us_socket_t *s, unsigned int httpErrorStatusCode) {
+        std::string_view status = httpErrorResponses[httpErrorStatusCode];
+        const char *date = ((LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group(s))))->date;
+        /* "HTTP/1.1 nnn Reason" (<= 44) + fixed headers (65) + date (29) + CRLFCRLF */
+        char buf[160];
+        int n = snprintf(buf, sizeof(buf),
+            "%.*s\r\nConnection: close\r\nContent-Length: 0\r\nDate: %.29s\r\n\r\n",
+            (int) status.length(), status.data(), date);
+        us_socket_write(s, buf, n);
+        us_socket_shutdown(s);
+        us_socket_close(s, 0, nullptr);
+    }
+
     /* ── vtable handlers ─────────────────────────────────────────────────── */
 
     static void onHandshake(us_socket_t *s, int success, struct us_bun_verify_error_t verify_error, void * /*custom_data*/) {
@@ -436,8 +453,12 @@ private:
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
             if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it */
-                us_socket_close((us_socket_t *) s, 0, nullptr);
+                /* No handler for this method: Bun.serve always registers a wildcard
+                 * handler for every method in supportedHttpMethods (and node:http
+                 * registers ANY directly), so a miss here means a method token
+                 * outside that table. RFC 9110 9.1: an unrecognized method SHOULD
+                 * get 501. */
+                writeHttpErrorAndClose((us_socket_t *) s, HTTP_ERROR_501_NOT_IMPLEMENTED);
                 return nullptr;
             }
 
@@ -577,10 +598,7 @@ private:
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
             }
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-            us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
-            us_socket_shutdown(s);
-            /* Close any socket on HTTP errors */
-            us_socket_close(s, 0, nullptr);
+            writeHttpErrorAndClose(s, httpErrorStatusCode);
         }
 
         auto returnedData = result.returnedData;

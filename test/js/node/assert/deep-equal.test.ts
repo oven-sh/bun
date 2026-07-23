@@ -631,6 +631,23 @@ describe("detached ArrayBuffer", () => {
     });
   }
 
+  test("deepStrictEqual throws Node's DataView TypeError on a detached view", () => {
+    const detachedView = () => {
+      const ab = new ArrayBuffer(4);
+      const dv = new DataView(ab);
+      structuredClone(ab, { transfer: [ab] });
+      return dv;
+    };
+    const error = caught(() => assert.deepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0))));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error?.message).toBe(
+      "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer",
+    );
+    expect(() => util.isDeepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0)))).toThrow(TypeError);
+    // Bun.deepEquals keeps its own-properties DataView surface: no throw.
+    expect(Bun.deepEquals(detachedView(), new DataView(new ArrayBuffer(0)), true)).toBe(true);
+  });
+
   test("assert.partialDeepStrictEqual throws TypeError on a detached ArrayBuffer", () => {
     expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);
   });

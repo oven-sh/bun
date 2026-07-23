@@ -1307,6 +1307,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         // offset), then falls through to own enumerable properties.
         JSC::JSDataView* left = uncheckedDowncast<JSC::JSDataView>(c1);
         JSC::JSDataView* right = uncheckedDowncast<JSC::JSDataView>(c2);
+        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+            // The C++ byteLength() accessor silently reports 0 for a detached
+            // view; node reads the JS accessor, which throws. Keep node's
+            // exact error contract.
+            throwTypeError(globalObject, scope, "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer"_s);
+            return false;
+        }
         size_t byteLength = left->byteLength();
         if (right->byteLength() != byteLength) {
             return false;

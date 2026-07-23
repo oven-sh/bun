@@ -4,11 +4,123 @@
 #include "helpers.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>
+#include <wtf/DateMath.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <JavaScriptCore/DateConversion.h>
 #include <JavaScriptCore/DateInstance.h>
 #include "HTTPParsers.h"
 namespace WebCore {
+
+// RFC 6265bis §5.1.1 "Dates". Browsers parse the Expires attribute with this
+// cookie-date algorithm, not a general HTTP-date parser: it tokenizes on a fixed
+// delimiter set, matches tokens order-independently, uses a 0-69 => 20xx /
+// 70-99 => 19xx two-digit-year rule, and ignores unrecognized tokens (including
+// timezone suffixes). Returns milliseconds since the Unix epoch in UTC.
+static std::optional<int64_t> parseCookieDate(std::span<const Latin1Character> input)
+{
+    auto isDelimiter = [](Latin1Character c) {
+        // delimiter = %x09 / %x20-2F / %x3B-40 / %x5B-60 / %x7B-7E
+        return c == 0x09 || (c >= 0x20 && c <= 0x2F) || (c >= 0x3B && c <= 0x40)
+            || (c >= 0x5B && c <= 0x60) || (c >= 0x7B && c <= 0x7E);
+    };
+    auto leadingDigits = [](std::span<const Latin1Character> s, size_t start) -> size_t {
+        size_t i = start;
+        while (i < s.size() && isASCIIDigit(s[i]))
+            i++;
+        return i - start;
+    };
+    auto readInt = [](std::span<const Latin1Character> s, size_t start, size_t len) -> int {
+        int v = 0;
+        for (size_t i = 0; i < len; i++)
+            v = v * 10 + (s[start + i] - '0');
+        return v;
+    };
+
+    static constexpr char monthNames[12][4] = {
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec"
+    };
+
+    bool foundTime = false, foundDay = false, foundMonth = false, foundYear = false;
+    int hour = 0, minute = 0, second = 0, day = 0, month = 0, year = 0;
+
+    size_t i = 0;
+    while (i < input.size()) {
+        while (i < input.size() && isDelimiter(input[i]))
+            i++;
+        if (i >= input.size())
+            break;
+        size_t tokenStart = i;
+        while (i < input.size() && !isDelimiter(input[i]))
+            i++;
+        auto token = input.subspan(tokenStart, i - tokenStart);
+        size_t digits = leadingDigits(token, 0);
+
+        // 2.1 time = 1*2DIGIT ":" 1*2DIGIT ":" 1*2DIGIT [ non-digit *OCTET ]
+        if (!foundTime && digits >= 1 && digits <= 2 && digits < token.size() && token[digits] == ':') {
+            size_t p = digits + 1;
+            size_t n2 = leadingDigits(token, p);
+            if (n2 >= 1 && n2 <= 2 && p + n2 < token.size() && token[p + n2] == ':') {
+                size_t p2 = p + n2 + 1;
+                size_t n3 = leadingDigits(token, p2);
+                if (n3 >= 1 && n3 <= 2) {
+                    hour = readInt(token, 0, digits);
+                    minute = readInt(token, p, n2);
+                    second = readInt(token, p2, n3);
+                    foundTime = true;
+                    continue;
+                }
+            }
+        }
+
+        // 2.2 day-of-month = 1*2DIGIT [ non-digit *OCTET ]
+        if (!foundDay && digits >= 1 && digits <= 2) {
+            day = readInt(token, 0, digits);
+            foundDay = true;
+            continue;
+        }
+
+        // 2.3 month = ( "jan" / ... / "dec" ) *OCTET
+        if (!foundMonth && token.size() >= 3) {
+            Latin1Character c0 = toASCIILower(token[0]);
+            Latin1Character c1 = toASCIILower(token[1]);
+            Latin1Character c2 = toASCIILower(token[2]);
+            for (int m = 0; m < 12; m++) {
+                if (c0 == monthNames[m][0] && c1 == monthNames[m][1] && c2 == monthNames[m][2]) {
+                    month = m;
+                    foundMonth = true;
+                    break;
+                }
+            }
+            if (foundMonth)
+                continue;
+        }
+
+        // 2.4 year = 2*4DIGIT [ non-digit *OCTET ]
+        if (!foundYear && digits >= 2 && digits <= 4) {
+            year = readInt(token, 0, digits);
+            foundYear = true;
+            continue;
+        }
+    }
+
+    if (!foundTime || !foundDay || !foundMonth || !foundYear)
+        return std::nullopt;
+
+    if (year >= 70 && year <= 99)
+        year += 1900;
+    else if (year >= 0 && year <= 69)
+        year += 2000;
+
+    if (day < 1 || day > 31 || year < 1601 || hour > 23 || minute > 59 || second > 59)
+        return std::nullopt;
+
+    double ms = WTF::dateToDaysFrom1970(year, month, day) * WTF::msPerDay
+        + hour * WTF::msPerHour + minute * WTF::msPerMinute + second * WTF::msPerSecond;
+    if (!std::isfinite(ms))
+        return std::nullopt;
+    return static_cast<int64_t>(ms);
+}
 
 extern "C" WebCore::Cookie* Cookie__fromJS(JSC::EncodedJSValue value)
 {
@@ -133,19 +245,15 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                 if (!attributeValue.isEmpty() && attributeValue.startsWith('/'))
                     path = attributeValue;
             } else if (attributeName == "expires"_s && !attributeValue.isEmpty()) {
-                if (!attributeValue.is8Bit()) [[unlikely]] {
-                    auto asLatin1 = attributeValue.latin1();
-                    double parsed = WTF::parseDate({ reinterpret_cast<const Latin1Character*>(asLatin1.data()), asLatin1.length() });
-                    if (std::isfinite(parsed)) {
-                        expires = static_cast<int64_t>(parsed);
-                    }
+                std::optional<int64_t> parsed;
+                if (attributeValue.is8Bit()) [[likely]] {
+                    parsed = parseCookieDate(attributeValue.span8());
                 } else {
-                    auto nullTerminated = attributeValue.utf8();
-                    double parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminated.data()), nullTerminated.length()));
-                    if (std::isfinite(parsed)) {
-                        expires = static_cast<int64_t>(parsed);
-                    }
+                    auto asLatin1 = attributeValue.latin1();
+                    parsed = parseCookieDate({ reinterpret_cast<const Latin1Character*>(asLatin1.data()), asLatin1.length() });
                 }
+                if (parsed)
+                    expires = *parsed;
             } else if (attributeName == "max-age"_s) {
                 if (auto parsed = WTF::parseIntegerAllowingTrailingJunk<int64_t>(attributeValue); parsed.has_value()) {
                     maxAge = static_cast<double>(parsed.value());

@@ -1052,6 +1052,7 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGINFO"),
         MAKE_STATIC_STRING_IMPL("SIGSYS"),
         MAKE_STATIC_STRING_IMPL("SIGBREAK"),
+        MAKE_STATIC_STRING_IMPL("SIGPWR"),
     };
 
     return signalNames;
@@ -1154,6 +1155,9 @@ static void loadSignalNumberMap()
 #ifdef SIGSYS
         signalNameToNumberMap->add(signalNames[30], SIGSYS);
 #endif
+#ifdef SIGPWR
+        signalNameToNumberMap->add(signalNames[32], SIGPWR);
+#endif
 #endif
     });
 }
@@ -1166,6 +1170,11 @@ bool isSignalName(WTF::String input)
 
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
+    // SigintWatcher::install() can prime the signal ring buffer without any process.on()
+    // ever running, in which case this map is still null and there is no listener to emit to.
+    if (!signalNumberToNameMap)
+        return;
+
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);
@@ -1403,6 +1412,36 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
     Bun__onPosixSignal(signalNumber);
 }
 
+#if OS(LINUX)
+static struct sigaction s_jscSuspendResumeAction;
+
+static void Bun__sigThreadSuspendResumeGuard(int signalNumber, siginfo_t* info, void* ucontext)
+{
+    // JSC's GC suspend/resume always uses pthread_kill from this process (si_code == SI_TKILL,
+    // si_pid == us). Any other delivery is unsolicited and would null-deref targetThread in
+    // WTF::Thread::signalHandlerSuspendResume, so forward it to JS listeners instead.
+    if (info && info->si_code == SI_TKILL && info->si_pid == getpid()) [[likely]] {
+        s_jscSuspendResumeAction.sa_sigaction(signalNumber, info, ucontext);
+        return;
+    }
+    Bun__onPosixSignal(signalNumber);
+}
+
+extern "C" void Bun__installSigThreadSuspendResumeGuard()
+{
+    int signalNumber = g_wtfConfig.sigThreadSuspendResume;
+    if (!signalNumber)
+        return;
+    if (sigaction(signalNumber, nullptr, &s_jscSuspendResumeAction))
+        return;
+    if (!(s_jscSuspendResumeAction.sa_flags & SA_SIGINFO))
+        return;
+    struct sigaction action = s_jscSuspendResumeAction;
+    action.sa_sigaction = &Bun__sigThreadSuspendResumeGuard;
+    sigaction(signalNumber, &action, nullptr);
+}
+#endif
+
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
@@ -1529,6 +1568,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #ifdef SIGBREAK
             signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
 #endif
+#ifdef SIGPWR
+            signalNumberToNameMap->add(SIGPWR, signalNames[32]);
+#endif
         });
 
         if (!signalToContextIdsMap) {
@@ -1536,11 +1578,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         }
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-#if OS(LINUX)
-            // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
-            // suspend and resume the JS thread which we must not override.
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
-#elif OS(DARWIN) || OS(FREEBSD)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
             // these signals cannot be handled
             if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
 #elif OS(WINDOWS)
@@ -1559,18 +1597,26 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         };
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
-                        struct sigaction action;
-                        memset(&action, 0, sizeof(struct sigaction));
+#if OS(LINUX)
+                        // JSC owns the handler for its GC suspend/resume signal; our wrapper
+                        // (Bun__installSigThreadSuspendResumeGuard) already forwards unsolicited
+                        // deliveries into Bun__onPosixSignal, so we must not replace it here.
+                        if (signalNumber != g_wtfConfig.sigThreadSuspendResume)
+#endif
+                        {
+                            struct sigaction action;
+                            memset(&action, 0, sizeof(struct sigaction));
 
-                        // Set the handler in the action struct
-                        action.sa_handler = forwardSignal;
+                            // Set the handler in the action struct
+                            action.sa_handler = forwardSignal;
 
-                        // Clear the sa_mask
-                        sigemptyset(&action.sa_mask);
-                        sigaddset(&action.sa_mask, signalNumber);
-                        action.sa_flags = SA_RESTART;
+                            // Clear the sa_mask
+                            sigemptyset(&action.sa_mask);
+                            sigaddset(&action.sa_mask, signalNumber);
+                            action.sa_flags = SA_RESTART;
 
-                        sigaction(signalNumber, &action, nullptr);
+                            sigaction(signalNumber, &action, nullptr);
+                        }
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -1587,10 +1633,13 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
-                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                            // Don't uninstall the old handler if it's not the one we installed.
-                            signal(signalNumber, oldHandler);
-                        }
+#if OS(LINUX)
+                        if (signalNumber != g_wtfConfig.sigThreadSuspendResume)
+#endif
+                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                                // Don't uninstall the old handler if it's not the one we installed.
+                                signal(signalNumber, oldHandler);
+                            }
 #else
                         SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                         Bun__UVSignalHandle__close(signal_handle.handle);

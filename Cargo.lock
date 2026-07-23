@@ -140,7 +140,6 @@ dependencies = [
  "allocator-api2",
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -197,7 +196,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -242,7 +240,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -348,7 +345,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_analytics",
  "bun_ast",
@@ -608,7 +604,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",
@@ -676,7 +671,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_cares_sys",
  "bun_core",
  "bun_sys",
@@ -1079,7 +1073,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",
@@ -1144,7 +1137,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
@@ -1376,7 +1368,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
@@ -1562,7 +1553,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_analytics",
  "bun_ast",
@@ -1612,7 +1602,6 @@ dependencies = [
  "bun_errno",
  "bun_http_types",
  "bun_js_parser",
- "bun_options_types",
  "bun_paths",
  "bun_ptr",
  "bun_resolver",
@@ -1828,7 +1817,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_collections",
  "bun_core",
@@ -1872,7 +1860,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bumpalo",
  "bun_alloc",
  "bun_ast",
  "bun_base64",
@@ -2117,17 +2104,12 @@ dependencies = [
 name = "bun_threading"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_ptr",
  "bun_safety",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
  "scopeguard",
  "strum",
@@ -2138,15 +2120,7 @@ dependencies = [
 name = "bun_transpiler"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_bundler",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]

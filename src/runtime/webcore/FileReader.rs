@@ -91,7 +91,6 @@ impl Default for FileReader {
 }
 
 pub type IOReader = BufferedReader;
-pub type Poll = IOReader;
 pub const TAG: readable_stream::Tag = readable_stream::Tag::File;
 
 #[derive(strum::IntoStaticStr)]
@@ -327,23 +326,6 @@ impl FileReader {
     // `Source`; `event_loop` is set to its real value right after the reset.
     // R-2: kept `&mut self` — init-time constructor that runs before any
     // host-fn could re-enter; `*self =` requires unique access.
-    pub fn setup(&mut self, fd: Fd) {
-        *self = FileReader {
-            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
-            done: Cell::new(false),
-            fd: Cell::new(fd),
-            ..Default::default()
-        };
-
-        // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
-        // global); deref to call `event_loop()`.
-        let global = self.parent_global();
-        // `bun_vm()` is the live thread-local VM; `event_loop()` is its
-        // per-thread `jsc::EventLoop`.
-        self.event_loop.set(EventLoopHandle::init(
-            global.bun_vm().as_mut().event_loop().cast::<()>(),
-        ));
-    }
 
     pub fn on_start(&self) -> streams::Start {
         self.reader().set_parent(self.as_ctx_ptr().cast());
@@ -506,6 +488,9 @@ impl FileReader {
             {
                 use bun_io::pipe_reader::PosixFlags;
                 if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
+                    // A from_pipe() reader may arrive with IS_PAUSED set (lazy
+                    // subprocess stdio); clear it so read() does not no-op.
+                    self.reader().unpause();
                     self.reader().read();
                 }
             }
@@ -972,9 +957,7 @@ impl FileReader {
     pub fn drain(&self) -> Vec<u8> {
         if !self.buffered.get().is_empty() {
             let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
-            if cfg!(debug_assertions) {
-                debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
-            }
+            debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
             return out;
         }
 

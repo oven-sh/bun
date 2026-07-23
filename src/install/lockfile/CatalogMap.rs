@@ -91,25 +91,6 @@ impl CatalogMap {
         Ok(entry.value_ptr)
     }
 
-    pub fn get_group(
-        &mut self,
-        map_buf: &[u8],
-        catalog_name: String,
-        catalog_name_buf: &[u8],
-    ) -> Option<&mut Map> {
-        if catalog_name.is_empty() {
-            return Some(&mut self.default);
-        }
-
-        self.groups.get_ptr_adapted(
-            &catalog_name,
-            &ArrayHashContext {
-                arg_buf: catalog_name_buf,
-                existing_buf: map_buf,
-            },
-        )
-    }
-
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
     pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {

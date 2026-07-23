@@ -301,7 +301,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
             // entry verbatim, leaving the original RGB with α=0. Normalise
             // here so
             // every backend yields identical bytes for the same GIF.
-            for px in d.rgba.chunks_exact_mut(4) {
+            for px in d.rgba.as_chunks_mut::<4>().0 {
                 if px[3] == 0 {
                     px[0] = 0;
                     px[1] = 0;

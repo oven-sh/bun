@@ -147,6 +147,7 @@ impl PipeReader {
         &mut self,
         process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
+        lazy: bool,
     ) -> bun_sys::Result<()> {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
@@ -154,11 +155,29 @@ impl PipeReader {
         self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         #[cfg(windows)]
         {
+            if lazy {
+                // Leave IS_PAUSED set (the init default) so uv_read_start is
+                // deferred until JS first pulls; the kernel pipe buffer then
+                // provides backpressure and the child blocks.
+                let reader_ptr = core::ptr::from_mut(&mut self.reader).cast::<core::ffi::c_void>();
+                if let Some(source) = self.reader.source.as_mut() {
+                    source.set_data(reader_ptr);
+                }
+                self.reader
+                    .flags
+                    .remove(bun_io::pipe_reader::WindowsFlags::IS_DONE);
+                return bun_sys::Result::Ok(());
+            }
             return self.reader.start_with_current_pipe();
         }
 
         #[cfg(not(windows))]
         {
+            if lazy {
+                // Defer poll registration until JS first pulls so the kernel
+                // pipe buffer provides backpressure and the child blocks.
+                self.reader.flags.insert(PosixFlags::IS_PAUSED);
+            }
             // PosixBufferedReader.start() always returns .result, but if poll
             // registration fails it synchronously invokes onReaderError() first,
             // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
@@ -369,30 +388,11 @@ impl PipeReader {
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
     /// whose generated trait `destructor` upholds the sole-owner contract.
     fn deinit(this: *mut PipeReader) {
-        // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-        let this_ref = unsafe { &mut *this };
-
         #[cfg(unix)]
         {
+            // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
+            let this_ref = unsafe { &*this };
             debug_assert!(this_ref.reader.is_done() || matches!(this_ref.state, State::Err(_)));
-        }
-
-        #[cfg(windows)]
-        {
-            // WindowsBufferedReader.onError() never closes the source, and
-            // WindowsBufferedReader.deinit() nulls this.source before calling
-            // closeImpl so it never actually closes either. Close it here on
-            // the error path so the uv.Pipe handle doesn't leak.
-            if matches!(this_ref.state, State::Err(_))
-                && this_ref.reader.source.is_some()
-                && !this_ref.reader.source.as_ref().unwrap().is_closed()
-            {
-                this_ref.reader.close_impl::<false>();
-            }
-            debug_assert!(
-                this_ref.reader.source.is_none()
-                    || this_ref.reader.source.as_ref().unwrap().is_closed()
-            );
         }
 
         // The `state` buffer and `reader` are freed by Drop when the Box drops.

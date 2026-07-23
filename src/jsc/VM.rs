@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{Exception, JSGlobalObject, JSValue, JsError};
+use crate::{JSGlobalObject, JSValue, JsError};
 
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
 // `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
@@ -27,38 +27,22 @@ unsafe extern "C" {
     safe fn JSC__VM__getAPILock(vm: &VM);
     safe fn JSC__VM__releaseAPILock(vm: &VM);
     safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
-    safe fn JSC__VM__deleteAllCode(vm: &VM, global_object: &JSGlobalObject);
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
-    safe fn JSC__VM__setExecutionTimeLimit(vm: &VM, timeout: f64);
-    safe fn JSC__VM__clearExecutionTimeLimit(vm: &VM);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
-    safe fn JSC__VM__notifyNeedWatchdogCheck(vm: &VM);
-    safe fn JSC__VM__notifyNeedDebuggerBreak(vm: &VM);
-    safe fn JSC__VM__notifyNeedShellTimeoutCheck(vm: &VM);
-    safe fn JSC__VM__isEntered(vm: &VM) -> bool;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
-    safe fn JSC__VM__externalMemorySize(vm: &VM) -> usize;
     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
-    safe fn JSC__VM__performOpportunisticallyScheduledTasks(vm: &VM, until: f64);
 }
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a `JSC::VM`.
     pub struct VM;
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum HeapType {
-    SmallHeap = 0,
-    LargeHeap = 1,
 }
 
 impl VM {
@@ -72,10 +56,6 @@ impl VM {
 
     pub fn set_control_flow_profiler(&self, enabled: bool) {
         JSC__VM__setControlFlowProfiler(self, enabled)
-    }
-
-    pub fn is_jit_enabled() -> bool {
-        crate::cpp::JSC__VM__isJITEnabled()
     }
 
     pub fn has_execution_time_limit(&self) -> bool {
@@ -110,10 +90,6 @@ impl VM {
         self.report_extra_memory(size);
     }
 
-    pub fn delete_all_code(&self, global_object: &JSGlobalObject) {
-        JSC__VM__deleteAllCode(self, global_object)
-    }
-
     pub fn shrink_footprint(&self) {
         JSC__VM__shrinkFootprint(self)
     }
@@ -134,14 +110,6 @@ impl VM {
         JSC__VM__setExecutionForbidden(self, forbidden)
     }
 
-    pub fn set_execution_time_limit(&self, timeout: f64) {
-        JSC__VM__setExecutionTimeLimit(self, timeout)
-    }
-
-    pub fn clear_execution_time_limit(&self) {
-        JSC__VM__clearExecutionTimeLimit(self)
-    }
-
     pub fn execution_forbidden(&self) -> bool {
         JSC__VM__executionForbidden(self)
     }
@@ -152,33 +120,6 @@ impl VM {
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
-    }
-
-    /// Fires NeedWatchdogCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
-    pub fn notify_need_watchdog_check(&self) {
-        JSC__VM__notifyNeedWatchdogCheck(self)
-    }
-
-    /// Fires NeedDebuggerBreak Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
-    pub fn notify_need_debugger_break(&self) {
-        JSC__VM__notifyNeedDebuggerBreak(self)
-    }
-
-    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
-    pub fn notify_need_shell_timeout_check(&self) {
-        JSC__VM__notifyNeedShellTimeoutCheck(self)
-    }
-
-    pub fn is_entered(&self) -> bool {
-        JSC__VM__isEntered(self)
-    }
-
-    pub fn is_termination_exception(&self, exception: &Exception) -> bool {
-        crate::cpp::JSC__VM__isTerminationException(self, exception)
-    }
-
-    pub fn has_termination_request(&self) -> bool {
-        crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
     pub fn clear_has_termination_request(&self) {
@@ -202,18 +143,10 @@ impl VM {
         JSC__VM__drainMicrotasks(self)
     }
 
-    pub fn external_memory_size(&self) -> usize {
-        JSC__VM__externalMemorySize(self)
-    }
-
     /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
     /// This is faster than checking the heap size
     pub fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
-    }
-
-    pub fn perform_opportunistically_scheduled_tasks(&self, until: f64) {
-        JSC__VM__performOpportunisticallyScheduledTasks(self, until)
     }
 }
 

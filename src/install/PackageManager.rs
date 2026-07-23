@@ -28,36 +28,6 @@ use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
 use bun_url::URL;
 
-/// Caches the result of a getter the first time `get()` is called.
-/// The getter receives `&mut PackageManager` explicitly and the caller
-/// passes `self` (the field is always read via `self.ci_mode.get(self)` in
-/// PackageManager — see `is_continuous_integration`). Because the field lives
-/// inside the parent and we'd otherwise need a simultaneous `&mut self.ci_mode`
-/// + `&self` borrow, model the cache as a `Cell<Option<bool>>` and read the
-/// parent through a raw pointer.
-pub struct LazyBool<F> {
-    value: core::cell::Cell<Option<bool>>,
-    getter: F,
-}
-impl<F> LazyBool<F> {
-    pub(crate) const fn new(getter: F) -> Self {
-        Self {
-            value: core::cell::Cell::new(None),
-            getter,
-        }
-    }
-}
-impl LazyBool<fn(&PackageManager) -> bool> {
-    pub(crate) fn get(&self, parent: &PackageManager) -> bool {
-        if let Some(v) = self.value.get() {
-            return v;
-        }
-        let v = (self.getter)(parent);
-        self.value.set(Some(v));
-        v
-    }
-}
-
 // `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
 // down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
 // init. The full waiter-thread machinery (queue, signalfd, loop) lives in
@@ -215,7 +185,7 @@ use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
-    Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
+    Dependency, DependencyID, NetworkTask, PackageID, PackageManifestMap,
     PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
     initialize_store,
 };
@@ -224,7 +194,6 @@ use bun_install::{
 // Sub-module re-exports (thin re-exports — bodies live in their own files)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use self::command_line_arguments as command_line_arguments_mod;
 pub use self::command_line_arguments::CommandLineArguments;
 pub use self::package_manager_options::Options;
 // `PackageJSONEditor` is a module-level namespace (no struct) — re-export
@@ -244,9 +213,9 @@ pub use directories::{
     cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
     cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
     fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,
-    get_temporary_directory, global_link_dir, global_link_dir_and_path, global_link_dir_path,
-    is_folder_in_cache, path_for_cached_npm_path, path_for_resolution, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    get_temporary_directory, global_link_dir, global_link_dir_path, is_folder_in_cache,
+    path_for_cached_npm_path, path_for_resolution, save_lockfile, setup_global_dir,
+    update_lockfile_if_needed, write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
@@ -262,31 +231,17 @@ pub use enqueue::{
 use self::package_manager_lifecycle as lifecycle;
 pub use lifecycle::{
     LifecycleScriptTimeLog, LifecycleScriptTimeLogEntry, determine_preinstall_state,
-    ensure_preinstall_state_list_capacity, find_trusted_dependencies_from_update_requests,
-    get_preinstall_state, has_no_more_pending_lifecycle_scripts, load_root_lifecycle_scripts,
-    report_slow_lifecycle_scripts, set_preinstall_state, sleep, spawn_package_lifecycle_scripts,
-    tick_lifecycle_scripts,
+    get_preinstall_state, set_preinstall_state,
 };
 
 use self::package_manager_resolution as resolution;
-pub use resolution::{
-    assign_resolution, assign_root_resolution, format_later_version_in_cache,
-    get_installed_versions_from_disk_cache, resolve_from_disk_cache, scope_for_package_name,
-    verify_resolutions,
-};
+pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
 
-pub use self::progress_strings as progress_mod;
-pub use progress_mod::{
-    ProgressStrings, end_progress_bar, set_node_name, start_progress_bar,
-    start_progress_bar_if_none,
-};
+pub use self::progress_strings::ProgressStrings;
 
 pub use self::patch_package::{PatchCommitResult, do_patch_commit, prepare_patch};
 
-pub use self::process_dependency_list::{
-    GitResolver, process_dependency_list, process_dependency_list_item,
-    process_extracted_tarball_package, process_peer_dependency_list,
-};
+pub use self::process_dependency_list::GitResolver;
 
 pub use self::run_tasks::{
     alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
@@ -359,7 +314,6 @@ pub struct PackageManager {
     pub resolve_tasks: ResolveTaskQueue,
     pub timestamp_for_manifest_cache_control: u32,
     pub extracted_count: u32,
-    pub default_features: Features,
     pub summary: Package::DiffSummary,
     // Set once in `init()`/`init_with_runtime()` to the process-singleton
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
@@ -369,8 +323,6 @@ pub struct PackageManager {
     pub downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
     pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
     pub progress_name_buf: [u8; 768],
-    pub progress_name_buf_dynamic: Vec<u8>,
-    pub cpu_count: u32,
 
     pub track_installed_bin: TrackInstalledBin,
 
@@ -440,7 +392,6 @@ pub struct PackageManager {
     pub global_link_dir_path: Box<[u8]>,
 
     pub on_wake: WakeHandler,
-    pub ci_mode: LazyBool<fn(&PackageManager) -> bool>,
 
     pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -921,21 +872,6 @@ impl PackageManager {
         self.env_mut().get_tls_reject_unauthorized()
     }
 
-    pub fn compute_is_continuous_integration(&self) -> bool {
-        self.env().is_ci()
-    }
-
-    #[inline]
-    pub fn is_continuous_integration(&mut self) -> bool {
-        // `LazyBool::get` needs the parent struct, so pass it
-        // explicitly. `ci_mode.value` is a `Cell` so a
-        // shared `&self` projection suffices — both the receiver `&self.ci_mode`
-        // and the `&PackageManager` arg are shared reborrows of `*self` and may
-        // freely overlap.
-        let this: &PackageManager = self;
-        this.ci_mode.get(this)
-    }
-
     pub fn fail_root_resolution(
         &mut self,
         dependency: &Dependency,
@@ -954,13 +890,6 @@ impl PackageManager {
                 );
             }
         }
-    }
-
-    pub fn wake(&mut self) {
-        // Main-thread / single-owner callers go through `&mut self`; delegate to the
-        // raw-pointer path so there is one body.
-        // SAFETY: `self` is a valid `*mut PackageManager`.
-        unsafe { Self::wake_raw(self) };
     }
 
     /// Raw-pointer wake for concurrent task-thread callers (see
@@ -1132,7 +1061,6 @@ fn configure_env_for_scripts_run(
             value: Box::<[u8]>::from(strings::without_trailing_slash(
                 FileSystem::instance().top_level_dir(),
             )),
-            conditional: false,
         };
     }
 
@@ -1354,6 +1282,9 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
         }
         http::InitError::InvalidCA => {
             Output::err("HTTPThread", "the CA is invalid", ());
+        }
+        http::InitError::InvalidCRL => {
+            Output::err("HTTPThread", "the CRL is invalid", ());
         }
         http::InitError::FailedToOpenSocket => {
             Output::err_generic("failed to start HTTP client thread", ());
@@ -1962,7 +1893,6 @@ pub fn init(
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
-        wr!(cpu_count, cpu_count);
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {
@@ -1993,13 +1923,11 @@ pub fn init(
         // remaining defaults:
         wr!(timestamp_for_manifest_cache_control, 0);
         wr!(extracted_count, 0);
-        wr!(default_features, Features::default());
         wr!(summary, Default::default());
         wr!(progress, Progress::default());
         wr!(downloads_node, None);
         wr!(scripts_node, None);
         wr!(progress_name_buf, [0; 768]);
-        wr!(progress_name_buf_dynamic, Vec::new());
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
@@ -2032,10 +1960,6 @@ pub fn init(
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
-        wr!(
-            ci_mode,
-            LazyBool::new(PackageManager::compute_is_continuous_integration)
-        );
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -2399,7 +2323,6 @@ pub(crate) fn init_with_runtime_once(
         // reads. `BackRef` stores a raw pointer —
         // ending the reborrow here does not alias the later uses.
         wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
-        wr!(cpu_count, cpu_count);
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {
@@ -2430,13 +2353,11 @@ pub(crate) fn init_with_runtime_once(
         wr!(resolve_tasks, ResolveTaskQueue::default());
         wr!(timestamp_for_manifest_cache_control, 0);
         wr!(extracted_count, 0);
-        wr!(default_features, Features::default());
         wr!(summary, Default::default());
         wr!(progress, Progress::default());
         wr!(downloads_node, None);
         wr!(scripts_node, None);
         wr!(progress_name_buf, [0; 768]);
-        wr!(progress_name_buf_dynamic, Vec::new());
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
@@ -2471,10 +2392,6 @@ pub(crate) fn init_with_runtime_once(
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
         wr!(on_wake, WakeHandler::default());
-        wr!(
-            ci_mode,
-            LazyBool::new(PackageManager::compute_is_continuous_integration)
-        );
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

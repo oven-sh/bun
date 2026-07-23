@@ -1067,7 +1067,6 @@ pub struct Formatter<'a> {
 
 impl<'a> fmt::Display for Formatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(debug_assertions)]
         debug_assert!(!self.label.is_empty());
         writer.write_str(self.label)?;
 

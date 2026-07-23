@@ -116,4 +116,31 @@ describe("AbortSignal", () => {
       signalCode: null,
     });
   });
+
+  // https://wpt.fyi/results/dom/abort/timeout.any.html "AbortSignal timeouts fire in order"
+  test("AbortSignal.timeout with equal deadlines fire in creation order", async () => {
+    const src = `
+      const order = [];
+      const done = Promise.withResolvers();
+      let remaining = 7;
+      const tick = v => { order.push(v); if (--remaining === 0) done.resolve(); };
+      for (let i = 0; i < 6; i++) {
+        const s = AbortSignal.timeout(5);
+        s.onabort = () => tick(i);
+      }
+      // setTimeout with the same delay is a reference: it already fires in
+      // creation order, and these signals should sort alongside it.
+      setTimeout(() => tick("t"), 5);
+      await done.promise;
+      console.log(JSON.stringify(order));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual([0, 1, 2, 3, 4, 5, "t"]);
+    expect(exitCode).toBe(0);
+  });
 });

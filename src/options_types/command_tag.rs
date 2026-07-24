@@ -177,7 +177,10 @@ const _: () = {
     let mut i = 0;
     while i < Tag::COUNT {
         let c = Tag::ALL[i].char() as usize;
-        assert!(!seen[c], "Tag::char() collision: two subcommands share a byte");
+        assert!(
+            !seen[c],
+            "Tag::char() collision: two subcommands share a byte"
+        );
         seen[c] = true;
         i += 1;
     }

@@ -151,4 +151,40 @@ describe("url.fileURLToPath", () => {
       assert.strictEqual(fromURL, path);
     }
   });
+
+  test("options.windows forces Windows or POSIX semantics regardless of host OS", () => {
+    // {windows: true} — Windows path semantics
+    assert.strictEqual(url.fileURLToPath("file:///C:/x", { windows: true }), "C:\\x");
+    assert.strictEqual(url.fileURLToPath("file:///C:/foo/bar", { windows: true }), "C:\\foo\\bar");
+    assert.strictEqual(url.fileURLToPath(new URL("file:///C:/foo%20bar"), { windows: true }), "C:\\foo bar");
+    // UNC path from hostname
+    assert.strictEqual(url.fileURLToPath("file://host/s/x", { windows: true }), "\\\\host\\s\\x");
+    assert.strictEqual(
+      url.fileURLToPath("file://nas/My%20Docs/File.doc", { windows: true }),
+      "\\\\nas\\My Docs\\File.doc",
+    );
+    // file://localhost/... normalizes to empty hostname, so still a local drive path
+    assert.strictEqual(url.fileURLToPath("file://localhost/C:/x", { windows: true }), "C:\\x");
+    // Encoded \\ or / rejected under Windows semantics
+    assert.throws(() => url.fileURLToPath("file:///C:/a%5Cb", { windows: true }), {
+      code: "ERR_INVALID_FILE_URL_PATH",
+    });
+    assert.throws(() => url.fileURLToPath("file:///C:/a%2Fb", { windows: true }), {
+      code: "ERR_INVALID_FILE_URL_PATH",
+    });
+    // No drive letter under Windows semantics
+    assert.throws(() => url.fileURLToPath("file:///foo", { windows: true }), { code: "ERR_INVALID_FILE_URL_PATH" });
+
+    // {windows: false} — POSIX path semantics
+    assert.strictEqual(url.fileURLToPath("file:///foo/bar", { windows: false }), "/foo/bar");
+    assert.strictEqual(url.fileURLToPath("file:///C:/x", { windows: false }), "/C:/x");
+    // Hostname rejected under POSIX semantics
+    assert.throws(() => url.fileURLToPath("file://host/a", { windows: false }), { code: "ERR_INVALID_FILE_URL_HOST" });
+    // Encoded / rejected under POSIX semantics, encoded \ is allowed
+    assert.throws(() => url.fileURLToPath("file:///a%2Fb", { windows: false }), { code: "ERR_INVALID_FILE_URL_PATH" });
+    assert.strictEqual(url.fileURLToPath("file:///a%5Cb", { windows: false }), "/a\\b");
+
+    // options.windows === undefined falls back to the host platform
+    assert.strictEqual(url.fileURLToPath("file:///C:/x", { windows: undefined }), isWindows ? "C:\\x" : "/C:/x");
+  });
 });

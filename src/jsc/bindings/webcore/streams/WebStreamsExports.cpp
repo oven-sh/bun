@@ -118,6 +118,12 @@ extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadable
     return stream && stream->m_disturbed;
 }
 
+extern "C" bool ReadableStream__isNativeSourceConsumed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    return stream && stream->nativeSourceConsumed();
+}
+
 extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));

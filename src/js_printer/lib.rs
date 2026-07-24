@@ -7679,6 +7679,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.binary_expression_stack = Vec::new();
 
+    for directive in tree.directives.slice() {
+        printer.print_indent();
+        printer.print_string_literal_utf8(directive.slice(), false);
+        printer.print(b";");
+        printer.print_newline();
+    }
+
     if !printer.options.bundling
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm

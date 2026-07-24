@@ -628,6 +628,7 @@ impl<'a> Parser<'a> {
             exports_kind,
             WrapMode::None,
             b"",
+            bun_ast::StoreSlice::EMPTY,
         )?))
     }
 }
@@ -896,6 +897,38 @@ impl<'a> Parser<'a> {
                 import_bindings,
             )));
         }
+
+        // Strip the leading directive prologue from `stmts` and record it on
+        // the AST so the printer / linker can emit it ahead of auto-injected
+        // parts (JSX runtime import, runtime helpers, `before`-hoisted imports).
+        // https://github.com/oven-sh/bun/issues/6854
+        let mut prologue_len = 0usize;
+        for stmt in stmts.iter() {
+            if matches!(stmt.data, js_ast::StmtData::SDirective(_)) {
+                prologue_len += 1;
+            } else {
+                break;
+            }
+        }
+        let directives: bun_ast::StoreSlice<bun_ast::StoreStr> = if prologue_len == 0 {
+            bun_ast::StoreSlice::EMPTY
+        } else {
+            let mut list = BumpVec::<bun_ast::StoreStr>::with_capacity_in(prologue_len, p.arena);
+            for stmt in stmts[..prologue_len].iter() {
+                let js_ast::StmtData::SDirective(d) = &stmt.data else {
+                    unreachable!()
+                };
+                if !list.iter().any(|e| e.slice() == d.value.slice()) {
+                    list.push(d.value);
+                }
+            }
+            bun_ast::StoreSlice::from_bump(list)
+        };
+        let stmts: &'a mut [Stmt] = if prologue_len > 0 {
+            &mut stmts[prologue_len..]
+        } else {
+            stmts
+        };
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
@@ -2170,7 +2203,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang, directives)?;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

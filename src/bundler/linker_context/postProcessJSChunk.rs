@@ -412,12 +412,25 @@ pub(crate) fn post_process_js_chunk(
 
     // Add the top-level directive if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode)
-    if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
-
-        if flags.contains(crate::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
-            j.push_static(b"\"use strict\";\n");
-            line_offset.advance(b"\"use strict\";\n");
+    if chunk.is_entry_point() {
+        let directives =
+            c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
+        let newline: &[u8] = if c.options.minify_whitespace {
+            b""
+        } else {
+            b"\n"
+        };
+        for directive in directives.slice() {
+            if directive.slice() == b"use strict" && output_format.is_always_strict_mode() {
+                continue;
+            }
+            let mut quoted = MutableString::default();
+            bun_core::quote_for_json(directive.slice(), &mut quoted, false)?;
+            quoted.append_slice(b";")?;
+            quoted.append_slice(newline)?;
+            let quoted = quoted.take_slice().into_boxed_slice();
+            line_offset.advance(&quoted);
+            j.push_owned(quoted);
             newline_before_comment = true;
         }
     }

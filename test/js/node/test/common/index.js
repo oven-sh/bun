@@ -133,9 +133,11 @@ if (process.argv.length === 2 &&
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--no-warnings" && process.versions.bun) {
-        // Harmless under Bun; keep scanning so a later --expose-internals (or
-        // --expose-gc) in the same Flags line still installs its shim instead
-        // of re-spawning the test as a child process.
+        // Keep scanning so a later --expose-internals / --expose-gc in the
+        // same Flags line still installs its shim in-process. Bun's onWarning
+        // printer installs lazily on the first emitWarning and honors Node's
+        // process.noProcessWarnings alias read at that point, so set it here.
+        process.noProcessWarnings = true;
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
@@ -846,8 +848,10 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
+const hasInspector = Boolean(process.features.inspector);
+
 function skipIfInspectorDisabled() {
-  if (!process.features.inspector) {
+  if (!hasInspector) {
     skip('V8 inspector is disabled');
   }
 }
@@ -1174,6 +1178,7 @@ const common = {
   printSkipMessage,
   pwdCommand,
   requireNoPackageJSONAbove,
+  hasInspector,
   runWithInvalidFD,
   skip,
   skipIf32Bits,

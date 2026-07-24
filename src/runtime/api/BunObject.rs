@@ -719,18 +719,6 @@ pub(crate) fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     Ok(ret)
 }
 
-// HOST_EXPORT(Bun__inspect, c)
-pub fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
-    // very stable memory address
-    let mut array: Vec<u8> = Vec::new();
-
-    let mut formatter = ConsoleObject::Formatter::new(global_this);
-    if write!(&mut array, "{}", value.to_fmt(&mut formatter)).is_err() {
-        return BunString::empty();
-    }
-    BunString::clone_utf8(&array)
-}
-
 // HOST_EXPORT(Bun__inspect_singleline, c)
 pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();

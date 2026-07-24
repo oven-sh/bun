@@ -257,7 +257,55 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message);
 }
 
-extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+// `Bun.inspect` with `single_line` + `quote_strings` — the same renderer
+// JSBuffer uses to inline a value into an error message; it renders objects
+// on one line ("Received { abc: 123 }") the way Node does.
+extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSValue value);
+
+// Mirrors the escaping util.inspect applies inside quoted strings: named
+// escapes for common control characters, \xNN for the rest, and the active
+// quote character. Bun.inspect can't be used here: it double-quotes strings
+// while Node's messages use util.inspect's single-quote preference.
+template<typename CharType>
+static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, char quote)
+{
+    switch (c) {
+    case '\b':
+        builder.append("\\b"_s);
+        return;
+    case '\t':
+        builder.append("\\t"_s);
+        return;
+    case '\n':
+        builder.append("\\n"_s);
+        return;
+    case '\f':
+        builder.append("\\f"_s);
+        return;
+    case '\r':
+        builder.append("\\r"_s);
+        return;
+    case '\\':
+        builder.append("\\\\"_s);
+        return;
+    default:
+        if (c == static_cast<CharType>(quote)) {
+            builder.append('\\');
+            builder.append(quote);
+            return;
+        }
+        // Node escapes C0 (0x00-0x1F), DEL, and the C1 range (0x80-0x9F);
+        // its meta table runs through index 0x9F.
+        if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
+            static constexpr char hex[] = "0123456789abcdef";
+            builder.append("\\x"_s);
+            builder.append(hex[(c >> 4) & 0xf]);
+            builder.append(hex[c & 0xf]);
+            return;
+        }
+        builder.append(c);
+    }
+}
 
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
@@ -276,34 +324,16 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         auto str = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         if (quotesLikeInspect) {
-            if (str->contains('\'')) {
-                builder.append('"');
-                if (str->is8Bit()) {
-                    const auto span = str->span<Latin1Character>();
-                    for (const auto c : span) {
-                        if (c == '"') {
-                            builder.append("\\\""_s);
-                        } else {
-                            builder.append(c);
-                        }
-                    }
-                } else {
-                    const auto span = str->span<char16_t>();
-                    for (const auto c : span) {
-                        if (c == '"') {
-                            builder.append("\\\""_s);
-                        } else {
-                            builder.append(c);
-                        }
-                    }
-                }
-                builder.append('"');
-                return;
+            const char quote = str->contains('\'') ? '"' : '\'';
+            builder.append(quote);
+            if (str->is8Bit()) {
+                for (const auto c : str->span<Latin1Character>())
+                    appendEscapedQuotedChar(builder, c, quote);
+            } else {
+                for (const auto c : str->span<char16_t>())
+                    appendEscapedQuotedChar(builder, c, quote);
             }
-
-            builder.append('\'');
-            builder.append(str);
-            builder.append('\'');
+            builder.append(quote);
             return;
         }
         builder.append(str);
@@ -338,9 +368,8 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
     }
 
-    auto bstring = Bun__inspect(globalObject, arg);
-    auto&& str = bstring.transferToWTFString();
-    builder.append(str);
+    // Node renders objects inline in error messages ("Received { abc: 123 }").
+    builder.append(Bun__inspect_singleline(globalObject, arg).transferToWTFString());
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
@@ -803,6 +832,19 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto arg_name = jsString->view(globalObject);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
     auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
+    throwScope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, std::span<const WTF::ASCIILiteral> expected_types, JSC::JSValue val_actual_value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::MarkedArgumentBuffer types;
+    for (const auto& type : expected_types)
+        types.append(JSC::jsString(vm, WTF::String(type)));
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, JSC::ArgList(types), val_actual_value);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     throwScope.release();

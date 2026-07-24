@@ -111,6 +111,7 @@
 #include <wtf/threads/BinarySemaphore.h>
 
 #include "ZigGlobalObject.h"
+#include "JSEnvironmentVariableMap.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
 #include "JSX509Certificate.h"
@@ -2879,7 +2880,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // like a plain object from JS's perspective (matches Node.js).
             // ObjectPrototype is allowed because %Object.prototype% is an immutable
             // prototype exotic object that the spec carves out of this rejection.
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info())
+            // process.env is also allowed: Node.js supports
+            // structuredClone(process.env) and yields a plain object.
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

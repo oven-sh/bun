@@ -146,6 +146,30 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
+/// Called by the CJS evaluator (JSCommonJSModule.cpp) at most once, for the
+/// root CommonJS module (`m_id == "."`). Records on the VM when that module is
+/// the entry point, so the run command can report a top-level throw with
+/// origin `uncaughtException` (Node's CJS-runner semantics) instead of
+/// `unhandledRejection`. The `main()` comparison stays because an ESM entry
+/// that `import`s a CJS file also gets `m_id == "."` (requireMap was still
+/// empty), and that must not set `evaluated_as_cjs`.
+// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
+pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
+    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
+        return;
+    }
+    let global = this.global();
+    // A failed conversion just skips the note; must never panic at an FFI
+    // boundary.
+    let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
+        return;
+    };
+    let specifier_str = bun_core::OwnedString::new(specifier_str);
+    if specifier_str.eql_utf8(this.main()) {
+        this.entry_point_result.evaluated_as_cjs = true;
+    }
+}
+
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to
 /// the next tick on the event loop.
 // HOST_EXPORT(Bun__closeChildIPC, c)

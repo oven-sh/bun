@@ -70,6 +70,42 @@ pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
+/// `--redirect-warnings=<path>` value, if set. Returns false when unset.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
+    let Some(path) = crate::cli::Bun__Node__RedirectWarnings.get() else {
+        return false;
+    };
+    // SAFETY: out is a valid out-param provided by the C++ caller.
+    unsafe { *out = bun_core::String::clone_utf8(path) };
+    true
+}
+
+/// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided
+/// buffers. Returns the number of entries. `bufs`/`lens` may be null when
+/// `cap == 0` to query the count. Entries borrow the CLI-owned Vec (never
+/// mutated after argument parsing).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
+    bufs: *mut *const u8,
+    lens: *mut usize,
+    cap: usize,
+) -> usize {
+    let Some(disabled) = crate::cli::Bun__Node__DisabledWarnings.get() else {
+        return 0;
+    };
+    let n = disabled.len().min(cap);
+    for (i, entry) in disabled.iter().take(n).enumerate() {
+        // SAFETY: caller provides `cap`-sized arrays; entries live for the
+        // process (write-once at CLI parse, never freed).
+        unsafe {
+            *bufs.add(i) = entry.as_ptr();
+            *lens.add(i) = entry.len();
+        }
+    }
+    disabled.len()
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
@@ -155,7 +191,13 @@ mod _impl {
     #[unsafe(export_name = "Bun__Process__getTitle")]
     pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
-        let str_ = guard.as_deref().unwrap_or(b"bun");
+        // Node's default process.title is argv[0] as invoked
+        // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
+        let argv = bun_core::argv();
+        let str_ = guard
+            .as_deref()
+            .or_else(|| argv.get(0).map(|z| z.as_bytes()))
+            .unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
         unsafe {
             *title = BunString::clone_utf8(str_);

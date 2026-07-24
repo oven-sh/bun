@@ -35,7 +35,11 @@ it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;
 
-  if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
+  // process.title defaults to argv[0] as invoked, matching Node
+  // (uv_get_process_title semantics), so it is the executable path here.
+  if (!isNode && process.platform !== "win32" && typeof process.title !== "string")
+    throw new Error("process.title is not a string");
+  if (!isNode && process.platform !== "win32" && process.title.length === 0) throw new Error("process.title is empty");
 
   if (process.platform !== "win32" && typeof process.env.USER !== "string")
     throw new Error("process.env is not an object");
@@ -100,6 +104,197 @@ it("process.title with UTF-16 characters", () => {
 
   process.title = "bun";
   expect(process.title).toBe("bun");
+});
+
+it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {
+  using dir = tempDir("load-env-accessors", {
+    ".env": "HTTP_PROXY=http://from-dotenv:8080\nEMPTY_WINS=from-dotenv\nFRESH_KEY=fresh\n",
+    "index.js": `
+      process.loadEnvFile();
+      // HTTP_PROXY always exists on process.env as a custom accessor even
+      // when the variable is unset; loadEnvFile must still apply it.
+      console.log(process.env.HTTP_PROXY);
+      // An existing empty-string value takes precedence over the file.
+      console.log(JSON.stringify(process.env.EMPTY_WINS));
+      console.log(process.env.FRESH_KEY);
+    `,
+  });
+
+  const env = { ...bunEnv, EMPTY_WINS: "" };
+  delete env.HTTP_PROXY;
+  delete env.http_proxy;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: 'http://from-dotenv:8080\n""\nfresh\n', exitCode: 0 });
+});
+
+it("process.env defineProperty matches assignment semantics", () => {
+  // Node's EnvDefiner delegates to the env setter after validating the
+  // descriptor: symbol keys throw a TypeError...
+  expect(() =>
+    Object.defineProperty(process.env, Symbol("env"), {
+      value: "x",
+      configurable: true,
+      writable: true,
+      enumerable: true,
+    }),
+  ).toThrow(TypeError);
+
+  // ...a data descriptor without a [[Value]] is rejected...
+  expect(() =>
+    Object.defineProperty(process.env, "NO_VALUE_DESCRIPTOR", {
+      configurable: true,
+      writable: true,
+      enumerable: true,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+    }),
+  );
+  expect(process.env.NO_VALUE_DESCRIPTOR).toBeUndefined();
+
+  // ...and empty variable names are silently ignored
+  // (https://github.com/nodejs/node/issues/32920).
+  Object.defineProperty(process.env, "", {
+    value: "empty",
+    configurable: true,
+    writable: true,
+    enumerable: true,
+  });
+  expect(process.env[""]).toBeUndefined();
+});
+
+it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
+  // Node does not intercept TZ in workers (only RealEnvStore::Set calls
+  // DateTimeConfigurationChangeNotification, and every worker env is a
+  // MapKVStore). WTF::setTimeZoneOverride is process-global, so without the
+  // isMainThread gate a worker write would flip the main thread's zone.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.env.TZ = "America/New_York";
+        const mainBefore = new Date("2024-07-15T12:00:00Z").getHours();
+        const { Worker } = require("node:worker_threads");
+        const results = [];
+        function probe(env, label) {
+          return new Promise((res, rej) => {
+            const w = new Worker(
+              \`process.env.TZ = "Asia/Tokyo";
+                delete process.env.TZ;
+                process.env.TZ = "Europe/London";
+                require("node:worker_threads").parentPort.postMessage(0);\`,
+              { eval: true, env },
+            );
+            w.once("message", () => {
+              results.push([label, new Date("2024-07-15T12:00:00Z").getHours() === mainBefore]);
+              w.terminate().then(res, rej);
+            });
+            w.once("error", rej);
+          });
+        }
+        Promise.all([probe({ TZ: "UTC" }, "snapshot"), probe(undefined, "default")])
+          .then(() => console.log(JSON.stringify({ mainBefore, results: results.sort() })))
+          .catch(e => { console.error(e); process.exit(1); });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: {
+      mainBefore: 8,
+      results: [
+        ["default", true],
+        ["snapshot", true],
+      ],
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
+  // new Worker(file, { env: {...} }) seeds process.env from a snapshot dict;
+  // writes inside the worker must still coerce to string, reject symbol keys,
+  // and reject accessor descriptors like Node's EnvSetter/EnvDefiner (Node
+  // installs those interceptors on the env ObjectTemplate regardless of the
+  // backing KVStore).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          \`
+          const out = {};
+          process.env.X = 42;
+          out.coerced = process.env.X;
+          try { process.env[Symbol()] = "v"; out.symbol = "no-throw"; }
+          catch (e) { out.symbol = e instanceof TypeError ? "TypeError" : String(e); }
+          try { Object.defineProperty(process.env, "G", { get() {} }); out.accessor = "no-throw"; }
+          catch (e) { out.accessor = e.code || String(e); }
+          out.seeded = process.env.SEEDED;
+          require("node:worker_threads").parentPort.postMessage(out);
+          \`,
+          { eval: true, env: { SEEDED: "yes" } },
+        );
+        w.once("message", m => console.log(JSON.stringify(m)));
+        w.once("error", e => { console.error(e); process.exit(1); });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { coerced: "42", symbol: "TypeError", accessor: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", seeded: "yes" },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("process.env defineProperty routes through the env setter for accessor-backed keys", async () => {
+  // Node's EnvDefiner delegates to EnvSetter, so defineProperty(env, "TZ", ...)
+  // must both apply the time zone and leave the native TZ accessor intact for
+  // later plain assignments (a data-descriptor define would destroy it).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const d = new Date("2024-01-15T12:00:00Z");
+       process.env.TZ = "UTC";
+       const utc = d.getHours();
+       Object.defineProperty(process.env, "TZ", {
+         value: "America/New_York",
+         writable: true,
+         enumerable: true,
+         configurable: true,
+       });
+       const ny = d.getHours();
+       process.env.TZ = "UTC";
+       console.log(JSON.stringify([utc, ny, d.getHours()]));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [utc, ny, utcAgain] = JSON.parse(stdout);
+  // New York is UTC-5 in January.
+  expect({ ny, utcAgain, exitCode }).toEqual({ ny: (utc + 24 - 5) % 24, utcAgain: utc, exitCode: 0 });
 });
 
 it("process.chdir() on root dir", () => {
@@ -229,6 +424,54 @@ it("process.env is spreadable and editable", () => {
   eval(`globalThis.process.env.USER = 'bun';`);
   expect(eval(`globalThis.process.env.USER`)).toBe("bun");
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
+});
+
+it("process.env reads are never stale after a write (JIT inline-cache soundness)", async () => {
+  // process.env only sets OverridesPut (not ProhibitsPropertyCaching), so
+  // reads hit the ordinary self-access IC. This test verifies that writes
+  // through the overridden put() still invalidate that IC: same-key Replace,
+  // delete-then-set, and a hot read loop that FTL constant-folds before a
+  // single write. Spawned so the subprocess gets its own tier-up.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const env = process.env;
+        const N = 100000;
+        for (let i = 0; i < N; i++) {
+          const expected = "v" + i;
+          env.PROBE_KEY = expected;
+          if (env.PROBE_KEY !== expected) throw new Error("same-key stale at " + i + ": " + env.PROBE_KEY);
+        }
+        env.PROBE_KEY = 42;
+        if (env.PROBE_KEY !== "42") throw new Error("coerce: " + env.PROBE_KEY);
+        env.HOT = "initial";
+        let sink = "";
+        for (let i = 0; i < 2 * N; i++) sink = env.HOT;
+        if (sink !== "initial") throw new Error("hot warmup: " + sink);
+        env.HOT = "changed";
+        if (env.HOT !== "changed") throw new Error("hot post-write: " + env.HOT);
+        const key = "PROBE_BYVAL";
+        for (let i = 0; i < 2000; i++) {
+          env[key] = "b" + i;
+          if (env[key] !== "b" + i) throw new Error("by-val stale at " + i);
+          delete env[key];
+          if (env[key] !== undefined) throw new Error("by-val delete stale at " + i);
+        }
+        console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
@@ -362,6 +605,9 @@ it("process.config", () => {
   expect(process.config.variables.clang).toBeNumber();
   expect(process.config.variables.host_arch).toBeDefined();
   expect(process.config.variables.target_arch).toBeDefined();
+  // Bun does not parse NODE_OPTIONS, so it reports the --without-node-options
+  // value; upstream tests use this key to skip NODE_OPTIONS-dependent cases.
+  expect(process.config.variables.node_without_node_options).toBe(true);
 });
 
 it("process.execArgv", () => {
@@ -1000,16 +1246,29 @@ describe.concurrent(() => {
     });
   });
 
+  // _rawDebug is not listed: it is a real implementation now (it writes a
+  // formatted line to fd 2); its coverage lives in the vendored
+  // test-process-raw-debug.js.
   const undefinedStubs = [
     "_debugEnd",
     "_debugProcess",
-    "_fatalException",
     "_linkedBinding",
-    "_rawDebug",
     "_startProfilerIdleNotifier",
     "_stopProfilerIdleNotifier",
     "_tickCallback",
   ];
+
+  it("process._fatalException", async () => {
+    // Returns whether an uncaughtException handler claimed the error
+    // (Node semantics), so it is a boolean rather than undefined.
+    await runInlineFixture(
+      `console.log(process._fatalException(new Error("nobody listening")));
+       process.on("uncaughtException", () => {});
+       console.log(process._fatalException(new Error("handled")));`,
+      "false\ntrue\n",
+      0,
+    );
+  });
 
   for (const stub of undefinedStubs) {
     it(`process.${stub}`, () => {
@@ -1026,7 +1285,6 @@ describe.concurrent(() => {
   }
 
   const emptyObjectStubs = [];
-  const emptySetStubs = ["allowedNodeEnvironmentFlags"];
   const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
 
   for (const stub of emptyObjectStubs) {
@@ -1035,12 +1293,25 @@ describe.concurrent(() => {
     });
   }
 
-  for (const stub of emptySetStubs) {
-    it(`process.${stub}`, () => {
-      expect(process[stub]).toBeInstanceOf(Set);
-      expect(process[stub].size).toBe(0);
-    });
-  }
+  it("process.allowedNodeEnvironmentFlags", () => {
+    // A real, frozen Set with Node's normalizing has() — no longer an empty
+    // stub.
+    const flags = process.allowedNodeEnvironmentFlags;
+    expect(flags).toBeInstanceOf(Set);
+    expect(flags.size).toBeGreaterThan(0);
+    expect(flags.has("--require")).toBe(true);
+    expect(flags.has("require")).toBe(true);
+    expect(flags.has("--no_warnings")).toBe(true);
+    expect(flags.has("--require=./foo.js")).toBe(true);
+    expect(flags.has("--not-a-real-flag")).toBe(false);
+    flags.add("--not-a-real-flag");
+    expect(flags.has("--not-a-real-flag")).toBe(false);
+    // Node freezes the prototype and constructor too; the vendored upstream
+    // test only asserts on the instance.
+    expect(Object.isFrozen(flags)).toBe(true);
+    expect(Object.isFrozen(Object.getPrototypeOf(flags))).toBe(true);
+    expect(Object.isFrozen(Object.getPrototypeOf(flags).constructor)).toBe(true);
+  });
 
   for (const stub of emptyArrayStubs) {
     it(`process.${stub}`, () => {
@@ -1566,6 +1837,17 @@ describe("process.exitCode", () => {
       6,
     );
   });
+
+  it("exitWithDeletedFatalException", async () => {
+    await runInlineFixture(
+      `
+      delete process._fatalException;
+      throw new Error('ok');
+    `,
+      "",
+      6,
+    );
+  });
 });
 
 it("process._exiting", () => {
@@ -1679,6 +1961,299 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const child = spawnSync({ cmd, env });
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
+});
+
+it("delete process.env.TZ invalidates existing Date instances", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const d = new Date("2024-01-15T12:00:00Z");
+       process.env.TZ = "America/New_York";
+       const ny = d.getHours();
+       delete process.env.TZ;
+       const afterDelete = d.getHours();
+       const has = "TZ" in process.env;
+       // set-after-delete must still fire the timezone side effect: Node's
+       // RealEnvStore::Set name-matches TZ on every write, not via a
+       // once-installed accessor.
+       process.env.TZ = "America/New_York";
+       const afterReSet = d.getHours();
+       console.log(JSON.stringify({ ny, afterDelete, has, afterReSet }));`,
+    ],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // NY is UTC-5 in January; after delete the override is cleared so getHours
+  // reverts to the UTC start value (12) and the property is gone.
+  expect({ ...JSON.parse(stdout), exitCode }).toEqual({
+    ny: 7,
+    afterDelete: 12,
+    has: false,
+    afterReSet: 7,
+    exitCode: 0,
+  });
+});
+
+it("process.traceDeprecation set at runtime prints a stack", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.traceDeprecation = true;
+       process.emitWarning("hi", "DeprecationWarning");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/DeprecationWarning: hi\n\s+at /);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+});
+
+it("--trace-deprecation seeds process.traceDeprecation", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--trace-deprecation", "-e", `console.log(process.traceDeprecation === true)`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("true");
+  expect(exitCode).toBe(0);
+});
+
+// Node seeds these via addReadOnlyProcessAlias (writable:false, configurable
+// and enumerable:true), so a later assignment is silently ignored in sloppy
+// mode. Verified against node v26.3.0.
+it.each([
+  ["--no-deprecation", "noDeprecation"],
+  ["--throw-deprecation", "throwDeprecation"],
+  ["--trace-deprecation", "traceDeprecation"],
+  ["--trace-warnings", "traceProcessWarnings"],
+  ["--pending-deprecation", "pendingDeprecation"],
+  ["--no-warnings", "noProcessWarnings"],
+])("%s seeds process.%s as a read-only alias", async (flag, prop) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      flag,
+      "-e",
+      // -e is ESM, so the rejected write throws TypeError rather than no-opping
+      // as it would in sloppy CJS; either way the seeded value must survive.
+      `const k = ${JSON.stringify(prop)};
+       const d = Object.getOwnPropertyDescriptor(process, k);
+       let threw = false;
+       try { process[k] = false; } catch { threw = true; }
+       console.log(JSON.stringify({ d, afterWrite: process[k], threw }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    d: { value: true, writable: false, enumerable: true, configurable: true },
+    afterWrite: true,
+    threw: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("removeAllListeners('warning') silences the default print", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.emitWarning("first");
+       process.nextTick(() => {
+         process.removeAllListeners("warning");
+         process.emitWarning("second");
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(/Warning: first/);
+  expect(stderr).not.toMatch(/Warning: second/);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+});
+
+it("--disable-warning suppresses print but not user 'warning' listeners", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--disable-warning=TESTCODE",
+      "-e",
+      `process.on("warning", w => console.log("listener:" + w.code));
+       process.emitWarning("hi", { code: "TESTCODE" });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("listener:TESTCODE");
+  expect(stderr).not.toMatch(/TESTCODE/);
+  expect(exitCode).toBe(0);
+});
+
+it("_rawDebug never throws when fd 2 is closed", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("node:fs").closeSync(2);
+       process._rawDebug("x");
+       console.log("ok");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows || process.getuid?.() === 0)(
+  "process.initgroups passes an unknown string user straight to initgroups(3)",
+  () => {
+    // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
+    // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
+    let err;
+    try {
+      process.initgroups("zz_no_user_zz", 0);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("EPERM");
+    expect(err?.syscall).toBe("initgroups");
+  },
+);
+
+it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through passwd", () => {
+  // Numeric users go through getpwuid_r first, so an unknown uid surfaces
+  // ERR_UNKNOWN_CREDENTIAL before the privileged initgroups(3) call — runs
+  // fine as non-root.
+  let err;
+  try {
+    process.initgroups(0x7ffffffe, 0);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("ERR_UNKNOWN_CREDENTIAL");
+  expect(err?.message).toContain("User identifier does not exist: 2147483646");
+});
+
+it("process.finalization.register does not validate that fn is a function", async () => {
+  // Node only validates the ref (obj); a non-callable fn is stored and only
+  // fails at exit time. Run in a subprocess so registration doesn't leak into
+  // this process's exit path.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const obj = {};
+       let threw = false;
+       try { process.finalization.register(obj, 123); } catch { threw = true; }
+       console.log(JSON.stringify({ threw }));
+       process.finalization.unregister(obj);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: stdout.trim(), exitCode }).toEqual({ out: '{"threw":false}', exitCode: 0 });
+});
+
+it("process.finalization exit listener is appended, not prepended", async () => {
+  // Node's install() uses process.on: a user exit listener added before the
+  // first register() fires before the finalization callback.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      // register() holds the target only weakly, so anchor it on globalThis:
+      // an unreferenced literal can be collected before `exit` fires, which
+      // drops the finalization callback and fakes an ordering regression.
+      `const order = [];
+       globalThis.__target = {};
+       process.on("exit", () => order.push("user"));
+       process.finalization.register(globalThis.__target, () => order.push("finalization"));
+       process.on("exit", () => console.log(JSON.stringify(order)));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: '["user","finalization"]',
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.each([false, true])("emitWarning does not read .stack unless tracing (--trace-warnings=%p)", async trace => {
+  // Reading .stack materializes the lazy trace and can run user
+  // Error.prepareStackTrace; Node's onWarning short-circuits
+  // `if (trace && warning.stack)`.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      ...(trace ? ["--trace-warnings"] : []),
+      "-e",
+      `let hits = 0;
+       const err = new Error("hello");
+       err.name = "Warning";
+       Object.defineProperty(err, "stack", { get() { hits++; return "Warning: hello\\n    at fake"; } });
+       process.on("warning", () => process.nextTick(() => console.log("hits:" + hits)));
+       process.emitWarning(err);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(trace ? "hits:2" : "hits:0");
+  if (trace) expect(stderr).toContain("at fake");
+  expect(exitCode).toBe(0);
+});
+
+it("process.throwDeprecation is per-Worker, not process-global", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("node:worker_threads");
+       const w = new Worker(
+         'process.throwDeprecation = true; require("node:worker_threads").parentPort.postMessage("set");',
+         { eval: true },
+       );
+       await new Promise((res, rej) => { w.on("message", res); w.on("error", rej); });
+       await w.terminate();
+       // Main-thread emit should still print, not throw.
+       let uncaught = false;
+       process.on("uncaughtException", () => { uncaught = true; });
+       process.emitWarning("hi", "DeprecationWarning");
+       await new Promise(r => setImmediate(() => setImmediate(r)));
+       console.log(JSON.stringify({ uncaught, throwDep: process.throwDeprecation }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"uncaught":false}');
+  expect(stderr).toContain("DeprecationWarning: hi");
+  expect(exitCode).toBe(0);
 });
 
 describe("NODE_NO_WARNINGS", () => {

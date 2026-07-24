@@ -490,6 +490,10 @@ export const exposedInternals = {
       getValidStdio: nodeGetValidStdio,
     });
   },
+  // translatePeerCertificate lives in node:_tls_common in Bun; upstream keeps
+  // the implementation in internal/tls/common and re-exports it from
+  // _tls_common, which is where node's tests import it from.
+  "internal/tls/common": require("internal/tls/common"),
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

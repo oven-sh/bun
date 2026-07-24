@@ -17,15 +17,17 @@ test("it will create a snapshot file if it doesn't exist", () => {
 // https://github.com/oven-sh/bun/issues/3521
 test("property matchers do not mutate the received object", () => {
   const date = new Date(0);
-  const obj = { id: 42, when: date, nested: { name: "abc" } };
+  const obj = { id: 42, when: date, nested: { name: "abc" }, list: [1, "two", 3] };
   expect(obj).toMatchSnapshot({
     id: expect.any(Number),
     when: expect.any(Date),
     nested: { name: expect.any(String) },
+    list: [1, expect.any(String), 3],
   });
   expect(obj.id).toBe(42);
   expect(obj.when).toBe(date);
   expect(obj.nested.name).toBe("abc");
+  expect(obj.list).toEqual([1, "two", 3]);
 });
 
 test("property matchers preserve class name and handle shared references", () => {

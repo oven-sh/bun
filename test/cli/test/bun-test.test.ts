@@ -1639,14 +1639,17 @@ describe.concurrent("test file discovery (scanner)", () => {
   // https://github.com/oven-sh/bun/issues/3833
   test.skipIf(!isLinux)("scanning for test files closes directory fds before tests run", async () => {
     const files: Record<string, string> = {};
-    const N = 200;
+    const N = 64;
     for (let i = 0; i < N; i++) {
       files[`sub${i}/a.test.ts`] = `import { test } from "bun:test"; test("x", () => {});`;
+      files[`sub${i}/mod.ts`] = `export const x = ${i};`;
     }
     files["sub0/probe.test.ts"] = `
       import { test } from "bun:test";
       import { readdirSync, readlinkSync } from "node:fs";
       test("probe", () => {
+        // Make the resolver visit every subdir too, not just the scanner.
+        for (let i = 0; i < ${N}; i++) require("../sub" + i + "/mod.ts");
         const root = process.env.PROBE_ROOT;
         let n = 0;
         for (const fd of readdirSync("/proc/self/fd")) {
@@ -1669,12 +1672,11 @@ describe.concurrent("test file discovery (scanner)", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const m = stdout.match(/OPEN_SUBDIR_FDS=(\d+)/);
-    expect(m).not.toBeNull();
-    const open = Number(m![1]);
-    // Before #3833 was fixed this reported N (one fd per scanned subdirectory).
-    expect(open).toBeLessThan(5);
     expect(stderr).toContain(" 1 pass");
+    expect(stdout).toContain("OPEN_SUBDIR_FDS=");
+    // Before #3833 was fixed the scanner left N subdirectory fds open; the
+    // resolver parked the same again when loading mod.ts from each one.
+    expect(Number(stdout.match(/OPEN_SUBDIR_FDS=(\d+)/)![1])).toBeLessThan(5);
     expect(exitCode).toBe(0);
   });
 });

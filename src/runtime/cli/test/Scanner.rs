@@ -9,7 +9,6 @@ use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
-use bun_sys::Fd;
 
 declare_scope!(jest, hidden);
 
@@ -63,7 +62,7 @@ impl PartialEq<crate::Error> for ScanError {
 #[repr(transparent)]
 struct ScannerDirIter<'a>(*mut Scanner<'a>);
 impl<'a> DirEntryIterator for ScannerDirIter<'a> {
-    fn next(&self, entry: &mut fs::Entry, _fd: Fd) {
+    fn next(&self, entry: &mut fs::Entry) {
         // SAFETY: `self.0` is `&mut Scanner` for the duration of
         // `read_directory_with_iterator`; no other live `&mut` alias exists
         // while the resolver walks entries.

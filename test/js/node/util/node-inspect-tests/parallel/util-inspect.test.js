@@ -591,14 +591,7 @@ test("no assertion failures 2", () => {
   // Exceptions should print the error message, not '{}'.
   {
     [new Error(), new Error("FAIL"), new TypeError("FAIL"), new SyntaxError("FAIL")].forEach(err => {
-      assert(
-        //! temp bug workaround with replace()'s
-        util.inspect(err).startsWith(err.stack.replace(/^Error: /, err.message ? "$&" : "Error")),
-        `Expected "${util.inspect(err)}" to start with "${err.stack.replace(
-          /^Error: /,
-          err.message ? "$&" : "Error",
-        )}"`,
-      );
+      assert.strictEqual(util.inspect(err), err.stack);
     });
 
     assert.throws(
@@ -1854,11 +1847,10 @@ test("no assertion failures 3", () => {
   ].forEach(([Class, message], i) => {
     const foo = new Class(message);
     const extra = Class.name.includes("Error") ? "" : ` [${foo.name}]`;
-    // TODO: Bun messes with `Error.stack` and this causes this to fail
-    // assert(
-    //   util.inspect(foo).startsWith(`${Class.name}${extra}${message ? `: ${message}` : "\n"}`),
-    //   util.inspect(foo) + "\n...did not start with: " + `${Class.name}${extra}${message ? `: ${message}` : "\n"}`,
-    // );
+    assert(
+      util.inspect(foo).startsWith(`${Class.name}${extra}${message ? `: ${message}` : "\n"}`),
+      util.inspect(foo) + "\n...did not start with: " + `${Class.name}${extra}${message ? `: ${message}` : "\n"}`,
+    );
     Object.defineProperty(foo, Symbol.toStringTag, {
       value: "WOW",
       writable: true,
@@ -1871,11 +1863,10 @@ test("no assertion failures 3", () => {
       `Expected to start with: "[This is a stack]"\nFound: "${util.inspect(foo)}"`,
     );
     foo.stack = stack;
-    // TODO: Bun messes with `Error.stack` and this causes this to fail
-    // assert(
-    //   util.inspect(foo).startsWith(`${Class.name} [WOW]${extra}${message ? `: ${message}` : "\n"}`),
-    //   util.inspect(foo),
-    // );
+    assert(
+      util.inspect(foo).startsWith(`${Class.name} [WOW]${extra}${message ? `: ${message}` : "\n"}`),
+      util.inspect(foo),
+    );
     Object.setPrototypeOf(foo, null);
     assert(
       util.inspect(foo).startsWith(
@@ -3186,6 +3177,164 @@ test("no assertion failures 3", () => {
       }),
       "{ Symbol(Symbol.iterator): [Getter] }",
     );
+  }
+});
+
+test("error inspect preserves stack header when name/message change after materialization", () => {
+  // Bun's native .stack already emits `${name}${message ? ": " + message : ""}` as the first line,
+  // so formatError must not rewrite it. These headers match Node's output for the same inputs.
+  const firstLine = e => util.inspect(e).split("\n")[0];
+
+  // message cleared after .stack was materialized: header is preserved verbatim
+  {
+    const err = new Error("msg");
+    void err.stack;
+    err.message = "";
+    assert.strictEqual(firstLine(err), "Error: msg");
+  }
+  {
+    const err = new Error("Error: nested");
+    void err.stack;
+    err.message = "";
+    assert.strictEqual(firstLine(err), "Error: Error: nested");
+  }
+
+  // user-assigned stack starting with "Error: " on an empty-message Error is preserved
+  {
+    const err = new Error();
+    err.stack = "Error: manually set\n    at foo";
+    assert.strictEqual(firstLine(err), "Error: manually set");
+  }
+
+  // name changed after .stack was materialized: header is not rewritten to the new name
+  {
+    const err = new Error("x");
+    void err.stack;
+    err.name = "Renamed";
+    assert.strictEqual(firstLine(err), "Error: x");
+  }
+
+  // native header is correct for subclassed errors and empty-message errors
+  {
+    class Foo extends Error {
+      name = "Foo";
+    }
+    const err = new Foo("x");
+    assert.strictEqual(err.stack.split("\n")[0], "Foo: x");
+    assert.strictEqual(firstLine(err), "Foo: x");
+  }
+  {
+    const err = new Error();
+    assert.strictEqual(err.stack.split("\n")[0], "Error");
+    assert.strictEqual(firstLine(err), "Error");
+  }
+});
+
+test("error stack header reads name/message via full [[Get]]", () => {
+  // V8 composes the .stack header with ErrorUtils::ToString: ordinary [[Get]] on "name"
+  // and "message" (prototype walk, accessors, ToString). Each expected value matches Node.
+  const header = e => e.stack.split("\n")[0];
+  const inspected = e => util.inspect(e).split("\n")[0];
+
+  // name on an intermediate prototype (2+ levels deep)
+  {
+    class Bar extends Error {}
+    class Foo extends Bar {}
+    Bar.prototype.name = "Bar";
+    const err = new Foo("x");
+    assert.strictEqual(header(err), "Bar: x");
+    assert.strictEqual(inspected(err), "Bar: x");
+  }
+
+  // name defined as an accessor
+  {
+    class G extends Error {
+      get name() {
+        return "G";
+      }
+    }
+    const err = new G("m");
+    assert.strictEqual(header(err), "G: m");
+    assert.strictEqual(inspected(err), "G: m");
+  }
+
+  // non-primitive name coerces via ToString
+  {
+    const err = new Error("m");
+    err.name = { toString: () => "O" };
+    assert.strictEqual(header(err), "O: m");
+  }
+
+  // message defined as an accessor / on an intermediate prototype
+  {
+    class M extends Error {
+      get message() {
+        return "acc-msg";
+      }
+    }
+    assert.strictEqual(header(new M()), "Error: acc-msg");
+  }
+  {
+    class A extends Error {}
+    class B extends A {}
+    A.prototype.message = "deep";
+    assert.strictEqual(header(new B()), "Error: deep");
+  }
+
+  // undefined name defaults to "Error"; null name stringifies
+  {
+    const e1 = new Error("m");
+    e1.name = undefined;
+    assert.strictEqual(header(e1), "Error: m");
+    const e2 = new Error("m");
+    e2.name = null;
+    assert.strictEqual(header(e2), "null: m");
+  }
+
+  // a name getter that throws propagates out of the .stack read
+  {
+    class T extends Error {
+      get name() {
+        throw new TypeError("name-boom");
+      }
+    }
+    assert.throws(() => new T("m").stack, /name-boom/);
+  }
+
+  // the Error.prepareStackTrace default string uses the same header
+  {
+    const saved = Error.prepareStackTrace;
+    try {
+      Error.prepareStackTrace = (e, s) => e.stack;
+      class Foo extends Error {
+        name = "Foo";
+      }
+      assert.strictEqual(header(new Foo("x")), "Foo: x");
+      assert.strictEqual(inspected(new Foo("x")), "Foo: x");
+    } finally {
+      Error.prepareStackTrace = saved;
+    }
+  }
+
+  // a name/message getter that calls Error.captureStackTrace(this) does not recurse unboundedly
+  {
+    let count = 0;
+    class M extends Error {
+      get message() {
+        count++;
+        Error.captureStackTrace(this);
+        return "m";
+      }
+    }
+    assert.strictEqual(header(new M()), "Error: m");
+    assert.strictEqual(count, 1);
+  }
+
+  // Error.captureStackTrace on a non-Error target uses its name and message
+  {
+    const target = { name: "X", message: "Y" };
+    Error.captureStackTrace(target);
+    assert.strictEqual(target.stack.split("\n")[0], "X: Y");
   }
 });
 

@@ -209,6 +209,25 @@ describe("Bun.serve() cookies", () => {
       ]
     `);
   });
+  test("set cookie to an empty value", async () => {
+    const res = await fetch(server.url + "/tester", {
+      method: "POST",
+      body: JSON.stringify([["test", ""]]),
+    });
+    expect(res.status).toBe(200);
+    // The handler's view of the cookie must match the Set-Cookie header the client receives.
+    const body = await res.json();
+    expect(body).toMatchInlineSnapshot(`
+      {
+        "test": "",
+      }
+    `);
+    expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
+      [
+        "test=; Path=/; SameSite=Lax",
+      ]
+    `);
+  });
   test("request with cookies", async () => {
     const res = await fetch(server.url + "/tester", {
       method: "POST",
@@ -394,6 +413,22 @@ test("delete cookie invalid path option", () => {
   expect(() => map.delete("\n", {})).toThrowErrorMatchingInlineSnapshot(
     `"Invalid cookie name: contains invalid characters"`,
   );
+});
+test("a delete that throws leaves the cookie in the map", () => {
+  const map = new Bun.CookieMap("a=1; b=2");
+  expect(() => map.delete("a", { path: "\n" })).toThrow("Invalid cookie path: contains invalid characters");
+  expect(() => map.delete("a", { domain: "\n" })).toThrow("Invalid cookie domain: contains invalid characters");
+  // Dropping "a" without emitting an expiring Set-Cookie would desync the map from the client.
+  expect({ has: map.has("a"), get: map.get("a"), size: map.size, entries: [...map] }).toEqual({
+    has: true,
+    get: "1",
+    size: 2,
+    entries: [
+      ["a", "1"],
+      ["b", "2"],
+    ],
+  });
+  expect(map.toSetCookieHeaders()).toEqual([]);
 });
 
 describe("Bun.CookieMap constructor", () => {

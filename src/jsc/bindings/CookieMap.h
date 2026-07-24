@@ -31,8 +31,7 @@ public:
     static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
-    Vector<KeyValuePair<String, String>> getAll() const;
-    Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
+    Vector<Ref<Cookie>> getAllChanges() const;
 
     bool has(const String& name) const;
 
@@ -62,13 +61,20 @@ public:
 
 private:
     CookieMap();
-    CookieMap(Vector<Ref<Cookie>>&& cookies);
     CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
+
+    // A removal is the expired cookie remove() synthesizes: it is written to Set-Cookie
+    // but is absent from the map. An empty value cannot mark one, because set(name, "")
+    // stores a real cookie whose value happens to be empty.
+    struct ModifiedCookie {
+        Ref<Cookie> cookie;
+        bool isRemoval { false };
+    };
 
     void removeInternal(const String& name);
 
     Vector<KeyValuePair<String, String>> m_originalCookies;
-    Vector<Ref<Cookie>> m_modifiedCookies;
+    Vector<ModifiedCookie> m_modifiedCookies;
 };
 
 } // namespace WebCore

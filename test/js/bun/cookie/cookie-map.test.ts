@@ -455,6 +455,85 @@ describe("delete with prefixed cookie names", () => {
   });
 });
 
+describe("cookies with an empty value", () => {
+  test("set() with an empty value stores a cookie the map can see", () => {
+    const map = new Bun.CookieMap();
+    map.set("k", "");
+    expect({ has: map.has("k"), get: map.get("k"), size: map.size, entries: [...map] }).toEqual({
+      has: true,
+      get: "",
+      size: 1,
+      entries: [["k", ""]],
+    });
+    expect(map.toJSON()).toEqual({ k: "" });
+    expect(map.toSetCookieHeaders()).toEqual(["k=; Path=/; SameSite=Lax"]);
+  });
+
+  test("an empty value set from a Cookie object is visible", () => {
+    const map = new Bun.CookieMap();
+    map.set(new Bun.Cookie("k", ""));
+    expect({ has: map.has("k"), get: map.get("k"), size: map.size }).toEqual({ has: true, get: "", size: 1 });
+  });
+
+  test("an empty value set from an init object is visible", () => {
+    const map = new Bun.CookieMap();
+    map.set({ name: "k", value: "" });
+    expect({ has: map.has("k"), get: map.get("k"), size: map.size }).toEqual({ has: true, get: "", size: 1 });
+  });
+
+  test("set() with an empty value matches the same cookie parsed from the Cookie header", () => {
+    const fromWire = new Bun.CookieMap("k=");
+    const fromSet = new Bun.CookieMap();
+    fromSet.set("k", "");
+    expect({ has: fromSet.has("k"), get: fromSet.get("k"), size: fromSet.size, entries: [...fromSet] }).toEqual({
+      has: fromWire.has("k"),
+      get: fromWire.get("k"),
+      size: fromWire.size,
+      entries: [...fromWire],
+    });
+  });
+
+  test("delete() still hides the cookie and emits an expiring header", () => {
+    const map = new Bun.CookieMap("k=v");
+    map.delete("k");
+    expect({ has: map.has("k"), get: map.get("k"), size: map.size, entries: [...map] }).toEqual({
+      has: false,
+      get: null,
+      size: 0,
+      entries: [],
+    });
+    expect(map.toJSON()).toEqual({});
+    expect(map.toSetCookieHeaders()).toEqual(["k=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+  });
+
+  test("set() with an empty value after delete() brings the cookie back", () => {
+    const map = new Bun.CookieMap("k=v");
+    map.delete("k");
+    map.set("k", "");
+    expect({ has: map.has("k"), get: map.get("k"), size: map.size }).toEqual({ has: true, get: "", size: 1 });
+    expect(map.toSetCookieHeaders()).toEqual(["k=; Path=/; SameSite=Lax"]);
+  });
+
+  test("delete() after set() with an empty value removes the cookie", () => {
+    const map = new Bun.CookieMap();
+    map.set("k", "");
+    map.delete("k");
+    expect({ has: map.has("k"), get: map.get("k"), size: map.size }).toEqual({ has: false, get: null, size: 0 });
+    expect(map.toSetCookieHeaders()).toEqual(["k=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"]);
+  });
+
+  test("a deleted cookie is skipped while an empty-valued one is kept during iteration", () => {
+    const map = new Bun.CookieMap("keep=1; drop=2");
+    map.set("empty", "");
+    map.delete("drop");
+    expect([...map]).toEqual([
+      ["empty", ""],
+      ["keep", "1"],
+    ]);
+    expect(map.size).toBe(2);
+  });
+});
+
 describe("invalid delete usage", () => {
   test("invalid usage does not crash", () => {
     expect(() => {

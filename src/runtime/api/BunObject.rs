@@ -864,6 +864,11 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             if strings::ends_with(vm.main(), b"[stdin]") {
                 break 'use_resolved_path;
             }
+            if let Some(eval_source) = vm.module_loader.eval_source.as_deref() {
+                if vm.main() == eval_source.path.text {
+                    break 'use_resolved_path;
+                }
+            }
 
             let Ok(fd) = sys::openat_a(
                 if cfg!(windows) {

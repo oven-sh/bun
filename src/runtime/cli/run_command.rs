@@ -2851,14 +2851,15 @@ impl RunCommand {
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+        let st = match bun_sys::fstat(fd) {
+            Ok(st) => st,
             Err(_) => {
                 let _ = bun_sys::close(fd);
                 return false;
             }
         };
-        if is_dir {
+        let mode = st.st_mode as bun_core::Mode;
+        if bun_sys::S::ISDIR(mode) {
             let _ = bun_sys::close(fd);
             return false;
         }
@@ -2867,6 +2868,41 @@ impl RunCommand {
             long_running: true,
             ..Default::default()
         });
+
+        // A pipe/socket/char-device entry point (e.g. `bun <(echo ...)` opens
+        // `/dev/fd/N`) cannot be re-opened from its canonical path:
+        // `get_fd_path` yields `pipe:[inode]` on Linux and fails outright on
+        // macOS. Read it now from the open fd and serve it as the
+        // `eval_source`, booting with the path as given so `process.argv[1]`
+        // and `__filename` reflect what the user typed.
+        if !bun_sys::S::ISREG(mode) {
+            let mut contents: Vec<u8> = Vec::new();
+            if bun_sys::File::from_fd(fd)
+                .read_to_end_into(&mut contents)
+                .is_err()
+            {
+                return false;
+            }
+            ctx.runtime_options.eval.script = contents.into_boxed_slice();
+            let absolute_script_path: Box<[u8]> = if paths::is_absolute(target) {
+                script_name_buf[..open_len].to_vec().into_boxed_slice()
+            } else {
+                let mut cwd_buf = PathBuffer::uninit();
+                let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+                    return false;
+                };
+                let cwd_len = cwd.as_bytes().len();
+                cwd_buf[cwd_len] = paths::SEP;
+                paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                    &cwd_buf[..cwd_len + 1],
+                    &mut script_name_buf.0,
+                    &[target],
+                )
+                .to_vec()
+                .into_boxed_slice()
+            };
+            return Self::_boot_and_handle_error(ctx, &absolute_script_path, None);
+        }
 
         // Re-derive the canonical absolute path from the open fd (resolves
         // symlinks).

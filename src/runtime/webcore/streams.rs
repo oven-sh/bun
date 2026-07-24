@@ -2038,7 +2038,13 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
+// Two intrusive-rc owners: the `JSNetworkSink` wrapper (`m_sinkPtr`) and
+// `MultiPartUpload.callback_context`; each `deref()`s exactly once. `deinit`
+// releases the sink's counted ref on the task before freeing.
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct NetworkSink {
+    pub ref_count: core::cell::Cell<u32>,
     // Stored as `BackRef`
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
@@ -2057,6 +2063,7 @@ pub struct NetworkSink {
 impl Default for NetworkSink {
     fn default() -> Self {
         Self {
+            ref_count: core::cell::Cell::new(1),
             task: None,
             signal: Signal::default(),
             global_this: None,
@@ -2132,10 +2139,21 @@ impl NetworkSink {
     }
 
     pub fn finalize(&mut self) {
-        self.detach_writable();
+        // SAFETY: `&mut self` carries write provenance over the whole
+        // allocation; this is the last use of `self`.
+        unsafe { NetworkSink::deref(core::ptr::from_mut::<Self>(self)) };
     }
 
-    fn detach_writable(&mut self) {
+    /// Runs once when the refcount hits zero. `Drop for MultiPartUpload` does
+    /// not enter JS, so this is safe when reached from a GC-sweep `finalize`.
+    unsafe fn deinit(this: *mut Self) {
+        // SAFETY: caller contract — sole owner of a heap-allocated `Self`.
+        unsafe { &mut *this }.detach_writable();
+        // SAFETY: `this` was allocated via `heap::into_raw` in `writable_stream`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+
+    pub fn detach_writable(&mut self) {
         if let Some(task) = self.task.take() {
             // task is ref-counted; deref releases our ref
             bun_s3::MultiPartUpload::deref_(task.as_ptr());
@@ -2202,7 +2220,7 @@ impl NetworkSink {
         self.done = true;
         self.signal.close(None);
         self.cancel = true;
-        self.finalize();
+        self.detach_writable();
     }
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {

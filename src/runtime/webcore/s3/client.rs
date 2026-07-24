@@ -431,6 +431,15 @@ pub(crate) fn writable_stream(
 ) -> JsResult<JSValue> {
     // Local callback wrapper
     fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsTerminatedResult<()> {
+        // Release the sink's +1 on the task (so `poll_ref` unrefs synchronously)
+        // and `callback_context`'s +1 on the sink, even on `JsTerminated` below.
+        let _teardown = scopeguard::guard(core::ptr::from_mut(sink), |s| {
+            // SAFETY: `s` is the heap-allocated `callback_context`, still live
+            // for the duration of this callback; last use here.
+            unsafe { &mut *s }.detach_writable();
+            // SAFETY: releases `callback_context`'s +1.
+            unsafe { NetworkSink::deref(s) };
+        });
         // `global_this` is a `BackRef` set at construction; copy it so the
         // re-borrow does not hold `&sink` across the `&mut sink` calls below.
         let global = sink
@@ -467,7 +476,6 @@ pub(crate) fn writable_stream(
                 }
             }
         }
-        sink.finalize();
         Ok(())
     }
 
@@ -537,6 +545,7 @@ pub(crate) fn writable_stream(
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
+            ref_count: core::cell::Cell::new(2), // +1 for callback_context
             task: NonNull::new(task_ptr).map(bun_ptr::BackRef::from),
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             high_water_mark: part_size as BlobSizeType,

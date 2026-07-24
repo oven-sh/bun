@@ -270,19 +270,20 @@ UV_EXTERN void Bun__uv_handle_dispatch(uv_handle_t* handle)
     if (handle->type != UV_ASYNC)
         return;
     uv_async_t* async = (uv_async_t*)handle;
-    // Reset before the callback so a send inside the callback schedules again,
-    // matching libuv's uv__async_io.
-    int pending = __atomic_exchange_n(&async->pending, 0, __ATOMIC_SEQ_CST);
-    if (pending == BUN_UV_ASYNC_CLOSING || (handle->flags & BUN_UV_HANDLE_CLOSING)) {
-        // uv_close ran; this is the deferred close. Release the loop ref it
-        // held (or took) so the process can exit once the close callback
-        // returns.
+    if (handle->flags & BUN_UV_HANDLE_CLOSING) {
+        // uv_close ran; this is the deferred close. Leave pending non-zero so
+        // a racing uv_async_send cannot schedule a second task behind the
+        // close callback. Release the loop ref uv_close held (or took) so the
+        // process can exit once the close callback returns.
         handle->flags |= BUN_UV_HANDLE_CLOSED;
         Bun__uv_handle_ref(handle->loop, -1);
         if (handle->close_cb != NULL)
             handle->close_cb(handle);
         return;
     }
+    // Reset before the callback so a send inside the callback schedules again,
+    // matching libuv's uv__async_io.
+    __atomic_store_n(&async->pending, 0, __ATOMIC_SEQ_CST);
     if (async->async_cb != NULL)
         async->async_cb(async);
 }

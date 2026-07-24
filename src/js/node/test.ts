@@ -513,6 +513,9 @@ function reportAbortedFile(
     testNumber: ordinal,
     details: { ...details, passed: false },
   });
+  // node emits start between the completion and the verdict here (observed
+  // v26.3.0 sequence: enqueue, dequeue, complete, start, fail).
+  reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
   reporter.emitMessage("test:fail", {
     __proto__: null,
     ...fileNode,

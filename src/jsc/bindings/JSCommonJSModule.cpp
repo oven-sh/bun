@@ -971,6 +971,7 @@ void populateESMExports(
 {
     auto& vm = JSC::getVM(globalObject);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
+    const Identifier moduleExportsIdentifier = Identifier::fromString(vm, "module.exports"_s);
 
     // Bun's interpretation of the "__esModule" annotation:
     //
@@ -1023,8 +1024,8 @@ void populateESMExports(
         auto* structure = exports->structure();
 
         uint32_t size = structure->inlineSize() + structure->outOfLineSize();
-        exportNames.reserveCapacity(size + 2);
-        exportValues.ensureCapacity(size + 2);
+        exportNames.reserveCapacity(size + 3);
+        exportValues.ensureCapacity(size + 3);
 
         CLEAR_IF_EXCEPTION(scope);
 
@@ -1032,7 +1033,7 @@ void populateESMExports(
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker)
+                    if (key->isSymbol() || key == esModuleMarker || key == moduleExportsIdentifier)
                         return true;
 
                     needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
@@ -1052,7 +1053,7 @@ void populateESMExports(
                 }
 
                 for (auto property : properties) {
-                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
+                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property == moduleExportsIdentifier || property.isPrivateName() || property.isSymbol()) [[unlikely]]
                         continue;
 
                     // ignore constructor
@@ -1092,7 +1093,7 @@ void populateESMExports(
         } else if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
-                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
+                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword || key == moduleExportsIdentifier)
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -1110,7 +1111,7 @@ void populateESMExports(
             }
 
             for (auto property : properties) {
-                if (property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()) [[unlikely]]
+                if (property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property == moduleExportsIdentifier || property.isPrivateName() || property.isSymbol()) [[unlikely]]
                     continue;
 
                 // ignore constructor
@@ -1150,6 +1151,12 @@ void populateESMExports(
         exportNames.append(vm.propertyNames->defaultKeyword);
         exportValues.append(result);
     }
+
+    // Node.js >= 22 always exposes the raw `module.exports` value as a string-named
+    // export, overriding an own property of the exports object with that literal name.
+    // https://nodejs.org/api/esm.html#commonjs-namespaces
+    exportNames.append(moduleExportsIdentifier);
+    exportValues.append(result);
 }
 
 void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -295,6 +295,67 @@ describe.concurrent("node-module-module", () => {
   });
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
+  });
+
+  // https://nodejs.org/api/esm.html#commonjs-namespaces
+  test("importing a cjs module exposes the 'module.exports' named export", async () => {
+    using dir = tempDir("cjs-module-exports-named-export", {
+      "named.cjs": `exports.a = 1;\nexports.b = 2;\n`,
+      "object.cjs": `module.exports = { hello: "world" };\n`,
+      "primitive.cjs": `module.exports = 42;\n`,
+      "esmodule-flag.cjs": `module.exports = { __esModule: true, default: "unwrapped", x: 1 };\n`,
+      "collision.cjs": `module.exports = { a: 1, "module.exports": "shadow" };\n`,
+      "star-reexport.mjs": `export * from "./named.cjs";\nexport const extra = 99;\n`,
+      "main.mjs": `
+        import assert from "node:assert";
+        import { "module.exports" as staticModuleExports } from "./object.cjs";
+        import objectDefault, * as objectNs from "./object.cjs";
+        import * as namedNs from "./named.cjs";
+        import * as primitiveNs from "./primitive.cjs";
+        import * as flaggedNs from "./esmodule-flag.cjs";
+        import * as collisionNs from "./collision.cjs";
+        import * as starNs from "./star-reexport.mjs";
+
+        // The static string-named import binding resolves, and it is the raw exports object.
+        assert.deepStrictEqual(staticModuleExports, { hello: "world" });
+        assert.strictEqual(staticModuleExports, objectNs["module.exports"]);
+        assert.strictEqual(objectNs["module.exports"], objectDefault);
+
+        // It sits alongside the real named exports, in lexicographic order.
+        assert.deepStrictEqual(Object.keys(namedNs), ["a", "b", "default", "module.exports"]);
+        assert.strictEqual(namedNs["module.exports"], namedNs.default);
+        assert.strictEqual(namedNs["module.exports"].a, 1);
+
+        // Present even when module.exports is not an object.
+        assert.deepStrictEqual(Object.keys(primitiveNs), ["default", "module.exports"]);
+        assert.strictEqual(primitiveNs["module.exports"], 42);
+        assert.strictEqual(primitiveNs.default, 42);
+
+        // "module.exports" is the raw exports object regardless of __esModule interop.
+        assert.deepStrictEqual(flaggedNs["module.exports"], { __esModule: true, default: "unwrapped", x: 1 });
+
+        // An own property literally named "module.exports" is overridden, matching node.
+        assert.deepStrictEqual(Object.keys(collisionNs), ["a", "default", "module.exports"]);
+        assert.strictEqual(collisionNs["module.exports"], collisionNs.default);
+        assert.strictEqual(collisionNs.default["module.exports"], "shadow");
+
+        // export * re-exports it ("default" is the only name a star export excludes).
+        assert.deepStrictEqual(Object.keys(starNs), ["a", "b", "extra", "module.exports"]);
+        assert.strictEqual(starNs["module.exports"], namedNs["module.exports"]);
+
+        console.log("pass");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "pass\n", stderr: "", exitCode: 0 });
   });
 
   test("Module.runMain", async () => {

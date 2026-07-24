@@ -41,5 +41,12 @@ test("arraylike", () => {
     "3": 4,
     "4": [Getter],
   },
+  "module.exports": {
+    "0": 0,
+    "1": 1,
+    "2": [Getter],
+    "3": 4,
+    "4": [Getter],
+  },
 }`);
 });

@@ -294,6 +294,15 @@ pub mod raw {
             addrlen: c_int,
             flags: c_int,
         ) -> c_int;
+        /// Parse an IPv4/IPv6 literal (with optional `%zone`) into `storage`.
+        /// Returns `AF_INET`/`AF_INET6`, or 0 if `host` is not an IP literal.
+        /// SAFETY: `host` must be NUL-terminated; `storage` must point to a
+        /// `sockaddr_storage`-sized buffer.
+        pub unsafe fn bsd_parse_ip_address(
+            host: *const core::ffi::c_char,
+            port: c_int,
+            storage: *mut c_void,
+        ) -> c_int;
     }
 }
 

@@ -73,7 +73,13 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     //     exceptionSourceURL = callFrame->sourceURL();
     // }
 
-    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    // JSEventListener::handleEvent calls this synchronously from inside
+    // innerInvokeEventListeners's per-listener loop. Bun__reportUnhandledError
+    // opts into Node's fatal exit, which would process_exit(1) mid-dispatch —
+    // later listeners on the same event and code after a synchronous
+    // dispatchEvent()/AbortController.abort() would never run. Keep-alive so
+    // the dispatch loop completes, matching pre-existing behavior.
+    Bun__reportError(globalObject, JSC::JSValue::encode(JSC::JSValue(exception)));
 
     if (exceptionDetails) {
         auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);

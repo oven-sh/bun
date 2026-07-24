@@ -3474,7 +3474,7 @@ impl VirtualMachine {
             Mode::Strict => {
                 let wrapped =
                     wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
-                let _ = self.uncaught_exception(
+                let _ = self.uncaught_exception_fatal(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
@@ -3493,7 +3493,7 @@ impl VirtualMachine {
                 }
                 let wrapped =
                     wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
-                if self.uncaught_exception(
+                if self.uncaught_exception_fatal(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,

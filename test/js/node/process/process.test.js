@@ -2119,6 +2119,52 @@ it("a Bun.listen error: handler that itself throws keeps the server alive", asyn
   expect(exitCode).toBe(1);
 });
 
+it("a throwing EventTarget listener does not hard-exit mid-dispatch", async () => {
+  // WebCore::reportException is called synchronously from inside
+  // innerInvokeEventListeners's per-listener loop; routing it to the fatal
+  // exit would process_exit before later listeners and code after
+  // dispatchEvent()/abort() run.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const ac = new AbortController();
+       ac.signal.addEventListener("abort", () => { throw new Error("from-first"); });
+       ac.signal.addEventListener("abort", () => console.log("SECOND-LISTENER"));
+       ac.abort();
+       console.log("AFTER-ABORT");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim().split(/\r?\n/)).toEqual(["SECOND-LISTENER", "AFTER-ABORT"]);
+  expect(stderr).toContain("from-first");
+  expect(exitCode).toBe(1);
+});
+
+it.each(["throw", "strict"])("--unhandled-rejections=%s fatal-exits with pending work", async mode => {
+  // Mode::Throw/Strict are explicit Node-compat opt-ins. With no
+  // unhandledRejection/uncaughtException listener, Node fatal-exits 1; a
+  // keep-alive report would leave the interval ticking forever.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      `--unhandled-rejections=${mode}`,
+      "-e",
+      `setInterval(() => console.log("TICK"), 5000); Promise.reject(new Error("rejected"))`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).not.toContain("TICK");
+  expect(stderr).toContain("rejected");
+  expect(exitCode).toBe(1);
+});
+
 it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
   // Same keep-alive default as the Bun.listen handlers above, reached
   // through EventLoop::run_callback instead of the socket error path.
@@ -2129,6 +2175,7 @@ it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
         ipc(message) {
           if (message === "boom") throw new Error("ipc-boom");
           console.log("got:" + message);
+          child.send("ack");
         },
       });
       await child.exited;
@@ -2136,7 +2183,7 @@ it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
     "child.js": `
       process.send("boom");
       process.send("second");
-      setTimeout(() => process.exit(0), 200);
+      process.on("message", () => process.exit(0));
     `,
   });
   await using proc = Bun.spawn({

@@ -244,12 +244,15 @@ impl Drop for AstArena {
         let Some(mut inner) = self.0.take() else {
             return;
         };
-        // Clean, then park for the next `AstArena::new()` on this thread. Any
-        // previous occupant of the slot is dropped (`mi_heap_destroy`); if the
-        // thread is tearing down (`try_with` fails), `inner` is dropped.
+        // Clean, then park for the next `AstArena::new()` on this thread. If
+        // the slot is already occupied (nested scopes) we keep the existing
+        // occupant and drop `inner`; if the thread is tearing down
+        // (`try_with` fails), `inner` is dropped with the closure.
         inner.as_mut().reset();
         let _ = POOL.try_with(|slot| {
-            slot.set(Some(inner));
+            if let Some(prev) = slot.replace(Some(inner)) {
+                slot.set(Some(prev));
+            }
         });
     }
 }
@@ -383,9 +386,7 @@ impl AstAlloc {
     /// The `MimallocArena` node-payload storage of the installed arena.
     #[inline]
     pub fn arena(self) -> &'static MimallocArena {
-        // SAFETY: the `'static` is the same lifetime erasure `StoreRef` uses
-        // (valid until the owning `AstArena` is dropped/reset).
-        unsafe { &*ptr::from_ref(active_arena()) }
+        active_arena()
     }
 
     /// Allocate `value` in the node-payload arena and return a stable `&mut`

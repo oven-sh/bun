@@ -338,6 +338,14 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
+      // ASSERT_ENABLED is ABI-critical (it gates struct fields and inline
+      // functions in WTF/JSC), so JSC must be built with the same assertion
+      // setting bun's own compile uses — the prebuilt tarballs encode this
+      // in their name; the local build must be told. ENABLE_ASSERTS=AUTO
+      // (the default) turns assertions off for release-type builds, which
+      // mismatches an assertions/asan bun and leaves the assertion-only JSC
+      // symbols undefined at link.
+      ENABLE_ASSERTS: cfg.assertions ? "ON" : "OFF",
     };
 
     const spec: NestedCmakeBuild = {

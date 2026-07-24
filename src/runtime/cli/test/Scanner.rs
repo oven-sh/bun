@@ -206,10 +206,7 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    fn read_dir_with_name(
-        &mut self,
-        name: &[u8],
-    ) -> crate::Result<&'static mut EntriesOption> {
+    fn read_dir_with_name(&mut self, name: &[u8]) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.

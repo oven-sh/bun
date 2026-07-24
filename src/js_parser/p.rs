@@ -403,6 +403,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
+    /// Maps a named or default import's local ref to `(namespace_ref, alias)`,
+    /// where `alias` is the external name in the source module. Only
+    /// `serialize_metadata` reads it: decorator metadata can reference an
+    /// imported type alias or interface, which has no value export, so the
+    /// reference is emitted as `ns.alias` and the named binding is not kept
+    /// for the metadata alone.
+    pub(crate) import_namespace_of_item: HashMap<Ref, (Ref, js_ast::StoreStr)>,
     pub(crate) named_imports: NamedImportsType<'a>,
     pub(crate) named_exports: bun_ast::ast_result::NamedExports,
 
@@ -3754,11 +3761,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
             let path_name = fs::PathName::init(path.text);
-            let name: &'a [u8] = bun_alloc::arena_format!(
-                in self.arena,
-                "import_{}",
-                bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
-            )
+            // When decorator metadata routes through this namespace ref the
+            // name is printed as a `* as name` binding, and the transpile-only
+            // printer does not rename; two imports with the same path basename
+            // would collide. The record index disambiguates. The bundler's
+            // linker resolves metadata references directly and its renamer
+            // already deduplicates, so keep the plain form there.
+            let name: &'a [u8] = if self.options.features.emit_decorator_metadata
+                && !self.options.bundle
+            {
+                bun_alloc::arena_format!(
+                    in self.arena,
+                    "import_{}_{}",
+                    bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base()),
+                    stmt.import_record_index,
+                )
+            } else {
+                bun_alloc::arena_format!(
+                    in self.arena,
+                    "import_{}",
+                    bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
+                )
+            }
             .into_bump_str()
             .as_bytes();
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
@@ -3785,6 +3809,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.ref_ = r#ref;
                 self.is_import_item.insert(r#ref, ());
+                if self.options.features.emit_decorator_metadata && !self.options.bundle {
+                    self.import_namespace_of_item.insert(
+                        r#ref,
+                        (stmt.namespace_ref, js_ast::StoreStr::new(b"default")),
+                    );
+                }
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
@@ -3866,6 +3896,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+            if self.options.features.emit_decorator_metadata && !self.options.bundle {
+                self.import_namespace_of_item
+                    .insert(r#ref, (stmt.namespace_ref, item.alias));
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -7058,6 +7092,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MPromise => ident!(b"Promise"),
             M::MIdentifier(ref_) => {
+                if let Some(e) = self.serialize_metadata_import_item(ref_)? {
+                    return Ok(e);
+                }
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
                     self.new_expr(
@@ -7123,7 +7160,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     i -= 1;
                 }
 
-                if self.is_import_item.contains_key(&refs[0]) {
+                if let Some(root) = self.metadata_root_for_import_item(refs[0]) {
+                    *current_expr = root;
+                } else if self.is_import_item.contains_key(&refs[0]) {
                     *current_expr = self.new_expr(
                         E::ImportIdentifier {
                             ref_: refs[0],
@@ -7207,6 +7246,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root);
             }
         })
+    }
+
+    /// For a named or default import referenced from decorator metadata, build
+    /// `ns.alias` and move the use count from the item's ref to the namespace
+    /// ref. A single-file transpiler cannot know whether the import is a class
+    /// or a type-only export; keeping the named binding for a type alias makes
+    /// the module fail to link (`Export named 'X' not found`). Going through
+    /// the namespace keeps a real class reachable and lets the `typeof` guard
+    /// fall back to `Object` for a missing export.
+    fn metadata_root_for_import_item(&mut self, ref_: Ref) -> Option<Expr> {
+        let &(namespace_ref, alias) = self.import_namespace_of_item.get(&ref_)?;
+        // `find_symbol` in the type-skip path already counted this as a value
+        // use; that single use is what would keep the named binding alive.
+        self.ignore_usage(ref_);
+        self.record_usage(namespace_ref);
+        let target = self.new_expr(E::Identifier::init(namespace_ref), bun_ast::Loc::EMPTY);
+        Some(self.new_expr(
+            E::Dot {
+                target,
+                name: alias,
+                name_loc: bun_ast::Loc::EMPTY,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        ))
+    }
+
+    fn serialize_metadata_import_item(
+        &mut self,
+        ref_: Ref,
+    ) -> Result<Option<Expr>, crate::Error> {
+        let Some(dot) = self.metadata_root_for_import_item(ref_) else {
+            return Ok(None);
+        };
+        self.maybe_defined_helper(dot).map(Some)
     }
 
     #[cold]
@@ -8807,6 +8881,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
+            import_namespace_of_item: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,

@@ -567,6 +567,19 @@ impl<'a> ImportScanner<'a> {
                     p.import_records_for_current_part
                         .push(st.import_record_index);
 
+                    // `serialize_metadata` emits references to imported types as
+                    // `ns.alias` and records a use on the generated namespace ref
+                    // so a type-only export does not force a named binding that
+                    // fails at link time. Give the statement a star binding so
+                    // the printer emits `* as ns`. This runs after the
+                    // `namespace_alias` assignment above so kept named items stay
+                    // bound as themselves.
+                    if st.star_name_loc.is_empty()
+                        && p.symbols[st.namespace_ref.inner_index() as usize].use_count_estimate > 0
+                    {
+                        st.star_name_loc = stmt.loc;
+                    }
+
                     if !st.star_name_loc.is_empty() {
                         record!()
                             .flags

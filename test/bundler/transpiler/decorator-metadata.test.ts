@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("decorator metadata", () => {
   test("type serialization", () => {
@@ -542,5 +543,141 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method4")[0]).toBe(Object);
     expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
+  });
+
+  // https://github.com/oven-sh/bun/issues/6172
+  describe.concurrent("imported identifiers", () => {
+    const tsconfig = JSON.stringify({
+      compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+    });
+    const mod = `
+      export class RealClass { static readonly tag = "RealClass" }
+      export interface JustInterface { x: number }
+      export type AliasType<T> = { v: T };
+      export namespace NS { export class Inner { static readonly tag = "Inner" } }
+      export default class DefaultClass { static readonly tag = "DefaultClass" }
+    `;
+
+    async function run(files: Record<string, string>) {
+      using dir = tempDir("decorator-metadata-imports", {
+        "tsconfig.json": tsconfig,
+        "mod.ts": mod,
+        ...files,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("interface / type alias does not force a failing named import", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "index.ts": `
+          import "reflect-metadata";
+          import { JustInterface, AliasType } from "./mod";
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec a!: JustInterface;
+            @dec b!: AliasType<string>;
+          }
+          const t = (k: string) => Reflect.getMetadata("design:type", Thing.prototype, k);
+          console.log(t("a") === Object, t("b") === Object);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class import used only in metadata still resolves to the class", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "index.ts": `
+          import "reflect-metadata";
+          import DefaultClass, { RealClass, NS } from "./mod";
+          import { RealClass as Aliased } from "./mod";
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec a!: RealClass;
+            @dec b!: NS.Inner;
+            @dec c!: DefaultClass;
+            @dec d!: Aliased;
+          }
+          const t = (k: string) => (Reflect.getMetadata("design:type", Thing.prototype, k) as any).tag;
+          console.log(t("a"), t("b"), t("c"), t("d"));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("RealClass Inner DefaultClass RealClass\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("type-only import alongside a value use from the same module", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "index.ts": `
+          import "reflect-metadata";
+          import { RealClass, JustInterface } from "./mod";
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec a!: JustInterface;
+            @dec b!: RealClass;
+          }
+          new RealClass();
+          const t = (k: string) => Reflect.getMetadata("design:type", Thing.prototype, k);
+          console.log(t("a") === Object, (t("b") as any).tag);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true RealClass\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("two imports with the same path basename", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "a/mod.ts": `export class Foo { static readonly tag = "A" }`,
+        "b/mod.ts": `export class Foo { static readonly tag = "B" }`,
+        "index.ts": `
+          import "reflect-metadata";
+          import { Foo as A } from "./a/mod";
+          import { Foo as B } from "./b/mod";
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec a!: A;
+            @dec b!: B;
+          }
+          const t = (k: string) => (Reflect.getMetadata("design:type", Thing.prototype, k) as any).tag;
+          console.log(t("a"), t("b"));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("A B\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("constructor parameter types from another module", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "index.ts": `
+          import "reflect-metadata";
+          import { RealClass, JustInterface } from "./mod";
+          function dec(...args: any[]) {}
+          @dec
+          class Thing {
+            constructor(public a: RealClass, public b: JustInterface) {}
+          }
+          const types = Reflect.getMetadata("design:paramtypes", Thing);
+          console.log((types[0] as any).tag, types[1] === Object);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("RealClass true\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

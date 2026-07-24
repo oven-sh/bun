@@ -115,7 +115,11 @@ function zlibBufferSync(engine, buffer) {
     if (isAnyArrayBuffer(buffer)) {
       buffer = Buffer.from(buffer);
     } else {
-      throw $ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
+      throw $ERR_INVALID_ARG_TYPE(
+        "buffer",
+        "string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer",
+        buffer,
+      );
     }
   }
   buffer = processChunkSync(engine, buffer, engine._finishFlushFlag);

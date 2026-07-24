@@ -1147,6 +1147,31 @@ impl FileSink {
             }
             WriteResult::Err(err) => {
                 self.done.set(true);
+                if self.pending.get().state == streams::PendingState::Pending {
+                    // A backpressured write() left its promise outstanding.
+                    // Throwing here would report the failure to the caller and
+                    // then let the auto-flush/error path reject that promise a
+                    // second time — with nobody holding it when the caller
+                    // discarded write()'s return value, that second delivery
+                    // surfaces as an unhandledRejection. Deliver the error to
+                    // the pending promise instead and hand the caller the same
+                    // promise (exactly like the Pending arm), so the failure is
+                    // reported once, to whichever await is watching. The latch
+                    // and promise grab happen before `writer.end()`: its
+                    // teardown can re-enter `on_error`/`run_pending`
+                    // synchronously, and the slot must already hold the error
+                    // and this caller's promise when that runs.
+                    self.pending
+                        .with_mut(|p| p.result = streams::Writable::Err(err));
+                    // SAFETY: JsCell — `WritablePending::promise` allocates a
+                    // JSPromise (may GC) but does not invoke any FileSink
+                    // host-fn synchronously.
+                    let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise_result).to_js() });
+                }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Err(err)
             }

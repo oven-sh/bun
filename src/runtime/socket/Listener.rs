@@ -275,7 +275,7 @@ impl Listener {
                                         // reports on err.errno; the SystemErrno
                                         // ordinal differs on Windows.
                                         errno: *uv_errno,
-                                        code: bun_core::String::static_(name),
+                                        code: bun_core::String::static_(name).into(),
                                         message: bun_core::String::clone_utf8(
                                             format!(
                                                 "listen {}: {}",
@@ -283,12 +283,12 @@ impl Listener {
                                                 bstr::BStr::new(&pipe_buf[..pipe_len])
                                             )
                                             .as_bytes(),
-                                        ),
-                                        syscall: bun_core::String::static_("listen"),
-                                        fd: -1,
-                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
-                                        hostname: bun_core::String::empty(),
-                                        dest: bun_core::String::empty(),
+                                        )
+                                        .into(),
+                                        syscall: bun_core::String::static_("listen").into(),
+                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len])
+                                            .into(),
+                                        ..Default::default()
                                     };
                                     return Err(global.throw_value(err.to_error_instance(global)));
                                 }

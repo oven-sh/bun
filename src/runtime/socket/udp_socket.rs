@@ -718,13 +718,10 @@ impl UDPSocket {
                 };
                 let sys_err = SystemError {
                     errno: err,
-                    code: BunString::static_(code),
-                    message,
-                    path: BunString::empty(),
-                    syscall: BunString::static_(syscall),
-                    hostname: BunString::empty(),
-                    fd: c_int::MIN,
-                    dest: BunString::empty(),
+                    code: BunString::static_(code).into(),
+                    message: message.into(),
+                    syscall: BunString::static_(syscall).into(),
+                    ..Default::default()
                 };
                 let error_value = sys_err.to_error_instance(global_this);
                 if !is_fd {

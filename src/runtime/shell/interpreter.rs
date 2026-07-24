@@ -634,7 +634,7 @@ impl Interpreter {
     /// not bumping `standalone_shell` analytics.
     pub fn init_and_run_from_file(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
@@ -651,7 +651,7 @@ impl Interpreter {
     /// without a diagnostic.
     pub fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -665,7 +665,7 @@ impl Interpreter {
     /// the two entrypoints.
     fn init_and_run_impl(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,

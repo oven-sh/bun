@@ -583,12 +583,13 @@ impl BlobExt for Blob {
                             // `t`, so build the SystemError (cloning the path
                             // out of `t.blob.store`) before the call.
                             let err = bun_jsc::SystemError {
-                                code: BunString::clone_utf8(e.code),
-                                message: BunString::clone_utf8(e.message),
+                                code: BunString::clone_utf8(e.code).into(),
+                                message: BunString::clone_utf8(e.message).into(),
                                 path: BunString::clone_utf8(
                                     t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
-                                ),
-                                syscall: BunString::static_("fetch"),
+                                )
+                                .into(),
+                                syscall: BunString::static_("fetch").into(),
                                 ..Default::default()
                             };
                             t.done(ReadBytesResult::Err(Box::new(err)));

@@ -813,7 +813,7 @@ impl UDPSocket {
         event_loop.enter();
         let result = callback.call(global_this, this_value, &[err.to_error().unwrap_or(err)]);
         if let Err(e) = result {
-            global_this.report_active_exception_as_unhandled(e);
+            global_this.report_active_exception_keep_alive(e);
         }
         event_loop.exit();
     }

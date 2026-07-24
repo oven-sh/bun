@@ -90,7 +90,7 @@ impl Handler {
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[error_value])
-                .map_err(|err| self.global_object.report_active_exception_as_unhandled(err));
+                .map_err(|err| self.global_object.report_active_exception_keep_alive(err));
             return;
         }
 

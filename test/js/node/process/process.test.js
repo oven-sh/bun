@@ -2076,3 +2076,45 @@ it("a throwing Bun.listen data handler with no error: handler keeps the server a
   // reported (exit code 1), but only after the loop drained naturally.
   expect(exitCode).toBe(1);
 });
+
+it("a Bun.listen error: handler that itself throws keeps the server alive", async () => {
+  // The sibling branch of the case above: the user supplied an error: handler
+  // and that handler threw. Same print-and-continue contract.
+  using dir = tempDir("bun-listen-error-handler-throw", {
+    "server.js": `
+      let hits = 0;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {},
+          data(socket) {
+            socket.end();
+            console.log("DATA-HANDLER-RAN:" + ++hits);
+            if (hits === 2) server.stop(true);
+            throw new Error("from-data");
+          },
+          error() { throw new Error("from-error-handler"); },
+        },
+      });
+      for (let i = 0; i < 2; i++) {
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open(s) { s.write("x"); }, data() {}, close() {} },
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim().split(/\r?\n/)).toEqual(["DATA-HANDLER-RAN:1", "DATA-HANDLER-RAN:2"]);
+  expect(stderr).toContain("from-error-handler");
+  expect(exitCode).toBe(1);
+});

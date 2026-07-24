@@ -300,7 +300,7 @@ impl Handlers {
         }
 
         if let Err(e) = on_error.call(&global_object, this_value, args) {
-            global_object.report_active_exception_as_unhandled(e);
+            global_object.report_active_exception_keep_alive(e);
         }
 
         true

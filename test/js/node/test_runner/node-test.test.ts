@@ -4,21 +4,32 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
-  test("should run basic tests", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+  // These three drive the largest fixtures (01-harness has 32 node:test cases);
+  // a debug+ASAN `bun test` child takes several seconds to start, so give them
+  // headroom and let them spawn in parallel instead of serially.
+  test.concurrent(
+    "should run basic tests",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
 
-  test("should run hooks in the right order", async () => {
-    const { exitCode, stderr } = await runTests(["02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
-  });
+  test.concurrent(
+    "should run hooks in the right order",
+    async () => {
+      const { exitCode, stderr } = await runTests(["02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
 
   test("should run tests with different variations", async () => {
     const { exitCode, stderr } = await runTests(["03-test-variations.js"]);
@@ -36,14 +47,18 @@ describe("node:test", () => {
     });
   });
 
-  test("should run all tests from multiple files", async () => {
-    const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      // 32 from 01-harness + 3 from 02-hooks
-      stderr: expect.stringContaining("35 pass"),
-    });
-  });
+  test.concurrent(
+    "should run all tests from multiple files",
+    async () => {
+      const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        // 32 from 01-harness + 3 from 02-hooks
+        stderr: expect.stringContaining("35 pass"),
+      });
+    },
+    30_000,
+  );
 
   test("should run test() and describe() called inside another test() as subtests", async () => {
     const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);

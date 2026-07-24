@@ -48,7 +48,8 @@ class Response extends WebResponse {
     }
 
     super(body, init);
-    if (init && typeof init.url === "string") this[kUrl] = init.url;
+    const initUrl = init?.url;
+    if (typeof initUrl === "string") this[kUrl] = initUrl;
   }
 
   get url() {
@@ -165,8 +166,9 @@ function fetchWithAgent(url, init, counter) {
       reject(new TypeError(`Only absolute URLs are supported. Received: ${url}`));
       return;
     }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      reject(new TypeError(`Only HTTP(S) protocols are supported. Received: ${parsed.protocol}`));
+    const protocol = parsed.protocol;
+    if (protocol !== "http:" && protocol !== "https:") {
+      reject(new TypeError(`Only HTTP(S) protocols are supported. Received: ${protocol}`));
       return;
     }
 
@@ -216,7 +218,7 @@ function fetchWithAgent(url, init, counter) {
     }
 
     const requestOpts = {
-      protocol: parsed.protocol,
+      protocol,
       hostname: parsed.hostname,
       port: parsed.port,
       path: parsed.pathname + parsed.search,
@@ -225,7 +227,7 @@ function fetchWithAgent(url, init, counter) {
       agent,
     };
 
-    const send = parsed.protocol === "https:" ? https.request : http.request;
+    const send = protocol === "https:" ? https.request : http.request;
     const req = send(requestOpts);
     let settled = false;
 
@@ -301,7 +303,7 @@ function fetchWithAgent(url, init, counter) {
           const nextHeaders = new Headers(init.headers || undefined);
           const nextInit: any = { ...init, counter: counter + 1, headers: nextHeaders };
           const nextURL = new URL(locationURL);
-          if (nextURL.hostname !== parsed.hostname || nextURL.protocol !== parsed.protocol) {
+          if (nextURL.hostname !== parsed.hostname || nextURL.protocol !== protocol) {
             for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) nextHeaders.delete(name);
           }
           if (status === 303 || ((status === 301 || status === 302) && method === "POST")) {

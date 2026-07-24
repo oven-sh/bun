@@ -1271,6 +1271,9 @@ impl TaskContext for FilesContext {
                     blob.last_modified.set((entry.mtime * 1000) as f64);
 
                     let name_js = blob.name.get().to_js(global)?;
+                    // `name` / `lastModified` live on File.prototype; `to_js`
+                    // keys on `is_jsdom_file` (set above) to pick the File
+                    // structure.
                     let blob_js = blob.to_js(global);
                     // SAFETY: map_ptr came from JSMap::from_js on a live value.
                     unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;

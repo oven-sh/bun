@@ -153,7 +153,10 @@ export default [
       storable: true,
     },
     estimatedSize: true,
-    values: ["stream"],
+    // `name` is a cached WriteBarrier on the instance even though the
+    // accessor lives on File.prototype (JSDOMFile.cpp), so that
+    // `Bun.file()` / `new File()` can cache their name string.
+    values: ["stream", "name"],
     overridesToJS: true,
     proto: {
       text: { fn: "getText", async: true },
@@ -176,20 +179,8 @@ export default [
         getter: "getType",
       },
 
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      name: {
-        this: true,
-        cache: true,
-        getter: "getName",
-        setter: "setName",
-      },
-
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      lastModified: {
-        getter: "getLastModified",
-      },
+      // `name` and `lastModified` live on File.prototype (JSDOMFile.cpp),
+      // not here — https://github.com/oven-sh/bun/issues/20700
 
       // Non-standard, s3 + BunFile support
       unlink: { fn: "doUnlink", length: 0 },

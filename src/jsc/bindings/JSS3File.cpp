@@ -144,7 +144,9 @@ JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    JSC::JSObject* superPrototype = defaultGlobalObject(globalObject)->JSBlobPrototype();
+    // S3File.prototype -> File.prototype -> Blob.prototype, so that
+    // `name` / `lastModified` (which live on File.prototype) are reachable.
+    JSC::JSObject* superPrototype = defaultGlobalObject(globalObject)->JSDOMFileStructure()->storedPrototypeObject();
     auto* protoStructure = JSS3FilePrototype::createStructure(vm, globalObject, superPrototype);
     auto* prototype = JSS3FilePrototype::create(vm, globalObject, protoStructure);
     return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);

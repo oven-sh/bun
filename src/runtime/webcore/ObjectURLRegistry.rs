@@ -80,7 +80,10 @@ impl ObjectURLRegistry {
     ) -> Option<JSValue> {
         let blob = Blob::new(self.resolve_and_dupe(pathname)?);
         // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
-        Some(unsafe { (*blob).to_js(global_object) })
+        // `to_js` picks Blob/File/S3File prototype from `is_jsdom_file` /
+        // `is_s3` carried over by `dupe()`, so a registered File round-trips
+        // as a File and a registered Blob as a Blob.
+        Some(unsafe { &*blob }.to_js(global_object))
     }
 
     pub fn revoke(&self, pathname: &[u8]) {

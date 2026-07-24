@@ -2112,12 +2112,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
         });
 
-    m_JSDOMFileConstructor.initLater(
-        [](const Initializer<JSObject>& init) {
-            JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
-            init.set(fileConstructor);
-        });
-
     m_cryptoObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
@@ -2158,6 +2152,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSS3FileStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
+        });
+
+    m_JSDOMFileClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::initJSDOMFileClassStructure(init);
         });
 
     m_S3ErrorStructure.initLater(

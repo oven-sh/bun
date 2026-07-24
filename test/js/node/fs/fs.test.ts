@@ -5852,6 +5852,10 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
           ],
         ]),
     ["crypto.pbkdf2", `require("crypto").pbkdf2("pw", "salt", 10, 16, "sha256", () => { throw new Error("boom"); })`],
+    ["crypto.scrypt", `require("crypto").scrypt("pw", "salt", 16, () => { throw new Error("boom"); })`],
+    ["crypto.randomBytes", `require("crypto").randomBytes(8, () => { throw new Error("boom"); })`],
+    ["crypto.randomFill", `require("crypto").randomFill(Buffer.alloc(8), () => { throw new Error("boom"); })`],
+    ["crypto.hkdf", `require("crypto").hkdf("sha256", "key", "salt", "info", 16, () => { throw new Error("boom"); })`],
   ];
 
   it.concurrent.each(cases)("%s", async (_name, snippet) => {

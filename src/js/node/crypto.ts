@@ -3,6 +3,20 @@ const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
 const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
+
+// The native async crypto jobs invoke their callback via EventLoop::run_callback,
+// which routes a throw to the keep-alive uncaught path; wrap the callback so a
+// throw is a fatal uncaughtException like node's AfterThreadPoolWork ->
+// MakeCallback. Applied only when the trailing arg is already callable so sync
+// overloads (randomBytes(size), randomInt(max)) and native validation of a
+// non-callable callback are unchanged.
+function guardLastCallback(native) {
+  return function wrapped() {
+    const last = arguments.length - 1;
+    if (last >= 0 && $isCallable(arguments[last])) arguments[last] = guardCallback(arguments[last]);
+    return native.$apply(this, arguments);
+  };
+}
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
 
@@ -139,10 +153,10 @@ crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;
 
-crypto_exports.generateKey = generateKey;
+crypto_exports.generateKey = guardLastCallback(generateKey);
 crypto_exports.generateKeySync = generateKeySync;
 defineCustomPromisifyArgs(generateKeyPair, ["publicKey", "privateKey"]);
-crypto_exports.generateKeyPair = generateKeyPair;
+crypto_exports.generateKeyPair = guardLastCallback(generateKeyPair);
 crypto_exports.generateKeyPairSync = generateKeyPairSync;
 
 crypto_exports.createSecretKey = createSecretKey;
@@ -185,7 +199,7 @@ function onPbkdf2Rejected(err) {
 crypto_exports.pbkdf2 = pbkdf2;
 crypto_exports.pbkdf2Sync = pbkdf2Sync;
 
-crypto_exports.hkdf = hkdf;
+crypto_exports.hkdf = guardLastCallback(hkdf);
 crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
@@ -335,10 +349,10 @@ crypto_exports.createHmac = function createHmac(hmac, key, options) {
 
 crypto_exports.getHashes = getHashes;
 
-crypto_exports.randomInt = randomInt;
-crypto_exports.randomFill = randomFill;
+crypto_exports.randomInt = guardLastCallback(randomInt);
+crypto_exports.randomFill = guardLastCallback(randomFill);
 crypto_exports.randomFillSync = randomFillSync;
-crypto_exports.randomBytes = randomBytes;
+crypto_exports.randomBytes = guardLastCallback(randomBytes);
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomUUIDv7 = randomUUIDv7;
 
@@ -352,9 +366,9 @@ crypto_exports.argon2Sync = function argon2Sync(_algorithm, _parameters) {
   throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
 };
 
-crypto_exports.checkPrime = checkPrime;
+crypto_exports.checkPrime = guardLastCallback(checkPrime);
 crypto_exports.checkPrimeSync = checkPrimeSync;
-crypto_exports.generatePrime = generatePrime;
+crypto_exports.generatePrime = guardLastCallback(generatePrime);
 crypto_exports.generatePrimeSync = generatePrimeSync;
 
 crypto_exports.secureHeapUsed = secureHeapUsed;
@@ -501,7 +515,7 @@ crypto_exports.createECDH = function createECDH(curve) {
   crypto_exports.getCiphers = getCiphers;
 }
 
-crypto_exports.scrypt = scrypt;
+crypto_exports.scrypt = guardLastCallback(scrypt);
 crypto_exports.scryptSync = scryptSync;
 
 crypto_exports.publicEncrypt = publicEncrypt;

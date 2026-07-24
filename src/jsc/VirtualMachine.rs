@@ -3469,9 +3469,12 @@ impl VirtualMachine {
                         drain(self);
                         return;
                     }
-                    if self.event_loop_mut().drain_microtasks().is_err() {
-                        return;
-                    }
+                    // uncaught_exception_fatal already bumped the counter and
+                    // printed (via the keep-alive tail) when the fatal gate
+                    // was skipped (REPL / worker); don't fall through and
+                    // print again.
+                    let _ = self.event_loop_mut().drain_microtasks();
+                    return;
                 }
             }
             Mode::None => {
@@ -3537,6 +3540,10 @@ impl VirtualMachine {
                         drain(self);
                         return;
                     }
+                    // Same as Mode::Bun: the keep-alive tail already printed
+                    // when the fatal gate was skipped (REPL / worker).
+                    let _ = self.event_loop_mut().drain_microtasks();
+                    return;
                 }
                 // continue to default handler — but RETURN if this drain
                 // errors (the VM is dead; don't bump the counter or invoke the

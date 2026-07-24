@@ -1267,6 +1267,35 @@ describe("bun test", () => {
     expect(stderr).toContain("index.ts");
   });
 
+  test("-t filter regex is compiled after JSC options are finalized", () => {
+    const stderr = runTest({
+      args: ["-t", "zzFilterMarkerzz"],
+      env: { BUN_JSC_dumpCompiledRegExpPatterns: "1" },
+      input: `
+        import { test, expect } from "bun:test";
+        test("zzFilterMarkerzz", () => {
+          expect(1).toBe(1);
+        });
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("RegExp pattern for /zzFilterMarkerzz/");
+    expect(stderr).toContain("(pass) zzFilterMarkerzz");
+  });
+
+  test("-t filter rejects invalid regex", () => {
+    const stderr = runTest({
+      args: ["-t", "[invalid("],
+      input: `
+        import { test } from "bun:test";
+        test("a", () => {});
+      `,
+      expectExitCode: 1,
+    });
+    expect(stderr).toContain("--test-name-pattern expects a valid regular expression");
+    expect(stderr).toContain(`"[invalid("`);
+  });
+
   test("Skipped and todo tests are filtered out when not matching -t filter", () => {
     const stderr = runTest({
       args: ["-t", "should match"],

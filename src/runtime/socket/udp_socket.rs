@@ -1295,15 +1295,14 @@ impl UDPSocket {
         if this.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
-        let arguments = callframe.arguments_old::<1>();
-        if arguments.len != 1 {
+        if callframe.arguments_count() < 1 {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected 1 argument, got {}",
-                arguments.len
+                callframe.arguments_count()
             )));
         }
 
-        let arg = arguments.ptr[0];
+        let [arg] = callframe.arguments_as_array::<1>();
         if !arg.js_type().is_array() {
             return Err(global_this.throw_invalid_argument_type(
                 "sendMany",
@@ -1465,31 +1464,32 @@ impl UDPSocket {
         if this.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
-        let arguments = callframe.arguments_old::<3>();
+        let arguments = callframe.arguments_as_array::<3>();
+        let args_len = callframe.arguments_count();
         let dst: Option<Destination> = 'brk: {
             if this.connect_info.get().is_some() {
-                if arguments.len == 1 {
+                if args_len == 1 {
                     break 'brk None;
                 }
-                if arguments.len == 3 {
+                if args_len >= 3 {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Cannot specify destination on connected socket"
                     )));
                 }
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected 1 argument, got {}",
-                    arguments.len
+                    args_len
                 )));
             } else {
-                if arguments.len != 3 {
+                if args_len < 3 {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected 3 arguments, got {}",
-                        arguments.len
+                        args_len
                     )));
                 }
                 break 'brk Some(Destination {
-                    port: arguments.ptr[1],
-                    address: arguments.ptr[2],
+                    port: arguments[1],
+                    address: arguments[2],
                 });
             }
         };
@@ -1515,7 +1515,7 @@ impl UDPSocket {
             }
         };
 
-        let payload_arg = arguments.ptr[0];
+        let payload_arg = arguments[0];
         let mut payload_str = ZigStringSlice::empty();
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the
         // backing store is kept alive by `payload_arg` on the JS stack.
@@ -1735,13 +1735,11 @@ impl UDPSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument")));
         }
 
-        let options = args.ptr[0];
+        let [options] = callframe.arguments_as_array::<1>();
         let Some(this_value) = this.this_value.get().try_get() else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1874,7 +1872,7 @@ impl UDPSocket {
     // bare `js_connect(..)` call which doesn't resolve inside an `impl` block.
     // The codegen `JsClass` derive owns the link name, so the shim isn't needed.
     pub fn js_connect(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old::<2>();
+        let args = call_frame.arguments_as_array::<2>();
 
         // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
         // mutation goes through `Cell`, so a shared borrow suffices (R-2).
@@ -1892,14 +1890,14 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
 
-        if args.len < 2 {
+        if call_frame.arguments_count() < 2 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        let str = bun_core::OwnedString::new(args.ptr[0].to_bun_string(global_this)?);
+        let str = bun_core::OwnedString::new(args[0].to_bun_string(global_this)?);
         let connect_host = str.to_owned_slice_z();
 
-        let connect_port_js = args.ptr[1];
+        let connect_port_js = args[1];
 
         if !connect_port_js.is_number() {
             return Err(global_this
@@ -1974,13 +1972,13 @@ impl UDPSocket {
             );
         };
 
-        let args = call_frame.arguments_old::<2>();
-        if args.len < 2 {
+        let args = call_frame.arguments_as_array::<2>();
+        if call_frame.arguments_count() < 2 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        let size = args.ptr[0].coerce_to_i32(global_this)?;
-        let is_recv = args.ptr[1].to_boolean();
+        let size = args[0].coerce_to_i32(global_this)?;
+        let is_recv = args[1].to_boolean();
 
         let bad_fd =
             || bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt);

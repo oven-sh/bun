@@ -787,6 +787,15 @@ pub fn debug_end() {
     }
 }
 
+/// `process.binding('inspector').isEnabled()`: whether this thread has an
+/// inspector agent that `process._debugEnd()` has not stopped.
+// HOST_EXPORT(Debugger__isEnabled, c)
+pub fn is_enabled() -> bool {
+    VirtualMachine::get()
+        .debugger_mut()
+        .is_some_and(|dbg| !dbg.debug_ended)
+}
+
 // HOST_EXPORT(Debugger__didConnect, c)
 pub fn did_connect() {
     let this = VirtualMachine::get().as_mut();

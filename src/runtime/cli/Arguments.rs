@@ -304,6 +304,10 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Rejected below with Node's DEP0062 message. Declared so `--debug=<port>`
+    // does not swallow the entrypoint before the rejection runs.
+    parse_param!("--debug <STR>?"),
+    parse_param!("--debug-brk <STR>?"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -1141,6 +1145,18 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         {
             Output::err_generic("--cron-title and --cron-period must not be empty", ());
             Global::exit(1);
+        }
+
+        // Node exits 9 on `--debug`/`--debug-brk` with this message, so tools
+        // that still pass the pre-io.js flags get told what to use instead
+        // rather than silently running without a debugger.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L56-L60
+        if args.option(b"--debug").is_some() || args.option(b"--debug-brk").is_some() {
+            Output::err_generic(
+                "[DEP0062]: `node --debug` and `node --debug-brk` are invalid. Please use `node --inspect` and `node --inspect-brk` instead.",
+                (),
+            );
+            Global::exit(9);
         }
 
         if let Some(inspect_flag) = args.option(b"--inspect") {

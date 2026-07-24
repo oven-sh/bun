@@ -360,11 +360,42 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         double startTime = s_profilingStartTime;
         double lastTime = s_profilingStartTime;
 
+        // V8 accounts for the wall-clock time the thread spent outside JS with
+        // (idle) samples, which Node drives from the event loop's idle
+        // callback. JSC's sampling profiler records nothing at all then, so
+        // reconstruct them: a hole longer than one extra sampling period means
+        // no JS ran across it.
+        int idleNodeId = 0;
+        auto appendIdleSampleBefore = [&](double sampleTime) {
+            double gap = sampleTime - lastTime;
+            if (gap <= 2.0 * s_samplingInterval)
+                return;
+            if (!idleNodeId) {
+                idleNodeId = nextNodeId++;
+                ProfileNode idleNode;
+                idleNode.id = idleNodeId;
+                idleNode.functionName = "(idle)"_s;
+                idleNode.url = ""_s;
+                idleNode.scriptId = 0;
+                idleNode.lineNumber = -1;
+                idleNode.columnNumber = -1;
+                idleNode.hitCount = 0;
+                nodes.append(WTF::move(idleNode));
+                nodes[0].children.append(idleNodeId);
+            }
+            nodes[idleNodeId - 1].hitCount++;
+            samples.append(idleNodeId);
+            // The sample that follows keeps one sampling period of its own.
+            timeDeltas.append(static_cast<long long>(gap - s_samplingInterval));
+            lastTime = sampleTime - s_samplingInterval;
+        };
+
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
+            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+            appendIdleSampleBefore(currentTime);
             if (stackTrace.frames.isEmpty()) {
                 samples.append(1);
-                double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
                 double delta = std::max(0.0, currentTime - lastTime);
                 timeDeltas.append(static_cast<long long>(delta));
                 lastTime = currentTime;
@@ -538,7 +569,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
             samples.append(currentParentId);
 
-            double currentTime = stackTrace.timestamp.approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
             double delta = std::max(0.0, currentTime - lastTime);
             timeDeltas.append(static_cast<long long>(delta));
             lastTime = currentTime;

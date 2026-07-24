@@ -474,12 +474,13 @@ describe("util", () => {
       }
     });
 
-    it.concurrent("is unaffected by user replacing globalThis.Error", async () => {
+    it.concurrent("is unaffected by user tampering with the Error global", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `const util = require("node:util");
+           delete Error.captureStackTrace;
            globalThis.Error = undefined;
            function outer() { return util.getCallSites(5); }
            const sites = outer();

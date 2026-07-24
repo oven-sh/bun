@@ -21,6 +21,7 @@ const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
 var Error = globalThis.Error;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
 const { uncurryThis, SafeMap } = require("internal/primordials");
 const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 
@@ -479,7 +480,7 @@ function getCallSites(frameCount = 10, options) {
     try {
       Error.stackTraceLimit = frameCount;
     } catch {}
-    Error.captureStackTrace(target, getCallSites);
+    ErrorCaptureStackTrace(target, getCallSites);
     return target.stack;
   } finally {
     Error.prepareStackTrace = savedPrepareStackTrace;

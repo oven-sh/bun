@@ -1216,8 +1216,11 @@ if (cluster.isPrimary) {
   process.send({ cmd: "NODE_CLUSTER", ack: null });
   process.send({ cmd: "NODE_CLUSTER", ack: "not-a-number" });
   process.send({ cmd: "NODE_CLUSTER", ack: {} });
+  // A fractional ack used to truncate onto whatever callback was parked at
+  // seq 0; the real cluster round-trip below must still complete.
   process.send({ cmd: "NODE_CLUSTER", ack: 0.5 });
-  process.send("sent");
+  const server = require("node:net").createServer();
+  server.listen(0, "127.0.0.1", () => process.send("sent"));
 }
 `,
   });

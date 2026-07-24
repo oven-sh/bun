@@ -1142,6 +1142,31 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
       "Invalid keyData",
     );
   });
+
+  const expectRejected = async (pkcs8: Uint8Array) => {
+    await expect(crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", false, ["sign"])).rejects.toThrow(
+      "Invalid keyData",
+    );
+  };
+  const version1 = "020100";
+
+  it("rejects bytes outside the declared outer SEQUENCE", async () => {
+    // the trailing ff is past the 0x2e-byte SEQUENCE
+    await expectRejected(fromHex("302e" + version1 + edAlgorithm + wrapSeed(edSeed) + "ff"));
+  });
+
+  it("rejects a truncated optional field", async () => {
+    // attributes [0] header claims one content byte that is not present
+    await expectRejected(der(version1, edAlgorithm, wrapSeed(edSeed), "a001"));
+  });
+
+  it("rejects an unknown trailing field", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "8200"));
+  });
+
+  it("rejects publicKey [1] before attributes [0]", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub), emptyAttributes));
+  });
 });
 
 // importKey's empty-usages guard got Node's message; the same predicate in

@@ -245,13 +245,13 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
 {
     // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
 
-    // Read SEQUENCE
-    size_t index = 1;
-    if (keyData.size() < index + 1)
+    // Read SEQUENCE, whose encoded length must cover the rest of the input
+    if (keyData.isEmpty() || keyData[0] != SequenceMark)
         return nullptr;
-
-    // Read length
-    index += bytesUsedToEncodedLength(keyData[index]);
+    size_t index = 1;
+    auto sequenceLength = readDERLength(keyData, index);
+    if (!sequenceLength || keyData.size() - index != *sequenceLength)
+        return nullptr;
     if (keyData.size() < index + 1)
         return nullptr;
 
@@ -318,7 +318,25 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
     if (!keyLength || index > octetStringEnd || octetStringEnd - index != *keyLength)
         return nullptr;
 
-    return create(identifier, namedCurve, CryptoKeyType::Private, std::span<const uint8_t> { keyData.begin() + index, *keyLength }, extractable, usages);
+    std::span<const uint8_t> privateKey { keyData.begin() + index, *keyLength };
+
+    // Consume the optional trailing fields, attributes [0] then publicKey [1],
+    // each at most once and in that order. Anything else left in the SEQUENCE
+    // is malformed.
+    index = octetStringEnd;
+    for (uint8_t allowedTag : { uint8_t { 0xa0 }, uint8_t { 0x81 } }) {
+        if (index >= keyData.size() || keyData[index] != allowedTag)
+            continue;
+        ++index;
+        auto fieldLength = readDERLength(keyData, index);
+        if (!fieldLength || keyData.size() - index < *fieldLength)
+            return nullptr;
+        index += *fieldLength;
+    }
+    if (index != keyData.size())
+        return nullptr;
+
+    return create(identifier, namedCurve, CryptoKeyType::Private, privateKey, extractable, usages);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const

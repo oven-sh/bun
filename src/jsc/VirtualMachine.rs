@@ -1384,7 +1384,8 @@ impl VirtualMachine {
     /// The process keeps running — this is the pre-existing contract every
     /// Bun-native call site was written against (`Bun.serve`, `Bun.listen`,
     /// `Bun.spawn` ipc/onExit, `Bun.sql`/`Bun.redis` onclose, the shell,
-    /// `EventLoop::run_callback`, `reportError()`, ...).
+    /// `EventLoop::run_callback`, `reportError()`, `EventTarget` listener
+    /// dispatch, ...).
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1397,13 +1398,13 @@ impl VirtualMachine {
     /// Node's fatal path: if no listener/domain/capture callback claims the
     /// error, print it, emit `'exit'`, and `process.exit(1)` without another
     /// loop turn (queued I/O, timers, immediates, later ticks never run).
-    /// Only for true Node-compat uncaught throws that reach
-    /// `Bun__reportUnhandledError` — the nextTick drain, setTimeout/
-    /// setInterval callbacks, `jsFunctionReportUncaughtException` (what this
-    /// PR's `guardCallback` routes fs/dns/crypto callback throws to), N-API
-    /// `napi_fatal_exception`, `node:events` error with no listener, and JSC's
-    /// `reportUncaughtExceptionAtEventLoop`. Everything else stays on
-    /// `uncaught_exception` above.
+    /// For Node-compat uncaught throws where the caller's task is dead:
+    /// `Bun__reportUnhandledError` (nextTick drain, setTimeout/setInterval,
+    /// `jsFunctionReportUncaughtException` for `guardCallback`/fs/dns/crypto
+    /// and `node:net` onread, `napi_fatal_exception`, `node:events` error with
+    /// no listener, JSC's `reportUncaughtExceptionAtEventLoop` VM hook),
+    /// `--unhandled-rejections=throw`/`strict`, and `Bun.cron` (matches
+    /// setTimeout). Everything else stays on `uncaught_exception` above.
     pub fn uncaught_exception_fatal(
         &mut self,
         global_object: &JSGlobalObject,

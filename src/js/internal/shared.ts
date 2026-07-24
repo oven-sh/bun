@@ -373,6 +373,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  reportUncaughtException,
   resistStopPropagation,
 
   hasObserver,

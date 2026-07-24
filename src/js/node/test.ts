@@ -1079,6 +1079,29 @@ function reportCancelledNode(node: TestNode) {
   noteRunChildDone(node.parent, true);
 }
 
+// A file that failed to import under run({isolation:'none'}) reports as a
+// failing top-level test at its queue position (node's root.createSubtest);
+// routed through the sink so republishChildEvent numbers and counts it.
+function reportFailedImportNode(node: TestNode, error: unknown) {
+  reportQueueChain(node);
+  const data = {
+    __proto__: null,
+    name: node.name,
+    nesting: 0,
+    testNumber: nextTestNumberFor(node),
+    testId: runTestIdFor(node),
+    parentId: 0,
+    duration_ms: 0,
+    type: "test",
+    tags: node.tags,
+    error,
+  };
+  emitRunChildEvent("test:complete", { ...data, passed: false });
+  reportStartChain(node);
+  emitRunChildEvent("test:fail", data);
+  noteRunChildDone(node.parent, true);
+}
+
 // node wraps a failure thrown by a before/after hook in a fresh
 // ERR_TEST_FAILURE with the fixed message `failed running <kind> hook`
 // (failureType hookFailed); the thrown error is kept on cause.
@@ -3305,7 +3328,12 @@ type StandaloneEntry = {
   isSuite: boolean;
   mode?: "skip";
   build?: Promise<unknown>;
+  // Set for a run({isolation:'none'}) file that threw at import; reports as a
+  // failing top-level test at its queue position, like node's createSubtest.
+  importError?: unknown;
 };
+
+const kImportFailedFn: TestFn = function importFailedNoop() {};
 
 let standaloneActive = false;
 let standaloneScheduled = false;
@@ -3350,7 +3378,7 @@ function standaloneRegister(entry: StandaloneEntry) {
 // Runs root before hooks, the queued entries, then root after hooks.
 // Returns the root hook failure (if any) so callers fail the run cleanly
 // instead of destroying the stream.
-async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
+async function executeStandaloneQueue(root: TestNode, signal?: AbortSignal): Promise<unknown> {
   let hookError: unknown;
   // Node's root is a Test, not a Suite; hookArgFor() hands root a TestContext.
   const rootArg = hookArgFor(root);
@@ -3366,6 +3394,7 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   if (hookError === undefined) {
     // Entries can register more entries (rare); index loop tolerates growth.
     for (let i = 0; i < standaloneQueue.length; i++) {
+      if (signal?.aborted) break;
       await runStandaloneEntry(standaloneQueue[i]);
     }
   } else {
@@ -3373,7 +3402,8 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
     // suite-level setupFailed path in runStandaloneEntry.
     for (const entry of standaloneQueue) {
       activeRunFile = entry.node.filePath ?? null;
-      reportCancelledNode(entry.node);
+      if (entry.importError !== undefined) reportFailedImportNode(entry.node, entry.importError);
+      else reportCancelledNode(entry.node);
     }
   }
   standaloneQueue.length = 0;
@@ -3421,6 +3451,11 @@ function standaloneQueueHasOnly(entries: StandaloneEntry[]): boolean {
 function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
+    // A failed import always reports (node creates it as a real root subtest).
+    if (entry.importError !== undefined) {
+      kept.push(entry);
+      continue;
+    }
     const children = entry.node.standaloneChildren ?? [];
     if (entry.node.onlyFlag) {
       if (entry.isSuite && children.some(entryHasOnly)) {
@@ -3454,7 +3489,7 @@ function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): 
   const kept: StandaloneEntry[] = [];
   for (const entry of entries) {
     if (!entry.isSuite) {
-      if (tagsMatchFilters(entry.node.tags, filters)) kept.push(entry);
+      if (entry.importError !== undefined || tagsMatchFilters(entry.node.tags, filters)) kept.push(entry);
       continue;
     }
     const keptChildren = pruneStandaloneEntries(entry.node.standaloneChildren ?? [], filters);
@@ -3497,11 +3532,15 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     const files = discoverRunFiles(opts);
     const numbering = { verdictNumber: 0 };
     standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, numbering);
+    // runFiles' twin: the entry loop stops spawning between files and between
+    // entries on abort, so --test --test-isolation=none stays Ctrl+C-able.
+    const signal = opts.signal as AbortSignal | undefined;
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
     callerRoot.started = true;
     try {
       for (const file of files) {
+        if (signal?.aborted) break;
         if (file === Bun.main) {
           // Importing the entry module from inside its own evaluation can
           // never settle (the import awaits the very evaluation that is
@@ -3515,36 +3554,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
         try {
           await import(file);
         } catch (err) {
-          // A file that fails to load is itself a failing test node. Emitted
-          // directly (not through republishChildEvent), so bump both the plan
-          // count and the shared verdict counter the sink numbers from.
-          counts.topLevel++;
-          const testNumber = ++numbering.verdictNumber;
-          const error = wrapTestError(err);
-          const fileNode = {
-            __proto__: null,
-            name: file,
-            nesting: 0,
-            file,
-            testId: ++runTestIdCounter,
-            parentId: 0,
-            tags: [],
-          };
-          reporter.emitMessage("test:enqueue", { ...fileNode, type: "test" });
-          reporter.emitMessage("test:dequeue", { ...fileNode, type: "test" });
-          reporter.emitMessage("test:complete", {
-            ...fileNode,
-            testNumber,
-            details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error },
-          });
-          reporter.emitMessage("test:start", { ...fileNode });
-          reporter.emitMessage("test:fail", {
-            ...fileNode,
-            testNumber,
-            details: { __proto__: null, duration_ms: 0, type: "test", error },
-          });
-          counts.tests++;
-          counts.failed++;
+          // A file that fails to load is itself a failing test. Queued at its
+          // position among successfully-imported files (node's createSubtest)
+          // so declaration order holds; republishChildEvent numbers/counts it.
+          const fileNode = new TestNode(file, callerRoot, kDefaultOptions, false, false);
+          fileNode.filePath = file;
+          standaloneQueue.push({ node: fileNode, fn: kImportFailedFn, isSuite: false, importError: wrapTestError(err) });
         }
       }
     } finally {
@@ -3571,17 +3586,19 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       standaloneQueue.push(...pruned);
     }
 
-    const hookError = await executeStandaloneQueue(callerRoot);
+    const hookError = await executeStandaloneQueue(callerRoot, signal);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
     }
+    if (signal?.aborted) {
+      counts.failed++;
+      reporter.emitMessage("test:interrupted", { __proto__: null, nesting: 0, tests: [] });
+    }
 
     const durationMs = roundDurationMs(performance.now() - started);
-    // counts.topLevel covers both the republished entries and the failed-import
-    // file nodes emitted above (root.reportedCount only the former). Emitted
-    // directly so it carries no data.file, matching runFiles and the adjacent
-    // run-level summary (the sink would stamp the stale activeRunFile on it).
+    // Emitted directly so it carries no data.file, matching runFiles and the
+    // adjacent run-level summary (the sink would stamp the stale activeRunFile).
     reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
     emitRunDiagnostics(reporter, counts, durationMs);
     reporter.emitMessage("test:summary", {
@@ -3695,6 +3712,10 @@ function standaloneSinkImpl(
 async function runStandaloneEntry(entry: StandaloneEntry) {
   const { node, fn, isSuite, mode } = entry;
   activeRunFile = node.filePath ?? null;
+  if (entry.importError !== undefined) {
+    reportFailedImportNode(node, entry.importError);
+    return;
+  }
   if (mode === "skip") {
     // Never executes; its directive event is its completion.
     if (isSuite) node.suiteReported = true;

@@ -1004,23 +1004,89 @@ test.concurrent.each([
   });
 });
 
-test.concurrent("run({isolation:'none'}): a failed import and later files share one verdict counter", async () => {
-  // node numbers every nesting-0 verdict from one cumulative counter, so a
-  // file that fails to load takes 1 and the next file's test takes 2.
-  using dir = tempDir("node-test-inprocess-numbering", {
-    "bad.test.mjs": `throw new Error('load boom');`,
-    "good.test.mjs": `
+test.concurrent.each([
+  [
+    "[bad, good]",
+    "'./bad.test.mjs', './good.test.mjs'",
+    [
+      ["fail", "bad.test.mjs", 1],
+      ["pass", "good-a", 2],
+    ],
+  ],
+  [
+    "[good, bad]",
+    "'./good.test.mjs', './bad.test.mjs'",
+    [
+      ["pass", "good-a", 1],
+      ["fail", "bad.test.mjs", 2],
+    ],
+  ],
+] as const)(
+  "run({isolation:'none'}): a failed import reports at its declaration position %s",
+  async (_label, orderLiteral, expected) => {
+    // node reports a load failure as a root subtest at its position among the
+    // other files, so [good, bad] keeps declaration order instead of emitting
+    // bad's fail first, and both share one cumulative verdict counter.
+    using dir = tempDir("node-test-inprocess-numbering", {
+      "bad.test.mjs": `throw new Error('load boom');`,
+      "good.test.mjs": `
+        import { test } from 'node:test';
+        test('good-a', () => {});
+      `,
+      "driver.mjs": `
+        import { run } from 'node:test';
+        import { fileURLToPath } from 'node:url';
+        const files = [${orderLiteral}].map(f => fileURLToPath(new URL(f, import.meta.url)));
+        const stream = run({ files, isolation: 'none' });
+        const ev = [];
+        stream.on('test:pass', t => ev.push(['pass', t.name.split(/[\\\\/]/).pop(), t.testNumber]));
+        stream.on('test:fail', t => ev.push(['fail', t.name.split(/[\\\\/]/).pop(), t.testNumber]));
+        for await (const _ of stream);
+        console.log(JSON.stringify(ev));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 output for this ordering.
+    expect({ events: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      events: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent("run({isolation:'none'}): opts.signal stops between queued entries", async () => {
+  // The in-process entry loop checks the signal between tests, so aborting
+  // from inside the first test means the second never runs (the eval driver's
+  // SIGINT handler routes through this signal under --test-isolation=none).
+  using dir = tempDir("node-test-inprocess-signal", {
+    "f.test.mjs": `
       import { test } from 'node:test';
-      test('good-a', () => {});
+      test('first', () => { globalThis.__abort(); });
+      test('second', () => {});
     `,
     "driver.mjs": `
       import { run } from 'node:test';
       import { fileURLToPath } from 'node:url';
-      const files = ['./bad.test.mjs', './good.test.mjs'].map(f => fileURLToPath(new URL(f, import.meta.url)));
-      const stream = run({ files, isolation: 'none' });
+      const ac = new AbortController();
+      globalThis.__abort = () => ac.abort();
+      const stream = run({
+        files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))],
+        isolation: 'none',
+        signal: ac.signal,
+      });
       const ev = [];
-      stream.on('test:pass', function onPass(t) { ev.push(['pass', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
-      stream.on('test:fail', function onFail(t) { ev.push(['fail', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
+      stream.on('test:pass', t => ev.push(['pass', t.name]));
+      stream.on('test:fail', t => ev.push(['fail', t.name]));
+      stream.on('test:interrupted', () => ev.push(['interrupted']));
+      stream.on('test:summary', t => { if (t.file === undefined) ev.push(['success', t.success]); });
       for await (const _ of stream);
       console.log(JSON.stringify(ev));
     `,
@@ -1032,12 +1098,16 @@ test.concurrent("run({isolation:'none'}): a failed import and later files share 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Verbatim node v26.3.0 output for this fixture.
-  expect(JSON.parse(stdout.trim() || "null")).toEqual([
-    ["fail", "bad.test.mjs", 1],
-    ["pass", "good-a", 2],
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ events: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    events: [
+      ["pass", "first"],
+      ["interrupted"],
+      ["success", false],
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("run(): a zero-test file reports a file-level pass like node", async () => {

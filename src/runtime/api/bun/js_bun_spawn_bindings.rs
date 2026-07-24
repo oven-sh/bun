@@ -53,22 +53,6 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
-/// `bun_jsc::SystemError` and materialize a JS Error instance.
-fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
-    let jsc_err = SystemError {
-        errno: err.errno,
-        code: err.code,
-        message: err.message,
-        path: err.path,
-        syscall: err.syscall,
-        hostname: err.hostname,
-        fd: err.fd,
-        dest: err.dest,
-    };
-    jsc_err.to_error_instance(global)
-}
-
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
@@ -1231,7 +1215,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
+            return Err(global_this
+                .throw_value(SystemError::from(systemerror).to_error_instance(global_this)));
         }
         Err(err) => {
             // See EMFILE arm above.
@@ -1261,8 +1246,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                             if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;
                             }
-                            return Err(global_this
-                                .throw_value(sys_system_error_to_js(&systemerror, global_this)));
+                            return Err(global_this.throw_value(
+                                SystemError::from(systemerror).to_error_instance(global_this),
+                            ));
                         }
                     }
                     _ => {}
@@ -2096,14 +2082,12 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",
             bstr::BStr::new(command)
-        )),
-        code: BunString::static_("ENOENT"),
+        ))
+        .into(),
+        code: BunString::static_("ENOENT").into(),
         errno: -UV_E::NOENT,
-        path: BunString::clone_utf8(command),
-        syscall: BunString::EMPTY,
-        hostname: BunString::EMPTY,
-        fd: -1,
-        dest: BunString::EMPTY,
+        path: BunString::clone_utf8(command).into(),
+        ..Default::default()
     };
     global_this.throw_value(err.to_error_instance(global_this))
 }

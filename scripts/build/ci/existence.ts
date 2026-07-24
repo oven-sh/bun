@@ -64,7 +64,25 @@ async function checkAwsAmi(image: Image, name: string, secrets: Secrets): Promis
   let stdout: string;
   try {
     // Async so the per-image probes actually overlap under Promise.all.
-    ({ stdout } = await promisify(execFile)("aws", args, { encoding: "utf8", env }));
+    // Retried across connection-class failures only (endpoint timeouts,
+    // DNS, resets); an auth/permission error from the CLI is not transient
+    // and fails immediately.
+    ({ stdout } = await withRetry(`aws describe-images ${name}`, async () => {
+      try {
+        return await promisify(execFile)("aws", args, { encoding: "utf8", env });
+      } catch (cause) {
+        const e = cause as { stderr?: string; message?: string };
+        const text = `${e.stderr ?? ""}${e.message ?? ""}`;
+        const transient = /Could not connect|timed out|Timeout|Connection|ETIMEDOUT|ENETUNREACH|EAI_AGAIN|reset/i.test(
+          text,
+        );
+        // Signal transience to withRetry with a synthetic 503; a real error
+        // (bad credentials, invalid filter) carries no status and is thrown
+        // straight through as a non-network error would be... except withRetry
+        // treats a missing status as a network error, so mark it a 400.
+        throw Object.assign(cause as object, { status: transient ? 503 : 400 });
+      }
+    }));
   } catch (cause) {
     const e = cause as NodeJS.ErrnoException & { code?: unknown; stderr?: string };
     // ENOENT / spawn failure: the aws CLI could not start at all.
@@ -95,15 +113,25 @@ async function checkAzureGalleryVersion(image: Image, name: string, secrets: Sec
   // dead endpoint (a hung TLS handshake never rejects on its own) into a
   // visible failure — it fails loudly into the existence-check banner, it
   // never silently skips a bake. Slow-but-alive Azure has 2 minutes.
-  const response = await fetch(`https://management.azure.com${path}?api-version=2024-03-03`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(120_000),
+  const response = await withRetry(`azure gallery probe ${name}`, async () => {
+    const attempt = await fetch(`https://management.azure.com${path}?api-version=2024-03-03`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(120_000),
+    });
+    // 404 = not found (a normal answer). Other non-OK: carry the status so
+    // withRetry retries only 429/5xx and throws a real 4xx immediately.
+    if (!attempt.ok && attempt.status !== 404) {
+      throw Object.assign(
+        new Error(`azure gallery probe failed for ${name}: ${attempt.status} ${await attempt.text()}`),
+        {
+          status: attempt.status,
+        },
+      );
+    }
+    return attempt;
   });
   if (response.status === 404) {
     return { image, name, exists: false, detail: "no gallery version with this name" };
-  }
-  if (!response.ok) {
-    throw new Error(`azure gallery probe failed for ${name}: ${response.status} ${await response.text()}`);
   }
   const body = await response.json();
   const state = body?.properties?.provisioningState;
@@ -139,18 +167,53 @@ export function classifyGalleryVersionState(state: string | undefined): GalleryV
   return "rebake";
 }
 
+/**
+ * Retry a network operation across TRANSIENT failures with backoff:
+ * connection errors (a rejected `fetch` — ETIMEDOUT / ENETUNREACH / DNS,
+ * which is a TypeError with a cause), timeouts, and 429/5xx responses. A
+ * genuine 4xx rejection (bad credentials, forbidden) is NOT transient and
+ * is thrown immediately — retrying it only delays a loud, correct failure.
+ * After the attempts are exhausted the last error propagates, so a dead
+ * network still fails loudly into the existence-check banner.
+ */
+async function withRetry<T>(what: string, operation: () => Promise<T>): Promise<T> {
+  const delays = [1000, 4000, 15000]; // then a final attempt
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      const transientStatus = status !== undefined && (status === 429 || status >= 500);
+      const networkError = status === undefined; // rejected fetch: TypeError / timeout / abort
+      if ((!transientStatus && !networkError) || attempt >= delays.length) throw error;
+      const delay = delays[attempt]!;
+      const why = status !== undefined ? `HTTP ${status}` : error instanceof Error ? error.message : String(error);
+      console.log(`  ${what}: transient failure (${why}); retrying in ${delay / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 /** Azure client-credentials OAuth token for the management API. The single
  * implementation shared by pipeline generation and machine.ts. */
 export async function azureToken(tenant: string, clientId: string, clientSecret: string): Promise<string> {
-  const response = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
-    method: "POST",
-    signal: AbortSignal.timeout(120_000),
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body:
-      `grant_type=client_credentials&client_id=${clientId}` +
-      `&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
+  return withRetry("azure token", async () => {
+    const response = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+      method: "POST",
+      signal: AbortSignal.timeout(120_000),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body:
+        `grant_type=client_credentials&client_id=${clientId}` +
+        `&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
+    });
+    if (!response.ok) {
+      // Carry the status so withRetry can tell a transient 429/5xx from a
+      // real auth rejection (which must fail immediately).
+      throw Object.assign(new Error(`azure auth failed: ${response.status} ${await response.text()}`), {
+        status: response.status,
+      });
+    }
+    const data = await response.json();
+    return data.access_token as string;
   });
-  if (!response.ok) throw new Error(`azure auth failed: ${response.status} ${await response.text()}`);
-  const data = await response.json();
-  return data.access_token;
 }

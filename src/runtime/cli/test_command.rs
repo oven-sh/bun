@@ -3057,6 +3057,7 @@ impl TestCommand {
             // multi-file run. Must precede the GC-root release below; handlers
             // are user JS and may touch still-live state.
             let drain = reporter.summary().files <= 1;
+            let prev_unhandled = vm.unhandled_error_counter;
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
@@ -3068,6 +3069,12 @@ impl TestCommand {
                 (*vm_ptr).global().handle_rejected_promises();
                 (*vm_ptr).on_exit();
             });
+            // The drain and handlers above run after `active_file` is cleared,
+            // so an uncaught throw there prints but does not reach the
+            // exit-code decision above; propagate it here.
+            if vm.unhandled_error_counter > prev_unhandled {
+                vm.exit_handler.exit_code = 1;
+            }
             // on_exit() already set is_shutting_down; global_exit() asserts it.
         } else {
             vm.is_shutting_down = true;

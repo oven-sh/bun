@@ -1528,6 +1528,28 @@ describe("bun test", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("node:test: an uncaught throw surfaced by the event-loop drain fails the run", async () => {
+    using dir = tempDir("bun-test-node-drain-throw", {
+      "drain-throw.test.ts": `
+        import { test } from "node:test";
+        test("a", () => {});
+        setTimeout(() => { throw new Error("boom") }, 500);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "drain-throw.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("boom");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(1);
+  });
+
   test("node:test: an exit handler can fail the run, like node's common.mustCall()", async () => {
     using dir = tempDir("bun-test-node-exit-handler-code", {
       "exit-code.test.ts": `

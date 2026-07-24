@@ -982,8 +982,30 @@ it("Dirent has the expected fields", () => {
   const dirs = readdirSync(dir, { withFileTypes: true });
   expect(dirs.length).toBe(1);
   expect(dirs[0].name).toBe("file.txt");
-  expect(dirs[0].path).toBe(dir);
   expect(dirs[0].parentPath).toBe(dir);
+});
+
+// DEP0178: Node.js v24+ removed the deprecated `path` own property from Dirent.
+it("Dirent does not expose the removed `path` own property", () => {
+  const dir = tmpdirSync();
+  writeFileSync(join(dir, "file.txt"), "");
+
+  const [readdirEnt] = readdirSync(dir, { withFileTypes: true });
+  expect(Object.keys(readdirEnt).sort()).toEqual(["name", "parentPath"]);
+  expect("path" in readdirEnt).toBe(false);
+  expect(readdirEnt.parentPath).toBe(dir);
+  expect(readdirEnt.isFile()).toBe(true);
+
+  const [globEnt] = fs.globSync("*.txt", { cwd: dir, withFileTypes: true });
+  expect(Object.keys(globEnt).sort()).toEqual(["name", "parentPath"]);
+  expect("path" in globEnt).toBe(false);
+  expect(globEnt.isFile()).toBe(true);
+
+  const constructed = new Dirent("file.txt", 1, dir);
+  expect(Object.keys(constructed).sort()).toEqual(["name", "parentPath"]);
+  expect("path" in constructed).toBe(false);
+  expect(constructed.parentPath).toBe(dir);
+  expect(constructed.isFile()).toBe(true);
 });
 
 it("promises.readdir on a large folder", async () => {
@@ -3784,7 +3806,7 @@ describe("fs/promises", () => {
       const [bun, subprocess] = await Promise.all([
         (async function () {
           const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
-          files.sort((a, b) => a.path.localeCompare(b.path));
+          files.sort((a, b) => a.parentPath.localeCompare(b.parentPath));
           return files;
         })(),
         (async function () {
@@ -3825,7 +3847,7 @@ describe("fs/promises", () => {
       const [bun, subprocess] = await Promise.all([
         (async function () {
           const files = readdirSync(full, { withFileTypes: true, recursive: true });
-          files.sort((a, b) => a.path.localeCompare(b.path));
+          files.sort((a, b) => a.parentPath.localeCompare(b.parentPath));
           return files;
         })(),
         (async function () {
@@ -3879,7 +3901,7 @@ describe("fs/promises", () => {
       // Sort the results for determinism.
       if (withFileTypes) {
         for (let i = 0; i < iterCount; i++) {
-          results[i].sort((a, b) => a.path.localeCompare(b.path));
+          results[i].sort((a, b) => a.parentPath.localeCompare(b.parentPath));
         }
       } else {
         for (let i = 0; i < iterCount; i++) {
@@ -3895,7 +3917,7 @@ describe("fs/promises", () => {
       if (!withFileTypes) {
         expect(results[0]).toContain(relative(full, import.meta.path));
       } else {
-        expect(results[0][0].path).toEqual(full);
+        expect(results[0][0].parentPath).toEqual(full);
       }
 
       const newMaxFD = getMaxFD();
@@ -3966,7 +3988,7 @@ describe("fs/promises", () => {
       if (!withFileTypes) {
         expect(results[0]).toContain(relative(full, import.meta.path));
       } else {
-        expect(results[0][0].path).toEqual(full);
+        expect(results[0][0].parentPath).toEqual(full);
       }
 
       const newMaxFD = getMaxFD();

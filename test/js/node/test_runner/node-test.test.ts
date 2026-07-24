@@ -1056,6 +1056,46 @@ test.concurrent(
 );
 
 test.concurrent(
+  "run(): a zero-test file reports a file-level pass like node",
+  async () => {
+    // node's FileTest.report(): a file that registers no tests and exits 0 is
+    // itself a passing test (tests=1/passed=1) and emits no per-file summary.
+    using dir = tempDir("node-test-zero-test-file", {
+      "empty.test.mjs": `// intentionally registers no tests`,
+      "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./empty.test.mjs', import.meta.url))] });
+      const out = { events: [], perFileSummaries: 0, runCounts: null };
+      stream.on('test:pass', function onPass(t) { out.events.push(['pass', t.name.split(/[\\/]/).pop(), t.testNumber]); });
+      stream.on('test:fail', function onFail(t) { out.events.push(['fail', t.name.split(/[\\/]/).pop(), t.testNumber]); });
+      stream.on('test:summary', function onSummary(t) {
+        if (t.file !== undefined) out.perFileSummaries++;
+        else out.runCounts = t.counts;
+      });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 output for this fixture.
+    expect(JSON.parse(stdout.trim() || "null")).toEqual({
+      events: [["pass", "empty.test.mjs", 1]],
+      perFileSummaries: 0,
+      runCounts: { tests: 1, failed: 0, passed: 1, cancelled: 0, skipped: 0, todo: 0, topLevel: 1, suites: 0 },
+    });
+  },
+  30_000,
+);
+
+test.concurrent(
   "run({isolation:'none'}): a suite's duration spans all of its children",
   async () => {
     using dir = tempDir("node-test-suite-duration", {

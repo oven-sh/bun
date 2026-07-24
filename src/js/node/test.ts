@@ -289,9 +289,13 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   }
 
   // Options whose semantics we cannot honor yet must fail loudly rather than be
-  // silently ignored. testTagFilters and timeout are the deliberate exceptions:
-  // validated for node's error contract but not yet forwarded (node's own
-  // test-runner-filetest-location.js passes timeout).
+  // silently ignored. Deliberate exceptions, validated for node's error
+  // contract but accepted: testTagFilters (not yet forwarded, pending the
+  // native reporter hook), timeout (node's own test-runner-filetest-location.js
+  // passes it), concurrency (files run serially — node's contract is an upper
+  // bound on parallelism, and the --test CLI driver always passes it like
+  // node's runner), and forceExit (the CLI driver forwards it for node's
+  // debuglog contract and handles the exit itself).
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
@@ -299,8 +303,6 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
-  if (opts.forceExit) throwNotImplemented("run({ forceExit: true })", 5090);
-  if (opts.concurrency != null) throwNotImplemented("run({ concurrency })", 5090);
 
   if (opts.isolation === "none") {
     // Set synchronously so an overlapping run() hits the recursion guard
@@ -593,6 +595,11 @@ async function runOneFile(
         duration_ms: fileDuration,
         file: absolute,
       });
+    } else if (fileFailed) {
+      error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
+      fileCounts.tests++;
+      fileCounts.failed++;
+      fileCounts.topLevel++;
     }
 
     // node emits the file node's completion before its verdict, and a failed

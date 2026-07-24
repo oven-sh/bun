@@ -321,9 +321,13 @@ JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexica
     return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
 }
 
+// Node reports ERR_INVALID_THIS as `Value of "this" must be of type X`, without
+// naming the method.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1585
 String makeThisTypeErrorMessage(ASCIILiteral interfaceName, ASCIILiteral functionName)
 {
-    return makeString("Can only call "_s, interfaceName, '.', functionName, " on instances of "_s, interfaceName);
+    UNUSED_PARAM(functionName);
+    return makeString("Value of \"this\" must be of type "_s, interfaceName);
 }
 
 String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName)

@@ -615,6 +615,47 @@ describe("apply", () => {
         exitCode: 0,
       });
     });
+
+    test("path with embedded NUL is rejected, not truncated", async () => {
+      // A file named "x" exists; the patch targets "x\0ignored". Release builds
+      // used to truncate at the NUL and silently patch "x"; debug builds panicked
+      // in ZStr::as_cstr. The applier must reject the path and leave "x" alone.
+      const dir = tempDirWithFiles("patch-nul-path", { "x": "original\n" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { readFileSync } from "node:fs";
+           const patch = [
+             "diff --git a/x\\0ignored b/x\\0ignored",
+             "--- a/x\\0ignored",
+             "+++ b/x\\0ignored",
+             "@@ -1,1 +1,1 @@",
+             "-original",
+             "+modified",
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("no-error contents=" + JSON.stringify(readFileSync(${JSON.stringify(dir)} + "/x", "utf8")));
+           } catch (e) {
+             console.log("caught: " + e.code + " contents=" + JSON.stringify(readFileSync(${JSON.stringify(dir)} + "/x", "utf8")));
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: 'caught: EINVAL contents="original\\n"',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });
 

@@ -180,7 +180,19 @@ pub mod js_fns {
                 ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
             )?;
 
-            let has_done_parameter = args.callback.is_some() && args.callback_length > 0;
+            let has_done_parameter = if let Some(callback) = args.callback {
+                callback.get_length(global_this)? > 0
+            } else {
+                false
+            };
+
+            // Snapshot any active AsyncLocalStorage context now that `.length`
+            // has been read from the bare function (an AsyncContextFrame has no
+            // `.length`). Still synchronous inside the user's `als.run(...)`
+            // body, so the captured frame is the one the caller expects.
+            let callback = args
+                .callback
+                .map(|cb| cb.with_async_context_if_needed(global_this));
 
             let bun_test_root = get_active_test_root(
                 global_this,
@@ -204,7 +216,7 @@ pub mod js_fns {
 
                 let _ = bun_test_root.hook_scope.append_hook(
                     tag.as_hook_tag().unwrap(),
-                    args.callback,
+                    callback,
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
@@ -222,7 +234,7 @@ pub mod js_fns {
                     }
                     let _ = bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
-                        args.callback,
+                        callback,
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
@@ -295,7 +307,7 @@ pub mod js_fns {
 
                     let new_item = ExecutionEntry::create(
                         None,
-                        args.callback,
+                        callback,
                         cfg,
                         None,
                         BaseScopeCfg::default(),

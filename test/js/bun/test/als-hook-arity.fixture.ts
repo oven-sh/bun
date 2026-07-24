@@ -3,9 +3,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 // When a test or hook is registered while an AsyncLocalStorage context is
 // active, bun:test wraps the callback in an AsyncContextFrame so the context
-// is restored at call time. Done-param detection must read the arity of the
-// *user* function, not the wrapper (which has no `.length`), otherwise every
-// zero-arg callback waits for a done() that never comes and times out.
+// is restored at call time. The wrapper has no `.length` and is not itself
+// callable via JSC::getCallData, so `.length` (done-param detection) and
+// `.bind()` (test.each) must be read from the user's function before wrapping.
 
 const als = new AsyncLocalStorage<{ tag: string }>();
 const order: string[] = [];
@@ -41,6 +41,11 @@ describe("registered inside an active ALS context", () => {
       setImmediate(done);
     });
 
+    test.each([[1], [2]])("each %p", function withArg(n) {
+      order.push(`each ${n}`);
+      expect(als.getStore()?.tag).toBe("collection");
+    });
+
     describe("nested describe", function zeroArg() {
       afterAll(function zeroArg() {
         order.push("nested.afterAll");
@@ -60,6 +65,12 @@ test("hooks and tests registered inside an ALS context use the callback's real a
     "afterEach",
     "beforeEach",
     "done test",
+    "afterEach",
+    "beforeEach",
+    "each 1",
+    "afterEach",
+    "beforeEach",
+    "each 2",
     "afterEach",
     "beforeEach",
     "nested.test",

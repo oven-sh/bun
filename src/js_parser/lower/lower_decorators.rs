@@ -218,7 +218,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// recordUsage + Expr.assign.
     fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
         self.record_usage(ref_);
-        Expr::assign(self.alloc, 
+        Expr::assign(
+            self.alloc,
             self.new_expr(
                 E::Identifier {
                     ref_,
@@ -1167,8 +1168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `ptr::read` left a second owner in the local that dropped at function
         // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
         // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
-        let mut class_decorators: ExprNodeList =
-            p.alloc.take(&mut class.ts_decorators);
+        let mut class_decorators: ExprNodeList = p.alloc.take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
@@ -2466,7 +2466,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 });
                                 if let Some(val) = decl_item.value {
                                     p.record_usage(ref_);
-                                    comma_parts.push(Expr::assign(p.alloc, 
+                                    comma_parts.push(Expr::assign(
+                                        p.alloc,
                                         p.new_expr(
                                             E::Identifier {
                                                 ref_,

@@ -218,7 +218,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         // Convert class declaration to assignment: ClassName = class ClassName {}
                         // G::Class is non-Copy (owns a Vec); the original
                         // S::Class store entry is dead after this rewrite, so move it out.
-                        let class_value = core::mem::replace(&mut class.class, G::Class::empty(self.alloc));
+                        let class_value =
+                            core::mem::replace(&mut class.class, G::Class::empty(self.alloc));
                         let class_expr = self.new_expr(class_value, stmt.loc);
                         let class_id = self.new_expr(
                             E::Identifier {

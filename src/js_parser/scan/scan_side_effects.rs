@@ -586,7 +586,10 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, alloc: bun_alloc::AstAlloc) -> bool {
+    fn should_keep_stmts_in_dead_control_flow(
+        stmts: bun_ast::StmtNodeList,
+        alloc: bun_alloc::AstAlloc,
+    ) -> bool {
         for child in stmts.slice() {
             if Self::should_keep_stmt_in_dead_control_flow(*child, alloc) {
                 return true;

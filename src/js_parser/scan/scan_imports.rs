@@ -414,8 +414,9 @@ impl<'a> ImportScanner<'a> {
                                 // SAFETY: `original_name` is an arena-owned slice valid for 'p.
                                 let original_name = symbol.original_name.slice();
 
-                                symbol.namespace_alias =
-                                    Some(bun_alloc::ast_box(p.alloc, G::NamespaceAlias {
+                                symbol.namespace_alias = Some(bun_alloc::ast_box(
+                                    p.alloc,
+                                    G::NamespaceAlias {
                                         namespace_ref,
                                         alias: js_ast::StoreStr::new(*alias),
                                         import_record_index: st.import_record_index,
@@ -423,7 +424,8 @@ impl<'a> ImportScanner<'a> {
                                             .star_name_loc
                                             .is_empty()
                                             && existing.contains(original_name),
-                                    }));
+                                    },
+                                ));
 
                                 // Also record these automatically-generated top-level namespace alias symbols
                                 p.declared_symbols
@@ -535,8 +537,9 @@ impl<'a> ImportScanner<'a> {
                             {
                                 // SAFETY: arena-owned slice valid for 'p.
                                 let original_name = symbol.original_name.slice();
-                                symbol.namespace_alias =
-                                    Some(bun_alloc::ast_box(p.alloc, G::NamespaceAlias {
+                                symbol.namespace_alias = Some(bun_alloc::ast_box(
+                                    p.alloc,
+                                    G::NamespaceAlias {
                                         namespace_ref,
                                         alias: item.alias,
                                         import_record_index: st.import_record_index,
@@ -546,7 +549,8 @@ impl<'a> ImportScanner<'a> {
                                             && existing_items
                                                 .map(|m| m.contains(original_name))
                                                 .unwrap_or(false),
-                                    }));
+                                    },
+                                ));
                             }
                         }
 
@@ -555,12 +559,15 @@ impl<'a> ImportScanner<'a> {
                             .contains(import_record::Flags::WAS_ORIGINALLY_REQUIRE)
                         {
                             let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
-                            symbol.namespace_alias = Some(bun_alloc::ast_box(p.alloc, G::NamespaceAlias {
-                                namespace_ref,
-                                alias: js_ast::StoreStr::EMPTY,
-                                import_record_index: st.import_record_index,
-                                was_originally_property_access: false,
-                            }));
+                            symbol.namespace_alias = Some(bun_alloc::ast_box(
+                                p.alloc,
+                                G::NamespaceAlias {
+                                    namespace_ref,
+                                    alias: js_ast::StoreStr::EMPTY,
+                                    import_record_index: st.import_record_index,
+                                    was_originally_property_access: false,
+                                },
+                            ));
                         }
                     }
 

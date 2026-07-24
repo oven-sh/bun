@@ -82,11 +82,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let ts_mut = &mut *ts_namespace;
                                 ts_mut.property_accesses.insert(name, new_ref);
                                 self.symbols[new_ref.inner_index() as usize].namespace_alias =
-                                    Some(bun_alloc::ast_box(self.alloc, js_ast::NamespaceAlias {
-                                        namespace_ref: arg_ref,
-                                        alias: js_ast::StoreStr::new(name),
-                                        ..Default::default()
-                                    }));
+                                    Some(bun_alloc::ast_box(
+                                        self.alloc,
+                                        js_ast::NamespaceAlias {
+                                            namespace_ref: arg_ref,
+                                            alias: js_ast::StoreStr::new(name),
+                                            ..Default::default()
+                                        },
+                                    ));
                                 break 'brk new_ref;
                             }
                         }

@@ -880,7 +880,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // visitor (PORTING.md §Forbidden).
     pub fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(self.alloc, 
+            js_ast::ExprData::EIf(ex) => Expr::init(
+                self.alloc,
                 E::If {
                     yes: self.maybe_transpose_if_import(ex.yes, state),
                     no: self.maybe_transpose_if_import(ex.no, state),
@@ -894,7 +895,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(self.alloc, 
+            js_ast::ExprData::EIf(ex) => Expr::init(
+                self.alloc,
                 E::If {
                     yes: self.maybe_transpose_if_require(ex.yes, state),
                     no: self.maybe_transpose_if_require(ex.no, state),
@@ -911,7 +913,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
         };
-        Expr::init(self.alloc, 
+        Expr::init(
+            self.alloc,
             E::If {
                 yes: self.maybe_transpose_if_require(ex.yes, state),
                 no: self.maybe_transpose_if_require(ex.no, state),
@@ -923,7 +926,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
         match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(self.alloc, 
+            js_ast::ExprData::EIf(ex) => Expr::init(
+                self.alloc,
                 E::If {
                     yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                     no: self.maybe_transpose_if_require_resolve(ex.no, state),
@@ -940,7 +944,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
         };
-        Expr::init(self.alloc, 
+        Expr::init(
+            self.alloc,
             E::If {
                 yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                 no: self.maybe_transpose_if_require_resolve(ex.no, state),
@@ -1833,12 +1838,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(self.alloc, js_ast::NamespaceAlias {
-                        namespace_ref,
-                        alias: js_ast::StoreStr::new(alias_name),
-                        import_record_index: import_record_i,
-                        was_originally_property_access: false,
-                    }));
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(
+                        self.alloc,
+                        js_ast::NamespaceAlias {
+                            namespace_ref,
+                            alias: js_ast::StoreStr::new(alias_name),
+                            import_record_index: import_record_i,
+                            was_originally_property_access: false,
+                        },
+                    ));
                 }
             }
 
@@ -2881,12 +2889,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app");
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(self.alloc, js_ast::NamespaceAlias {
-                        namespace_ref: self.bun_app_namespace_ref,
-                        alias: js_ast::StoreStr::new(b"Response"),
-                        was_originally_property_access: false,
-                        import_record_index: u32::MAX,
-                    }));
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(
+                        self.alloc,
+                        js_ast::NamespaceAlias {
+                            namespace_ref: self.bun_app_namespace_ref,
+                            alias: js_ast::StoreStr::new(b"Response"),
+                            was_originally_property_access: false,
+                            import_record_index: u32::MAX,
+                        },
+                    ));
                 }
             }
         }
@@ -3765,12 +3776,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.options.features.hot_module_reloading {
                     let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                     if symbol.namespace_alias.is_none() {
-                        symbol.namespace_alias = Some(bun_alloc::ast_box(self.alloc, js_ast::NamespaceAlias {
-                            namespace_ref: stmt.namespace_ref,
-                            alias: js_ast::StoreStr::new(b"default"),
-                            import_record_index: stmt.import_record_index,
-                            was_originally_property_access: false,
-                        }));
+                        symbol.namespace_alias = Some(bun_alloc::ast_box(
+                            self.alloc,
+                            js_ast::NamespaceAlias {
+                                namespace_ref: stmt.namespace_ref,
+                                alias: js_ast::StoreStr::new(b"default"),
+                                import_record_index: stmt.import_record_index,
+                                was_originally_property_access: false,
+                            },
+                        ));
                     }
                 }
 
@@ -3847,12 +3861,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(self.alloc, js_ast::NamespaceAlias {
-                        namespace_ref: stmt.namespace_ref,
-                        alias: js_ast::StoreStr::new(alias),
-                        import_record_index: stmt.import_record_index,
-                        was_originally_property_access: false,
-                    }));
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(
+                        self.alloc,
+                        js_ast::NamespaceAlias {
+                            namespace_ref: stmt.namespace_ref,
+                            alias: js_ast::StoreStr::new(alias),
+                            import_record_index: stmt.import_record_index,
+                            was_originally_property_access: false,
+                        },
+                    ));
                 }
             }
 
@@ -5003,7 +5020,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             parts.push(js_ast::Part {
                 stmts: final_stmts,
-                symbol_uses: core::mem::replace(&mut self.symbol_uses, SymbolUseMap::new_in(self.alloc)),
+                symbol_uses: core::mem::replace(
+                    &mut self.symbol_uses,
+                    SymbolUseMap::new_in(self.alloc),
+                ),
                 import_symbol_property_uses: {
                     let m = core::mem::replace(
                         &mut self.import_symbol_property_uses,
@@ -6143,7 +6163,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name_loc,
                     );
                     let right = self.new_expr(E::Object::empty(self.alloc), name_loc);
-                    break 'arg_expr Expr::assign(self.alloc, 
+                    break 'arg_expr Expr::assign(
+                        self.alloc,
                         Expr::init_identifier(name_ref, name_loc),
                         self.new_expr(
                             E::Binary {
@@ -6763,7 +6784,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ..G::Property::empty(self.alloc)
                         });
                         for old in old_props.slice_mut().iter_mut() {
-                            properties.push(core::mem::replace(old, G::Property::empty(self.alloc)));
+                            properties
+                                .push(core::mem::replace(old, G::Property::empty(self.alloc)));
                         }
 
                         s_class.class.properties =
@@ -7563,7 +7585,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let call = self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.react_refresh.register_ref, loc),
-                args: self.alloc.vec_from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
+                args: self
+                    .alloc
+                    .vec_from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
                 ..E::Call::empty(self.alloc)
             },
             loc,
@@ -8706,7 +8730,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loop_body: null_stmt_data(),
             define,
             import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
-            named_imports: NamedImportsType::Owned(bun_ast::ast_result::NamedImports::new_in(alloc)), // overwritten below for !SCAN_ONLY
+            named_imports: NamedImportsType::Owned(bun_ast::ast_result::NamedImports::new_in(
+                alloc,
+            )), // overwritten below for !SCAN_ONLY
             named_exports: bun_ast::ast_result::NamedExports::new_in(alloc),
             log,
             stack_check: bun_core::StackCheck::init(),
@@ -8912,11 +8938,8 @@ impl LowerUsingDeclarationsContext {
                             stmt_loc,
                         ),
                     ]);
-                    decl.value = Some(p.call_runtime(
-                        value_loc,
-                        b"__using",
-                        p.alloc.vec_from_slice(args),
-                    ));
+                    decl.value =
+                        Some(p.call_runtime(value_loc, b"__using", p.alloc.vec_from_slice(args)));
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding

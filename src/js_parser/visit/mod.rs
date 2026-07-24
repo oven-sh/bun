@@ -1804,10 +1804,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                ret.value = Some(prev_expr.value.join_with_comma(
-                                    p.alloc,
-                                    ret.value.unwrap(),
-                                ));
+                                ret.value = Some(
+                                    prev_expr.value.join_with_comma(p.alloc, ret.value.unwrap()),
+                                );
                                 output[prev_idx] = stmt;
                                 continue;
                             }
@@ -1831,10 +1830,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if !prev_stmt.is_super_call() {
                                 output[prev_idx] = p.s(
                                     S::Throw {
-                                        value: prev_expr.value.join_with_comma(
-                                            p.alloc,
-                                            s_throw.value,
-                                        ),
+                                        value: prev_expr
+                                            .value
+                                            .join_with_comma(p.alloc, s_throw.value),
                                     },
                                     stmt.loc,
                                 );

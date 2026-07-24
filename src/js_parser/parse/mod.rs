@@ -1493,7 +1493,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
-                                stmt = Stmt::alloc(p.alloc, 
+                                stmt = Stmt::alloc(
+                                    p.alloc,
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
                                     },

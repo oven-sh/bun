@@ -1315,14 +1315,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
                         if let Data::EBinary(comma) = &e_.value.data {
                             if comma.op == Op::BinComma {
-                                *e = comma.left.join_with_comma(p.alloc, p.new_expr(
-                                    E::Unary {
-                                        op: e_.op,
-                                        value: comma.right,
-                                        flags: e_.flags,
-                                    },
-                                    comma.right.loc,
-                                ));
+                                *e = comma.left.join_with_comma(
+                                    p.alloc,
+                                    p.new_expr(
+                                        E::Unary {
+                                            op: e_.op,
+                                            value: comma.right,
+                                            flags: e_.flags,
+                                        },
+                                        comma.right.loc,
+                                    ),
+                                );
                                 return;
                             }
                         }

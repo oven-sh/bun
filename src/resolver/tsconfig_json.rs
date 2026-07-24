@@ -41,7 +41,9 @@ impl JsonCache {
     /// Lazily creates the arena on first access.
     #[inline]
     pub fn alloc(&mut self) -> bun_alloc::AstAlloc {
-        self.bump.get_or_insert_with(bun_alloc::AstArena::new).alloc()
+        self.bump
+            .get_or_insert_with(bun_alloc::AstArena::new)
+            .alloc()
     }
 
     #[inline]

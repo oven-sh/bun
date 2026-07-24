@@ -1027,7 +1027,8 @@ impl<'a> Parser<'a> {
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
-                    bun_ast::DeclaredSymbolList::init_capacity(p.alloc, count).expect("unreachable");
+                    bun_ast::DeclaredSymbolList::init_capacity(p.alloc, count)
+                        .expect("unreachable");
                 let decls = p
                     .arena
                     .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
@@ -1135,7 +1136,8 @@ impl<'a> Parser<'a> {
 
                     VecExt::append(&mut p.module_scope_mut().generated, ns_ref);
 
-                    import_part_stmts[0] = Stmt::alloc(p.alloc, 
+                    import_part_stmts[0] = Stmt::alloc(
+                        p.alloc,
                         S::Import {
                             star_name_loc: ns_loc,
                             import_record_index: import_record_id,
@@ -1148,7 +1150,8 @@ impl<'a> Parser<'a> {
                         ns_loc,
                     );
                     let mut declared_symbols =
-                        bun_ast::DeclaredSymbolList::init_capacity(p.alloc, 1).expect("unreachable");
+                        bun_ast::DeclaredSymbolList::init_capacity(p.alloc, 1)
+                            .expect("unreachable");
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
                         ref_: ns_ref,
                         is_top_level: true,
@@ -1309,8 +1312,7 @@ impl<'a> Parser<'a> {
                                     None
                                 };
                                 if let Some(id) = redirect_import_record_index {
-                                    part.symbol_uses =
-                                        js_ast::part::SymbolUseMap::new_in(p.alloc);
+                                    part.symbol_uses = js_ast::part::SymbolUseMap::new_in(p.alloc);
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
@@ -1391,7 +1393,8 @@ impl<'a> Parser<'a> {
                                             );
                                             new_stmts.extend_from_slice(&part_stmts[0..j]);
 
-                                            new_stmts.push(Stmt::alloc(p.alloc, 
+                                            new_stmts.push(Stmt::alloc(
+                                                p.alloc,
                                                 S::ExportStar {
                                                     import_record_index: req.import_record_index,
                                                     namespace_ref,
@@ -1898,9 +1901,7 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: p.alloc.vec_from_iter([
-                        import_record_id,
-                    ]),
+                    import_record_indices: p.alloc.vec_from_iter([import_record_id]),
                     tag: bun_ast::PartTag::BunTest,
                     ..js_ast::Part::empty(p.alloc)
                 });
@@ -1958,9 +1959,7 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: p.alloc.vec_from_iter([
-                        import_record_id,
-                    ]),
+                    import_record_indices: p.alloc.vec_from_iter([import_record_id]),
                     tag: bun_ast::PartTag::BunTest,
                     ..js_ast::Part::empty(p.alloc)
                 });
@@ -2086,8 +2085,7 @@ impl<'a> Parser<'a> {
             }
             if !rc_stmts.is_empty() {
                 let mut declared_symbols = bun_ast::DeclaredSymbolList::empty(p.alloc);
-                let mut import_record_indices: js_ast::PartImportRecordIndices =
-                    p.alloc.vec();
+                let mut import_record_indices: js_ast::PartImportRecordIndices = p.alloc.vec();
                 for stmt in &rc_stmts {
                     match &stmt.data {
                         js_ast::StmtData::SImport(import) => {

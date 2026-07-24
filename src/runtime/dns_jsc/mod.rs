@@ -12,6 +12,13 @@
 mod dns_body;
 pub(crate) use dns_body::netc;
 
+/// Codegen path alias: `generated_js2native.rs` lowers
+/// `$rust(runtime/dns_jsc/dns.rs, TestingAPIs.*)` to
+/// `crate::dns_jsc::dns::testing_ap_is::*` (cf. `crate::socket::socket`).
+pub mod dns {
+    pub use super::dns_body::testing_ap_is;
+}
+
 #[path = "cares_jsc.rs"]
 pub mod cares_jsc; // c-ares reply struct → JSValue bridges
 

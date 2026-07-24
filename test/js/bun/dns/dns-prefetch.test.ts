@@ -1,5 +1,6 @@
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
+import { dnsInternals } from "bun:internal-for-testing";
 import { bunEnv, bunExe } from "harness";
 
 // The DNS cache is process-global, so this runs in its own process to get
@@ -70,5 +71,30 @@ describe("dns.prefetch", () => {
     const newStats2 = dns.getCacheStats();
     // Ensure it's cached.
     expect(newStats2.cacheHitsCompleted).toBeGreaterThan(currentStats.cacheHitsCompleted);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/33278
+describe("getaddrinfo result interleaving (RFC 8305)", () => {
+  // Entries are encoded as family * 1000 + original resolver index.
+  test.each([
+    // 4 AAAA before any A (the aiplatform.googleapis.com shape from the
+    // issue): an IPv4 address must reach the first batch of 4 attempts.
+    {
+      families: [6, 6, 6, 6, 4, 4, 4, 4],
+      expected: [6000, 4004, 6001, 4005, 6002, 4006, 6003, 4007],
+    },
+    // The resolver's preferred family stays first (RFC 6724 order is policy).
+    { families: [4, 4, 6, 6], expected: [4000, 6002, 4001, 6003] },
+    // Uneven counts: the surplus family keeps resolver order at the tail.
+    { families: [6, 6, 6, 6, 4, 4], expected: [6000, 4004, 6001, 4005, 6002, 6003] },
+    { families: [6, 4, 4, 4], expected: [6000, 4001, 4002, 4003] },
+    // Single-family and already-interleaved lists are untouched.
+    { families: [6, 6, 6], expected: [6000, 6001, 6002] },
+    { families: [4], expected: [4000] },
+    { families: [6, 4, 6, 4], expected: [6000, 4001, 6002, 4003] },
+    { families: [], expected: [] },
+  ])("$families → $expected", ({ families, expected }) => {
+    expect(dnsInternals.getaddrinfoInterleave(families)).toEqual(expected);
   });
 });

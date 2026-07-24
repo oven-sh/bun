@@ -467,6 +467,17 @@ export const stringsInternals = {
   ) => string,
 };
 
+export const dnsInternals = {
+  /**
+   * Feeds a synthetic getaddrinfo result with the given address families
+   * (4 | 6) through the connect path's result packing and returns
+   * `family * 1000 + originalIndex` in the order connections are attempted.
+   */
+  getaddrinfoInterleave: $newRustFunction("runtime/dns_jsc/dns.rs", "TestingAPIs.getaddrinfoInterleave", 1) as (
+    families: number[],
+  ) => number[],
+};
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

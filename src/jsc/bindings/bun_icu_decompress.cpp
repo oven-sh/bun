@@ -46,6 +46,42 @@ extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;
 
 namespace Bun {
 
+// Replacement uts46.nrm carrying the Unicode 16.0 IdnaMappingTable (UTS #46
+// rev. 33) in Nrm2 format version 4, readable by the ICU 73/75 the prebuilts
+// bundle. Regenerate via scripts/regenerate-uts46-override.sh.
+alignas(16) static constexpr uint8_t s_uts46Override[] = {
+#embed "icu_uts46_override.nrm"
+};
+
+// The bundled prebuilts' uts46.nrm predates Unicode 16.0, which reclassified
+// U+04C0, U+10A0..10C5, U+2132, U+2183 et al. from "disallowed" to "mapped".
+// Match by 48-byte prefix (DataHeader + first four Nrm2 indexes, unique per *.nrm).
+static const void* maybeOverrideUTS46(const void* p, int32_t* length)
+{
+    // clang-format off
+    static constexpr uint8_t kUTS46Prefix75[48] = {
+        0x20, 0x00, 0xda, 0x27, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x4e, 0x72, 0x6d, 0x32,
+        0x04, 0x00, 0x00, 0x00, 0x0f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x50, 0x00, 0x00, 0x00, 0xc0, 0x93, 0x00, 0x00, 0x8c, 0xe8, 0x00, 0x00, 0x8c, 0xe9, 0x00, 0x00,
+    };
+    static constexpr uint8_t kUTS46Prefix73[48] = {
+        0x20, 0x00, 0xda, 0x27, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x4e, 0x72, 0x6d, 0x32,
+        0x04, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x50, 0x00, 0x00, 0x00, 0x84, 0x93, 0x00, 0x00, 0x4c, 0xe8, 0x00, 0x00, 0x4c, 0xe9, 0x00, 0x00,
+    };
+    // clang-format on
+    static_assert(s_uts46Override[12] == 'N' && s_uts46Override[13] == 'r' && s_uts46Override[16] == 4,
+        "icu_uts46_override.nrm must be Nrm2 format version 4");
+
+    if (*length >= static_cast<int32_t>(sizeof(kUTS46Prefix75))
+        && (std::memcmp(p, kUTS46Prefix75, sizeof(kUTS46Prefix75)) == 0
+            || std::memcmp(p, kUTS46Prefix73, sizeof(kUTS46Prefix73)) == 0)) {
+        *length = static_cast<int32_t>(sizeof(s_uts46Override));
+        return s_uts46Override;
+    }
+    return p;
+}
+
 class ICUDecompressor {
 public:
     static ICUDecompressor& get()
@@ -119,7 +155,7 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
     uint32_t magic;
     std::memcpy(&magic, p, sizeof(magic));
     if (magic != ZSTD_MAGICNUMBER) [[likely]]
-        return p;
+        return Bun::maybeOverrideUTS46(p, length);
     return Bun::ICUDecompressor::get().decompress(p, length);
 }
 

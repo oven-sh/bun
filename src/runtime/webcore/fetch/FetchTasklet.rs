@@ -834,10 +834,6 @@ impl FetchTasklet {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
-                // Same GC hint Bun.serve fires per request, for the outbound direction: an
-                // agent loop only makes fetches, so nothing else nudges the heuristic.
-                // SAFETY: process-static VM (checked non-shutting-down above); JS thread.
-                unsafe { (*vm.event_loop()).request_gc_hint() };
                 // The HTTP response has been fully received. If the request body
                 // is still being uploaded through a ResumableSink (e.g. the
                 // underlying source's `pull` awaits a timer, so a chunk arrives

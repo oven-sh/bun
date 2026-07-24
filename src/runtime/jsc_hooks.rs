@@ -991,10 +991,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
-            // Before `get_timeout`, not after: both of these can arm the GC timer, and a
+            // Before `get_timeout`: the first call arms the idle GC timer, and a
             // timer armed after the poll deadline is computed is not in that deadline.
-            // SAFETY: `el` is the live per-thread event loop.
-            unsafe { (*el).drain_pending_gc_hint() };
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
             // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
@@ -1126,8 +1124,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
             // Before `get_timeout` — see the matching call in `auto_tick`.
-            // SAFETY: `el` is the live per-thread event loop.
-            unsafe { (*el).drain_pending_gc_hint() };
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
             // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that

@@ -317,6 +317,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
+            // Lower the "large heap" threshold so JSC's own allocation-budgeted
+            // eden pacing engages sooner; with Bun's per-tick heap sampler gone
+            // (GarbageCollectionController.rs), this is the primary eden driver.
+            JSC::Options::largeHeapSize() = 8 * 1024 * 1024;
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;

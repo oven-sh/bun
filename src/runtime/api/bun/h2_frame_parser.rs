@@ -2153,10 +2153,6 @@ impl Stream {
         if let Some(signal) = self.signal.take() {
             drop(signal);
         }
-        // unsafe to ask GC to run if we are already inside GC
-        if !FINALIZING {
-            VirtualMachine::get().event_loop_mut().process_gc_timer();
-        }
     }
 }
 

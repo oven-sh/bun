@@ -1,75 +1,54 @@
-//! Garbage Collection Controller for Bun's JavaScript runtime
+//! Idle garbage-collection timer for Bun's JavaScript runtime.
 //!
-//! This controller intelligently schedules garbage collection to run at optimal times,
-//! such as when HTTP requests complete, during idle periods, or when memory usage
-//! has grown significantly since the last collection cycle.
+//! JavaScriptCore already paces eden and full collections against allocation
+//! rate via `GCActivityCallback::didAllocate` / `Heap::collectIfNecessaryOrDefer`
+//! (bridged onto Bun's timer heap through `WTFTimer`). This controller only
+//! adds a low-frequency idle timer that requests a collection every
+//! `gc_timer_interval` ms (default 1 s, decaying to 30 s after 30 steady ticks)
+//! so a process that stops allocating still releases memory.
 //!
-//! The controller works in conjunction with JavaScriptCore's built-in GC timers to
-//! provide additional collection opportunities, particularly in scenarios where:
-//! - JavaScript code is not actively executing (e.g., waiting for I/O)
-//! - The event loop is idle but memory usage has increased
-//! - Long-running operations have allocated significant memory
-//!
-//! Key features:
-//! - Adaptive timing based on heap growth patterns
-//! - Configurable intervals via BUN_GC_TIMER_INTERVAL environment variable
-//! - Can be disabled via BUN_GC_TIMER_DISABLE for debugging/testing
+//! Tuning knobs (process environment):
+//! - `BUN_GC_TIMER_INTERVAL`  fast-mode interval in ms (default 1000)
+//! - `BUN_GC_TIMER_DISABLE`   truthy value disables the timer entirely
 //!
 //! Thread Safety: This type must be unique per JavaScript thread and is not
-//! thread-safe. Each VirtualMachine instance should have its own controller.
+//! thread-safe. Each VirtualMachine instance has its own controller.
 
 use core::ffi::c_int;
 
-use bun_core::{Timespec, TimespecMockMode};
+use bun_core::{Timespec, TimespecMockMode, ZStr};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_uws as uws;
 
-use crate::VM;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
 pub struct GarbageCollectionController {
-    pub gc_timer: EventLoopTimer,
     pub gc_repeating_timer: EventLoopTimer,
     pub gc_last_heap_size: usize,
-    pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
-    pub gc_timer_state: GCTimerState,
     pub gc_timer_interval: i32,
     pub gc_repeating_timer_fast: bool,
     pub disabled: bool,
-    /// A finished HTTP transaction wants the heap looked at; see `request_hint`.
-    hint_pending: bool,
 }
 
 bun_event_loop::impl_timer_owner!(
     GarbageCollectionController;
-    from_gc_timer_ptr => gc_timer,
     from_gc_repeating_timer_ptr => gc_repeating_timer,
 );
 
 impl Default for GarbageCollectionController {
     fn default() -> Self {
         Self {
-            gc_timer: EventLoopTimer::init_paused(TimerTag::GcOneShot),
             gc_repeating_timer: EventLoopTimer::init_paused(TimerTag::GcRepeating),
             gc_last_heap_size: 0,
-            gc_last_heap_size_on_repeating_timer: 0,
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
-            gc_timer_state: GCTimerState::Pending,
             gc_timer_interval: 0,
             gc_repeating_timer_fast: true,
             disabled: false,
-            hint_pending: false,
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum GcRepeatSetting {
-    Fast,
-    Slow,
 }
 
 impl GarbageCollectionController {
@@ -77,7 +56,7 @@ impl GarbageCollectionController {
     /// insert. JS-thread only. Real time, not the mocked clock: GC pacing is
     /// Bun's, not the test's.
     fn arm(vm: *mut VirtualMachine, t: *mut EventLoopTimer, ms: i32) {
-        // SAFETY: `t` is one of the two embedded nodes of the per-VM controller,
+        // SAFETY: `t` is the embedded node of the per-VM controller,
         // address-stable for the VM lifetime; JS-thread only.
         unsafe {
             if (*t).state == TimerState::ACTIVE {
@@ -102,10 +81,17 @@ impl GarbageCollectionController {
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
+        // The dotenv loader may not be populated yet when this runs (it exists
+        // from `Transpiler::init` but `load_process()` has not run); fall back
+        // to the process environment so the knobs below are always honoured.
         let env = vm.env_loader_opt();
+        let get_env = |zkey: &'static ZStr| -> Option<&'static [u8]> {
+            env.and_then(|e| e.get(zkey))
+                .or_else(|| bun_core::getenv_z(zkey))
+        };
 
         let mut gc_timer_interval: i32 = 1000;
-        if let Some(timer) = env.and_then(|e| e.get(b"BUN_GC_TIMER_INTERVAL")) {
+        if let Some(timer) = get_env(ZStr::from_static(b"BUN_GC_TIMER_INTERVAL\0")) {
             if let Some(parsed) = bun_core::fmt::parse_decimal::<i32>(timer) {
                 if parsed > 0 {
                     gc_timer_interval = parsed;
@@ -114,7 +100,9 @@ impl GarbageCollectionController {
         }
         self.gc_timer_interval = gc_timer_interval;
 
-        if let Some(val) = env.and_then(|e| e.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) {
+        if let Some(val) = get_env(ZStr::from_static(
+            b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS\0",
+        )) {
             if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
                 if parsed >= 0 {
                     crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
@@ -123,28 +111,8 @@ impl GarbageCollectionController {
             }
         }
 
-        self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
-    }
-
-    /// A completed HTTP transaction asked us to look at the heap. We do not act here: the
-    /// response's JS handling and its microtasks have not run yet, so the garbage does not
-    /// exist to be measured. Acted on at the next event-loop park, by which point it does.
-    pub fn request_hint(&mut self) {
-        self.hint_pending = true;
-    }
-
-    /// Called just before the event loop blocks. Microtasks have drained by now.
-    pub fn drain_pending_hint(&mut self) {
-        if !self.hint_pending {
-            return;
-        }
-        self.hint_pending = false;
-        self.process_gc_timer();
-    }
-
-    pub fn schedule_gc_timer(&mut self) {
-        self.gc_timer_state = GCTimerState::Scheduled;
-        Self::arm(VirtualMachine::get_mut_ptr(), &raw mut self.gc_timer, 16);
+        self.disabled = get_env(ZStr::from_static(b"BUN_GC_TIMER_DISABLE\0"))
+            .is_some_and(bun_dotenv::Loader::is_truthy);
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
@@ -159,14 +127,38 @@ impl GarbageCollectionController {
         let Some(vm) = VirtualMachine::get_or_null() else {
             return;
         };
-        for t in [&raw mut self.gc_timer, &raw mut self.gc_repeating_timer] {
-            // SAFETY: JS-thread; nodes are linked iff state == ACTIVE.
-            unsafe {
-                if (*t).state == TimerState::ACTIVE {
-                    VirtualMachine::timer_remove(vm, t);
-                }
+        // SAFETY: JS-thread; node is linked iff state == ACTIVE.
+        unsafe {
+            let t = &raw mut self.gc_repeating_timer;
+            if (*t).state == TimerState::ACTIVE {
+                VirtualMachine::timer_remove(vm, t);
             }
         }
+    }
+
+    /// Arms the idle timer on first call; a branch on `state` thereafter. Kept
+    /// at the existing event-loop call sites so the timer's first deadline is
+    /// included in the poll that follows.
+    #[inline]
+    pub fn process_gc_timer(&mut self) {
+        if self.disabled || self.gc_repeating_timer.state != TimerState::PENDING {
+            return;
+        }
+        let interval = self.repeat_interval();
+        Self::arm(
+            VirtualMachine::get_mut_ptr(),
+            &raw mut self.gc_repeating_timer,
+            interval,
+        );
+    }
+
+    pub fn perform_gc(&mut self) {
+        if self.disabled {
+            return;
+        }
+        let vm = VirtualMachine::get().jsc_vm();
+        vm.collect_async();
+        self.gc_last_heap_size = vm.block_bytes_allocated();
     }
 
     // We want to always run GC once in awhile
@@ -179,100 +171,9 @@ impl GarbageCollectionController {
     //    - Slow: GC runs every 30 seconds
     //
     // When the heap size is increasing, we always switch to fast mode
-    // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
-        let want_fast = match setting {
-            GcRepeatSetting::Fast if !self.gc_repeating_timer_fast => true,
-            GcRepeatSetting::Slow if self.gc_repeating_timer_fast => false,
-            _ => return,
-        };
-        self.gc_repeating_timer_fast = want_fast;
-        self.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-        if self.gc_repeating_timer.state == TimerState::ACTIVE {
-            let interval = self.repeat_interval();
-            Self::arm(
-                VirtualMachine::get_mut_ptr(),
-                &raw mut self.gc_repeating_timer,
-                interval,
-            );
-        }
-    }
-
-    #[inline]
-    pub fn process_gc_timer(&mut self) {
-        if self.disabled {
-            return;
-        }
-        if self.gc_repeating_timer.state == TimerState::PENDING {
-            let interval = self.repeat_interval();
-            Self::arm(
-                VirtualMachine::get_mut_ptr(),
-                &raw mut self.gc_repeating_timer,
-                interval,
-            );
-        }
-        let vm = VirtualMachine::get().jsc_vm();
-        self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
-    }
-
-    fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
-        let prev = self.gc_last_heap_size;
-
-        match self.gc_timer_state {
-            GCTimerState::RunOnNextTick => {
-                // When memory usage is not stable, run the GC more.
-                if this_heap_size != prev {
-                    self.schedule_gc_timer();
-                    self.update_gc_repeat_timer(GcRepeatSetting::Fast);
-                } else {
-                    self.gc_timer_state = GCTimerState::Pending;
-                }
-                vm.collect_async();
-                self.gc_last_heap_size = this_heap_size;
-            }
-            GCTimerState::Pending => {
-                if this_heap_size != prev {
-                    self.update_gc_repeat_timer(GcRepeatSetting::Fast);
-
-                    if this_heap_size > prev * 2 {
-                        self.perform_gc();
-                    } else {
-                        self.schedule_gc_timer();
-                    }
-                }
-            }
-            GCTimerState::Scheduled => {
-                if this_heap_size > prev * 2 {
-                    self.update_gc_repeat_timer(GcRepeatSetting::Fast);
-                    self.perform_gc();
-                }
-            }
-        }
-    }
-
-    pub fn perform_gc(&mut self) {
-        if self.disabled {
-            return;
-        }
-        let vm = VirtualMachine::get().jsc_vm();
-        vm.collect_async();
-        self.gc_last_heap_size = vm.block_bytes_allocated();
-    }
-
-    /// `Tag::GcOneShot` fire body.
+    // When the heap size has been the same or less for 30 seconds, we switch
+    // to slow mode.
     ///
-    /// # Safety
-    /// `this` is the live per-VM controller; JS-thread only.
-    pub unsafe fn on_gc_timer(this: *mut Self) {
-        // SAFETY: per fn contract.
-        let this = unsafe { &mut *this };
-        this.gc_timer.state = TimerState::FIRED;
-        if this.disabled {
-            return;
-        }
-        this.gc_timer_state = GCTimerState::RunOnNextTick;
-    }
-
     /// `Tag::GcRepeating` fire body.
     ///
     /// # Safety
@@ -284,19 +185,18 @@ impl GarbageCollectionController {
         if this.disabled {
             return;
         }
-        let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
+        let prev_heap_size = this.gc_last_heap_size;
         this.perform_gc();
-        this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
-        if prev_heap_size == this.gc_last_heap_size_on_repeating_timer {
+        if prev_heap_size == this.gc_last_heap_size {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .saturating_add(1);
             if this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30 {
-                this.update_gc_repeat_timer(GcRepeatSetting::Slow);
+                this.gc_repeating_timer_fast = false;
             }
         } else {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-            this.update_gc_repeat_timer(GcRepeatSetting::Fast);
+            this.gc_repeating_timer_fast = true;
         }
         let interval = this.repeat_interval();
         Self::arm(vm, &raw mut this.gc_repeating_timer, interval);
@@ -307,12 +207,4 @@ impl Drop for GarbageCollectionController {
     fn drop(&mut self) {
         self.deinit();
     }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum GCTimerState {
-    Pending,
-    Scheduled,
-    RunOnNextTick,
 }

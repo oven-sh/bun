@@ -976,11 +976,6 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                 AbortSignalTimeout::run(c, vm)
             })
         }
-        EventLoopTimerTag::GcOneShot => {
-            timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
-                GarbageCollectionController::on_gc_timer(c)
-            })
-        }
         EventLoopTimerTag::GcRepeating => {
             timer_arm!(
                 GarbageCollectionController,

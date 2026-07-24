@@ -1077,6 +1077,30 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
       ecdsaPkcs8: "DataError: Invalid key type",
     });
   });
+
+  // RSA and EC AlgorithmIdentifiers are longer than the OKP one, so the pkcs8
+  // importer's length check trips before the OID compare; it must still report
+  // the type mismatch for these well-formed keys.
+  it("RSA/EC pkcs8 imported as Ed25519 reports 'Invalid key type'", async () => {
+    const rsa = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const ec = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    expect({
+      rsa: await rejection(
+        crypto.subtle.importKey("pkcs8", await crypto.subtle.exportKey("pkcs8", rsa.privateKey), "Ed25519", true, [
+          "sign",
+        ]),
+      ),
+      ec: await rejection(
+        crypto.subtle.importKey("pkcs8", await crypto.subtle.exportKey("pkcs8", ec.privateKey), "Ed25519", true, [
+          "sign",
+        ]),
+      ),
+    }).toEqual({ rsa: "DataError: Invalid key type", ec: "DataError: Invalid key type" });
+  });
 });
 
 // The hand-rolled pkcs8 parser consumed everything after the CurvePrivateKey

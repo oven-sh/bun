@@ -1353,6 +1353,16 @@ impl WebWorker {
         }
         #[cfg(windows)]
         {
+            // Free the uWS wrapper (512 KiB recv_buf + send/cork buffers +
+            // struct). Must precede `Loop::shutdown()`: `us_loop_free` queues
+            // `uv_close` callbacks on this thread's `uv_loop_t` that
+            // `shutdown()`'s `uv_run` flushes; running it afterwards would
+            // `uv_close()` already-closed handles. `RareData::drop` in
+            // `vm.destroy()` below does not touch the freed wrapper: every
+            // socket group was emptied (and so unlinked) by
+            // `close_all_socket_groups` + the JSC-finalizer listener close +
+            // `drain_closed_sockets` above.
+            bun_uws::on_thread_exit();
             // Per-thread libuv loop teardown; closes any handles still open on
             // this worker's loop and drops the thread-local pointer.
             bun_sys::windows::libuv::Loop::shutdown();
@@ -1400,6 +1410,8 @@ impl WebWorker {
         // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
         // on `!bun_is_exiting()`. Everything that registers polls on the loop
         // (gc_controller, sockets, timers) has been deinit'd above.
+        // Windows freed the wrapper above (before `Loop::shutdown()`).
+        #[cfg(not(windows))]
         bun_uws::on_thread_exit();
         drop(arena.take());
 

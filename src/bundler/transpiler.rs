@@ -174,12 +174,12 @@ impl<'a> Transpiler<'a> {
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
-    /// `resolve_results`, leaving them logically uninitialized. After this
-    /// returns, `self` must never be dropped (or `deinit`'d again) — every
-    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
-    /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
-    /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
-    /// normal `Drop` instead.
+    /// `resolver.caches` / `resolve_results`, leaving them logically
+    /// uninitialized. After this returns, `self` must never be dropped (or
+    /// `deinit`'d again) — every caller holds a `Transpiler` that bypasses
+    /// `Drop`: a raw-`dealloc`'d `VirtualMachine` field, a `MaybeUninit` stack
+    /// slot, or an arena-backed `&'static mut`. Owned `Transpiler`s from
+    /// [`Self::for_worker`] must use normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
         // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` is
         // process-lifetime by default, but
@@ -190,13 +190,19 @@ impl<'a> Transpiler<'a> {
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
-        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()` / the `--changed` scan teardown. Caller upholds
-        // the no-auto-drop contract above.
+        // SAFETY: `options`, `result`, `resolver.opts`, `resolver.caches`, and
+        // `resolve_results` are init'd and never read past `destroy()` / the
+        // `--changed` scan teardown. Caller upholds the no-auto-drop contract
+        // above.
         unsafe {
             core::ptr::drop_in_place(&raw mut self.options);
             core::ptr::drop_in_place(&raw mut self.result);
             core::ptr::drop_in_place(&raw mut self.resolver.opts);
+            // `caches.json.bump` is a lazily-populated `AstArena` whose
+            // `Pin<Box<AstArenaInner>>` is system-heap (16 KB); without this,
+            // `bun pm pack`'s stack-local `MaybeUninit<Transpiler>` strands it
+            // and LSAN flags the box.
+            core::ptr::drop_in_place(&raw mut self.resolver.caches);
             core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
     }

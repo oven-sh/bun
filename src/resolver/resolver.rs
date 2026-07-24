@@ -600,7 +600,7 @@ impl<'a> Resolver<'a> {
     /// copy-from-`from` for the resolver
     /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
     /// per-worker `caches` (the only `Drop`-carrying field, via the
-    /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
+    /// `Json` cache's `AstArena`) and `debug_logs`/`timer` are freshly
     /// constructed so nothing the parent owns is aliased into the worker.
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a

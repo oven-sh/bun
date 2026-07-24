@@ -99,8 +99,9 @@ domain.createDomain = domain.create = function () {
       } catch (er2) {
         // The handler threw: offer the new error to the next domain down, or
         // let it become the uncaught exception.
-        if (stack.length) {
-          domain.active = process.domain = stack[stack.length - 1];
+        const { length } = stack;
+        if (length) {
+          domain.active = process.domain = stack[length - 1];
           caught = domain.active._errorHandler(er2);
         } else {
           throw er2;

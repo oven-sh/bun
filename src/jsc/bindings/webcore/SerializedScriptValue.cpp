@@ -122,6 +122,8 @@
 #include "CryptoKeyType.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "../napi.h"
+#include "JSMIMEType.h"
+#include "JSMIMEParams.h"
 #include <limits>
 #include <algorithm>
 
@@ -2879,7 +2881,15 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // like a plain object from JS's perspective (matches Node.js).
             // ObjectPrototype is allowed because %Object.prototype% is an immutable
             // prototype exotic object that the spec carves out of this rejection.
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info())
+            // JSMIMEType/JSMIMEParams (and their prototype objects) are allowed
+            // because in Node.js they are plain JS classes that clone as empty objects.
+            if (inObject->classInfo() != JSFinalObject::info()
+                && inObject->classInfo() != Zig::NapiPrototype::info()
+                && inObject->classInfo() != JSC::ObjectPrototype::info()
+                && inObject->classInfo() != WebCore::JSMIMEType::info()
+                && inObject->classInfo() != WebCore::JSMIMEParams::info()
+                && inObject->classInfo() != WebCore::JSMIMETypePrototype::info()
+                && inObject->classInfo() != WebCore::JSMIMEParamsPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

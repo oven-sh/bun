@@ -798,7 +798,15 @@ where
         };
         if let Err(err) = watcher.start() {
             bun_core::handle_error_return_trace(&err);
-            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
+            // A --watch child that just execve'd can transiently fail
+            // pthread_create on musl; exit with the message (the parent
+            // watcher restarts) rather than reporting a crash.
+            bun_core::pretty_errorln!(
+                "<red>error<r><d>:<r> Failed to start File Watcher: {}",
+                err.name()
+            );
+            Output::flush();
+            bun_core::Global::exit(1);
         }
         watcher
     }
@@ -861,7 +869,12 @@ where
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
             bun_core::handle_error_return_trace(&err);
-            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
+            bun_core::pretty_errorln!(
+                "<red>error<r><d>:<r> Failed to start File Watcher: {}",
+                err.name()
+            );
+            Output::flush();
+            bun_core::Global::exit(1);
         }
     }
 

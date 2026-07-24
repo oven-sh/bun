@@ -367,34 +367,33 @@ impl Error {
 
         let mut err = SystemError {
             errno: js_errno,
-            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
-            message: BunString::empty(),
+            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()).into(),
             ..Default::default()
         };
 
         // both maps are total (`initFull("unknown error")`).
         let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
-            err.code = BunString::static_(code.as_bytes());
+            err.code = BunString::static_(code.as_bytes()).into();
             (code, map[system_errno])
         });
 
         if !self.path.is_empty() {
-            err.path = BunString::clone_utf8(&self.path);
+            err.path = BunString::clone_utf8(&self.path).into();
         }
 
         if !self.dest.is_empty() {
-            err.dest = BunString::clone_utf8(&self.dest);
+            err.dest = BunString::clone_utf8(&self.dest).into();
         }
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
             if valid.kind() == crate::FdKind::Uv {
-                err.fd = valid.uv();
+                err.fd = Some(valid.uv());
             }
             #[cfg(not(windows))]
             {
-                err.fd = valid.uv();
+                err.fd = Some(valid.uv());
             }
         }
 
@@ -406,7 +405,7 @@ impl Error {
         let (mut err, looked_up) =
             self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
         if let Some((_, label)) = looked_up {
-            err.message = BunString::static_(label.as_bytes());
+            err.message = BunString::static_(label.as_bytes()).into();
         }
         err
     }
@@ -470,7 +469,7 @@ impl Error {
             }
             usize::try_from(cursor.position()).expect("int cast")
         };
-        err.message = BunString::clone_utf8(&message_buf[..pos]);
+        err.message = BunString::clone_utf8(&message_buf[..pos]).into();
 
         err
     }
@@ -497,8 +496,8 @@ impl fmt::Display for Error {
         let mut that = self.without_path().to_shell_system_error();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path);
-        that.dest = BunString::borrow_utf8(&self.dest);
+        that.path = BunString::borrow_utf8(&self.path).into();
+        that.dest = BunString::borrow_utf8(&self.dest).into();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
 

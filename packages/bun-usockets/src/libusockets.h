@@ -155,6 +155,11 @@ enum {
      * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
      * the server sends the first bytes. */
     LIBUS_LISTEN_DEFER_ACCEPT = 64,
+    /* Enable IP_RECVERR on a UDP socket so ICMP errors land on the error
+     * queue for on_recv_error to drain. Off by default: on a shared
+     * unconnected socket it also makes the next send fail for a datagram
+     * bound to a different, live peer. */
+    LIBUS_UDP_LINUX_RECVERR = 128,
 };
 
 /* Library types publicly available */

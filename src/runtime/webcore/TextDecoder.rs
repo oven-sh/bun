@@ -211,8 +211,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(method)]
     pub fn decode(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
 
         // Evaluate options.stream before reading the input bytes. Reading `stream`
         // can invoke a user-defined getter that detaches/transfers the input's

@@ -322,7 +322,7 @@ impl HotReloaderEventLoop for EventLoop {
 /// latter requires `watch_kill_signal_has_listeners()`, which is never true
 /// for the `BundleV2`/`AnyEventLoop` instantiations, so this is never
 /// reached.
-impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
+impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
     }
@@ -1390,7 +1390,7 @@ where
 // in via the `#[no_mangle]` hook below.
 
 impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
-    type EventLoop = bun_event_loop::AnyEventLoop<'static>;
+    type EventLoop = bun_event_loop::AnyEventLoop;
 
     fn event_loop(&self) -> *mut Self::EventLoop {
         // With RELOAD_IMMEDIATELY=true the only caller (`Task::enqueue`)
@@ -1468,7 +1468,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 /// `'static` because the only caller (`bun build --watch`)
 /// allocates the transpiler from the process-lifetime CLI arena.
 type BundlerWatcher =
-    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
+    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
 /// `cli_watch_flag` is set. Defined here (not in

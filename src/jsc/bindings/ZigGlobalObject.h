@@ -38,6 +38,7 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
+class GCProfilerObserver;
 } // namespace Bun
 
 namespace v8 {
@@ -786,6 +787,11 @@ public:
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
+
+    // Backs node:v8's GCProfiler. Lazily created on first start(); its
+    // destructor detaches from the heap so a worker that exits mid-profile
+    // does not leave the observer registered.
+    std::unique_ptr<Bun::GCProfilerObserver> m_gcProfilerObserver;
 
     WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
     Ref<NapiEnv> makeNapiEnv(const napi_module&);

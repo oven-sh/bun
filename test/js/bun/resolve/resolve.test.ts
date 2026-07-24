@@ -975,6 +975,69 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   });
 }
 
+// Node.js removed "subpath folder mappings" (exports/imports keys ending in
+// "/", DEP0148) in v17. A key like "./legacy/": "./real/" must no longer act
+// as a prefix pattern; only "./legacy/*": "./real/*" does.
+it("rejects removed trailing-slash exports subpath folder mappings", async () => {
+  using dir = tempDir("exports-trailing-slash", {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "node_modules/tp/package.json": JSON.stringify({
+      name: "tp",
+      exports: { "./legacy/": "./real/", "./modern/*": "./real/*" },
+      imports: { "#legacy/": "./real/", "#modern/*": "./real/*" },
+    }),
+    "node_modules/tp/real/f.js": `module.exports = "tp/real/f.js";\n`,
+    "node_modules/tp/probe-imports.cjs": `
+      const out = {};
+      for (const s of ["#legacy/f.js", "#modern/f.js"]) {
+        try { out[s] = require(s); } catch (e) { out[s] = "THREW " + (e.code || e.name); }
+      }
+      console.log(JSON.stringify(out));
+    `,
+    "probe.mjs": `
+      const out = {};
+      for (const s of ["tp/legacy/f.js", "tp/modern/f.js"]) {
+        try { out[s] = (await import(s)).default; } catch (e) { out[s] = "THREW " + (e.code || e.name); }
+      }
+      console.log(JSON.stringify(out));
+    `,
+  });
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "probe.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "tp/legacy/f.js": expect.stringMatching(/^THREW /),
+      "tp/modern/f.js": "tp/real/f.js",
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "node_modules/tp/probe-imports.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "#legacy/f.js": expect.stringMatching(/^THREW /),
+      "#modern/f.js": "tp/real/f.js",
+    });
+    expect(exitCode).toBe(0);
+  }
+});
+
 describe("resolving external URL specifiers with non-ASCII characters", () => {
   // The resolver returns http://, https://, and // specifiers as-is (marked external).
   // When the specifier contains non-ASCII characters, the intermediate UTF-8 buffer

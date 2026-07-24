@@ -1138,8 +1138,7 @@ impl<'a> Visitor<'a> {
                 json_parser::ValueLocation::Property(prop.key_loc),
             );
 
-            // safe to use "/" on windows. exports in package.json does not use "\\"
-            if strings::ends_with(&key, b"/") || strings::contains_char(&key, b'*') {
+            if strings::contains_char(&key, b'*') {
                 expansion_keys.push(MapEntry {
                     value: value.clone(),
                     key: key.clone(),
@@ -1156,9 +1155,9 @@ impl<'a> Visitor<'a> {
 
         // this leaks a lil, but it's fine.
 
-        // Let expansionKeys be the list of keys of matchObj either ending in "/"
-        // or containing only a single "*", sorted by the sorting function
-        // PATTERN_KEY_COMPARE which orders in descending order of specificity.
+        // Let expansionKeys be the list of keys of matchObj containing only a
+        // single "*", sorted by the sorting function PATTERN_KEY_COMPARE which
+        // orders in descending order of specificity.
         expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
 
         Entry {
@@ -1304,7 +1303,6 @@ pub enum Status {
     Null,
     Exact,
     ExactEndsWithStar,
-    Inexact, // This means we may need to try CommonJS-style extension suffixes
 
     /// Module specifier is an invalid URL, package name or package subpath specifier.
     InvalidModuleSpecifier,
@@ -1587,10 +1585,7 @@ impl<'a> ESModule<'a> {
 
     pub fn finalize(result_: Resolution) -> Resolution {
         let mut result = result_;
-        if result.status != Status::Exact
-            && result.status != Status::ExactEndsWithStar
-            && result.status != Status::Inexact
-        {
+        if result.status != Status::Exact && result.status != Status::ExactEndsWithStar {
             return result;
         }
 
@@ -1737,49 +1732,31 @@ impl<'a> ESModule<'a> {
         if let EntryData::Map(map) = &match_obj.data {
             let expansion_keys = &map.expansion_keys;
             for expansion in expansion_keys.iter() {
-                // If expansionKey contains "*", set patternBase to the substring of
-                // expansionKey up to but excluding the first "*" character
-                if let Some(star) = strings::index_of_char(&expansion.key, b'*') {
-                    let star = star as usize;
-                    let pattern_base = &expansion.key[0..star];
-                    // If patternBase is not null and matchKey starts with but is not equal
-                    // to patternBase, then
-                    if strings::starts_with(match_key, pattern_base) {
-                        // Let patternTrailer be the substring of expansionKey from the index
-                        // after the first "*" character.
-                        let pattern_trailer = &expansion.key[star + 1..];
+                // expansion_keys only contains keys with a "*" (trailing-slash
+                // "./dir/" subpath folder mappings were removed from Node.js in
+                // v17 / DEP0148 and are no longer treated as patterns).
+                let Some(star) = strings::index_of_char(&expansion.key, b'*') else {
+                    debug_assert!(false, "expansion_keys must contain '*'");
+                    continue;
+                };
+                let star = star as usize;
+                let pattern_base = &expansion.key[0..star];
+                // If matchKey starts with but is not equal to patternBase, then
+                if strings::starts_with(match_key, pattern_base) {
+                    // Let patternTrailer be the substring of expansionKey from the index
+                    // after the first "*" character.
+                    let pattern_trailer = &expansion.key[star + 1..];
 
-                        // If patternTrailer has zero length, or if matchKey ends with
-                        // patternTrailer and the length of matchKey is greater than or
-                        // equal to the length of expansionKey, then
-                        if pattern_trailer.is_empty()
-                            || (strings::ends_with(match_key, pattern_trailer)
-                                && match_key.len() >= expansion.key.len())
-                        {
-                            let target = &expansion.value;
-                            let subpath = &match_key
-                                [pattern_base.len()..match_key.len() - pattern_trailer.len()];
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
-                                log.add_note_fmt(format_args!(
-                                    "The key \"{}\" matched with \"{}\" left over",
-                                    bstr::BStr::new(&expansion.key),
-                                    bstr::BStr::new(subpath)
-                                ));
-                            }
-                            return self.resolve_target::<true>(
-                                package_url,
-                                target,
-                                subpath,
-                                is_imports,
-                            );
-                        }
-                    }
-                } else {
-                    // Otherwise if patternBase is null and matchKey starts with
-                    // expansionKey, then
-                    if strings::starts_with(match_key, &expansion.key) {
+                    // If patternTrailer has zero length, or if matchKey ends with
+                    // patternTrailer and the length of matchKey is greater than or
+                    // equal to the length of expansionKey, then
+                    if pattern_trailer.is_empty()
+                        || (strings::ends_with(match_key, pattern_trailer)
+                            && match_key.len() >= expansion.key.len())
+                    {
                         let target = &expansion.value;
-                        let subpath = &match_key[expansion.key.len()..];
+                        let subpath =
+                            &match_key[pattern_base.len()..match_key.len() - pattern_trailer.len()];
                         if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The key \"{}\" matched with \"{}\" left over",
@@ -1787,15 +1764,12 @@ impl<'a> ESModule<'a> {
                                 bstr::BStr::new(subpath)
                             ));
                         }
-                        let mut result =
-                            self.resolve_target::<false>(package_url, target, subpath, is_imports);
-                        if result.status == Status::Exact
-                            || result.status == Status::ExactEndsWithStar
-                        {
-                            // Return the object { resolved, exact: false }.
-                            result.status = Status::Inexact;
-                        }
-                        return result;
+                        return self.resolve_target::<true>(
+                            package_url,
+                            target,
+                            subpath,
+                            is_imports,
+                        );
                     }
                 }
 
@@ -1890,31 +1864,18 @@ impl<'a> ESModule<'a> {
                     };
                 }
 
-                // If pattern is false, subpath has non-zero length and target
-                // does not end with "/", throw an Invalid Module Specifier error.
                 if !PATTERN {
-                    if !subpath.is_empty() && !strings::ends_with_char(str, b'/') {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
-                            log.add_note_fmt(format_args!(
-                                "The target \"{}\" is invalid because it doesn't end with a \"/\"",
-                                bstr::BStr::new(str)
-                            ));
-                        }
-                        dedent!();
-
-                        return Resolution {
-                            path: Box::<[u8]>::from(str),
-                            status: Status::InvalidModuleSpecifier,
-                        };
-                    }
+                    // The only `<false>` callers pass `b""` (exact-key / "." main export);
+                    // the removed DEP0148 folder-mapping branch was the sole source of a
+                    // non-empty subpath without PATTERN.
+                    debug_assert!(subpath.is_empty());
                 }
 
-                // If the wildcard match (or trailing-slash remainder) taken from
-                // the import specifier contains any ".", ".." or "node_modules"
-                // segments, throw an Invalid Module Specifier error. Node's
-                // PACKAGE_TARGET_RESOLVE applies the same validation to
-                // patternMatch; without it the specifier can substitute "../"
-                // segments into the target and escape the package directory.
+                // If the wildcard match taken from the import specifier contains any
+                // ".", ".." or "node_modules" segments, throw an Invalid Module
+                // Specifier error. Node's PACKAGE_TARGET_RESOLVE applies the same
+                // validation to patternMatch; without it the specifier can substitute
+                // "../" segments into the target and escape the package directory.
                 if !subpath.is_empty() {
                     if let Some(invalid) = find_invalid_subpath_segment(subpath) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -1965,30 +1926,9 @@ impl<'a> ESModule<'a> {
                                 status: Status::PackageResolve,
                             };
                         } else {
-                            // Latent Windows bug (#30839): this branch runs when an
-                            // `imports` target is itself a package specifier
-                            // (e.g. `@myproject/resolver`) that we hand back to
-                            // package-resolve. Per the Node.js packages spec these
-                            // are URL-like specifiers and must keep forward slashes;
-                            // `Auto` normalizes them to `\` on Windows and the
-                            // scoped-name match fails, falling through to `main`.
-                            let parts2 = [str, subpath];
-                            let result = resolve_path::resolve_path::join_string_buf::<
-                                resolve_path::platform::Posix,
-                            >(
-                                &mut resolve_target_buf2.0, &parts2
-                            );
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
-                                log.add_note_fmt(format_args!(
-                                    "Resolved \".{}\" to \".{}\"",
-                                    bstr::BStr::new(str),
-                                    bstr::BStr::new(result)
-                                ));
-                            }
-                            let path = Box::<[u8]>::from(result);
                             dedent!();
                             return Resolution {
-                                path,
+                                path: Box::<[u8]>::from(str),
                                 status: Status::PackageResolve,
                             };
                         }
@@ -2084,22 +2024,15 @@ impl<'a> ESModule<'a> {
                         status,
                     };
                 } else {
-                    let parts2 = [package_url, str, subpath];
-                    let result = resolve_path::resolve_path::join_string_buf::<
-                        resolve_path::platform::Auto,
-                    >(&mut resolve_target_buf2.0, &parts2);
                     if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
-                            "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
-                            bstr::BStr::new(subpath),
-                            bstr::BStr::new(resolved_target),
-                            bstr::BStr::new(result)
+                            "Resolved to \".{}\"",
+                            bstr::BStr::new(resolved_target)
                         ));
                     }
-                    let path = Box::<[u8]>::from(result);
                     dedent!();
                     return Resolution {
-                        path,
+                        path: Box::<[u8]>::from(resolved_target),
                         status: Status::Exact,
                     };
                 }

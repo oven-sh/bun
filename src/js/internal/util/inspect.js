@@ -969,6 +969,13 @@ function initializeWellKnownPrototypes() {
 }
 
 function getConstructorName(obj, ctx, recurseTimes, protoProps) {
+  // Module namespace objects are spec'd with a null [[Prototype]]; Bun hangs an
+  // internal `{ __esModule: true }` object off them for CJS interop. Walking it
+  // would report a constructor and print `Module <...> [Module] {}` instead of
+  // node's `[Module: null prototype] {}`.
+  if (isModuleNamespaceObject(obj)) {
+    return null;
+  }
   let firstProto;
   const tmp = obj;
   if (!wellKnownPrototypes) initializeWellKnownPrototypes();

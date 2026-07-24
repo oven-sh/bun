@@ -1335,3 +1335,101 @@ describe("exception scope discipline", () => {
     });
   });
 });
+
+// Every expectation below was taken from Node v26.3.0's own SubtleCrypto.supports().
+describe("SubtleCrypto.supports", () => {
+  it("exportKey resolves a bare algorithm name", () => {
+    // exportKey takes no algorithm members, so "RSA-PSS" alone is enough; it
+    // must not be normalized as importKey, which would demand a hash.
+    for (const name of [
+      "RSASSA-PKCS1-v1_5",
+      "RSA-PSS",
+      "RSA-OAEP",
+      "ECDSA",
+      "ECDH",
+      "HMAC",
+      "AES-KW",
+      "AES-GCM",
+      "X25519",
+      "ChaCha20-Poly1305",
+    ]) {
+      expect([name, SubtleCrypto.supports("exportKey", name)]).toEqual([name, true]);
+    }
+    expect(SubtleCrypto.supports("exportKey", "HKDF")).toBe(false);
+    expect(SubtleCrypto.supports("exportKey", "Not-An-Algorithm")).toBe(false);
+    // wrapKey checks its second algorithm with exportKey.
+    expect(SubtleCrypto.supports("wrapKey", "AES-KW", "HMAC")).toBe(true);
+  });
+
+  it("getPublicKey resolves a bare algorithm name", () => {
+    for (const name of ["RSASSA-PKCS1-v1_5", "RSA-PSS", "RSA-OAEP", "ECDSA", "ECDH", "X25519", "ML-DSA-44"]) {
+      expect([name, SubtleCrypto.supports("getPublicKey", name)]).toEqual([name, true]);
+    }
+    expect(SubtleCrypto.supports("getPublicKey", "AES-CBC")).toBe(false);
+    expect(SubtleCrypto.supports("getPublicKey", "HMAC")).toBe(false);
+  });
+
+  it("HMAC length must be a non-zero multiple of 8", () => {
+    for (const op of ["importKey", "generateKey"] as const) {
+      for (const [length, expected] of [
+        [0, false],
+        [25, false],
+        [255, false],
+        [8, true],
+        [256, true],
+      ] as const) {
+        const algorithm = { name: "HMAC", hash: "SHA-256", length };
+        expect([op, length, SubtleCrypto.supports(op, algorithm)]).toEqual([op, length, expected]);
+      }
+      // Omitting the length is allowed: it defaults to the hash block size.
+      expect(SubtleCrypto.supports(op, { name: "HMAC", hash: "SHA-256" })).toBe(true);
+    }
+  });
+
+  it("AES key lengths and EC named curves are checked", () => {
+    for (const name of ["AES-CBC", "AES-CTR", "AES-GCM", "AES-KW"]) {
+      expect([name, SubtleCrypto.supports("generateKey", { name, length: 25 })]).toEqual([name, false]);
+      expect([name, SubtleCrypto.supports("generateKey", { name, length: 128 })]).toEqual([name, true]);
+    }
+    expect(SubtleCrypto.supports("generateKey", { name: "ECDSA", namedCurve: "X25519" })).toBe(false);
+    expect(SubtleCrypto.supports("importKey", { name: "ECDSA", namedCurve: "X25519" })).toBe(false);
+    expect(SubtleCrypto.supports("generateKey", { name: "ECDSA", namedCurve: "P-256" })).toBe(true);
+  });
+
+  it("deriveBits accepts a zero length but not a null one", () => {
+    const hkdf = { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(), info: new Uint8Array() };
+    const pbkdf2 = { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(), iterations: 1 };
+    for (const algorithm of [hkdf, pbkdf2]) {
+      expect(SubtleCrypto.supports("deriveBits", algorithm, 0)).toBe(true);
+      expect(SubtleCrypto.supports("deriveBits", algorithm, 8)).toBe(true);
+      expect(SubtleCrypto.supports("deriveBits", algorithm, 7)).toBe(false);
+      expect(SubtleCrypto.supports("deriveBits", algorithm, null)).toBe(false);
+    }
+    // PBKDF2 cannot run zero iterations.
+    expect(
+      SubtleCrypto.supports("deriveBits", { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(), iterations: 0 }, 8),
+    ).toBe(false);
+  });
+
+  it("ECDH and X25519 deriveBits need a public key", async () => {
+    const ecdh = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
+    const x25519 = await crypto.subtle.generateKey("X25519", false, ["deriveBits"]);
+    expect(SubtleCrypto.supports("deriveBits", { name: "ECDH", public: ecdh.publicKey })).toBe(true);
+    expect(SubtleCrypto.supports("deriveBits", { name: "ECDH", public: ecdh.publicKey }, 256)).toBe(true);
+    expect(SubtleCrypto.supports("deriveBits", { name: "ECDH", public: ecdh.publicKey }, 257)).toBe(false);
+    expect(SubtleCrypto.supports("deriveBits", { name: "ECDH", public: ecdh.privateKey })).toBe(false);
+    expect(SubtleCrypto.supports("deriveBits", { name: "ECDH", public: {} })).toBe(false);
+    expect(SubtleCrypto.supports("deriveBits", "ECDH")).toBe(false);
+    expect(SubtleCrypto.supports("deriveBits", { name: "X25519", public: x25519.publicKey })).toBe(true);
+    expect(SubtleCrypto.supports("deriveBits", { name: "X25519", public: x25519.privateKey })).toBe(false);
+  });
+
+  it("ChaCha20-Poly1305 takes a 12 byte iv and a 128 bit tag", () => {
+    const name = "ChaCha20-Poly1305";
+    expect(SubtleCrypto.supports("encrypt", { name, iv: new Uint8Array(12) })).toBe(true);
+    expect(SubtleCrypto.supports("encrypt", { name, iv: new Uint8Array(16) })).toBe(false);
+    expect(SubtleCrypto.supports("decrypt", { name, iv: new Uint8Array(11) })).toBe(false);
+    expect(SubtleCrypto.supports("encrypt", { name, iv: new Uint8Array(12), tagLength: 128 })).toBe(true);
+    expect(SubtleCrypto.supports("encrypt", { name, iv: new Uint8Array(12), tagLength: 64 })).toBe(false);
+  });
+});

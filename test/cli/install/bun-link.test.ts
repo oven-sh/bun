@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { access, mkdir, readlink, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -471,4 +471,82 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/4719
+describe("link: with a filesystem path", () => {
+  async function checkLink(dep: string, expected: { name: string; version: string }) {
+    const { out, err, exited } = await runBunInstall(env, package_dir);
+    const errText = stderrForInstall(await new Response(err).text());
+    expect(errText).not.toContain("not linked");
+    expect(errText).not.toContain("error:");
+    expect(await new Response(out).text()).toContain(`+ ${expected.name}@link:`);
+    expect(await exited).toBe(0);
+
+    const target = await readlink(join(package_dir, "node_modules", ...expected.name.split("/")));
+    expect(target.replaceAll("\\", "/")).toContain(basename(dep));
+    expect(await file(join(package_dir, "node_modules", expected.name, "package.json")).json()).toEqual(expected);
+  }
+
+  it("resolves a ./relative path", async () => {
+    await mkdir(join(package_dir, "lib", "mypkg"), { recursive: true });
+    await writeFile(
+      join(package_dir, "lib", "mypkg", "package.json"),
+      JSON.stringify({ name: "mypkg", version: "1.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { mypkg: "link:./lib/mypkg" },
+      }),
+    );
+    await checkLink("./lib/mypkg", { name: "mypkg", version: "1.0.0" });
+  });
+
+  it("resolves a ../relative path", async () => {
+    await mkdir(join(link_dir, "sibling"), { recursive: true });
+    await writeFile(
+      join(link_dir, "sibling", "package.json"),
+      JSON.stringify({ name: "sibling-pkg", version: "2.0.0" }),
+    );
+    await mkdir(join(package_dir, "app"), { recursive: true });
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { "sibling-pkg": `link:${join("..", basename(link_dir), "sibling").replaceAll("\\", "/")}` },
+      }),
+    );
+    await checkLink("sibling", { name: "sibling-pkg", version: "2.0.0" });
+  });
+
+  it("resolves a scoped package path", async () => {
+    await mkdir(join(package_dir, "packages", "scoped"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "scoped", "package.json"),
+      JSON.stringify({ name: "@scope/pkg", version: "3.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { "@scope/pkg": "link:./packages/scoped" },
+      }),
+    );
+    await checkLink("./packages/scoped", { name: "@scope/pkg", version: "3.0.0" });
+  });
+
+  it("resolves an absolute path", async () => {
+    await mkdir(join(link_dir, "abspkg"), { recursive: true });
+    await writeFile(join(link_dir, "abspkg", "package.json"), JSON.stringify({ name: "abspkg", version: "4.0.0" }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { abspkg: `link:${join(link_dir, "abspkg").replaceAll("\\", "/")}` },
+      }),
+    );
+    await checkLink("abspkg", { name: "abspkg", version: "4.0.0" });
+  });
 });

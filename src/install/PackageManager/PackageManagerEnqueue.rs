@@ -2691,15 +2691,34 @@ fn get_or_put_resolved_package(
             // set once and never freed); `get_or_put` copies `symlink_path`
             // into the lockfile string buffer before any other mutation.
             // `version.tag == Symlink`.
-            let link_dir =
-                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
             let symlink_path = this.lockfile.str_detached(version.symlink());
-            let res = FolderResolution::get_or_put(
-                GlobalOrRelative::Global(link_dir),
-                version,
-                symlink_path,
-                this,
-            );
+            let res = if dependency::is_link_path(symlink_path) {
+                let mut buf2 = PathBuffer::uninit();
+                let symlink_path_abs = if bun_paths::is_absolute(symlink_path) {
+                    symlink_path
+                } else {
+                    Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                        FileSystem::instance().top_level_dir(),
+                        &mut buf2,
+                        &[symlink_path],
+                    )
+                };
+                FolderResolution::get_or_put(
+                    GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
+                    version,
+                    symlink_path_abs,
+                    this,
+                )
+            } else {
+                let link_dir =
+                    unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+                FolderResolution::get_or_put(
+                    GlobalOrRelative::Global(link_dir),
+                    version,
+                    symlink_path,
+                    this,
+                )
+            };
 
             match res {
                 FolderResolutionValue::Err(err) => Err(err),

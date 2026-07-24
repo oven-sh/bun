@@ -472,6 +472,28 @@ pub fn get_or_put(
                     &mut resolver,
                 );
             }
+            dependency::version::Tag::Symlink => 'symlink: {
+                // `link:./path` — the stored resolution is the project-relative
+                // path. Ensure it is recognisable as a path (leading `.`/`/`)
+                // so the installer can distinguish it from `link:<name>`.
+                let mut path = PathBuffer::uninit();
+                let folder_path: &[u8] = if dependency::is_link_path(rel) {
+                    rel
+                } else {
+                    path[0] = b'.';
+                    path[1] = b'/';
+                    path[2..2 + rel.len()].copy_from_slice(rel);
+                    &path[..2 + rel.len()]
+                };
+                let mut resolver: SymlinkResolver = NewResolver { folder_path };
+                break 'symlink read_package_json_from_disk(
+                    manager,
+                    abs,
+                    version,
+                    Features::LINK,
+                    &mut resolver,
+                );
+            }
             _ => unreachable!(),
         },
         GlobalOrRelative::CacheFolder(_) => 'cache_folder: {

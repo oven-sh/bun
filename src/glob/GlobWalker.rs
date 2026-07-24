@@ -697,9 +697,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 };
                 self.close_disallowing_cwd(fd);
                 let mode = stat_result.st_mode as u32;
-                let matches = (S::ISDIR(mode) && !self.walker.only_files)
-                    || S::ISREG(mode)
-                    || !self.walker.only_files;
+                let trailing_sep = self.walker.pattern_components[idx as usize].trailing_sep;
+                let matches = if trailing_sep {
+                    S::ISDIR(mode) && !self.walker.only_files
+                } else {
+                    (S::ISDIR(mode) && !self.walker.only_files)
+                        || S::ISREG(mode)
+                        || !self.walker.only_files
+                };
                 if matches {
                     if let Some(path) = self
                         .walker
@@ -1761,10 +1766,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
         // Handle case b)
         if !is_last {
+            let next = next_pattern.unwrap();
             return pattern.syntax_hint == SyntaxHint::Double
                 && (component_idx + 1) as usize == self.pattern_components.len().saturating_sub(1)
-                && next_pattern.unwrap().syntax_hint != SyntaxHint::Double
-                && self.match_pattern_impl(next_pattern.unwrap(), entry_name);
+                && next.syntax_hint != SyntaxHint::Double
+                && !next.trailing_sep
+                && self.match_pattern_impl(next, entry_name);
         }
 
         // Handle case a)
@@ -2081,9 +2088,24 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             return None;
         }
 
+        // The final component of a pattern may carry its trailing `/` inside
+        // `len`. Classify the syntax hint on the same slice `pattern_slice()`
+        // returns (i.e. without that separator) so `**/` is recognized as a
+        // globstar and recurses like `**` during scan().
+        let last_idx = (component.start + component.len - 1) as usize;
+        if pattern[last_idx] == b'/' {
+            component.trailing_sep = true;
+        } else {
+            #[cfg(windows)]
+            {
+                component.trailing_sep = pattern[last_idx] == b'\\';
+            }
+        }
+        let effective_len = component.len - u32::from(component.trailing_sep);
+
         'out: {
             let comp_slice =
-                &pattern[component.start as usize..(component.start + component.len) as usize];
+                &pattern[component.start as usize..(component.start + effective_len) as usize];
             if comp_slice == b"." {
                 component.syntax_hint = SyntaxHint::Dot;
                 break 'out;
@@ -2098,7 +2120,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 break 'out;
             }
 
-            match component.len {
+            match effective_len {
                 1 => {
                     if pattern[component.start as usize] == b'*' {
                         component.syntax_hint = SyntaxHint::Single;
@@ -2144,16 +2166,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                     component.syntax_hint = SyntaxHint::WildcardFilepath;
                     break 'out;
                 }
-            }
-        }
-
-        let last_idx = (component.start + component.len).saturating_sub(1) as usize;
-        if pattern[last_idx] == b'/' {
-            component.trailing_sep = true;
-        } else {
-            #[cfg(windows)]
-            {
-                component.trailing_sep = pattern[last_idx] == b'\\';
             }
         }
 

@@ -1064,6 +1064,15 @@ function makeCancelledByParentError() {
 function reportCancelledNode(node: TestNode) {
   if (!runEventsEnabled()) return;
   reportQueueChain(node);
+  if (node.isSuite) {
+    // node's postRun() is post-order (children first), like maybeCompleteSuite.
+    // Set suiteReported before recursing so children's noteRunChildDone
+    // short-circuits at maybeCompleteSuite instead of re-emitting this suite.
+    node.suiteReported = true;
+    for (const child of node.standaloneChildren ?? []) {
+      reportCancelledNode(child.node);
+    }
+  }
   const data = {
     __proto__: null,
     name: node.name,
@@ -1078,10 +1087,6 @@ function reportCancelledNode(node: TestNode) {
   };
   emitRunChildEvent("test:complete", { ...data, passed: false });
   if (node.isSuite) {
-    node.suiteReported = true;
-    for (const child of node.standaloneChildren ?? []) {
-      reportCancelledNode(child.node);
-    }
     emitRunChildEvent("test:plan", {
       __proto__: null,
       nesting: nestingOf(node) + 1,

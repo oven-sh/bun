@@ -438,7 +438,6 @@ test.skipIf(isWindows)(
     const flat = Bun.stripANSI(out).replace(/\r/g, "");
     expect(flat).toContain("name? alice");
   },
-  20_000,
 );
 
 test("globalThis.self = 123 works", () => {

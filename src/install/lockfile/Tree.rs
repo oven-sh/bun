@@ -654,20 +654,13 @@ pub(crate) fn is_filtered_dependency_or_workspace(
             }
         };
 
-        match bun_glob::r#match(pattern, name_or_path) {
-            bun_glob::MatchResult::Match | bun_glob::MatchResult::NegateMatch => {
-                workspace_matched = true;
-            }
-
-            bun_glob::MatchResult::NegateNoMatch => {
-                // always skip if a pattern specifically says "!<name|path>"
-                workspace_matched = false;
-                break;
-            }
-
-            bun_glob::MatchResult::NoMatch => {
-                // keep looking
-            }
+        let result = bun_glob::r#match(pattern, name_or_path);
+        if result.matches() {
+            workspace_matched = true;
+        } else if result.is_negated() {
+            // always skip if a pattern specifically says "!<name|path>"
+            workspace_matched = false;
+            break;
         }
     }
 

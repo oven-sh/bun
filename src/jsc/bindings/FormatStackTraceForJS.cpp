@@ -770,6 +770,23 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
+    // V8 installs "stack" with ordinary define semantics, so the target's integrity level
+    // is honored: a frozen, sealed or preventExtensions()'d object, or one with a
+    // non-configurable "stack", rejects the call instead of being mutated.
+    bool isExtensible = errorObject->isExtensible(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isExtensible) {
+        return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "Cannot define property stack, object is not extensible"_s));
+    }
+
+    // Looking the slot up through the method table would materialize an ErrorInstance's
+    // lazy error info, so read the own property's attributes off the structure instead.
+    unsigned stackAttributes = 0;
+    if (errorObject->getDirectOffset(vm, vm.propertyNames->stack, stackAttributes) != JSC::invalidOffset
+        && (stackAttributes & JSC::PropertyAttribute::DontDelete)) {
+        return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "Cannot redefine property: stack"_s));
+    }
+
     size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     if (stackTraceLimit == 0) {
         stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
@@ -796,10 +813,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             instance->setStackFrames(vm, WTF::move(stackTrace));
 
             {
-                const auto& propertyName = vm.propertyNames->stack;
-                VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
                 DeletePropertySlot slot;
-                JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+                JSObject::deleteProperty(instance, globalObject, vm.propertyNames->stack, slot);
             }
             RETURN_IF_EXCEPTION(scope, {});
 

@@ -79,7 +79,11 @@ const CRASH_SIGNATURES: { re: RegExp; kind: string }[] = [
   // ... in Bar". The frame text is folded of addresses later like any
   // other signature. Listed first so it wins over the generic patterns.
   {
-    re: /ERROR: (AddressSanitizer: [a-z-]+[^\n]{0,80}\n(?:[^\n]*\n){0,3}?\s*#0 0x[0-9a-fA-F]+ (?:in )?[^\n]{0,140})/,
+    // Key = error type + the top instrumented FRAME. The header line
+    // carries per-run addresses (on address 0x.. at pc 0x.. bp/sp), which
+    // would give one bug a new key every run, so we deliberately skip past
+    // it: capture the type, then the #0 frame text after its 0xADDR.
+    re: /ERROR: (AddressSanitizer: [a-z-]+)[^\n]*\n(?:[^\n]*\n){0,3}?\s*#0 0x[0-9a-fA-F]+ (?:in )?([^\n(]{0,140})/,
     kind: "asan",
   },
   // Fallback when the report has no readable #0 frame (early runtime CHECK,
@@ -137,7 +141,9 @@ export function detectCrash(stdout: string, stderr: string): CrashSig | null {
       // Panic-family and assertion-family signatures are only crashes when
       // the real handler's anchor accompanies them (see hasCrashAnchor).
       if (!hasCrashAnchor && /panic|assert|unreachable|crash-banner/.test(kind)) continue;
-      const detail = m[1].trim();
+      // Signatures may capture several groups (e.g. ASAN: error type + top
+      // frame); join whatever was captured so the key uses all of it.
+      const detail = m.slice(1).filter(g => g !== undefined).map(g => g.trim()).join(" in ");
       // Fold volatile addresses/counts so identical crashes dedupe:
       // "Segmentation fault at address 0x24" keeps the low offset (a
       // struct-field null deref reads identically), thread ids and
@@ -563,7 +569,7 @@ export function newestLog(dir: string): string | null {
 
 // Locate cdb.exe (Debugging Tools for Windows): WSF_CDB override, the usual
 // SDK install dirs, then PATH. null => hang/crash CAPTURE is unavailable;
-// tracing, sweeping and classification all still work Ã¢â‚¬â€ findings simply
+// tracing, sweeping and classification all still work ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â findings simply
 // carry no stacks until setup.ps1 -InstallDebuggers is run.
 function findCdb(): string | null {
   const candidates = [
@@ -620,7 +626,7 @@ export function pidOf(image: string): number | null {
 // Attach to a hung process and dump every thread's stack. Non-invasive
 // (-pv) so it works even if the process is deadlocked in the loader.
 export async function captureHangStacks(pid: number, outFile: string): Promise<string> {
-  if (!cdb) return "(cdb.exe not installed: no thread stacks captured Ã¢â‚¬â€ run setup.ps1 -InstallDebuggers)";
+  if (!cdb) return "(cdb.exe not installed: no thread stacks captured ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â run setup.ps1 -InstallDebuggers)";
   const cmdFile = outFile + ".cmd.txt";
   await Bun.write(cmdFile, ".lines -e\n~*kv 16\nq\n");
   const r = Bun.spawnSync([cdb, "-pv", "-p", String(pid), "-cf", cmdFile], {
@@ -779,7 +785,7 @@ export function lastStage(stdout: string): string | null {
 
 // Re-run a target under the debugger, break on access violation, dump state.
 export async function captureCrash(cmdline: string[], env: Record<string, string>, outFile: string): Promise<string> {
-  if (!cdb) return "(cdb.exe not installed: no crash stack captured Ã¢â‚¬â€ run setup.ps1 -InstallDebuggers)";
+  if (!cdb) return "(cdb.exe not installed: no crash stack captured ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â run setup.ps1 -InstallDebuggers)";
   const cmdFile = outFile + ".cmd.txt";
   await Bun.write(
     cmdFile,
@@ -814,7 +820,7 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
   // stdio to FILES, never pipes: the target's grandchildren (spawned cmd,
   // servers) can inherit a pipe's write end and hold it open past exit,
   // wedging a pipe read forever. Files can't do that, and the runner must
-  // always return Ã¢â‚¬â€ it is the fuzzer's clock.
+  // always return ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â it is the fuzzer's clock.
   const outFile = join(o.workDir, "stdout.txt");
   const errFile = join(o.workDir, "stderr.txt");
   const t0 = performance.now();

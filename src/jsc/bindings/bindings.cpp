@@ -70,6 +70,7 @@
 #include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/ObjectPrototype.h"
 #include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
@@ -667,14 +668,70 @@ static bool looseFloatContentsEqual(std::span<const T> a, std::span<const T> b)
     return true;
 }
 
+// `val instanceof Error` without invoking a user-visible Symbol.hasInstance:
+// walk the prototype chain looking for %Error.prototype%.
+static bool inheritsFromErrorPrototype(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
+{
+    JSObject* errorPrototype = globalObject->errorPrototype();
+    JSValue proto = object->getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    while (proto.isObject()) {
+        if (proto.getObject() == errorPrototype) return true;
+        proto = asObject(proto)->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return false;
+}
+
+// node compares an error's message/name/cause/errors even though they are
+// normally non-enumerable, unless the right-hand side owns the property
+// enumerably - in which case the ordinary key walk already covers it.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L404
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+static bool errorLikeFieldsEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2)
+{
+    VM& vm = globalObject->vm();
+    const PropertyName fields[] = {
+        PropertyName(vm.propertyNames->message),
+        PropertyName(vm.propertyNames->name),
+        PropertyName(vm.propertyNames->cause),
+        PropertyName(vm.propertyNames->errors),
+    };
+    for (const PropertyName& field : fields) {
+        PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool o2OwnsField = o2->methodTable()->getOwnPropertySlot(o2, globalObject, field, slot2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (o2OwnsField && !(slot2.attributes() & PropertyAttribute::DontEnum)) {
+            continue;
+        }
+        JSValue left = o1->get(globalObject, field);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue right = o2->get(globalObject, field);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal) return false;
+    }
+
+    // An absent `cause` is not the same as `cause: undefined`.
+    const PropertyName cause(vm.propertyNames->cause);
+    bool o1HasCause = o1->hasOwnProperty(globalObject, cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool o2HasCause = o2->hasOwnProperty(globalObject, cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    return o1HasCause == o2HasCause;
+}
+
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
 {
     VM& vm = globalObject->vm();
-    JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    // node's loose mode enumerates with SKIP_SYMBOLS; its strict mode does not.
+    constexpr PropertyNameMode kPropertyNameMode = (!isStrict && checkPrototypes) ? PropertyNameMode::Strings : PropertyNameMode::StringsAndSymbols;
+    JSC::PropertyNameArrayBuilder a1(vm, kPropertyNameMode, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder a2(vm, kPropertyNameMode, PrivateSymbolMode::Exclude);
     o1->getOwnNonIndexPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, false);
     o2->getOwnNonIndexPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
@@ -726,6 +783,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return false;
     }
 
+    // node's loose mode (`assert.deepEqual`): node semantics everywhere except
+    // that non-objects compare with `==`, prototypes are not compared, and
+    // symbol-keyed properties are ignored. node's strict mode is
+    // `isStrict && checkPrototypes`; Bun's own comparators never set
+    // checkPrototypes and are unaffected by every `kNodeLoose` branch below.
+    constexpr bool kNodeLoose = !isStrict && checkPrototypes;
+
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
@@ -763,6 +827,23 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1.isEmpty() || v2.isEmpty())
         return v1.isEmpty() == v2.isEmpty();
 
+    // node's loose mode splits on `typeof x !== 'object'`, which counts
+    // callables as non-objects, and compares two non-objects with `==` (plus
+    // NaN == NaN). Only node's `assert.deepEqual` behaves this way; Bun's own
+    // loose comparison stays value-identity based.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L152-L167
+    if constexpr (kNodeLoose) {
+        bool v1IsObject = v1.isObject() && !v1.isCallable();
+        bool v2IsObject = v2.isObject() && !v2.isCallable();
+        if (!v1IsObject || !v2IsObject) {
+            if (v1IsObject != v2IsObject) return false;
+            bool looselyEqual = JSValue::equal(globalObject, v1, v2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (looselyEqual) return true;
+            return v1.isNumber() && v2.isNumber() && v1.asNumber() != v1.asNumber() && v2.asNumber() != v2.asNumber();
+        }
+    }
+
     if (v1.isPrimitive() || v2.isPrimitive())
         return false;
 
@@ -799,8 +880,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     // Node's deepStrictEqual compares [[Prototype]]s with ===. Only the
     // node:assert/node:util entry point does this; Bun.deepEquals and
-    // expect() keep their prototype-blind semantics.
-    if constexpr (checkPrototypes && !skipPrototypeIdentity) {
+    // expect() keep their prototype-blind semantics. node's loose mode does
+    // not compare prototypes at all, only the object tag (checked below).
+    if constexpr (isStrict && checkPrototypes && !skipPrototypeIdentity) {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
@@ -811,6 +893,22 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (proto1 != proto2) {
                 return false;
             }
+        }
+    }
+
+    // node's loose mode does not compare prototypes, but it does compare
+    // Object.prototype.toString tags, which is what separates an Arguments
+    // object from a plain object with the same keys.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L184-L196
+    if constexpr (kNodeLoose) {
+        JSString* tag1 = JSC::objectPrototypeToString(globalObject, v1);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSString* tag2 = JSC::objectPrototypeToString(globalObject, v2);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool sameTag = JSValue::strictEqual(globalObject, tag1, tag2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!sameTag) {
+            return false;
         }
     }
 
@@ -835,6 +933,27 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
+    // node treats every object with %Error.prototype% in its chain as an error,
+    // not just real Error instances (which specialObjectsDequal handled above),
+    // and compares their non-enumerable message/name/cause/errors.
+    if constexpr (checkPrototypes) {
+        if (o1 && o2 && c1->type() != ErrorInstanceType) {
+            bool leftIsErrorLike = inheritsFromErrorPrototype(globalObject, scope, o1);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (leftIsErrorLike) {
+                bool rightIsErrorLike = c2->type() == ErrorInstanceType;
+                if (!rightIsErrorLike) {
+                    rightIsErrorLike = inheritsFromErrorPrototype(globalObject, scope, o2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                if (!rightIsErrorLike) return false;
+                bool fieldsEqual = errorLikeFieldsEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!fieldsEqual) return false;
+            }
+        }
+    }
+
     bool v1Array = isArray(globalObject, v1);
     RETURN_IF_EXCEPTION(scope, false);
     bool v2Array = isArray(globalObject, v2);
@@ -849,7 +968,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         size_t array1Length = array1->length();
         size_t array2Length = array2->length();
-        if constexpr (isStrict) {
+        if constexpr (isStrict || kNodeLoose) {
             if (array1Length != array2Length) {
                 return false;
             }
@@ -862,16 +981,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
             RETURN_IF_EXCEPTION(scope, false);
 
-            if constexpr (isStrict) {
+            if constexpr (isStrict || kNodeLoose) {
                 if (left.isEmpty() && right.isEmpty()) {
                     continue;
                 }
                 if (left.isEmpty() || right.isEmpty()) {
                     return false;
                 }
-            }
-
-            if constexpr (!isStrict) {
+            } else {
                 if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
                     continue;
                 }
@@ -895,10 +1012,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
-        JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, false);
+        // node's loose mode enumerates with SKIP_SYMBOLS, so symbol-keyed
+        // properties are invisible to it.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L272-L277
+        if constexpr (!kNodeLoose) {
+            JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
 
         size_t propertyLength = a1.size();
         if constexpr (isStrict) {
@@ -922,7 +1044,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
             RETURN_IF_EXCEPTION(scope, false);
 
-            if constexpr (!isStrict) {
+            if constexpr (!isStrict && !kNodeLoose) {
                 if (prop1.isUndefined() && prop2.isEmpty()) {
                     continue;
                 }
@@ -960,7 +1082,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     JSC::Structure* o1Structure = o1->structure();
-    if (!o1Structure->hasNonReifiedStaticProperties() && o1Structure->canPerformFastPropertyEnumeration()) {
+    // The structure walk below reads every non-DontEnum slot, symbols
+    // included; node's loose mode ignores symbol keys, so it takes the
+    // general path where the enumeration mode can be restricted.
+    if (!kNodeLoose && !o1Structure->hasNonReifiedStaticProperties() && o1Structure->canPerformFastPropertyEnumeration()) {
         JSC::Structure* o2Structure = o2->structure();
         // The mixed-structure fast path resolves properties with getDirect(),
         // which also finds non-enumerable ones node ignores; the node entry
@@ -1078,8 +1203,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    // node's loose mode enumerates with SKIP_SYMBOLS.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L493-L505
+    constexpr PropertyNameMode kPropertyNameMode = kNodeLoose ? PropertyNameMode::Strings : PropertyNameMode::StringsAndSymbols;
+    JSC::PropertyNameArrayBuilder a1(vm, kPropertyNameMode, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder a2(vm, kPropertyNameMode, PrivateSymbolMode::Exclude);
     if constexpr (checkPrototypes) {
         // node compares own enumerable properties only; getPropertyNames also
         // collects enumerable properties from the prototype chain.
@@ -1096,7 +1224,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     const size_t propertyArrayLength1 = a1.size();
     const size_t propertyArrayLength2 = a2.size();
-    if constexpr (isStrict) {
+    // node requires the same number of own enumerable keys in both modes.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L487-L491
+    if constexpr (isStrict || kNodeLoose) {
         if (propertyArrayLength1 != propertyArrayLength2) {
             return false;
         }
@@ -1132,7 +1262,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             RETURN_IF_EXCEPTION(scope, false);
         }
 
-        if constexpr (!isStrict) {
+        if constexpr (!isStrict && !kNodeLoose) {
             if (prop1.isUndefined() && prop2.isEmpty()) {
                 continue;
             }
@@ -1460,6 +1590,27 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             RETURN_IF_EXCEPTION(scope, {});
             if (!causesEqual) {
                 return false;
+            }
+
+            // `.errors` (AggregateError) is non-enumerable too. node compares it
+            // whenever it is not an own enumerable property of the right-hand
+            // side, in which case the enumerable walk below covers it.
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L400
+            const PropertyName errorsName(vm.propertyNames->errors);
+            PropertySlot rightErrorsSlot(right, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool rightOwnsEnumerableErrors = right->methodTable()->getOwnPropertySlot(right, globalObject, errorsName, rightErrorsSlot)
+                && !(rightErrorsSlot.attributes() & PropertyAttribute::DontEnum);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!rightOwnsEnumerableErrors) {
+                auto leftErrors = left->get(globalObject, errorsName);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto rightErrors = right->get(globalObject, errorsName);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool errorsEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, leftErrors, rightErrors, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!errorsEqual) {
+                    return false;
+                }
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.
@@ -3004,6 +3155,15 @@ bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue
 bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
     return deepEqualsWrapperImpl<true, false, true, true>(JSValue0, JSValue1, globalObject);
+}
+
+// node:assert deepEqual / notDeepEqual: node's loose mode. Same rules as
+// Bun__deepEqualsNodeStrict except that non-objects compare with `==`,
+// [[Prototype]]s are not compared and symbol keys are ignored. This is a
+// different relation from Bun.deepEquals(a, b, false), which expect() uses.
+bool Bun__deepEqualsNodeLoose(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
+{
+    return deepEqualsWrapperImpl<false, false, true>(JSValue0, JSValue1, globalObject);
 }
 
 #undef IMPL_DEEP_EQUALS_WRAPPER

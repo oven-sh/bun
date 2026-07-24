@@ -889,6 +889,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
 
 extern "C" bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
+extern "C" bool Bun__deepEqualsNodeLoose(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
 
 // util.isDeepStrictEqual / assert.deepStrictEqual: node semantics, including
 // the [[Prototype]] identity check that Bun.deepEquals(a, b, true) omits.
@@ -904,6 +905,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
     bool result = skipPrototype
         ? Bun__deepEqualsNodeStrictSkipProto(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject)
         : Bun__deepEqualsNodeStrict(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(result));
+}
+
+// assert.deepEqual / assert.notDeepEqual: node's loose mode.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepEqual,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    bool result = Bun__deepEqualsNodeLoose(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(result));
 }

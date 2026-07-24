@@ -46,11 +46,8 @@ type nodeAssert = typeof import("node:assert");
 
 const kOptions = Symbol("options");
 
-const { isDeepStrictEqual } = require("internal/util/comparisons");
+const { isDeepStrictEqual, isDeepEqual } = require("internal/util/comparisons");
 
-function isDeepEqual(a, b) {
-  return Bun.deepEquals(a, b, false);
-}
 
 var _inspect;
 function lazyInspect() {

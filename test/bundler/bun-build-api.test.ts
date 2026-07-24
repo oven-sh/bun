@@ -1513,3 +1513,255 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+describe("Bun.build external: false", () => {
+  type Case = { target: "bun" | "node" | "browser"; specifier: string; code: string; files?: Record<string, string> };
+  const cases: Case[] = [
+    { target: "bun", specifier: "node:fs", code: 'import fs from "node:fs"; console.log(fs);' },
+    { target: "bun", specifier: "fs", code: 'import fs from "fs"; console.log(fs);' },
+    { target: "bun", specifier: "bun:sqlite", code: 'import { Database } from "bun:sqlite"; console.log(Database);' },
+    { target: "bun", specifier: "bun", code: 'import { serve } from "bun"; console.log(serve);' },
+    { target: "bun", specifier: "net", code: 'const net = require("net"); console.log(net);' },
+    { target: "bun", specifier: "ws", code: 'import WebSocket from "ws"; console.log(WebSocket);' },
+    {
+      target: "bun",
+      specifier: "#fs",
+      code: 'import { readFileSync } from "#fs"; console.log(readFileSync);',
+      files: { "package.json": JSON.stringify({ imports: { "#fs": "node:fs" } }) },
+    },
+    { target: "node", specifier: "node:fs", code: 'import fs from "node:fs"; console.log(fs);' },
+    { target: "node", specifier: "path", code: 'import path from "path"; console.log(path);' },
+  ];
+
+  test.each(cases)("target $target rejects $specifier", async ({ target, specifier, code, files }) => {
+    using dir = tempDir("external-false", { "entry.js": `// line 1\n${code}`, ...files });
+    const result = await buildNoThrow({
+      entrypoints: [join(String(dir), "entry.js")],
+      target,
+      external: false,
+    });
+    const logs = result.logs.map(m => ({
+      message: String((m as any).message ?? m),
+      file: (m as any).position?.file ?? "",
+      line: (m as any).position?.line,
+    }));
+    expect({ success: result.success, logs }).toEqual({
+      success: false,
+      logs: [
+        {
+          message: expect.stringContaining(`"${specifier}" because 'external' is set to false`),
+          file: expect.stringContaining("entry.js"),
+          line: 2,
+        },
+      ],
+    });
+  });
+
+  test("rejects a runtime-external sqlite import", async () => {
+    using dir = tempDir("external-false-sqlite", {
+      "entry.js": 'import db from "./data.db" with { type: "sqlite" }; console.log(db);',
+      "data.db": "",
+    });
+    const result = await buildNoThrow({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "bun",
+      external: false,
+    });
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(m => String((m as any).message ?? m));
+    expect(messages.join("\n")).toContain("\"./data.db\" because 'external' is set to false");
+  });
+
+  test("CSS url() references are not module externals", async () => {
+    using dir = tempDir("external-false-css", {
+      "entry.css":
+        ".a { fill: url(#f); }\n" +
+        ".b { background: url(data:image/png;base64,AA==); }\n" +
+        ".c { background: url(https://cdn.example/x.png); }\n",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      target: "bun",
+      external: false,
+    });
+    expect(result.success).toBe(true);
+    const out = await result.outputs[0].text();
+    expect(out).toContain("#f");
+    expect(out).toContain("data:image/png;base64,AA==");
+    expect(out).toContain("https://cdn.example/x.png");
+  });
+
+  test("target browser bundles polyfillable builtins", async () => {
+    using dir = tempDir("external-false-browser", {
+      "entry.js": 'import path from "path"; console.log(path.join("a", "b"));',
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "browser",
+      external: false,
+    });
+    expect(result.success).toBe(true);
+    const out = await result.outputs[0].text();
+    expect(out).not.toContain('from "path"');
+  });
+
+  test.each(["bun", "node"] as const)("succeeds with no builtin imports (target %s)", async target => {
+    using dir = tempDir("external-false-ok", {
+      "entry.js": 'import { foo } from "./foo.js"; console.log(foo);',
+      "foo.js": "export const foo = 1;",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target,
+      external: false,
+    });
+    expect(result.success).toBe(true);
+    expect(await result.outputs[0].text()).not.toContain("node:module");
+  });
+
+  test.each(["bun", "node"] as const)(
+    "still fails when a matching onResolve plugin returns undefined (target %s)",
+    async target => {
+      using dir = tempDir("external-false-plugin-fallthrough", {
+        "entry.js": 'import fs from "node:fs"; console.log(fs);',
+      });
+      const result = await buildNoThrow({
+        entrypoints: [join(String(dir), "entry.js")],
+        target,
+        external: false,
+        plugins: [
+          {
+            name: "noop",
+            setup(build) {
+              build.onResolve({ filter: /.*/ }, () => undefined);
+            },
+          },
+        ],
+      });
+      const messages = result.logs.map(m => String((m as any).message ?? m));
+      expect({ success: result.success, messages }).toEqual({
+        success: false,
+        messages: [expect.stringContaining("\"node:fs\" because 'external' is set to false")],
+      });
+    },
+  );
+
+  test("succeeds with no builtin imports and a broad noop plugin (target node)", async () => {
+    using dir = tempDir("external-false-noop-node", {
+      "entry.js": 'import { foo } from "./foo.js"; console.log(foo);',
+      "foo.js": "export const foo = 1;",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "node",
+      external: false,
+      plugins: [
+        {
+          name: "noop",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, () => undefined);
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("plugin onResolve returning { external: true } for a CSS url() is not a module external", async () => {
+    using dir = tempDir("external-false-plugin-css-external", {
+      "entry.css": ".a { background: url(virtual:img); }",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      target: "bun",
+      external: false,
+      plugins: [
+        {
+          name: "css-ext",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:img$/ }, args => ({
+              path: args.path,
+              external: true,
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    expect(await result.outputs[0].text()).toContain("virtual:img");
+  });
+
+  test("plugin onResolve returning { external: true } is rejected under external: false", async () => {
+    using dir = tempDir("external-false-plugin-external", {
+      "entry.js": 'import x from "some-pkg"; console.log(x);',
+    });
+    const result = await buildNoThrow({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "bun",
+      external: false,
+      plugins: [
+        {
+          name: "mark-external",
+          setup(build) {
+            build.onResolve({ filter: /^some-pkg$/ }, args => ({
+              path: args.path,
+              external: true,
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(m => String((m as any).message ?? m));
+    expect(messages.join("\n")).toContain("\"some-pkg\" because 'external' is set to false");
+  });
+
+  test("plugin onResolve can redirect a builtin under external: false", async () => {
+    using dir = tempDir("external-false-plugin", {
+      "entry.js": 'import { readFileSync } from "node:fs"; console.log(readFileSync());',
+      "shim.js": 'export const readFileSync = () => "shimmed!";',
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "bun",
+      external: false,
+      plugins: [
+        {
+          name: "shim-fs",
+          setup(build) {
+            build.onResolve({ filter: /^node:fs$/ }, () => ({
+              path: join(String(dir), "shim.js"),
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    const out = await result.outputs[0].text();
+    expect(out).toContain("shimmed!");
+    expect(out).not.toContain('from "fs"');
+  });
+
+  test("packages: 'external' is rejected", () => {
+    using dir = tempDir("external-false-pkgs", { "entry.js": "console.log(1);" });
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        target: "bun",
+        external: false,
+        packages: "external",
+      }),
+    ).toThrow('external: false cannot be combined with packages: "external"');
+  });
+
+  test.each(["node:fs", true, 42])("invalid external value %p is rejected", value => {
+    using dir = tempDir("external-invalid", { "entry.js": "console.log(1);" });
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        // @ts-expect-error
+        external: value,
+      }),
+    ).toThrow("external must be an array of strings or false");
+  });
+});

@@ -192,12 +192,6 @@ pub struct LinkerGraph<'a> {
     // `html_import_manifest` to gain lifetimes first.
     pub bump: bun_ptr::BackRef<Arena>,
 
-    /// Owns the AST-allocation arena for linker-generated nodes (synthetic
-    /// parts, wrapper stmts, etc.). Lives for the link step; `ast_alloc` is
-    /// the `Copy` handle into it.
-    pub ast_arena: bun_alloc::AstArena,
-    pub ast_alloc: bun_alloc::AstAlloc,
-
     pub code_splitting: bool,
 
     // This is an alias from Graph
@@ -223,6 +217,16 @@ pub struct LinkerGraph<'a> {
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
     pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+
+    /// `Copy` handle into `ast_arena`.
+    pub ast_alloc: bun_alloc::AstAlloc,
+    /// Owns the AST-allocation arena for linker-generated nodes (synthetic
+    /// parts, wrapper stmts, etc.). Lives for the link step.
+    ///
+    /// Declared last so it drops after every `AstAlloc`-backed field above
+    /// (`files`, `meta`, `ts_enums`): their `Drop` impls dereference the
+    /// allocator handle, which points into this arena's pinned interior.
+    pub ast_arena: bun_alloc::AstArena,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during

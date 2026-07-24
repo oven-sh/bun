@@ -11,7 +11,7 @@ use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
 use crate::js_meta;
-use crate::{Chunk, LinkerContext, StableRef, WrapKind};
+use crate::{LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
 /// esbuild does parallelize it.
@@ -37,9 +37,14 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 /// renamer tasks.
 pub unsafe fn rename_symbols_in_chunk(
     c: *mut LinkerContext,
-    chunk: &mut Chunk,
-    files_in_order: &[u32],
+    content: &Content,
 ) -> Result<ChunkRenamer, crate::Error> {
+    let js = match content {
+        Content::Javascript(js) => js,
+        // Caller (`LinkerContext::generate_js_renamer`) only dispatches JS chunks.
+        _ => return Ok(ChunkRenamer::default()),
+    };
+    let files_in_order: &[u32] = &js.files_in_chunk_order;
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
     // Derive the `symbols` pointer from the raw `*mut LinkerContext` *before*
@@ -136,11 +141,7 @@ pub unsafe fn rename_symbols_in_chunk(
     }
 
     let sorted_imports_from_other_chunks: Vec<StableRef> = {
-        let imports_from_other_chunks = match &chunk.content {
-            Content::Javascript(js) => js.imports_from_other_chunks.values(),
-            // Only JS chunks reach `rename_symbols_in_chunk`.
-            _ => &[],
-        };
+        let imports_from_other_chunks = js.imports_from_other_chunks.values();
         let mut count: u32 = 0;
         for item in imports_from_other_chunks {
             count += item.len() as u32;

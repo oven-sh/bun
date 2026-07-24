@@ -2221,48 +2221,19 @@ pub mod parse_worker {
         log: &mut Log,
         entry: &mut CacheEntry,
     ) -> core::result::Result<Success, AnyError> {
-        // reshaped for borrowck — `transpiler_for_target` borrows `this`
-        // mutably; we may need to call it again below (server-components branch),
-        // so hold it as a raw pointer and reborrow per use site.
-        //
-        // Stacked-Borrows: derive a single raw `*mut Worker` once and route every
-        // subsequent worker access through it. The second `transpiler_for_target`
-        // call (server-components/browser branch) must NOT autoref `&mut *this`
-        // directly — that retag of the parent `&mut` pops the SharedRW tag chain
-        // backing the first `transpiler` (and the `resolver` field-projection
-        // derived from it), making the later `(*resolver)` derefs in `get_ast` UB.
-        // `transpiler` may be rebound below while `resolver` keeps
-        // pointing into the original;
-        // both calls' `&mut self` must be children of the same raw so neither pops
-        // the other's tag chain.
-        let worker_raw: *mut crate::Worker = this;
-        // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-        // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
-        // reads through the returned ASTs. `arena` is a `*const Bump` field; the
-        // deref points outside `*worker_raw`.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
+        // SAFETY: worker arena is pinned for the bundle pass. `'static` matches
+        // `JSAst = BundledAst<'static>`; the arena outlives all reads through the
+        // returned ASTs.
+        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(this.arena.get()) };
+        let worker_ctx = this.ctx;
 
-        // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
-        let mut transpiler: *mut Transpiler<'static> =
-            std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
-        // Error-path cleanup (`transpiler.resetStore()` and
-        // `if (.fd) entry.deinit(arena)`) is reshaped into the
-        // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
-        // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that
-        // follow. There are no other fallible `?` between here and that match.
-        // `resolver` is a field of
-        // `*transpiler`. Keep raw — never materialize `&mut Transpiler`
-        // while a `&mut` derived from `resolver` is live. `resolver` is
-        // bound *before* the possible `transpiler` reassignment below and stays
-        // pointing into the original target's transpiler.
-        // SAFETY: `transpiler` just derived from a live `&mut`.
-        let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
+        let loader = {
+            let loaders = &this.transpiler_for_target(task.known_target).options.loaders;
+            task.loader
+                .or_else(|| task.path.loader(loaders))
+                .unwrap_or(Loader::File)
+        };
         let file_path = &mut task.path;
-        let loader = task
-            .loader
-            // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
-            .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
-            .unwrap_or(Loader::File);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!
@@ -2275,12 +2246,6 @@ pub mod parse_worker {
         // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(arena)` below).
         #[cfg(debug_assertions)]
         let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
-
-        // SAFETY: `worker_raw` derived from the live `this: &mut Worker` above.
-        // Read the `BackRef` field via `worker_raw` (not `this`) so no
-        // parent-`&mut` access pops the `transpiler`/`resolver` tag chain derived
-        // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
-        let worker_ctx = unsafe { (*worker_raw).ctx };
 
         // Only close a descriptor this task opened. A valid `file` was borrowed
         // from the resolver's entry cache (symlink-resolved files cache their fd
@@ -2308,44 +2273,78 @@ pub mod parse_worker {
         let entry_contents: &[u8] = entry.contents.as_slice();
         let is_empty = strings::is_all_whitespace(entry_contents);
 
-        // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
-        // disjoint `options` field — never the whole struct — so the raw `resolver`
-        // pointer (which targets `(*transpiler).resolver`) remains valid.
-        let topts = unsafe { &(*transpiler).options };
-        let use_directive: UseDirective = if !is_empty && topts.server_components {
-            UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
-        } else {
-            UseDirective::None
+        let (use_directive, rebind_to_browser) = {
+            let topts = &this.transpiler_for_target(task.known_target).options;
+            let use_directive: UseDirective = if !is_empty && topts.server_components {
+                UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+            } else {
+                UseDirective::None
+            };
+            // separate_ssr_graph makes boundaries switch to client because the
+            // server file uses that generated file as input. this is not done
+            // when there is one server graph because it is easier for plugins to
+            // deal with.
+            let rebind_to_browser = (use_directive == UseDirective::Client
+                && task.known_target != options::Target::ServerComponentsSsr
+                && worker_ctx.framework.is_some()
+                && worker_ctx
+                    .framework
+                    .as_ref()
+                    .unwrap()
+                    .server_components
+                    .as_ref()
+                    .unwrap()
+                    .separate_ssr_graph)
+                // set the target to the client when bundling client-side files
+                || ((topts.server_components || topts.has_dev_server())
+                    && task.known_target == options::Target::Browser);
+            (use_directive, rebind_to_browser)
         };
 
-        if (use_directive == UseDirective::Client
-        && task.known_target != options::Target::ServerComponentsSsr
-        && worker_ctx.framework.is_some()
-        && worker_ctx
-            .framework
-            .as_ref()
-            .unwrap()
-            .server_components
-            .as_ref()
-            .unwrap()
-            .separate_ssr_graph)
-        ||
-        // set the target to the client when bundling client-side files
-        ((topts.server_components || topts.has_dev_server())
-            && task.known_target == options::Target::Browser)
-        {
-            // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
-            // this is not done when there is one server graph because it is easier for plugins to deal with.
-            // SAFETY: route through `worker_raw` (see top-of-function note)
-            // so this call's `&mut self` is a child of the same raw and does not
-            // pop the SharedRW tag backing `resolver` (which still points into the
-            // original target's transpiler).
-            transpiler = std::ptr::from_mut(unsafe {
-                (*worker_raw).transpiler_for_target(options::Target::Browser)
-            });
+        if rebind_to_browser {
+            // Ensure the browser transpiler is initialized before taking
+            // long-lived borrows into `this.data` below.
+            let _ = this.transpiler_for_target(options::Target::Browser);
         }
-        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
-        // reassigned above); reborrow only the disjoint `options` field.
+
+        // `resolver` always comes from the `known_target` transpiler;
+        // `transpiler` is the (possibly rebound) browser transpiler. Both
+        // `WorkerData` slots are disjoint (inline vs. `Box`), so the two
+        // pointers never alias one another's whole struct even when different.
+        // `get_ast` takes them raw because `resolver` may equal
+        // `&(*transpiler).resolver` (see its doc).
+        let data = this.data.as_mut().expect("Worker.data set in create()");
+        let main_is_browser = data.transpiler.options.target == options::Target::Browser;
+        let known_uses_other = task.known_target == options::Target::Browser && !main_is_browser;
+        let final_uses_other = if rebind_to_browser {
+            !main_is_browser
+        } else {
+            known_uses_other
+        };
+        let (resolver, transpiler): (*mut Resolver, *mut Transpiler<'static>) = if known_uses_other {
+            debug_assert!(final_uses_other);
+            let t: *mut Transpiler<'static> = &raw mut **data
+                .other_transpiler
+                .as_mut()
+                .expect("other_transpiler initialized by transpiler_for_target above");
+            // SAFETY: `t` was just derived from a live `&mut Box<Transpiler>`.
+            (unsafe { &raw mut (*t).resolver }, t)
+        } else if final_uses_other {
+            (
+                &raw mut data.transpiler.resolver,
+                &raw mut **data
+                    .other_transpiler
+                    .as_mut()
+                    .expect("other_transpiler initialized by transpiler_for_target above"),
+            )
+        } else {
+            let t: *mut Transpiler<'static> = &raw mut data.transpiler;
+            // SAFETY: `t` was just derived from a live `&mut WorkerData` field.
+            (unsafe { &raw mut (*t).resolver }, t)
+        };
+        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (see
+        // match above); reborrow only the disjoint `options` field so `resolver`
+        // (which may target `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
@@ -2413,18 +2412,14 @@ pub mod parse_worker {
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
-        // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
-        // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
-        // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` is
-        // sound — caller (`BundleV2::init`) guarantees
-        // it is set before any ParseTask runs.
-        // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
-        // `'static` erasure: the context outlives the parse.
-        opts.macro_context = unsafe {
-            Some(&mut *std::ptr::from_mut(
-                (*transpiler).macro_context.as_mut().unwrap(),
-            ))
-        };
+        // (same nominal type as `ParserOptions.macro_context`'s pointee). `.unwrap()`
+        // is sound: caller (`BundleV2::init`) guarantees it is set before any
+        // ParseTask runs.
+        // SAFETY: `transpiler` is live; `macro_context` is a field disjoint from
+        // `options` (borrowed as `topts`) and `resolver`. `'static` erasure: the
+        // context is worker-owned and outlives the parse.
+        opts.macro_context =
+            Some(unsafe { (*transpiler).macro_context.as_mut() }.unwrap());
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
@@ -2583,8 +2578,8 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
-        // `topts` (a `&BundleOptions`) is dead past this point; the callees take
-        // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
+        // `topts` (a `&BundleOptions`) is dead past this point; the callees
+        // reborrow `(*transpiler).options` mutably.
         let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
             if !is_empty || loader.handles_empty_file() {

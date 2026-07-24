@@ -1057,20 +1057,11 @@ impl<'a> LinkerContext<'a> {
         chunk_index: usize,
     ) {
         let _ = chunk_index;
-        // Note: reshaped for borrowck — `rename_symbols_in_chunk` needs
-        // `&mut Chunk` and a borrow of `chunk.content.javascript.files_in_chunk_order`
-        // simultaneously; cache the files slice via raw pointer (it lives in
-        // the chunk arena, address-stable for the renamer pass).
-        let files: *const [u32] = match &chunk.content {
-            crate::chunk::Content::Javascript(js) => &raw const *js.files_in_chunk_order,
-            _ => unreachable!(),
-        };
-        // SAFETY: `files` points into `chunk.content.javascript`; `rename_symbols_in_chunk`
-        // does not touch `chunk.content` (it writes `chunk.renamer` only). `ctx.c` is the
-        // shared `*mut LinkerContext` — pass it raw so `rename_symbols_in_chunk` can deref
-        // to `&LinkerContext` (shared) without asserting whole-context exclusivity while
-        // peer renamer tasks run concurrently.
-        chunk.renamer = unsafe { rename_symbols_in_chunk(ctx.c.as_mut_ptr(), chunk, &*files) }
+        // SAFETY: `ctx.c` is the shared `*mut LinkerContext` — pass it raw so
+        // `rename_symbols_in_chunk` can deref to `&LinkerContext` (shared) without
+        // asserting whole-context exclusivity while peer renamer tasks run
+        // concurrently.
+        chunk.renamer = unsafe { rename_symbols_in_chunk(ctx.c.as_mut_ptr(), &chunk.content) }
             .expect("TODO: handle error");
     }
 
@@ -2223,30 +2214,14 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
+        // `init` stores an erased `*mut self` and returns a `Copy` value; the
+        // `&mut self` reborrow ends here, so the shared `self.*` reads below
+        // can coexist in `print_options`.
+        let require_or_import_meta_for_source_callback =
+            js_printer::RequireOrImportMetaCallback::init(self);
 
-        // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
-        // `line_offset_tables` / `mangled_props` from `self.graph`, but the
-        // `require_or_import_meta_for_source_callback` field below needs
-        // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
-        // (graph SoA storage is never reallocated during the print step).
-        // SAFETY: `self.graph` columns are stable heap allocations valid for
-        // the duration of this call; the printer only reads from them.
-        let ts_enums: &bun_ast::ast_result::TsEnumsMap =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
-        // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
-        // call (see above); the printer only reads from this slot.
-        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            bun_ptr::detach_lifetime_ref(
-                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
-            )
-        };
-        let mangled_props: &MangledProps =
-            // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
-            // outlives only this call (see above).
-            unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
+        // SAFETY: parse_graph backref.
+        let parse_graph = unsafe { &*self.parse_graph };
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2264,7 +2239,7 @@ impl<'a> LinkerContext<'a> {
                 .flags
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
-            ts_enums: Some(ts_enums),
+            ts_enums: Some(&self.graph.ts_enums),
 
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
@@ -2279,9 +2254,10 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback:
-                js_printer::RequireOrImportMetaCallback::init(self),
-            line_offset_tables: Some(line_offset_table),
+            require_or_import_meta_for_source_callback,
+            line_offset_tables: Some(
+                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
+            ),
             target: self.options.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
@@ -2295,7 +2271,7 @@ impl<'a> LinkerContext<'a> {
             } else {
                 None
             },
-            mangled_props: Some(mangled_props),
+            mangled_props: Some(&self.mangled_props),
             ..Default::default()
         };
 

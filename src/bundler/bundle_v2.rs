@@ -1615,18 +1615,23 @@ pub mod bv2_impl {
         /// By calling this function, it implies that the returned log *will* be
         /// written to. For DevServer, this allocates a per-file log for the sources
         /// it is called on. Function must be called on the bundle thread.
-        pub fn log_for_resolution_failures(
-            &mut self,
+        ///
+        /// The returned log lives in either the DevServer or `*self.transpiler.log`,
+        /// both raw-pointer storage disjoint from `self.graph`; the unbounded `'r`
+        /// lets callers hold the `&mut Log` across `self.graph` accesses. Same
+        /// caller contract as [`Transpiler::log_mut`]: do not hold two results
+        /// live at once.
+        #[allow(clippy::mut_from_ref)]
+        pub fn log_for_resolution_failures<'r>(
+            &self,
             abs_path: &[u8],
             bake_graph: bake::Graph,
-        ) -> &mut bun_ast::Log {
+        ) -> &'r mut bun_ast::Log {
             if let Some(dev) = self.dev_server_handle() {
                 // CYCLEBREAK GENUINE: DevServer → vtable.
                 // SAFETY: owner is a live *mut DevServer per handle invariant.
                 return unsafe { &mut *dev.log_for_resolution_failures(abs_path, bake_graph) };
             }
-            // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
-            // outlives `BundleV2`.
             self.transpiler.log_mut()
         }
     }
@@ -1991,20 +1996,31 @@ pub mod bv2_impl {
             Ok(reachable.into_boxed_slice())
         }
 
+        /// Schedule a task to be run on the JS thread which resolves the promise
+        /// of each `.defer()` called in an onLoad plugin.
+        ///
+        /// Returns true if there were more tasks queued.
+        fn drain_deferred_tasks(&mut self) -> bool {
+            self.thread_lock.assert_locked();
+
+            if self.graph.deferred_pending > 0 {
+                self.graph.pending_items += self.graph.deferred_pending;
+                self.graph.deferred_pending = 0;
+
+                self.drain_defer_task.init();
+                self.drain_defer_task.schedule();
+
+                return true;
+            }
+
+            false
+        }
+
         fn is_done(&mut self) -> bool {
             self.thread_lock.assert_locked();
 
             if self.graph.pending_items == 0 {
-                let this: *mut Self = self;
-                // reshaped for borrowck — `&self.graph` and
-                // `self` go to the same call. Take a raw ptr so the two `&mut` don't
-                // overlap from rustc's view.
-                // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
-                // fields and the `BundleV2` callback surface; no aliasing UB.
-                if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
-                    return false;
-                }
-                return true;
+                return !self.drain_deferred_tasks();
             }
 
             false
@@ -2112,14 +2128,6 @@ pub mod bv2_impl {
             import_record: &jsc_api::JSBundler::MiniImportRecord,
             target: options::Target,
         ) {
-            // reshaped for borrowck — `transpiler_for_target` borrows `&mut self`, so launder
-            // through a raw pointer to keep `*self` available below.
-            // SAFETY: the returned `&mut Transpiler` lives for `'a` (set in `init`) and is not
-            // invalidated by anything called here. No second `&mut` to the same transpiler is
-            // created while a `&mut` reborrow derived from this raw pointer is live; the later
-            // direct `self.transpiler.options.*` accesses are shared reads that occur after the
-            // last `&mut *transpiler` deref on their control path.
-            let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
@@ -2148,17 +2156,15 @@ pub mod bv2_impl {
                     };
                     if !found_existing {
                         let loader: Loader = 'brk: {
-                            let record: &mut ImportRecord =
-                                &mut self.graph.ast.items_import_records_mut()
-                                    [import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [import_record.import_record_index as usize];
-                            if let Some(out_loader) = record.loader {
+                            let record_loader = self.graph.ast.items_import_records()
+                                [import_record.importer_source_index as usize]
+                                .as_slice()[import_record.import_record_index as usize]
+                                .loader;
+                            if let Some(out_loader) = record_loader {
                                 break 'brk out_loader;
                             }
-                            // SAFETY: see `transpiler` note above.
                             break 'brk Fs::Path::init(path_primary.text)
-                                .loader(unsafe { &(*transpiler).options.loaders })
+                                .loader(&self.transpiler_for_target(target).options.loaders)
                                 .unwrap_or(Loader::File);
                         };
                         // For virtual files, use the path text as-is (no relative path computation needed).
@@ -2199,8 +2205,7 @@ pub mod bv2_impl {
 
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
-                // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
+                match self.transpiler_for_target(target).resolver.resolve(
                     source_dir,
                     &import_record.specifier,
                     import_record.kind,
@@ -2208,25 +2213,27 @@ pub mod bv2_impl {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
-                        if err == _resolver::Error::ModuleNotFound {
-                            if let Some(dev) = &self.dev_server {
-                                if !had_busted_dir_cache {
-                                    // Only re-query if we previously had something cached.
-                                    // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
-                                        .resolver
-                                        .bust_dir_cache_from_specifier(
-                                            &import_record.source_file,
-                                            &import_record.specifier,
-                                        )
-                                    {
-                                        had_busted_dir_cache = true;
-                                        continue;
-                                    }
+                        if err == _resolver::Error::ModuleNotFound && self.dev_server.is_some() {
+                            if !had_busted_dir_cache {
+                                // Only re-query if we previously had something cached.
+                                if self
+                                    .transpiler_for_target(target)
+                                    .resolver
+                                    .bust_dir_cache_from_specifier(
+                                        &import_record.source_file,
+                                        &import_record.specifier,
+                                    )
+                                {
+                                    had_busted_dir_cache = true;
+                                    continue;
                                 }
+                            }
 
-                                // Tell Bake's Dev Server to wait for the file to be imported.
-                                dev.track_resolution_failure(
+                            // Tell Bake's Dev Server to wait for the file to be imported.
+                            self.dev_server
+                                .as_ref()
+                                .unwrap()
+                                .track_resolution_failure(
                                     &import_record.source_file,
                                     &import_record.specifier,
                                     target.bake_graph(),
@@ -2235,28 +2242,20 @@ pub mod bv2_impl {
                                 )
                                 .expect("oom");
 
-                                // Turn this into an invalid AST, so that incremental mode skips it when printing.
-                                // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                                unsafe {
-                                    self.graph.ast.items_parts_mut()
-                                        [import_record.importer_source_index as usize]
-                                        .set_len((0) as usize)
-                                };
-                            }
+                            // Turn this into an invalid AST, so that incremental mode skips it when printing.
+                            // SAFETY: truncating to len 0 never exposes uninitialized elements.
+                            unsafe {
+                                self.graph.ast.items_parts_mut()
+                                    [import_record.importer_source_index as usize]
+                                    .set_len((0) as usize)
+                            };
                         }
 
                         let handles_import_errors;
-                        // reshaped for borrowck — `log_for_resolution_failures` borrows
-                        // `&mut self`; the returned log is backed by either a DevServer-owned slot or
-                        // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
-                        // so `self.graph.*` / `self.transpiler.*` reads below type-check.
-                        // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
-                        let log: &mut bun_ast::Log = unsafe {
-                            bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                                &import_record.source_file,
-                                target.bake_graph(),
-                            ))
-                        };
+                        let log: &mut bun_ast::Log = self.log_for_resolution_failures(
+                            &import_record.source_file,
+                            target.bake_graph(),
+                        );
 
                         {
                             let record: &mut ImportRecord =
@@ -2393,15 +2392,15 @@ pub mod bv2_impl {
                     *p = path;
                 }
                 let loader: Loader = 'brk: {
-                    let record: &ImportRecord = &self.graph.ast.items_import_records()
+                    let record_loader = self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
-                        .as_slice()[import_record.import_record_index as usize];
-                    if let Some(out_loader) = record.loader {
+                        .as_slice()[import_record.import_record_index as usize]
+                        .loader;
+                    if let Some(out_loader) = record_loader {
                         break 'brk out_loader;
                     }
-                    // SAFETY: see `transpiler` note above.
                     break 'brk path
-                        .loader(unsafe { &(*transpiler).options.loaders })
+                        .loader(&self.transpiler_for_target(target).options.loaders)
                         .unwrap_or(Loader::File);
                     // HTML is only allowed at the entry point.
                 };
@@ -4516,16 +4515,10 @@ pub mod bv2_impl {
                         return;
                     }
 
-                    // SAFETY: Holding the `&mut bun_ast::Log` borrow would alias `&this.graph`
-                    // below; detach the lifetime so borrowck releases `this`. The log
-                    // lives in `this.transpiler`/`this.framework`, disjoint from
-                    // `graph.input_files`.
-                    let log: &mut bun_ast::Log = unsafe {
-                        bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
-                            resolve.import_record.original_target.bake_graph(),
-                        ))
-                    };
+                    let log: &mut bun_ast::Log = this.log_for_resolution_failures(
+                        &resolve.import_record.source_file,
+                        resolve.import_record.original_target.bake_graph(),
+                    );
 
                     // When it's not a file, this is an error and we should report it.
                     //
@@ -6070,16 +6063,8 @@ pub mod bv2_impl {
                     ) {
                         Ok(r) => break r,
                         Err(err) => {
-                            // borrowck — `log_for_resolution_failures` returns
-                            // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
-                            // deref (DevServer vtable or `transpiler.log`). Detach via
-                            // `*mut` so later `self.*` reads don't conflict.
-                            // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
-                            let log: &mut bun_ast::Log = unsafe {
-                                &mut *std::ptr::from_mut::<bun_ast::Log>(
-                                    self.log_for_resolution_failures(source.path.text, bake_graph),
-                                )
-                            };
+                            let log: &mut bun_ast::Log =
+                                self.log_for_resolution_failures(source.path.text, bake_graph);
 
                             // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {

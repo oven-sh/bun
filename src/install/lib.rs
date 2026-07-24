@@ -57,7 +57,6 @@ pub(crate) mod bun_bunfig {
     pub(crate) use bun_options_types::context as Arguments;
 }
 
-use core::cell::Cell;
 use core::fmt;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -947,57 +946,16 @@ pub(crate) fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
 pub(crate) static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
-pub(crate) fn initialize_store() {
-    bun_ast::initialize_store_or_reset();
-}
+/// No-op: the thread-local AST store is gone. Each parse scope now owns an
+/// [`bun_alloc::AstArena`] and threads its [`bun_alloc::AstAlloc`] handle
+/// explicitly. Kept so existing call sites compile unchanged; will be removed
+/// once every caller is migrated.
+#[inline]
+pub(crate) fn initialize_store() {}
 
-/// The default store we use pre-allocates around 16 MB of memory per thread
-/// That adds up in multi-threaded scenarios.
-/// ASTMemoryAllocator uses a smaller fixed buffer allocator
-pub(crate) fn initialize_mini_store() {
-    use bun_alloc::Arena;
-
-    struct MiniStore {
-        heap: Arena,
-        memory_store: bun_ast::ASTMemoryAllocator,
-    }
-
-    thread_local! {
-        static INSTANCE: Cell<Option<*mut MiniStore>> = const { Cell::new(None) };
-    }
-
-    INSTANCE.with(|instance| {
-        if instance.get().is_none() {
-            let heap = Arena::new();
-            let memory_store = bun_ast::ASTMemoryAllocator::new(&heap);
-            let mini_store = bun_core::heap::into_raw(Box::new(MiniStore { heap, memory_store }));
-            // SAFETY: just allocated, non-null, thread-local exclusive access
-            unsafe {
-                (*mini_store).memory_store.reset();
-                (*mini_store).memory_store.push();
-            }
-            instance.set(Some(mini_store));
-        } else {
-            // SAFETY: pointer was heap-allocated on this thread in the branch above and is
-            // never freed; INSTANCE is thread-local and `Cell::get` copies the raw pointer
-            // out (no borrow of the Cell is held), so this `&mut` is the sole live reference
-            // to the allocation for its entire scope — no aliasing.
-            let mini_store = unsafe { &mut *instance.get().unwrap() };
-            // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena,
-            // so there is no stack-buffer watermark to inspect — `reset()` already
-            // releases all bump allocations. The size gate is
-            // `reset_retain_with_limit` — only pay `mi_heap_destroy + mi_heap_new`
-            // once accumulated bytes exceed 8 MiB. The `AstAlloc` state stays
-            // installed across the re-arm (`push()` without `pop()`), so
-            // `reset_retain_with_limit` resets it in place when it recycles.
-            let _ = &mini_store.heap;
-            mini_store
-                .memory_store
-                .reset_retain_with_limit(8 * 1024 * 1024);
-            mini_store.memory_store.push();
-        }
-    });
-}
+/// See [`initialize_store`].
+#[inline]
+pub(crate) fn initialize_mini_store() {}
 
 // MOVE_DOWN: identity/sentinel scalar aliases live in `bun_install_types::resolver_hooks`
 // (single canonical definition shared with `bun_resolver`). Re-exported here so existing

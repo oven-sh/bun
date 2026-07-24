@@ -247,11 +247,15 @@ impl Scripts {
     // Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
-        if let Some(scripts_prop) = json.as_property(b"scripts") {
+    pub fn parse_count<B: bun_semver::StringBuilder>(
+        alloc: bun_alloc::AstAlloc,
+        builder: &mut B,
+        json: Expr,
+    ) {
+        if let Some(scripts_prop) = json.as_property(alloc, b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
-                    if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
+                    if let Some(script) = scripts_prop.expr.get(alloc, script_name.as_bytes()) {
                         // The JSON parser
                         // produces UTF-8 `EString`s, so the alloc-free literal accessor
                         // is sufficient here.
@@ -264,12 +268,17 @@ impl Scripts {
         }
     }
 
-    pub fn parse_alloc<B: bun_semver::StringBuilder>(&mut self, builder: &mut B, json: Expr) {
-        if let Some(scripts_prop) = json.as_property(b"scripts") {
+    pub fn parse_alloc<B: bun_semver::StringBuilder>(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        builder: &mut B,
+        json: Expr,
+    ) {
+        if let Some(scripts_prop) = json.as_property(alloc, b"scripts") {
             if scripts_prop.expr.is_object() {
                 let dsts = self.hooks_mut();
                 for (dst, script_name) in dsts.into_iter().zip(LockfileScripts::NAMES) {
-                    if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
+                    if let Some(script) = scripts_prop.expr.get(alloc, script_name.as_bytes()) {
                         if let Some(input) = script.as_utf8_string_literal() {
                             *dst = builder.append::<SemverString>(input);
                         }
@@ -332,6 +341,8 @@ impl Scripts {
     ) -> Result<(), crate::Error> {
         let json_buf;
         let parsed;
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
         let json: Expr = {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
@@ -342,13 +353,13 @@ impl Scripts {
             let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
 
             initialize_store();
-            parsed = bun_json::ParsedJson::parse_package_json(&json_src, log)?;
+            parsed = bun_json::ParsedJson::parse_package_json(&json_src, log, alloc)?;
             parsed.root
         };
 
-        Scripts::parse_count(string_builder, json);
+        Scripts::parse_count(alloc, string_builder, json);
         string_builder.allocate()?;
-        self.parse_alloc(string_builder, json);
+        self.parse_alloc(alloc, string_builder, json);
         self.filled = true;
         Ok(())
     }

@@ -44,11 +44,11 @@ fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
 /// (`ts_decorators`, `class_static_block`, …) are always default for parsed
 /// `package.json`.
 #[inline]
-fn copy_property(p: &G::Property) -> G::Property {
+fn copy_property(alloc: bun_alloc::AstAlloc, p: &G::Property) -> G::Property {
     G::Property {
         key: p.key,
         value: p.value,
-        ..G::Property::default()
+        ..G::Property::empty(alloc)
     }
 }
 
@@ -58,10 +58,11 @@ pub(crate) fn edit_patched_dependencies(
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    let arena = &manager.ast_arena;
+    let alloc = manager.ast_arena.alloc();
+    let arena = alloc.arena();
     // const pkg_to_patch = manager.
-    let mut patched_dependencies = E::Object::default();
-    if let Some(query) = package_json.as_property(b"patchedDependencies") {
+    let mut patched_dependencies = E::Object::empty(alloc);
+    if let Some(query) = package_json.as_property(alloc, b"patchedDependencies") {
         if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
             // Preserve the formatting fields so the printed
             // `patchedDependencies` keeps its original single-line / brace layout.
@@ -71,34 +72,36 @@ pub(crate) fn edit_patched_dependencies(
             patched_dependencies.is_parenthesized = obj.is_parenthesized;
             patched_dependencies.was_originally_macro = obj.was_originally_macro;
             for p in obj.properties.slice() {
-                VecExt::append(&mut patched_dependencies.properties, copy_property(p));
+                VecExt::append(&mut patched_dependencies.properties, copy_property(alloc, p));
             }
         }
     }
 
     let patchfile_expr = Expr::init(
+        alloc,
         E::EString::init(arena_dup(arena, patchfile_path)),
         bun_ast::Loc::EMPTY,
     );
 
-    patched_dependencies.put(arena, arena_dup(arena, patch_key), patchfile_expr)?;
+    patched_dependencies.put(alloc, arena_dup(arena, patch_key), patchfile_expr)?;
 
     package_json.data.e_object_mut().unwrap().put(
-        arena,
+        alloc,
         b"patchedDependencies",
-        Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
+        Expr::init(alloc, patched_dependencies, bun_ast::Loc::EMPTY),
     )?;
     Ok(())
 }
 
 pub fn edit_trusted_dependencies(
+    alloc: bun_alloc::AstAlloc,
     package_json: &mut Expr,
     names_to_add: &mut [Box<[u8]>],
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
     let mut trusted_dependencies: &[Expr] = &[];
-    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+    if let Some(query) = package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
         if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
             // this function; lifetime erased per the parser's `Str` convention.
@@ -142,7 +145,7 @@ pub fn edit_trusted_dependencies(
             while i > 0 {
                 i -= 1;
                 if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
-                    deps[i] = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
+                    deps[i] = Expr::init(alloc, E::EString::init(name), bun_ast::Loc::EMPTY);
                     break;
                 }
             }
@@ -153,12 +156,12 @@ pub fn edit_trusted_dependencies(
             debug_assert!(!matches!(dep.data, bun_ast::ExprData::EMissing(_)));
         }
 
-        js_ast::ExprNodeList::from_owned_slice(deps)
+        alloc.vec_from_iter(deps.into_vec())
     };
 
     let mut needs_new_trusted_dependencies_list = true;
     let mut trusted_dependencies_array: Expr = 'brk: {
-        if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+        if let Some(query) = package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
             if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                 needs_new_trusted_dependencies_list = false;
                 break 'brk query.expr;
@@ -166,9 +169,10 @@ pub fn edit_trusted_dependencies(
         }
 
         Expr::init(
+            alloc,
             E::Array {
-                items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
-                ..Default::default()
+                items: alloc.vec_from_slice(new_trusted_deps.slice()),
+                ..E::Array::empty(alloc)
             },
             bun_ast::Loc::EMPTY,
         )
@@ -192,19 +196,22 @@ pub fn edit_trusted_dependencies(
             .len_u32()
             == 0
     {
-        let root_properties: Vec<G::Property> = vec![G::Property {
+        let mut root_properties: G::PropertyList = alloc.vec_with_capacity(1);
+        root_properties.push(G::Property {
             key: Some(Expr::init(
+                alloc,
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                 bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
-            ..Default::default()
-        }];
+            ..G::Property::empty(alloc)
+        });
 
         *package_json = Expr::init(
+            alloc,
             E::Object {
-                properties: G::PropertyList::move_from_list(root_properties),
-                ..Default::default()
+                properties: root_properties,
+                ..E::Object::empty(alloc)
             },
             bun_ast::Loc::EMPTY,
         );
@@ -214,22 +221,24 @@ pub fn edit_trusted_dependencies(
             .e_object()
             .expect("infallible: variant checked");
         let old_props = obj.properties.slice();
-        let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
+        let mut root_properties: G::PropertyList = alloc.vec_with_capacity(old_props.len() + 1);
         for p in old_props {
-            root_properties.push(copy_property(p));
+            root_properties.push(copy_property(alloc, p));
         }
         root_properties.push(G::Property {
             key: Some(Expr::init(
+                alloc,
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                 bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
-            ..Default::default()
+            ..G::Property::empty(alloc)
         });
         *package_json = Expr::init(
+            alloc,
             E::Object {
-                properties: G::PropertyList::move_from_list(root_properties),
-                ..Default::default()
+                properties: root_properties,
+                ..E::Object::empty(alloc)
             },
             bun_ast::Loc::EMPTY,
         );
@@ -254,12 +263,13 @@ pub(crate) fn edit_update_no_args(
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
     // `arena` is a disjoint-field borrow held across
     // the `&mut manager.updating_packages` accesses below.
-    let arena = &manager.ast_arena;
+    let alloc = manager.ast_arena.alloc();
+    let arena = alloc.arena();
 
     for group in DEPENDENCY_GROUPS {
         let group_str = group.prop;
 
-        if let Some(mut root) = current_package_json.as_property(group_str) {
+        if let Some(mut root) = current_package_json.as_property(alloc, group_str) {
             if matches!(root.expr.data, bun_ast::ExprData::EObject(_)) {
                 if options.before_install {
                     // set each npm dependency to latest
@@ -548,7 +558,8 @@ pub(crate) fn edit(
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
     // `arena` is a disjoint-field borrow held across
     // the `&mut manager.{updating_packages,trusted_deps_to_add_to_package_json}` accesses below.
-    let arena = &manager.ast_arena;
+    let alloc = manager.ast_arena.alloc();
+    let arena = alloc.arena();
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
@@ -561,7 +572,7 @@ pub(crate) fn edit(
     // Try to use the existing spot in the dependencies list if possible
     {
         if options.add_trusted_dependencies {
-            if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+            if let Some(query) = current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
                 if let bun_ast::ExprData::EArray(arr) = query.expr.data {
                     // Iterate backwards to avoid index issues when removing items
                     let mut i: usize = manager.trusted_deps_to_add_to_package_json.len();
@@ -587,11 +598,11 @@ pub(crate) fn edit(
                 let request = &mut updates[i];
                 // order-insensitive scan: `FOUR` is fine here
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
-                    if let Some(query) = current_package_json.as_property(list) {
+                    if let Some(query) = current_package_json.as_property(alloc, list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                             let name = request.get_name();
 
-                            if let Some(value) = query.expr.as_property(name) {
+                            if let Some(value) = query.expr.as_property(alloc, name) {
                                 if matches!(value.expr.data, bun_ast::ExprData::EString(_)) {
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && strings::eql_long(list, dependency_list, true)
@@ -748,23 +759,23 @@ pub(crate) fn edit(
     if remaining != 0 {
         let mut new_dependencies: Vec<G::Property> = {
             let mut dependencies: Vec<G::Property> = Vec::new();
-            if let Some(query) = current_package_json.as_property(dependency_list) {
+            if let Some(query) = current_package_json.as_property(alloc, dependency_list) {
                 if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
                     for p in obj.properties.slice() {
-                        dependencies.push(copy_property(p));
+                        dependencies.push(copy_property(alloc, p));
                     }
                 }
             }
             let target = dependencies.len() + remaining - replacing;
             while dependencies.len() < target {
-                dependencies.push(G::Property::default());
+                dependencies.push(G::Property::empty(alloc));
             }
             dependencies
         };
 
         let mut trusted_dependencies: &[Expr] = &[];
         if options.add_trusted_dependencies {
-            if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+            if let Some(query) = current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
                 if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                     // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
                     trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
@@ -775,7 +786,7 @@ pub(crate) fn edit(
         let trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.len();
         let new_trusted_deps: js_ast::ExprNodeList = 'brk: {
             if !options.add_trusted_dependencies || trusted_dependencies_to_add == 0 {
-                break 'brk bun_alloc::AstAlloc::vec();
+                break 'brk alloc.vec();
             }
 
             let mut deps =
@@ -815,7 +826,7 @@ pub(crate) fn edit(
                 debug_assert!(!matches!(dep.data, bun_ast::ExprData::EMissing(_)));
             }
 
-            js_ast::ExprNodeList::from_owned_slice(deps)
+            alloc.vec_from_iter(deps.into_vec())
         };
 
         for request in updates.iter_mut() {
@@ -839,7 +850,7 @@ pub(crate) fn edit(
                     if request.package_id == INVALID_PACKAGE_ID {
                         // Duplicate dependency (e.g., "react" in both "dependencies" and
                         // "optionalDependencies"). Remove the old dependency.
-                        new_dependencies[k] = G::Property::default();
+                        new_dependencies[k] = G::Property::empty(alloc);
                         // Drop the trailing slot (no shift).
                         let new_len = new_dependencies.len() - 1;
                         new_dependencies.truncate(new_len);
@@ -884,7 +895,7 @@ pub(crate) fn edit(
 
         let mut needs_new_dependency_list = true;
         let mut dependencies_object: Expr = 'brk: {
-            if let Some(query) = current_package_json.as_property(dependency_list) {
+            if let Some(query) = current_package_json.as_property(alloc, dependency_list) {
                 if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                     needs_new_dependency_list = false;
                     break 'brk query.expr;
@@ -894,8 +905,8 @@ pub(crate) fn edit(
             Expr::allocate(
                 arena,
                 E::Object {
-                    properties: bun_alloc::AstAlloc::vec(),
-                    ..Default::default()
+                    properties: alloc.vec(),
+                    ..E::Object::empty(alloc)
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -906,7 +917,7 @@ pub(crate) fn edit(
                 .data
                 .e_object_mut()
                 .expect("infallible: variant checked");
-            obj.properties = G::PropertyList::move_from_list(new_dependencies);
+            obj.properties = alloc.vec_from_iter(new_dependencies);
             if obj.properties.len_u32() > 1 {
                 obj.alphabetize_properties();
             }
@@ -918,7 +929,7 @@ pub(crate) fn edit(
                 needs_new_trusted_dependencies_list = false;
                 break 'brk Expr::EMPTY;
             }
-            if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+            if let Some(query) = current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
                 if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                     needs_new_trusted_dependencies_list = false;
                     break 'brk query.expr;
@@ -928,8 +939,8 @@ pub(crate) fn edit(
             Expr::allocate(
                 arena,
                 E::Array {
-                    items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
-                    ..Default::default()
+                    items: alloc.vec_from_slice(new_trusted_deps.slice()),
+                    ..E::Array::empty(alloc)
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -960,7 +971,7 @@ pub(crate) fn edit(
             } else {
                 1
             };
-            let mut root_properties: Vec<G::Property> = Vec::with_capacity(n);
+            let mut root_properties: G::PropertyList = alloc.vec_with_capacity(n);
             root_properties.push(G::Property {
                 key: Some(Expr::allocate(
                     arena,
@@ -968,7 +979,7 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 )),
                 value: Some(dependencies_object),
-                ..Default::default()
+                ..G::Property::empty(alloc)
             });
 
             if options.add_trusted_dependencies {
@@ -979,15 +990,15 @@ pub(crate) fn edit(
                         bun_ast::Loc::EMPTY,
                     )),
                     value: Some(trusted_dependencies_array),
-                    ..Default::default()
+                    ..G::Property::empty(alloc)
                 });
             }
 
             *current_package_json = Expr::allocate(
                 arena,
                 E::Object {
-                    properties: G::PropertyList::move_from_list(root_properties),
-                    ..Default::default()
+                    properties: root_properties,
+                    ..E::Object::empty(alloc)
                 },
                 bun_ast::Loc::EMPTY,
             );
@@ -998,9 +1009,10 @@ pub(crate) fn edit(
                     .e_object()
                     .expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
-                let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 2);
+                let mut root_properties: G::PropertyList =
+                    alloc.vec_with_capacity(old_props.len() + 2);
                 for p in old_props {
-                    root_properties.push(copy_property(p));
+                    root_properties.push(copy_property(alloc, p));
                 }
                 root_properties.push(G::Property {
                     key: Some(Expr::allocate(
@@ -1009,7 +1021,7 @@ pub(crate) fn edit(
                         bun_ast::Loc::EMPTY,
                     )),
                     value: Some(dependencies_object),
-                    ..Default::default()
+                    ..G::Property::empty(alloc)
                 });
                 root_properties.push(G::Property {
                     key: Some(Expr::allocate(
@@ -1018,13 +1030,13 @@ pub(crate) fn edit(
                         bun_ast::Loc::EMPTY,
                     )),
                     value: Some(trusted_dependencies_array),
-                    ..Default::default()
+                    ..G::Property::empty(alloc)
                 });
                 *current_package_json = Expr::allocate(
                     arena,
                     E::Object {
-                        properties: G::PropertyList::move_from_list(root_properties),
-                        ..Default::default()
+                        properties: root_properties,
+                        ..E::Object::empty(alloc)
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -1034,9 +1046,10 @@ pub(crate) fn edit(
                     .e_object()
                     .expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
-                let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
+                let mut root_properties: G::PropertyList =
+                    alloc.vec_with_capacity(old_props.len() + 1);
                 for p in old_props {
-                    root_properties.push(copy_property(p));
+                    root_properties.push(copy_property(alloc, p));
                 }
                 root_properties.push(G::Property {
                     key: Some(Expr::allocate(
@@ -1053,13 +1066,13 @@ pub(crate) fn edit(
                     } else {
                         trusted_dependencies_array
                     }),
-                    ..Default::default()
+                    ..G::Property::empty(alloc)
                 });
                 *current_package_json = Expr::allocate(
                     arena,
                     E::Object {
-                        properties: G::PropertyList::move_from_list(root_properties),
-                        ..Default::default()
+                        properties: root_properties,
+                        ..E::Object::empty(alloc)
                     },
                     bun_ast::Loc::EMPTY,
                 );

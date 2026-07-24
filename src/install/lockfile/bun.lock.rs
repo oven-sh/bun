@@ -1601,6 +1601,7 @@ fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bu
 
 pub fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
+    alloc: bun_alloc::AstAlloc,
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -1608,7 +1609,7 @@ pub fn parse_into_binary_lockfile(
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
 
-    let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
+    let Some(lockfile_version_expr) = root.get(alloc, b"lockfileVersion") else {
         log.add_error(Some(source), root.loc, b"Missing lockfile version");
         return Err(ParseError::InvalidLockfileVersion);
     };
@@ -1663,7 +1664,7 @@ pub fn parse_into_binary_lockfile(
     lockfile.text_lockfile_version = lockfile_version;
 
     // configVersion is not required
-    if let Some(config_version_expr) = root.get(b"configVersion") {
+    if let Some(config_version_expr) = root.get(alloc, b"configVersion") {
         lockfile.saved_config_version = match ConfigVersion::from_expr(&config_version_expr) {
             Some(v) => Some(v),
             None => {
@@ -1677,7 +1678,7 @@ pub fn parse_into_binary_lockfile(
         };
     }
 
-    if let Some(trusted_dependencies_expr) = root.get(b"trustedDependencies") {
+    if let Some(trusted_dependencies_expr) = root.get(alloc, b"trustedDependencies") {
         let mut trusted_dependencies = TrustedDependenciesSet::default();
         if !trusted_dependencies_expr.is_array() {
             log.add_error(
@@ -1706,7 +1707,7 @@ pub fn parse_into_binary_lockfile(
         lockfile.trusted_dependencies = Some(trusted_dependencies);
     }
 
-    if let Some(patched_dependencies_expr) = root.get(b"patchedDependencies") {
+    if let Some(patched_dependencies_expr) = root.get(alloc, b"patchedDependencies") {
         if !patched_dependencies_expr.is_object() {
             log.add_error(
                 Some(source),
@@ -1737,7 +1738,7 @@ pub fn parse_into_binary_lockfile(
         }
     }
 
-    if let Some(overrides_expr) = root.get(b"overrides") {
+    if let Some(overrides_expr) = root.get(alloc, b"overrides") {
         if !overrides_expr.is_object() {
             log.add_error(
                 Some(source),
@@ -1799,7 +1800,7 @@ pub fn parse_into_binary_lockfile(
         }
     }
 
-    if let Some(catalog_expr) = root.get(b"catalog") {
+    if let Some(catalog_expr) = root.get(alloc, b"catalog") {
         if !catalog_expr.is_object() {
             log.add_error(
                 Some(source),
@@ -1871,7 +1872,7 @@ pub fn parse_into_binary_lockfile(
         }
     }
 
-    if let Some(catalogs_expr) = root.get(b"catalogs") {
+    if let Some(catalogs_expr) = root.get(alloc, b"catalogs") {
         if !catalogs_expr.is_object() {
             log.add_error(
                 Some(source),
@@ -1970,7 +1971,7 @@ pub fn parse_into_binary_lockfile(
         }
     }
 
-    let Some(workspaces_obj) = root.get_object(b"workspaces") else {
+    let Some(workspaces_obj) = root.get_object(alloc, b"workspaces") else {
         log.add_error(
             Some(source),
             root.loc,
@@ -1990,7 +1991,7 @@ pub fn parse_into_binary_lockfile(
             );
             return Err(ParseError::InvalidWorkspaceObject);
         }
-        let value = Expr::from_json_value(&row.value, row.key_loc);
+        let value = Expr::from_json_value(alloc, &row.value, row.key_loc);
 
         let path = row.key.slice();
 
@@ -2004,7 +2005,7 @@ pub fn parse_into_binary_lockfile(
             continue;
         }
 
-        let Some(name_expr) = value.get(b"name") else {
+        let Some(name_expr) = value.get(alloc, b"name") else {
             log.add_error(
                 Some(source),
                 value_loc_of(source, row.key_loc),
@@ -2027,7 +2028,7 @@ pub fn parse_into_binary_lockfile(
             .insert(name_hash, sbuf!(lockfile).append(path)?);
 
         // versions are optional
-        if let Some(version_expr) = value.get(b"version") {
+        if let Some(version_expr) = value.get(alloc, b"version") {
             if !version_expr.is_string() {
                 log.add_error(
                     Some(source),
@@ -2078,7 +2079,7 @@ pub fn parse_into_binary_lockfile(
         // `Expr::get` returns by value and `as_utf8_string_literal` borrows
         // from it, so keep the expr alive for the rest of the block instead
         // of letting it drop at the end of the `if let` arm.
-        let name_expr = root_pkg_exr.get(b"name");
+        let name_expr = root_pkg_exr.get(alloc, b"name");
         let maybe_name = if let Some(name) = &name_expr {
             match name.as_utf8_string_literal() {
                 Some(s) => Some(s),
@@ -2097,6 +2098,7 @@ pub fn parse_into_binary_lockfile(
 
         let (off, len) = parse_append_dependencies::<false, true>(
             lockfile,
+            alloc,
             &root_pkg_exr,
             &mut *log,
             source,
@@ -2145,7 +2147,7 @@ pub fn parse_into_binary_lockfile(
                 ) {
                     continue;
                 }
-                let value = Expr::from_json_value(&row.value, row.key_loc);
+                let value = Expr::from_json_value(alloc, &row.value, row.key_loc);
 
                 let mut pkg = Package {
                     resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
@@ -2154,7 +2156,7 @@ pub fn parse_into_binary_lockfile(
                     ..Default::default()
                 };
 
-                let name_expr = value.get(b"name").unwrap();
+                let name_expr = value.get(alloc, b"name").unwrap();
                 let name = name_expr
                     .as_utf8_string_literal()
                     .expect("infallible: is_string checked");
@@ -2165,6 +2167,7 @@ pub fn parse_into_binary_lockfile(
 
                 let (off, len) = parse_append_dependencies::<false, false>(
                     lockfile,
+                    alloc,
                     &value,
                     &mut *log,
                     source,
@@ -2177,13 +2180,13 @@ pub fn parse_into_binary_lockfile(
                 pkg.dependencies = DependencySlice::new(off, len);
                 pkg.resolutions = PackageIDSlice::new(off, len);
 
-                if let Some(bin_expr) = value.get(b"bin") {
+                if let Some(bin_expr) = value.get(alloc, b"bin") {
                     pkg.bin = Bin::parse_append(
                         &bin_expr,
                         &mut sbuf!(lockfile),
                         &mut lockfile.buffers.extern_strings,
                     )?;
-                } else if let Some(bin_dir_expr) = value.get(b"binDir") {
+                } else if let Some(bin_dir_expr) = value.get(alloc, b"binDir") {
                     pkg.bin =
                         Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
                 }
@@ -2209,7 +2212,7 @@ pub fn parse_into_binary_lockfile(
         }
     }
 
-    let Some(pkgs_expr) = root.get(b"packages") else {
+    let Some(pkgs_expr) = root.get(alloc, b"packages") else {
         // packages is empty, but there might be empty workspace packages
         if workspace_pkgs_len == 0 {
             lockfile.init_empty();
@@ -2522,10 +2525,11 @@ pub fn parse_into_binary_lockfile(
                             );
                             return Err(ParseError::InvalidPackageInfo);
                         };
-                        let deps_expr = Expr::from_json_value(&pkg_info[deps_idx], key_loc);
+                        let deps_expr = Expr::from_json_value(alloc, &pkg_info[deps_idx], key_loc);
 
                         let (off, len) = parse_append_dependencies::<true, false>(
                             lockfile,
+                            alloc,
                             &deps_expr,
                             &mut *log,
                             source,
@@ -2538,13 +2542,13 @@ pub fn parse_into_binary_lockfile(
                         pkg.dependencies = DependencySlice::new(off, len);
                         pkg.resolutions = PackageIDSlice::new(off, len);
 
-                        if let Some(bin) = deps_expr.get(b"bin") {
+                        if let Some(bin) = deps_expr.get(alloc, b"bin") {
                             pkg.bin = Bin::parse_append(
                                 &bin,
                                 &mut sbuf!(lockfile),
                                 &mut lockfile.buffers.extern_strings,
                             )?;
-                        } else if let Some(bin_dir) = deps_expr.get(b"binDir") {
+                        } else if let Some(bin_dir) = deps_expr.get(alloc, b"binDir") {
                             pkg.bin =
                                 Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
                         }
@@ -2583,15 +2587,15 @@ pub fn parse_into_binary_lockfile(
                             );
                             return Err(ParseError::InvalidPackageInfo);
                         }
-                        let bin_obj = Expr::from_json_value(&pkg_info[bin_obj_idx], key_loc);
+                        let bin_obj = Expr::from_json_value(alloc, &pkg_info[bin_obj_idx], key_loc);
 
-                        if let Some(bin) = bin_obj.get(b"bin") {
+                        if let Some(bin) = bin_obj.get(alloc, b"bin") {
                             pkg.bin = Bin::parse_append(
                                 &bin,
                                 &mut sbuf!(lockfile),
                                 &mut lockfile.buffers.extern_strings,
                             )?;
-                        } else if let Some(bin_dir) = bin_obj.get(b"binDir") {
+                        } else if let Some(bin_dir) = bin_obj.get(alloc, b"binDir") {
                             pkg.bin =
                                 Bin::parse_append_from_directories(&bin_dir, &mut sbuf!(lockfile))?;
                         }
@@ -3217,6 +3221,7 @@ fn dependency_resolution_failure(
 // and `workspace_paths`.
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
     lockfile: &mut BinaryLockfile,
+    alloc: bun_alloc::AstAlloc,
     obj: &Expr,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
@@ -3230,7 +3235,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     // callers (none read the buf between calls) and also covers early-error exits.
     optional_peers_buf.clear();
 
-    if let Some(optional_peers) = obj.get(b"optionalPeers") {
+    if let Some(optional_peers) = obj.get(alloc, b"optionalPeers") {
         if !optional_peers.is_array() {
             log.add_error(
                 Some(source),
@@ -3262,7 +3267,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     let off = lockfile.buffers.dependencies.len();
     for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
-        if let Some(deps) = obj.get(group_name.as_bytes()) {
+        if let Some(deps) = obj.get(alloc, group_name.as_bytes()) {
             if !deps.is_object() {
                 log.add_error(
                     Some(source),
@@ -3366,9 +3371,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 ) {
                     continue;
                 }
-                let value = Expr::from_json_value(&row.value, row.key_loc);
+                let value = Expr::from_json_value(alloc, &row.value, row.key_loc);
 
-                let name_expr = value.get(b"name").unwrap();
+                let name_expr = value.get(alloc, b"name").unwrap();
                 let name = name_expr
                     .as_utf8_string_literal()
                     .expect("infallible: is_string checked");

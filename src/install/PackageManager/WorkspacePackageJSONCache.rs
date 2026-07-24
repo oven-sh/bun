@@ -37,7 +37,7 @@ pub struct MapEntry {
     /// (e.g. `update_interactive_command::update_package_json_files_from_updates`)
     /// can allocate those nodes here instead of in the resettable `Store` —
     /// the cached `root` outlives `initialize_store()` resets.
-    pub json_arena: bun_alloc::Arena,
+    pub json_arena: bun_alloc::AstArena,
     /// Superseded `source.contents` buffers, pinned so cached `root` slices
     /// stay valid; freed when the entry drops.
     pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
@@ -50,7 +50,7 @@ impl Default for MapEntry {
             source: Source::default(),
             indentation: Indentation::default(),
             _path_storage: bun_core::ZBox::default(),
-            json_arena: bun_alloc::Arena::new(),
+            json_arena: bun_alloc::AstArena::new(),
             stale_contents: Vec::new(),
         }
     }
@@ -63,9 +63,10 @@ impl MapEntry {
     /// writes the printed JSON back into `source.contents`. The caller then
     /// invokes this to restore the invariant `root == parse(source)`.
     pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
-        let json_bump = bun_alloc::Arena::new();
-        let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
+        let json_bump = bun_alloc::AstArena::new();
+        let alloc = json_bump.alloc();
+        let parsed = parse_package_json(&self.source, log, alloc, false)?;
+        self.root = bun_core::handle_oom(parsed.root.deep_clone(alloc));
         self.json_arena = json_bump;
         Ok(())
     }
@@ -76,7 +77,7 @@ pub type Map = StringHashMap<MapEntry>;
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
-    bump: &bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, crate::Error> {
     Ok(json::parse_package_json_utf8_with_opts(
@@ -87,7 +88,7 @@ fn parse_package_json(
         },
         source,
         log,
-        bump,
+        alloc,
     )?)
 }
 
@@ -180,8 +181,9 @@ impl WorkspacePackageJSONCache {
             initialize_store();
         }
 
-        let json_bump = bun_alloc::Arena::new();
-        let parsed = match parse_package_json(&source, log, &json_bump, opts.guess_indentation) {
+        let json_bump = bun_alloc::AstArena::new();
+        let alloc = json_bump.alloc();
+        let parsed = match parse_package_json(&source, log, alloc, opts.guess_indentation) {
             Ok(p) => p,
             Err(err) => {
                 return GetResult::ParseErr(err);
@@ -189,7 +191,7 @@ impl WorkspacePackageJSONCache {
         };
 
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root: bun_core::handle_oom(parsed.root.deep_clone(alloc)),
             source,
             indentation: parsed.indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap

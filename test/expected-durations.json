@@ -12234,12 +12234,6 @@
     "musl": 9,
     "windows": 44
   },
-  "js/node/test/parallel/test-gc-http-client-connaborted.js": {
-    "default": 79,
-    "asan": 77,
-    "musl": 66,
-    "windows": 13
-  },
   "js/node/test/parallel/test-gc-tls-external-memory.js": {
     "default": 213,
     "asan": 185,
@@ -17249,12 +17243,6 @@
     "musl": 49,
     "windows": 76
   },
-  "js/node/test/parallel/test-net-connect-memleak.js": {
-    "default": 55,
-    "asan": 168,
-    "musl": 68,
-    "windows": 87
-  },
   "js/node/test/parallel/test-net-connect-no-arg.js": {
     "default": 38,
     "asan": 260,
@@ -21629,11 +21617,6 @@
     "asan": 160,
     "musl": 64,
     "windows": 55
-  },
-  "js/node/test/parallel/test-tls-connect-memleak.js": {
-    "default": 41,
-    "asan": 326,
-    "windows": 97
   },
   "js/node/test/parallel/test-tls-connect-no-host.js": {
     "default": 27,

@@ -161,6 +161,48 @@ describe("URLPattern", () => {
     });
   });
 
+  describe("percent-encoded username/password", () => {
+    const href = "https://u%20x:%2F%3A%40@h.example/";
+
+    test("exec() with URL string input preserves encoded userinfo", () => {
+      const m = new URLPattern({}).exec(href)!;
+      expect({ username: m.username.input, password: m.password.input }).toEqual({
+        username: "u%20x",
+        password: "%2F%3A%40",
+      });
+    });
+
+    test("exec() with baseURL input preserves encoded userinfo", () => {
+      const m = new URLPattern({}).exec({ baseURL: href })!;
+      expect({ username: m.username.input, password: m.password.input }).toEqual({
+        username: "u%20x",
+        password: "%2F%3A%40",
+      });
+    });
+
+    test("test() matches URL string against encoded userinfo pattern", () => {
+      const p = new URLPattern({ username: "u%20x", password: "%2F%3A%40" });
+      expect(p.test(href)).toBe(true);
+      expect(p.test({ baseURL: href })).toBe(true);
+    });
+
+    test("test() matches URL string against non-ASCII password pattern", () => {
+      const p = new URLPattern({ password: "paß" });
+      expect(p.password).toBe("pa%C3%9F");
+      expect(p.test("https://user:pa%C3%9F@h.example/")).toBe(true);
+      expect(p.test({ password: "paß" })).toBe(true);
+    });
+
+    test("exec() component input agrees with new URL()", () => {
+      const url = new URL(href);
+      const m = new URLPattern({}).exec(href)!;
+      expect({ username: m.username.input, password: m.password.input }).toEqual({
+        username: url.username,
+        password: url.password,
+      });
+    });
+  });
+
   describe("hasRegExpGroups", () => {
     test("match-everything pattern", () => {
       expect(new URLPattern({}).hasRegExpGroups).toBe(false);

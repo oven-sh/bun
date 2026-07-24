@@ -273,45 +273,43 @@ it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte
   expect(received).toBe(size);
 });
 
-// end() called after a backpressured write() whose promise the caller
-// discarded, with the reader already gone: end_from_js's flush() sees EPIPE
-// synchronously. Throwing it would report the failure to end()'s caller and
-// then let the auto-flush/error path reject the orphaned write() promise as an
-// unhandledRejection; instead the error is delivered to that pending promise
-// and end() returns the same promise, so the failure is reported exactly once.
+// end() called after a backpressured write() with the reader already gone:
+// end_from_js's own flush() sees EPIPE synchronously. Throwing it would leave
+// the write()'s outstanding promise orphaned (never settled here; in the spawn
+// path on_attached_process_exit rejected it a second time as an unhandled
+// rejection). Instead end() latches the error into that pending promise and
+// returns it, so write()'s promise and end()'s return are the same object and
+// the failure is reported exactly once.
 it.skipIf(!isPosix)(
-  "end() after a discarded backpressured write() delivers EPIPE once, with no unhandled rejection",
+  "end() after a backpressured write() with the reader gone returns the write's promise, rejecting with EPIPE",
   async () => {
     const [readFd, writeFd] = createSocketPair();
     let readFdOpen = true;
     const sink = Bun.file(writeFd).writer();
-    let unhandled: any = null;
-    function onUnhandled(e: unknown) {
-      unhandled = e;
-    }
-    process.on("unhandledRejection", onUnhandled);
     try {
-      // Discarded on purpose: the write's promise must not surface on its own.
-      sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
       fs.closeSync(readFd);
       readFdOpen = false;
 
+      // end()'s flush() hits EPIPE synchronously. It must not throw and strand
+      // writePromise; it hands back the same promise with the error latched.
+      const endResult = sink.end();
+      expect(endResult).toBe(writePromise);
+
       let caught: any;
       try {
-        await sink.end();
+        await endResult;
       } catch (e) {
         caught = e;
       }
       expect(caught?.code).toBe("EPIPE");
 
-      // Bounded window for a stray second rejection to surface.
-      for (let i = 0; i < 10; i++) await Bun.sleep(1);
-      expect(unhandled).toBeNull();
+      // The pending slot is now settled; a follow-up end() short-circuits to
+      // the written byte count, not another promise.
+      expect(typeof sink.end()).toBe("number");
     } finally {
-      process.off("unhandledRejection", onUnhandled);
-      try {
-        await sink.end();
-      } catch {}
       try {
         fs.closeSync(writeFd);
       } catch {}

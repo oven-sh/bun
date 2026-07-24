@@ -2710,7 +2710,12 @@ fn get_or_put_resolved_package(
             // into the lockfile string buffer before any other mutation.
             // `version.tag == Symlink`.
             let symlink_path = this.lockfile.str_detached(version.symlink());
-            let res = if dependency::is_link_path(symlink_path) {
+            // Only resolve path-form `link:` when declared in the root or a
+            // workspace package; a downloaded package must not be able to
+            // symlink an arbitrary path on the host. Same gate as `file:`.
+            let res = if dependency::is_link_path(symlink_path)
+                && this.lockfile.is_workspace_dependency(dependency_id)
+            {
                 let mut buf2 = PathBuffer::uninit();
                 let symlink_path_abs = if bun_paths::is_absolute(symlink_path) {
                     symlink_path

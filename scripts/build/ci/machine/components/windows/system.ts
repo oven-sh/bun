@@ -1,7 +1,8 @@
 // Windows base-system tuning for CI images: Defender realtime scanning off,
-// telemetry/services stopped, high-performance power scheme; and — last,
-// after everything that installs software — the Defender feature uninstall
-// that only takes effect on reboot.
+// telemetry/services stopped, high-performance power scheme; and the
+// Defender feature uninstall, which only takes effect on the reboot the
+// windows-restart provisioner performs after all components have run (so
+// its position in the components list is not load-bearing).
 
 import * as win from "../../ops-windows.ts";
 import type { WindowsComponent } from "../component.ts";
@@ -46,8 +47,8 @@ powercfg /change hibernate-timeout-dc 0`,
 };
 
 /** Remove the Windows Defender feature outright (disabled by
- * optimize-windows; this uninstalls it). Takes effect on reboot, so it goes
- * at the end of a CI bake. */
+ * optimize-windows; this uninstalls it). Takes effect on the post-bake
+ * reboot regardless of where it runs in the components list. */
 export const defenderRemoval: WindowsComponent = {
   name: "defender-removal",
   artifacts: () => ({}),

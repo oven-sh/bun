@@ -18,7 +18,7 @@ export type Host = {
   home: string;
 };
 
-/** Detect the host. Read-only probes only; safe in dry-run. */
+/** Detect the host. Read-only probes only. */
 export async function detectHost(): Promise<Host> {
   const os = detectOs();
   const user = process.env.SUDO_USER || userInfo().username;

@@ -11,7 +11,7 @@
 
 import { join } from "node:path";
 import { enableService, ensureDirectory, removePaths, setModeRecursive, setOwnerRecursive } from "../../ops-posix.ts";
-import { ensureLines, log, mode, run, scratchDir, sudo, warn, which } from "../../runtime.ts";
+import { ensureLines, log, run, scratchDir, sudo, warn, which } from "../../runtime.ts";
 import type { LinuxComponent } from "../component.ts";
 import { appendToProfiles } from "../environment.ts";
 import { linuxBin } from "../paths.ts";
@@ -66,9 +66,9 @@ export const prefetch: LinuxComponent = {
           // images that have docker (the build host does; runs as root
           // since our user's docker-group membership doesn't apply to the
           // current shell). prepare-ci.ts is checked into git on this ref.
-          const haveDocker = which("docker") !== undefined || mode.dryRun;
+          const haveDocker = which("docker") !== undefined;
           if (haveDocker) {
-            await enableService("docker", { start: true });
+            await enableService("docker", { start: true }, ctx.manager.init);
             const pulled = await sudo([bun, "test/docker/prepare-ci.ts"], { cwd: clone, allowFailure: true });
             if (pulled.exitCode !== 0) warn("prepare-ci.ts failed; test docker images not pre-pulled");
           } else {

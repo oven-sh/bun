@@ -9,7 +9,7 @@
 
 import { existsSync } from "node:fs";
 import { enableService, ensureDirectory, shellScript } from "../../ops-posix.ts";
-import { download, log, mode, runOutput, sudo } from "../../runtime.ts";
+import { download, log, runOutput, sudo } from "../../runtime.ts";
 import type { LinuxContext } from "../component.ts";
 import { artifact } from "../component.ts";
 import { appendToProfiles } from "../environment.ts";
@@ -25,8 +25,11 @@ export type PackageManager = {
   readonly cmakeIsPackaged: boolean;
   /** python-fuse is packaged here (else built from source). */
   readonly pythonFuseIsPackaged: boolean;
-  /** The distro runs systemd (a tmp.mount to mask; else OpenRC). */
-  readonly systemd: boolean;
+  /** The distro's init system — a spec fact, never probed from the host,
+   * so the recipe is a function of the spec rather than of whatever
+   * machine runs it. (systemd distros also have a tmp.mount to mask;
+   * OpenRC ones don't.) */
+  readonly init: "systemd" | "openrc";
   /** Refresh the package index. */
   updateIndex(): Promise<void>;
   /** Install packages, non-interactively. */
@@ -57,13 +60,8 @@ async function installLogged(
 // ---------------------------------------------------------------------------
 
 /** True when apt has an installable candidate for a package (renamed
- * packages, libasound2 → libasound2t64). A query of the TARGET's package
- * database; off-target (dry-run) plan with the first candidate. */
+ * packages, libasound2 → libasound2t64). */
 async function aptHasCandidate(name: string): Promise<boolean> {
-  if (mode.dryRun) {
-    log(`[dry-run] would check whether apt knows "${name}" (assuming yes)`);
-    return true;
-  }
   const output = await runOutput(["apt-cache", "policy", name], { allowFailure: true });
   return output.includes(name) && !/Candidate: \(none\)/.test(output);
 }
@@ -73,7 +71,7 @@ export const apt: PackageManager = {
   userFlavor: "shadow",
   cmakeIsPackaged: false,
   pythonFuseIsPackaged: true,
-  systemd: true,
+  init: "systemd",
   async updateIndex() {
     await sudo(["apt-get", "update", "-y"], { env: { DEBIAN_FRONTEND: "noninteractive" } });
   },
@@ -96,7 +94,7 @@ export const apt: PackageManager = {
   async installDocker(ctx) {
     const script = await download(artifact(ctx.artifacts, "dockerInstaller"), { name: "get-docker.sh" });
     await sudo(["sh", script]);
-    await enableService("docker", { start: false });
+    await enableService("docker", { start: false }, this.init);
   },
   async installLlvm(ctx) {
     const { llvm } = ctx.image;
@@ -136,7 +134,7 @@ export const apk: PackageManager = {
   userFlavor: "busybox",
   cmakeIsPackaged: true,
   pythonFuseIsPackaged: false,
-  systemd: false,
+  init: "openrc",
   async updateIndex() {
     await sudo(["apk", "update"]);
   },
@@ -148,7 +146,7 @@ export const apk: PackageManager = {
   async afterBuildEssentials() {},
   async installDocker() {
     // docker + compose come from the apk package list.
-    await enableService("docker", { start: true });
+    await enableService("docker", { start: true }, this.init);
   },
   async installLlvm(ctx) {
     // Alpine ships LLVM as versioned apk packages (llvm{N}, clang{N}, ...),

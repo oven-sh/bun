@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyGalleryVersionState } from "../../../../scripts/build/ci/existence.ts";
+import { classifyGalleryVersionState } from "../../../scripts/build/ci/existence.ts";
 
 // The pipeline existence check and the bake-time probe in machine.ts both
 // classify an Azure gallery image version's provisioningState with this one

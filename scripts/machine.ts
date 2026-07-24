@@ -1238,7 +1238,8 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
     azure: {
       // Credentials are NOT template data: the template references them as
       // sensitive packer variables and machine.ts passes the values via
-      // -var below, so the file written to disk holds no secret. Dedicated
+      // PKR_VAR_* env below, so the file written to disk holds no secret and
+      // nothing secret lands on the command line. Dedicated
       // build RG so Packer's 4-core bake VMs don't contend with robobun CI
       // runners for the runner quota. (The gallery's own RG is a spec fact,
       // image.gallery.resourceGroup, read by the template.)
@@ -1256,28 +1257,27 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
     await spawnSafe([packerBin, "init", templatePath], { stdio: "inherit" });
 
     console.log(`[packer] Building ${imageName}`);
-    // The service-principal credentials travel as packer -var flags —
-    // process memory only, never written to the template on disk. This is
-    // the mechanism the checked-in HCL templates used.
-    const packerArgs = [
-      packerBin,
-      "build",
-      "-var",
-      `client_id=${clientId}`,
-      "-var",
-      `client_secret=${clientSecret}`,
-      "-var",
-      `subscription_id=${subscriptionId}`,
-      "-var",
-      `tenant_id=${tenantId}`,
-      templatePath,
-    ];
+    // The service-principal credentials reach packer as PKR_VAR_* env vars
+    // (packer's supported input for the template's declared variables) —
+    // never written to the template on disk, and off the command line so
+    // they are not world-readable in /proc/<pid>/cmdline on the standing
+    // build host during the multi-hour bake.
+    const packerArgs = [packerBin, "build", templatePath];
 
     // Packer's azure-arm builder cleans up its temp pkr* resources on
     // SIGINT/SIGTERM, but only if the signal reaches the packer process and
     // it has time to finish the Azure deletes. Spawn directly and forward, or
     // a Buildkite cancel orphans the VM/NIC/IP/disk/vnet/NSG/keyvault stack.
-    const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), { stdio: "inherit" });
+    const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PKR_VAR_client_id: clientId,
+        PKR_VAR_client_secret: clientSecret,
+        PKR_VAR_subscription_id: subscriptionId,
+        PKR_VAR_tenant_id: tenantId,
+      },
+    });
     let cancelled = false;
     const forward = signal => {
       cancelled = true;
@@ -1291,7 +1291,10 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
     process.off("SIGTERM", forward);
     if (cancelled) {
       console.log("[packer] cleanup after cancel finished");
-      process.exit(1);
+      // Throw (not process.exit) so the finally below still removes the
+      // template's temp dir before this process ends; process.exit would
+      // skip the finally and leak /tmp/packer-XXXXXX on the standing host.
+      throw new Error("[packer] build cancelled");
     }
     if (code !== 0) {
       throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
@@ -1693,9 +1696,6 @@ async function main() {
   }
 }
 
-// Run only when executed as the entry point (node scripts/machine.mjs …),
-// not when the module is imported for its types (e.g. azure.mjs's JSDoc).
-
 // ---------------------------------------------------------------------------
 // Getting bootstrap onto a fresh linux machine.
 //
@@ -1746,6 +1746,8 @@ function linuxBootstrapCommand(image, args) {
   ].join("\n");
 }
 
+// Run only when executed as the entry point (node scripts/machine.mjs …),
+// not when the module is imported for its types (e.g. azure.mjs's JSDoc).
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   await main();
 }

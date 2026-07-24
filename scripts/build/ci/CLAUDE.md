@@ -44,9 +44,9 @@ number to bump anywhere. Merging _is_ publishing.
 | `naming.ts`                                      | The name: `${key}-${imageHash(entry)}` — sha256 of the entry's value, canonically serialized.                                                                                                                                                                                                                                                                                                     |
 | `existence.ts`                                   | Asks AWS/Azure whether each content-addressed name exists; the pipeline bakes only the missing ones.                                                                                                                                                                                                                                                                                              |
 | `packer.ts`                                      | Renders the Windows Packer template as JSON from a `WindowsImage` entry at bake time (no checked-in `.pkr.hcl`).                                                                                                                                                                                                                                                                                  |
-| `machine/bootstrap.ts`                           | The bake entry point run **on the machine** under a bare `node`: `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`. `--dry-run` prints the complete plan for any image from any host.                                                                                                                                                                                                       |
+| `machine/bootstrap.ts`                           | The bake entry point run **on the machine** under a bare `node`: `node bootstrap.ts --image=<key> --ci --repo-ref=<ref>`.                                                                                                                                                                                                                                                                         |
 | `machine/artifacts.ts`                           | Turns spec values into concrete `{url, sha256}` downloads.                                                                                                                                                                                                                                                                                                                                        |
-| `machine/runtime.ts`                             | Logging, `run`/`sudo`, `download` (checksum-verified), dry-run, and the failure report.                                                                                                                                                                                                                                                                                                           |
+| `machine/runtime.ts`                             | Logging, `run`/`sudo`, `download` (checksum-verified), and the failure report.                                                                                                                                                                                                                                                                                                                    |
 | `machine/ops-posix.ts`, `machine/ops-windows.ts` | The vocabulary: `ensureDirectory`, `installFile`, `extractArchive`, `ensureSystemUser`, `msiInstall`, `setMachineEnv`, … Each op logs its intent then the exact command.                                                                                                                                                                                                                          |
 | `machine/components/{linux,windows}/*.ts`        | One file per baked thing, per platform: each owns HOW its thing installs and enumerates its own downloads, reading every fact from the spec entry. A thing on both platforms is two components sharing a name (`linux/nodejs.ts`, `windows/nodejs.ts`).                                                                                                                                           |
 | `machine/components/linux/package-manager.ts`    | apt vs apk, abstracted once (`PackageManager`); selected per image by `managerFor()` in `bootstrap.ts` from the entry's `packages.manager` fact, and passed to components on their `LinuxContext`.                                                                                                                                                                                                |
@@ -71,8 +71,7 @@ current names). Linux images are AWS AMIs; Windows are Azure gallery images.
 
 Every change below is a **fact edit**. Editing an image's entry moves its
 hash, so it bakes once on your PR and is reused after — you never bump a
-version or force a rebuild by hand. Sanity-check by dry-running an image (see below;
-8 plans in about a second) before pushing.
+version or force a rebuild by hand.
 
 | Task                                         | Where                                                                                                                                                                                       |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -86,15 +85,6 @@ version or force a rebuild by hand. Sanity-check by dry-running an image (see be
 | **Set a cache dir, or turn a cache off**     | `paths.caches.{prefetch,install}` — a path enables it, `null` disables it                                                                                                                   |
 | **Turn an optional feature on / off**        | its nullable config block on the entry (`null` = off). This is the idiom — Dev Drive would be `devDrive: {...} \| null` if added                                                            |
 | **Reorder install steps**                    | reorder the `components` list — order is data (VS Build Tools before cargo, ci-user before prefetch)                                                                                        |
-
-**Review what a bake will do** without touching anything:
-
-```sh
-node scripts/build/ci/machine/bootstrap.ts --image=linux-aarch64-13-debian --ci --repo-ref=main --dry-run
-```
-
-Prints every step, command, download (URL + whether checksum-pinned), and
-file write. Works from any OS.
 
 ## How a bake happens
 

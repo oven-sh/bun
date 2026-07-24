@@ -34,7 +34,7 @@ export type PackerTemplateInput = {
      * so its 4-core bake VMs don't contend with CI runners for quota.
      * The service-principal credentials are NOT here: they are Packer
      * variables (client_id, client_secret, subscription_id, tenant_id)
-     * that machine.ts passes via -var, so this file never holds a
+     * that machine.ts passes as PKR_VAR_* env vars, so this file never holds a
      * secret — the same guarantee the checked-in HCL templates had. */
     buildResourceGroup: string;
     location: string;
@@ -61,9 +61,9 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
     // Credentials are Packer VARIABLES (declared sensitive in the
     // template's `variable` block below) and referenced here, so the
     // template file on disk holds only "${var.client_secret}" — never
-    // the value. The real values reach packer via -var on the command
-    // line and live only in the packer process, matching how the
-    // checked-in HCL templates on main passed them.
+    // the value. The real values reach packer as PKR_VAR_* env vars
+    // (see machine.ts) and live only in the packer process — off the
+    // command line and off disk.
     client_id: "${var.client_id}",
     client_secret: "${var.client_secret}",
     subscription_id: "${var.subscription_id}",
@@ -134,7 +134,7 @@ export function windowsPackerTemplate(input: PackerTemplateInput): Record<string
       },
     },
     // Auth reaches packer as variables, never as literals in this file
-    // (see machine.ts, which passes the values via -var). `sensitive`
+    // (see machine.ts, which passes the values as PKR_VAR_* env vars). `sensitive`
     // also redacts them from packer's own log output.
     variable: {
       client_id: { type: "string", sensitive: true },

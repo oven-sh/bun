@@ -4,7 +4,7 @@
 // Steps say WHAT ("ensure this directory", "install this binary", "add the
 // user to this group") and these ops decide HOW (which command, run as root,
 // quoting). Each op logs its intent in plain terms and then executes through
-// runtime.run(), so a --dry-run prints intent + the exact command, and a
+// runtime.run(), which echoes the exact command, and a
 // failure reports both. ./ops-windows.ts mirrors the shared signatures for
 // Windows.
 //
@@ -13,7 +13,7 @@
 // exception visible in the code and the log.
 
 import type { RunOptions, RunResult } from "./runtime.ts";
-import { log, mode, run, runOutput, sudo, verify, warn, which } from "./runtime.ts";
+import { log, run, runOutput, sudo, verify, which } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
 // Files and directories (all system paths → run as root)
@@ -118,10 +118,6 @@ export type UserSpec = {
 
 /** Create a system user if it doesn't exist. Idempotent. */
 export async function ensureSystemUser(spec: UserSpec): Promise<void> {
-  if (mode.dryRun) {
-    log(`[dry-run] would ensure system user ${spec.name} (home ${spec.home})`);
-    return;
-  }
   const existing = await runOutput(["sh", "-c", `getent passwd ${spec.name} || true`]);
   if (existing) {
     log(`user ${spec.name} already exists`);
@@ -150,10 +146,6 @@ export async function ensureSystemUser(spec: UserSpec): Promise<void> {
 /** Add a user to a group if the group exists (a missing group is a
  * logged no-op, e.g. no docker group on a machine without docker). */
 export async function addUserToGroup(user: string, group: string): Promise<void> {
-  if (mode.dryRun) {
-    log(`[dry-run] would add ${user} to group ${group}`);
-    return;
-  }
   const exists = await runOutput(["sh", "-c", `getent group ${group} || true`]);
   if (!exists) {
     log(`group ${group} does not exist; not adding ${user} to it`);
@@ -167,34 +159,29 @@ export async function addUserToGroup(user: string, group: string): Promise<void>
 // Services and kernel settings
 // ---------------------------------------------------------------------------
 
-/** systemd if present, else OpenRC (alpine). */
-function initSystem(): "systemd" | "openrc" | undefined {
-  if (which("systemctl")) return "systemd";
-  if (which("rc-update")) return "openrc";
-  return undefined;
-}
+/** The target image's init system — a SPEC fact (PackageManager.init),
+ * threaded in by the caller rather than probed from the host, so the recipe
+ * is a function of the spec, not of whatever machine runs it. */
+export type Init = "systemd" | "openrc";
 
 /** Enable a service at boot (and start it now when `start`). */
-export async function enableService(name: string, options: { start: boolean }): Promise<void> {
-  const init = initSystem();
-  log(`enabling service ${name} at boot (${init ?? "no init system"})${options.start ? " and starting it" : ""}`);
+export async function enableService(name: string, options: { start: boolean }, init: Init): Promise<void> {
+  log(`enabling service ${name} at boot (${init})${options.start ? " and starting it" : ""}`);
   if (init === "systemd") {
     await sudo(["systemctl", "enable", name]);
     // Best-effort start: a unit that needs a reboot (or first-boot state)
     // to come up still gets enabled; the image bakes it either way.
     if (options.start) await sudo(["systemctl", "start", name], { allowFailure: true });
-  } else if (init === "openrc") {
+  } else {
     await sudo(["rc-update", "add", name, "default"]);
     // (same best-effort start as the systemd branch above)
     if (options.start) await sudo(["rc-service", name, "start"], { allowFailure: true });
-  } else {
-    warn(`no init system found; ${name} not enabled`);
   }
 }
 
 /** Stop and disable a service if it exists (systemd only). */
-export async function disableServiceNow(name: string): Promise<void> {
-  if (initSystem() !== "systemd") return;
+export async function disableServiceNow(name: string, init: Init): Promise<void> {
+  if (init !== "systemd") return;
   const units = await runOutput(["sh", "-c", `systemctl list-unit-files ${name} 2>/dev/null || true`]);
   if (!units.includes(name)) {
     log(`service ${name} not present; nothing to disable`);
@@ -205,8 +192,8 @@ export async function disableServiceNow(name: string): Promise<void> {
 }
 
 /** systemd: mask a unit so nothing can start it. */
-export async function maskUnit(name: string): Promise<void> {
-  if (initSystem() !== "systemd") {
+export async function maskUnit(name: string, init: Init): Promise<void> {
+  if (init !== "systemd") {
     log(`no systemd; not masking ${name}`);
     return;
   }
@@ -214,8 +201,8 @@ export async function maskUnit(name: string): Promise<void> {
   await sudo(["systemctl", "mask", name]);
 }
 
-export async function reloadServiceManager(): Promise<void> {
-  if (initSystem() !== "systemd") return;
+export async function reloadServiceManager(init: Init): Promise<void> {
+  if (init !== "systemd") return;
   // Best-effort: a reload failure means only that new units apply on boot.
   await sudo(["systemctl", "daemon-reload"], { allowFailure: true });
 }

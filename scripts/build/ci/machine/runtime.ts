@@ -10,10 +10,6 @@
 //   - every failure reports which step, which command, the exit code, and
 //     the tail of the output before aborting.
 //
-// `--dry-run` prints the same plan without changing anything: commands are
-// echoed as "would run", downloads as "would fetch", file writes as diffs.
-// Read-only probes (which(), existsSync) still run for real.
-//
 // Node built-ins only — this runs under a bare `node` (>= 25, type
 // stripping) on a fresh machine, before anything else is installed.
 
@@ -27,13 +23,6 @@ import type { Download } from "./artifacts.ts";
 // ---------------------------------------------------------------------------
 // Global options
 // ---------------------------------------------------------------------------
-
-export type RunMode = {
-  /** Print the plan, execute nothing that mutates the system. */
-  dryRun: boolean;
-};
-
-export const mode: RunMode = { dryRun: false };
 
 // ---------------------------------------------------------------------------
 // Logging
@@ -84,7 +73,7 @@ const stepStack: string[] = [];
  */
 export async function runSteps(title: string, steps: Step[]): Promise<void> {
   const active = steps.filter(step => !step.skip);
-  banner(`${title}: ${active.length} step(s)${mode.dryRun ? " [DRY RUN — nothing will be changed]" : ""}`);
+  banner(`${title}: ${active.length} step(s)`);
   for (const step of steps) {
     if (step.skip) {
       log(`-- skipping "${step.name}": ${step.skip}`);
@@ -208,17 +197,10 @@ export function formatCommand(command: string[]): string {
 /**
  * Run a MUTATING command, streaming its output live and echoing exactly
  * what runs. Throws CommandError (with captured output) on non-zero exit
- * unless allowFailure. In dry-run mode nothing runs: the command is echoed
- * as "would run" and an empty success is returned. For read-only queries
- * whose answer the plan depends on, use runOutput() instead — those run
- * even in dry-run.
+ * unless allowFailure. For read-only queries whose answer the plan depends
+ * on, use runOutput() instead.
  */
 export function run(command: string[], options: RunOptions = {}): Promise<RunResult> {
-  const printable = formatCommand(command);
-  if (mode.dryRun) {
-    log(`[dry-run] would run: $ ${printable}${options.cwd ? `   (cwd: ${options.cwd})` : ""}`);
-    return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
-  }
   return execute(command, options);
 }
 
@@ -345,11 +327,9 @@ function execute(command: string[], options: RunOptions): Promise<RunResult> {
 }
 
 /**
- * Run a READ-ONLY probe and return its trimmed stdout. Executes for real
- * even in dry-run mode, because it changes nothing and the plan depends on
- * its answer (home dir, `uname -m`, whether a sysroot already exists, ...).
- * Output is captured, not streamed; on failure the whole output is in the
- * error report.
+ * Run a READ-ONLY probe and return its trimmed stdout (home dir,
+ * `uname -m`, whether a sysroot already exists, ...). Output is captured,
+ * not streamed; on failure the whole output is in the error report.
  */
 export async function runOutput(command: string[], options: RunOptions = {}): Promise<string> {
   const { stdout } = await execute(command, { ...options, quiet: true });
@@ -359,15 +339,10 @@ export async function runOutput(command: string[], options: RunOptions = {}): Pr
 /**
  * A post-condition check on something a previous command installed or
  * created ("node --version prints v26.3.0", "the sysroot now has libc.so").
- * Enforced in a real run; in dry-run it can't be true (nothing was
- * installed), so it is logged as "would verify" and skipped. Announcing
- * each verification by name makes the bake log show what was proven.
+ * Announcing each verification by name makes the bake log show what was
+ * proven.
  */
 export async function verify(description: string, check: () => Promise<void> | void): Promise<void> {
-  if (mode.dryRun) {
-    log(`[dry-run] would verify: ${description}`);
-    return;
-  }
   log(`verifying: ${description}`);
   await check();
   log(`verified: ${description}`);
@@ -411,7 +386,7 @@ export function sudo(command: string[], options: RunOptions = {}): Promise<RunRe
 }
 
 // ---------------------------------------------------------------------------
-// Probes (read-only; run for real even in dry-run)
+// Probes (read-only)
 // ---------------------------------------------------------------------------
 
 /** Resolve an executable on PATH, or undefined. */
@@ -442,11 +417,6 @@ function readTextIfExists(path: string): string | undefined {
  */
 export async function writeText(path: string, content: string, options: { mode?: number } = {}): Promise<void> {
   const preview = content.length > 2000 ? `${content.slice(0, 2000)}\n... (${content.length} bytes total)` : content;
-  if (mode.dryRun) {
-    log(`[dry-run] would write ${path} (${content.length} bytes):`);
-    log(indent(preview));
-    return;
-  }
   log(`writing ${path} (${content.length} bytes):`);
   log(indent(preview));
   if (isRoot() || process.platform === "win32") {
@@ -515,13 +485,6 @@ export async function download(what: Download, options: { name?: string } = {}):
     throw new Error(`download(${what.url}): URL has no filename; pass { name } to name the file`);
   }
   const path = join(scratchDir, name);
-  if (mode.dryRun) {
-    log(`[dry-run] would download ${what.url}`);
-    log(
-      `[dry-run]        -> ${path} (${what.sha256 ? `sha256 must be ${what.sha256}` : "no pinned checksum: FLOATING"})`,
-    );
-    return path;
-  }
   log(`downloading ${what.url}`);
   log(`         -> ${path}`);
   let lastError: unknown;

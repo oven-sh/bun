@@ -629,7 +629,11 @@ function getEmulatorBinary(platform) {
   // time. Its install dir is a spec fact on the x64 windows entry — read it,
   // don't restate it, so a moved SDE bakes and runs from the same path.
   if (os === "windows") {
-    const entry = imageEntry("windows-x64-2019");
+    // Same descriptor the verify-baseline agent uses, so the SDE bakes onto
+    // and runs from the one image both name. Windows baseline verification
+    // is x64-only (needsBaselineVerification gates it, and Intel SDE is an
+    // x64 emulator), so this always resolves the x64 windows image.
+    const entry = imageEntry(getImageKey(getVerifyBaselineHost(platform)));
     return `${entry.intelSde.installDir}\\sde.exe`;
   }
   // Fetched into the checkout root by the setup command below (see PINNED_QEMU).

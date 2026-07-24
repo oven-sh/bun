@@ -15,7 +15,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RunOptions, RunResult } from "./runtime.ts";
-import { invalidateChildPath, log, mode, run, runOutput, scratchDir, verify } from "./runtime.ts";
+import { invalidateChildPath, log, run, runOutput, scratchDir, verify } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
 // PowerShell plumbing
@@ -50,7 +50,7 @@ async function ps(script: string, options: RunOptions = {}): Promise<RunResult> 
   log(`script text (${strict.split(/\r?\n/).length} line(s)) -> temp .ps1:`);
   for (const line of script.split(/\r?\n/)) log(`    | ${line}`);
   const file = join(scratchDir, `step-${++psScriptCounter}.ps1`);
-  if (!mode.dryRun) writeFileSync(file, strict);
+  writeFileSync(file, strict);
   return run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file], options);
 }
 
@@ -66,7 +66,7 @@ function psProbe(script: string): Promise<string> {
   // Same launch mechanism as ps(): a file, not the command line. The
   // trailing `exit 0` pins the exit code so only stdout carries meaning.
   const file = join(scratchDir, `probe-${++psScriptCounter}.ps1`);
-  if (!mode.dryRun) writeFileSync(file, `${script}\r\nexit 0\r\n`);
+  writeFileSync(file, `${script}\r\nexit 0\r\n`);
   return runOutput(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file]);
 }
 
@@ -119,14 +119,9 @@ export async function moveDirectory(from: string, to: string): Promise<void> {
 /**
  * The first file matching a name anywhere under a directory (e.g. bun.exe
  * inside an extracted release whose folder name we don't want to pin).
- * Returns the path or undefined. A probe: runs even in dry-run — but the
- * directory may not exist there, so dry-run answers undefined.
+ * Returns the path, or undefined when not found.
  */
 export async function findFile(under: string, fileName: string): Promise<string | undefined> {
-  if (mode.dryRun) {
-    log(`[dry-run] would locate ${fileName} under ${under}`);
-    return `${under}\\${fileName}`;
-  }
   const output = await psProbe(
     `$f = Get-ChildItem ${psq(under)} -Recurse -Filter ${psq(fileName)} -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($f) { $f.FullName }`,
@@ -134,13 +129,8 @@ if ($f) { $f.FullName }`,
   return output || undefined;
 }
 
-/** The first directory named `dirName` anywhere under `under` (a probe;
- * dry-run answers a plausible path). */
+/** The first directory named `dirName` anywhere under `under`. */
 export async function findDirectory(under: string, dirName: string): Promise<string | undefined> {
-  if (mode.dryRun) {
-    log(`[dry-run] would locate directory ${dirName} under ${under}`);
-    return `${under}\\${dirName}`;
-  }
   const output = await psProbe(
     `$d = Get-ChildItem ${psq(under)} -Recurse -Directory -Filter ${psq(dirName)} -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($d) { $d.FullName }`,
@@ -198,6 +188,12 @@ export async function msiInstall(spec: { path: string; extraArgs: string[]; vali
 if (@(${spec.validExitCodes.join(",")}) -notcontains $p.ExitCode) { throw "msiexec failed: exit code $($p.ExitCode)" }
 Write-Output "msiexec exit code: $($p.ExitCode)"`,
   );
+  // An installer can rewrite the Machine PATH (ADD_PATH=1, or its own MSI
+  // logic — the pwsh MSI adds C:\Program Files\PowerShell\7). The cached
+  // child PATH is a claim that PATH is unchanged; the install just broke it,
+  // so drop it or the next component's script (e.g. openssh resolving pwsh
+  // for sshd's DefaultShell) runs with a stale PATH and misses the new tool.
+  invalidateChildPath();
 }
 
 /** Run an .exe installer with arguments; validExitCodes as for msi. */
@@ -208,6 +204,8 @@ export async function exeInstall(spec: { path: string; args: string[]; validExit
 if (@(${spec.validExitCodes.join(",")}) -notcontains $p.ExitCode) { throw "installer failed: exit code $($p.ExitCode)" }
 Write-Output "installer exit code: $($p.ExitCode)"`,
   );
+  // Same as msiInstall: an .exe installer can modify the Machine PATH.
+  invalidateChildPath();
 }
 
 // ---------------------------------------------------------------------------
@@ -229,10 +227,6 @@ export async function setMachineEnv(name: string, value: string): Promise<void> 
  * scope that survives sysprep and reaches every account.
  */
 export async function promoteScoopUserPathToMachine(scoopRoot: string): Promise<void> {
-  if (mode.dryRun) {
-    log(`[dry-run] would promote the bake user's ${scoopRoot}\\... PATH entries to the machine PATH`);
-    return;
-  }
   const output = await psProbe(
     `$user = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($user) {
@@ -270,15 +264,9 @@ if (($p -split ';') -notcontains ${psq(dir)}) {
 
 /**
  * Resolve a command against a PATH freshly read from the registry (this
- * session's PATH is stale after installers write to Machine PATH). A probe
- * of the target's PATH: off-target (dry-run) it can't be answered, so plan
- * as "not installed yet" — which prints the install.
+ * session's PATH is stale after installers write to Machine PATH).
  */
 export async function commandOnPath(command: string): Promise<string | undefined> {
-  if (mode.dryRun) {
-    log(`[dry-run] would check whether "${command}" is on PATH (assuming not yet)`);
-    return undefined;
-  }
   const output = await psProbe(
     `$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
 $c = Get-Command ${psq(command)} -ErrorAction SilentlyContinue
@@ -307,10 +295,6 @@ if ($s) {
 
 /** Whether a service exists (probe). */
 export async function serviceExists(name: string): Promise<boolean> {
-  if (mode.dryRun) {
-    log(`[dry-run] would check whether service "${name}" exists (assuming not)`);
-    return false;
-  }
   const output = await psProbe(`(Get-Service -Name ${psq(name)} -ErrorAction SilentlyContinue).Status`);
   return output.length > 0;
 }

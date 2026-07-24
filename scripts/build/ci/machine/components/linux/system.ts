@@ -2,7 +2,6 @@
 // cleanup and core-dump steps. Manager-specific behavior (apt vs apk) comes
 // from ctx.manager — see package-manager.ts.
 
-import { existsSync } from "node:fs";
 import {
   applySysctlFile,
   disableServiceNow,
@@ -12,7 +11,7 @@ import {
   shellScript,
   trimFilesystems,
 } from "../../ops-posix.ts";
-import { ensureLines } from "../../runtime.ts";
+import { ensureLines, writeText } from "../../runtime.ts";
 import type { LinuxComponent } from "../component.ts";
 import { appendToProfiles } from "../environment.ts";
 import { coresDir } from "../paths.ts";
@@ -47,12 +46,28 @@ export const baseSystem: LinuxComponent = {
             systemdLines.push(`DefaultLimit${limit.toUpperCase()}=${value === "unlimited" ? "infinity" : value}`);
           }
           await ensureLines("/etc/security/limits.d/99-unlimited.conf", limitLines);
-          if (existsSync("/etc/systemd/system.conf")) await ensureLines("/etc/systemd/system.conf", systemdLines);
-          // OpenRC (alpine) has no systemd and no pam session config;
-          // rc_ulimit in /etc/rc.conf is the ONLY thing raising limits for
-          // rc-started services (buildkite-agent, dockerd). Without it
-          // fd-heavy tests EMFILE at the OpenRC default of 1024.
-          if (existsSync("/etc/rc.conf")) {
+          // Which limits mechanism applies is the target distro's init
+          // system, a spec fact — not whatever the running host has.
+          if (manager.init === "systemd") {
+            // A drop-in with its own [Manager] header, not lines appended to
+            // /etc/systemd/system.conf: systemd >= 256 (Debian 13, Ubuntu
+            // 25.04) no longer ships that file, and DefaultLimit assignments
+            // written to a fresh file with no section header are ignored
+            // ("Assignment outside of section"). A drop-in merges over the
+            // main file either way and always carries the header.
+            await writeText(
+              "/etc/systemd/system.conf.d/99-bun-limits.conf",
+              ["[Manager]", ...systemdLines].join("\n") + "\n",
+            );
+            // pam_limits applies the limits.d values to login sessions.
+            for (const pam of ["/etc/pam.d/common-session", "/etc/pam.d/common-session-noninteractive"]) {
+              await ensureLines(pam, ["session optional pam_limits.so"]);
+            }
+          } else {
+            // OpenRC (alpine) has no systemd and no pam session config;
+            // rc_ulimit in /etc/rc.conf is the ONLY thing raising limits for
+            // rc-started services (buildkite-agent, dockerd). Without it
+            // fd-heavy tests EMFILE at the OpenRC default of 1024.
             const rcFlags: Record<string, string> = { c: "core", n: "nofile", u: "nproc" };
             const rcUlimit = ["c", "d", "e", "f", "i", "l", "m", "n", "q", "r", "s", "t", "u", "v", "x"]
               .map(flag => {
@@ -63,10 +78,7 @@ export const baseSystem: LinuxComponent = {
               .join(" ");
             await ensureLines("/etc/rc.conf", [`rc_ulimit="${rcUlimit}"`]);
           }
-          for (const pam of ["/etc/pam.d/common-session", "/etc/pam.d/common-session-noninteractive"]) {
-            if (existsSync(pam)) await ensureLines(pam, ["session optional pam_limits.so"]);
-          }
-          await reloadServiceManager();
+          await reloadServiceManager(manager.init);
         },
       },
       {
@@ -94,8 +106,8 @@ export const cleanup: LinuxComponent = {
     return [
       {
         name: "Mask tmpfs on /tmp (needs disk-backed /tmp)",
-        skip: !manager.systemd && "no systemd tmp.mount on this distro",
-        run: () => maskUnit("tmp.mount"),
+        skip: manager.init !== "systemd" && "no systemd tmp.mount on this distro",
+        run: () => maskUnit("tmp.mount", manager.init),
       },
       {
         name: "Clean caches and trim disk before capture",
@@ -120,7 +132,7 @@ export const coreDumps: LinuxComponent = {
   name: "core-dumps",
   artifacts: () => ({}),
   steps: ctx => {
-    const { image } = ctx;
+    const { image, manager } = ctx;
     return [
       {
         name: "Configure core dumps",
@@ -131,7 +143,7 @@ export const coreDumps: LinuxComponent = {
           // %e = executable filename, %p = pid
           await ensureLines("/etc/sysctl.d/local.conf", [`kernel.core_pattern = ${dir}/%e-%p.core`]);
           // apport overrides core_pattern where it exists.
-          await disableServiceNow("apport.service");
+          await disableServiceNow("apport.service", manager.init);
           await applySysctlFile("/etc/sysctl.d/local.conf");
           await appendToProfiles(ctx, [`export PATH="/sbin:$PATH"`]);
         },

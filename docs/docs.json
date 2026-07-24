@@ -493,19 +493,6 @@
             ]
           },
           {
-            "group": "Runtime & Debugging",
-            "icon": "bug",
-            "pages": [
-              "/guides/runtime/vscode-debugger",
-              "/guides/runtime/web-debugger",
-              "/guides/runtime/heap-snapshot",
-              "/guides/runtime/build-time-constants",
-              "/guides/runtime/define-constant",
-              "/guides/runtime/cicd",
-              "/guides/runtime/codesign-macos-executable"
-            ]
-          },
-          {
             "group": "Module System",
             "icon": "box",
             "pages": [
@@ -546,23 +533,6 @@
               "/guides/write-file/unlink",
               "/guides/runtime/delete-file",
               "/guides/runtime/delete-directory"
-            ]
-          },
-          {
-            "group": "Utilities",
-            "icon": "wrench",
-            "pages": [
-              "/guides/util/hash-a-password",
-              "/guides/util/javascript-uuid",
-              "/guides/util/base64",
-              "/guides/util/gzip",
-              "/guides/util/deflate",
-              "/guides/util/escape-html",
-              "/guides/util/deep-equals",
-              "/guides/util/sleep",
-              "/guides/util/file-url-to-path",
-              "/guides/util/path-to-file-url",
-              "/guides/util/which-path-to-executable-bin"
             ]
           },
           {

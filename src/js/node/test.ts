@@ -3546,6 +3546,9 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // runFiles' twin: the entry loop stops spawning between files and between
     // entries on abort, so --test --test-isolation=none stays Ctrl+C-able.
     const signal = opts.signal as AbortSignal | undefined;
+    // Captured like runFiles: test:interrupted is the mid-run abort shape; a
+    // signal that was already aborted at run() time skips it.
+    const preAborted = signal?.aborted === true;
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
     callerRoot.started = true;
@@ -3609,7 +3612,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     }
     if (signal?.aborted) {
       counts.failed++;
-      reporter.emitMessage("test:interrupted", { __proto__: null, nesting: 0, tests: [] });
+      if (!preAborted) reporter.emitMessage("test:interrupted", { __proto__: null, nesting: 0, tests: [] });
     }
 
     const durationMs = roundDurationMs(performance.now() - started);
@@ -3771,7 +3774,7 @@ async function runStandaloneEntry(entry: StandaloneEntry, signal?: AbortSignal) 
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error = err;
+        node.error ??= err;
         setupFailed = true;
       }
     }
@@ -3784,7 +3787,7 @@ async function runStandaloneEntry(entry: StandaloneEntry, signal?: AbortSignal) 
         // A todo suite's hook failure is advisory, like in the run() child.
         if (!isTodoSuite) {
           node.childrenFailed++;
-          node.error = err;
+          node.error ??= err;
           setupFailed = true;
           break;
         }
@@ -3810,7 +3813,8 @@ async function runStandaloneEntry(entry: StandaloneEntry, signal?: AbortSignal) 
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error = err;
+        // First-wins (node's Test.fail()), matching runSuiteAfterHooks' twin.
+        node.error ??= err;
       }
     }
   }

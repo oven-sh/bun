@@ -138,12 +138,14 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(nodeModuleConstructor) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
+    macro(overriddenModuleLoad) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
@@ -166,6 +168,7 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCommonJSModule) \
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \

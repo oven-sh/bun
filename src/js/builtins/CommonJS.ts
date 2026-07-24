@@ -15,7 +15,29 @@ export function require(this: JSCommonJSModule, _: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
+export function overridableRequire(this: JSCommonJSModule, originalId: string) {
+  // Like Node, dispatch through `Module._load` once user code has replaced it
+  // (proxyquire, mock-require and APM agents all patch it to intercept
+  // require). $overriddenModuleLoad stays `undefined` on the unpatched path.
+  const customLoad = $overriddenModuleLoad;
+  if (customLoad !== undefined) {
+    if ($argumentCount() > 1) {
+      // Bun's `require(id, options)` extension ({ type }, { paths }) rides as
+      // a 4th argument so `originalLoad.apply(this, arguments)` inside a patch
+      // preserves it. 1-argument requires keep Node's 3-argument shape.
+      return customLoad.$call($nodeModuleConstructor, originalId, this, false, $argument(1));
+    }
+    return customLoad.$call($nodeModuleConstructor, originalId, this, false);
+  }
+  return $requireCommonJSModule.$apply(this, arguments);
+}
+
+// `require()` past the `Module._load` dispatch: resolve, consult the cache,
+// create + evaluate. The default `Module._load(request, parent, isMain)` calls
+// this with `parent` as `this`, so `originalLoad.apply()` performs a real load.
+$overriddenName = "require";
+$visibility = "Private";
+export function requireCommonJSModule(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
@@ -78,8 +100,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   var out: LoaderModule | -1;
 
-  // This is where we load the module. We will see if Module._load and
-  // Module._compile are actually important for compatibility.
+  // This is where we load the module.
   //
   // Note: we do not need to wrap this in a try/catch for release, if it throws
   // the C++ code will clear the module from the map.

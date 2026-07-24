@@ -1064,6 +1064,36 @@ impl CompileResult {
     }
 }
 
+/// Read-only byte view of the source executable for `inject`. The file is
+/// memory-mapped read-only so the bytes share page-cache pages with the
+/// on-disk image (and, when the source is the running process, with its own
+/// text segment) instead of occupying anonymous heap. A mapping failure falls
+/// back to `read_to_end`.
+enum SourceBytes {
+    Mapped(bun_sys::MemoryMapping),
+    Owned(Vec<u8>),
+}
+
+impl SourceBytes {
+    fn open(path: &ZStr) -> bun_sys::Maybe<Self> {
+        let file = bun_sys::File::open(path, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0)?;
+        match file.map_read_only() {
+            Ok(m) => Ok(SourceBytes::Mapped(m)),
+            Err(_) => Ok(SourceBytes::Owned(file.read_to_end()?)),
+        }
+    }
+}
+
+impl core::ops::Deref for SourceBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            SourceBytes::Mapped(m) => m,
+            SourceBytes::Owned(v) => v,
+        }
+    }
+}
+
 pub(crate) fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
@@ -1107,40 +1137,25 @@ pub(crate) fn inject(
         let _ = Syscall::unlink(name);
     };
 
+    // Every target format (ELF/Mach-O/PE) reads the source executable via
+    // `SourceBytes` and emits the full output in a single write, so the temp
+    // file is created empty. `CompileTarget::try_from` rejects wasm, so no
+    // other `target.os` reaches here.
     let cloned_executable_fd: Fd = 'brk: {
         #[cfg(windows)]
         {
-            // copy self and then open it for writing
-
-            let mut in_buf = WPathBuffer::uninit();
-            strings::copy_u8_into_u16(&mut in_buf, self_exe.as_bytes());
-            in_buf[self_exe.len()] = 0;
             let mut out_buf = WPathBuffer::uninit();
             strings::copy_u8_into_u16(&mut out_buf, zname.as_bytes());
             out_buf[zname.len()] = 0;
 
             use bun_sys::windows as w;
-            use bun_sys::windows::Win32ErrorExt as _;
-            // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
-            // retain the pointers past return.
-            if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
-                let e = w::Win32Error::get();
-                // Map the Win32 code through the errno table so users see a
-                // name, not a raw integer.
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
-                    e.to_system_errno()
-                        .unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
-                );
-                return Fd::invalid();
-            }
             let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
                 Fd::invalid(),
                 out,
                 Syscall::NtCreateFileOptions {
                     access_mask: w::SYNCHRONIZE | w::GENERIC_WRITE | w::GENERIC_READ | w::DELETE,
-                    disposition: w::FILE_OPEN,
+                    disposition: w::FILE_CREATE,
                     options: w::FILE_SYNCHRONOUS_IO_NONALERT | w::FILE_OPEN_REPARSE_POINT,
                     ..Default::default()
                 },
@@ -1148,7 +1163,7 @@ pub(crate) fn inject(
                 Ok(f) => f,
                 Err(e) => {
                     bun_core::pretty_errorln!(
-                        "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
+                        "<r><red>error<r><d>:<r> failed to create temporary file\n{}",
                         e
                     );
                     return Fd::invalid();
@@ -1157,21 +1172,6 @@ pub(crate) fn inject(
 
             break 'brk file;
         }
-
-        #[cfg(target_os = "macos")]
-        {
-            // if we're on a mac, use clonefile() if we can
-            // failure is okay, clonefile is just a fast path.
-            if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
-                if let bun_sys::Result::Ok(res) =
-                    Syscall::open(zname, bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0)
-                {
-                    break 'brk res;
-                }
-            }
-        }
-
-        // otherwise, just copy the file
 
         #[cfg(not(windows))]
         let fd: Fd = 'brk2: {
@@ -1233,62 +1233,29 @@ pub(crate) fn inject(
             }
             unreachable!()
         };
-        #[cfg(not(windows))]
-        let self_fd: Fd = 'brk2: {
-            for retry in 0..3 {
-                match Syscall::open(self_exe, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0) {
-                    Ok(res) => break 'brk2 res,
-                    Err(err) => {
-                        if retry < 2 {
-                            match err.get_errno() {
-                                // try again
-                                bun_sys::E::EPERM | bun_sys::E::EAGAIN | bun_sys::E::EBUSY => {
-                                    continue;
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}",
-                            err
-                        );
-                        cleanup(zname, fd);
-                        return Fd::INVALID;
-                    }
-                }
-            }
-            unreachable!()
-        };
 
         #[cfg(not(windows))]
-        {
-            // defer self_fd.close()
-            let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
-
-            if let Err(e) = bun_sys::copy_file(self_fd, fd) {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    e
-                );
-                cleanup(zname, fd);
-                return Fd::INVALID;
-            }
-
-            break 'brk fd;
-        }
+        break 'brk fd;
     };
     let _ = (&mut zname_owned, &mut zname);
 
+    let open_source = || match SourceBytes::open(self_exe) {
+        Ok(s) => Some(s),
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> failed to read bun executable {}\n{}",
+                bun_core::fmt::quote(self_exe.as_bytes()),
+                err
+            );
+            None
+        }
+    };
+
     match target.os {
         CompileTargetOs::Mac => {
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
-                    cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
-                }
+            let Some(input_bytes) = open_source() else {
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
             };
             let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
                 Ok(f) => f,
@@ -1304,12 +1271,6 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
             drop(input_bytes);
-
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
-            }
 
             let mut buffered_writer = std::io::BufWriter::with_capacity(
                 512 * 1024,
@@ -1336,13 +1297,9 @@ pub(crate) fn inject(
             return cloned_executable_fd;
         }
         CompileTargetOs::Windows => {
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
-                    cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
-                }
+            let Some(input_bytes) = open_source() else {
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
             };
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
                 Ok(f) => f,
@@ -1360,12 +1317,6 @@ pub(crate) fn inject(
             }
             drop(input_bytes);
 
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
-            }
-
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
                 bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
@@ -1382,16 +1333,12 @@ pub(crate) fn inject(
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading executable: {}", err);
-                    cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
-                }
+            let Some(input_bytes) = open_source() else {
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
             };
 
-            let mut elf_file = match bun_elf::ElfFile::init(input_bytes) {
+            let mut elf_file = match bun_elf::ElfFile::init(&input_bytes, bytes.len()) {
                 Ok(f) => f,
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
@@ -1399,17 +1346,12 @@ pub(crate) fn inject(
                     return Fd::INVALID;
                 }
             };
+            drop(input_bytes);
 
             elf_file.normalize_interpreter();
 
             if let Err(e) = elf_file.write_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
-            }
-
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
@@ -1421,11 +1363,6 @@ pub(crate) fn inject(
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
-            // Truncate the file to the exact size of the modified ELF
-            let _ = Syscall::ftruncate(
-                cloned_executable_fd,
-                i64::try_from(elf_file.data.len()).expect("int cast"),
-            );
 
             #[cfg(not(windows))]
             {
@@ -1434,85 +1371,7 @@ pub(crate) fn inject(
             }
             return cloned_executable_fd;
         }
-        _ => {
-            let total_byte_count: usize;
-            #[cfg(windows)]
-            {
-                total_byte_count = bytes.len()
-                    + 8
-                    + match Syscall::set_file_offset_to_end_windows(cloned_executable_fd) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}",
-                                e
-                            );
-                            cleanup(zname, cloned_executable_fd);
-                            return Fd::invalid();
-                        }
-                    };
-            }
-            #[cfg(not(windows))]
-            {
-                let seek_position: u64 = u64::try_from('brk: {
-                    let fstat = match Syscall::fstat(cloned_executable_fd) {
-                        Ok(res) => res,
-                        Err(err) => {
-                            bun_core::pretty_errorln!("{}", err);
-                            cleanup(zname, cloned_executable_fd);
-                            return Fd::INVALID;
-                        }
-                    };
-                    break 'brk fstat.st_size.max(0);
-                })
-                .unwrap();
-
-                total_byte_count = seek_position as usize + bytes.len() + 8;
-
-                // From https://man7.org/linux/man-pages/man2/lseek.2.html
-                //
-                //  lseek() allows the file offset to be set beyond the end of the
-                //  file (but this does not change the size of the file).  If data is
-                //  later written at this point, subsequent reads of the data in the
-                //  gap (a "hole") return null bytes ('\0') until data is actually
-                //  written into the gap.
-                //
-                if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, seek_position) {
-                    bun_core::pretty_errorln!(
-                        "{}\nwhile seeking to end of temporary file (pos: {})",
-                        err,
-                        seek_position
-                    );
-                    cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
-                }
-            }
-
-            let mut remain = bytes;
-            while !remain.is_empty() {
-                match Syscall::write(cloned_executable_fd, remain) {
-                    Ok(written) => remain = &remain[written..],
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r><d>:<r> failed to write to temporary file\n{}",
-                            err
-                        );
-                        cleanup(zname, cloned_executable_fd);
-                        return Fd::INVALID;
-                    }
-                }
-            }
-
-            // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
-            let _ = Syscall::write(cloned_executable_fd, &total_byte_count.to_ne_bytes());
-            #[cfg(not(windows))]
-            {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
-            }
-
-            return cloned_executable_fd;
-        }
+        CompileTargetOs::Wasm => unreachable!("CompileTarget::try_from rejects wasm"),
     }
 }
 

@@ -106,6 +106,7 @@ pub type PVOID = LPVOID;
 pub use bun_windows_sys::COORD;
 pub use bun_windows_sys::FALSE;
 pub use bun_windows_sys::FILE_BEGIN;
+pub use bun_windows_sys::FILE_CREATE;
 pub use bun_windows_sys::FILE_CURRENT;
 pub use bun_windows_sys::FILE_END;
 pub use bun_windows_sys::FILE_OPEN;
@@ -1473,12 +1474,15 @@ pub mod rescle {
 
 pub use bun_windows_sys::externs::CloseHandle;
 pub use bun_windows_sys::externs::CreateDirectoryW;
+pub use bun_windows_sys::externs::CreateFileMappingW;
 pub use bun_windows_sys::externs::CreateSymbolicLinkW;
 pub use bun_windows_sys::externs::DeleteFileW;
 pub use bun_windows_sys::externs::GetCommandLineW;
 pub use bun_windows_sys::externs::GetCurrentThread;
 pub use bun_windows_sys::externs::GetProcessTimes;
+pub use bun_windows_sys::externs::MapViewOfFile;
 pub use bun_windows_sys::externs::SetEndOfFile;
+pub use bun_windows_sys::externs::UnmapViewOfFile;
 
 /// `PROCESS_MEMORY_COUNTERS` (`psapi.h`).
 #[repr(C)]

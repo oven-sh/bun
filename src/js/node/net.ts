@@ -137,6 +137,7 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+const kAdoptedFd = Symbol("kAdoptedFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -344,6 +345,14 @@ const SocketHandlers: SocketHandler = {
     if (!self) return;
 
     self._unrefTimer();
+    // An fd-adopted socket constructed with readable: false has its readable
+    // side already ended; a later resume()/read()/on('data') can restart the
+    // native read. Drop those bytes and re-pause rather than destroy the
+    // write side with ERR_STREAM_PUSH_AFTER_EOF.
+    if (self._readableState?.ended) {
+      socket.pause();
+      return;
+    }
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
       socket.pause();
@@ -447,10 +456,17 @@ const SocketHandlers: SocketHandler = {
 
     if (!self[kupgraded]) {
       self[kBytesWritten] = socket.bytesWritten;
-      // this is not actually emitted on nodejs when socket used on the connection
-      // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
-      self.emit("connect", self);
-      self.emit("ready");
+      // Node does not emit 'connect' for a Socket constructed over an
+      // already-connected fd (new net.Socket({ fd })): the handle is opened
+      // synchronously in the constructor, before any listener can exist. A
+      // later connect(port, host) on the same instance goes through
+      // SocketHandlers2, which emits 'connect' without consulting this flag.
+      if (!self[kAdoptedFd]) {
+        // this is not actually emitted on nodejs when socket used on the connection
+        // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
+        self.emit("connect", self);
+        self.emit("ready");
+      }
     }
 
     SocketHandlers.drain(socket);
@@ -1558,15 +1574,19 @@ function Socket(options?) {
     if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
   }
 
-  if (options?.fd !== undefined) {
+  const hasFd = options?.fd !== undefined;
+  if (hasFd) {
     validateInt32(options.fd, "options.fd", 0);
   }
 
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
-    readable: true,
-    writable: true,
+    // Node passes options.readable/writable through; for an fd-adopted socket
+    // those flags are authoritative. For the connect() path keep both true so
+    // the stream is usable once the handle attaches.
+    readable: hasFd ? options.readable !== false : true,
+    writable: hasFd ? options.writable !== false : true,
     //For node.js compat do not emit close on destroy.
     emitClose: false,
     autoDestroy: true,
@@ -1614,21 +1634,16 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  if (options?.fd !== undefined) {
+  if (hasFd) {
     const { fd } = options;
-    validateInt32(fd, "fd", 0);
-    // Adopt pipe/character-device/file fds with synchronous writes. Matches
-    // node's effective semantics for stdio-style sockets: writes to a pipe
-    // complete inline, so data survives an immediate process.exit().
-    // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
-    // e.g. new Socket({ fd: 2, readable: false, writable: true })): a bare
-    // { fd } is the connect({ fd }) path (child_process extra stdio), which
-    // attaches a native duplex handle in Socket.prototype.connect - adopting
-    // here would end its readable side and stomp its write path.
-    // Network-socket fds are not supported (handle adoption needs native
-    // support); those keep the previous validated-but-inert behavior.
-    if (options.writable === true) {
-      let stats;
+    const optionsReadable = options.readable;
+    const optionsWritable = options.writable;
+    // On Windows us_socket_from_fd is a no-op and fstat on a child_process
+    // extra-stdio fd fails, so the constructor leaves a bare { fd } inert and
+    // Socket.prototype.connect({ fd }) routes it through the named-pipe open
+    // path instead.
+    let stats;
+    if (process.platform !== "win32" || optionsWritable === true) {
       try {
         stats = require("node:fs").fstatSync(fd);
       } catch {
@@ -1636,16 +1651,45 @@ function Socket(options?) {
         // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
         throw $ERR_INVALID_FD_TYPE("UNKNOWN");
       }
-      // isSocket() covers stdio handed to a child as a socketpair (how spawn
-      // implements pipes on unix); writable-only adoption with sync write(2)
-      // is correct there too.
-      const optionsReadable = options.readable;
-      if (
-        stats.isFIFO() ||
-        stats.isCharacterDevice() ||
-        stats.isFile() ||
-        (stats.isSocket() && optionsReadable !== true)
-      ) {
+    }
+    if (process.platform !== "win32" && stats.isSocket()) {
+      if (optionsWritable === true && optionsReadable === false) {
+        // stdio-style write-only adoption (new Socket({ fd: 2, readable: false,
+        // writable: true })): keep synchronous write(2) so data survives an
+        // immediate process.exit().
+        this[kSyncWriteFd] = fd;
+        this._write = fdSyncWrite;
+        this._writev = fdSyncWritev;
+        this.push(null);
+        this.read(0);
+      } else {
+        // Already-connected socket fd (inherited connection, inetd, a live
+        // connection handed over stdio). Attach the native duplex handle via
+        // the same path net.connect({ fd }) uses; the open handler runs
+        // synchronously for fd adoption so _handle is set on return.
+        this[kAdoptedFd] = true;
+        doConnect(null, {
+          data: this,
+          fd: fd,
+          socket: SocketHandlers,
+          allowHalfOpen: true,
+        }).catch(error => {
+          if (!this.destroyed) {
+            this.emit("error", error);
+            this.emit("close", true);
+          }
+        });
+        // Node never starts the handle reading when readable is false, so peer
+        // bytes sit in the kernel buffer. Without this the first data callback
+        // pushes into an already-ended readable (ERR_STREAM_PUSH_AFTER_EOF).
+        if (optionsReadable === false) this._handle?.pause?.();
+      }
+    } else if (stats && optionsWritable === true) {
+      // Adopt pipe/character-device/file fds with synchronous writes so data
+      // survives an immediate process.exit() (node's effective semantics for
+      // stdio-style sockets). On Windows the socketpair form of stdio (which
+      // lands here) is also write-only sync.
+      if (stats.isFIFO() || stats.isCharacterDevice() || stats.isFile() || (isWindows && stats.isSocket())) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
@@ -1899,6 +1943,12 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd) {
+      // new Socket({ fd }) already attached the native handle for socket fds;
+      // re-adopting here would close and rewrap the same descriptor.
+      if (this[kAdoptedFd]) {
+        if (pauseOnConnect) this.pause();
+        return this;
+      }
       doConnect(this._handle, {
         data: this,
         fd: fd,

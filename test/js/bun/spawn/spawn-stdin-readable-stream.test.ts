@@ -896,3 +896,112 @@ describe("spawn stdin ReadableStream", () => {
     expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
   });
 });
+
+// Response/Request whose body is a JS-authored ReadableStream: the constructor
+// migrates the stream out of `Locked.readable` into the wrapper's GC-traced
+// stream slot, so spawn's stdin extraction must read that slot instead of
+// synthesizing a fresh (unconnected) native ByteStream.
+describe.concurrent("spawn stdin Response/Request with JS-authored ReadableStream body", () => {
+  const childScript = `let n = 0; for await (const c of process.stdin) n += c.length; process.stdout.write("n=" + n);`;
+  const payload = () => new TextEncoder().encode("hello stream");
+
+  const shapes: Record<string, () => Response | Request> = {
+    "Response(start+enqueue+close)": () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(payload());
+            c.close();
+          },
+        }),
+      ),
+    "Response(async pull)": () => {
+      let done = false;
+      return new Response(
+        new ReadableStream({
+          async pull(c) {
+            await Promise.resolve();
+            if (done) return c.close();
+            c.enqueue(payload());
+            done = true;
+          },
+        }),
+      );
+    },
+    "Response(TransformStream.readable)": () => {
+      const { readable, writable } = new TransformStream();
+      const w = writable.getWriter();
+      w.write(payload()).then(() => w.close());
+      return new Response(readable);
+    },
+    "Response(async generator)": () =>
+      new Response(
+        (async function* () {
+          yield payload();
+        })() as any,
+      ),
+    "Request(pull stream)": () => {
+      let done = false;
+      return new Request("http://x/", {
+        method: "POST",
+        body: new ReadableStream({
+          pull(c) {
+            if (done) return c.close();
+            c.enqueue(payload());
+            done = true;
+          },
+        }),
+      });
+    },
+  };
+
+  for (const [name, mk] of Object.entries(shapes)) {
+    test(name, async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", childScript],
+        stdin: mk(),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("n=12");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("Response(Blob) body still works", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", childScript],
+      stdin: new Response(new Blob([payload()])),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("n=12");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Response whose body stream was already consumed throws", async () => {
+    const res = new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(payload());
+          c.close();
+        },
+      }),
+    );
+    await res.arrayBuffer();
+    expect(() =>
+      spawn({
+        cmd: [bunExe(), "-e", childScript],
+        stdin: res,
+        stdout: "pipe",
+        env: bunEnv,
+      }),
+    ).toThrow(/already.*used/i);
+  });
+});

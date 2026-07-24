@@ -256,6 +256,23 @@ pub fn set_max_http_header_size(v: usize) {
     MAX_HTTP_HEADER_SIZE.store(v, Ordering::Relaxed);
 }
 
+/// `--insecure-http-parser`: the process-wide default for node:http's
+/// `insecureHTTPParser` option. Set once during single-threaded CLI parsing;
+/// read from JS when node:http builds its parser leniency flags.
+static INSECURE_HTTP_PARSER: AtomicBool = AtomicBool::new(false);
+
+/// Safe accessor for `INSECURE_HTTP_PARSER`.
+#[inline]
+pub fn insecure_http_parser() -> bool {
+    INSECURE_HTTP_PARSER.load(Ordering::Relaxed)
+}
+
+/// Safe setter for `INSECURE_HTTP_PARSER` (see [`insecure_http_parser`]).
+#[inline]
+pub fn set_insecure_http_parser(v: bool) {
+    INSECURE_HTTP_PARSER.store(v, Ordering::Relaxed);
+}
+
 /// Set once during single-threaded CLI parsing; read from the HTTP thread.
 pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
     std::sync::OnceLock::new();

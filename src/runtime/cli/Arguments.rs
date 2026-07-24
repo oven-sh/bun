@@ -244,6 +244,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
     ),
     parse_param!(
+        "--insecure-http-parser            Use an insecure HTTP parser that accepts invalid HTTP headers"
+    ),
+    parse_param!(
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
@@ -1044,6 +1047,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 }
             };
             bun_http::set_max_http_header_size(if size == 0 { 1024 * 1024 * 1024 } else { size });
+        }
+
+        if args.flag(b"--insecure-http-parser") {
+            bun_http::set_insecure_http_parser(true);
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {

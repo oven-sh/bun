@@ -46,6 +46,13 @@ pub(crate) fn get_max_http_header_size(
     Ok(JSValue::from(bun_http::max_http_header_size()))
 }
 
+pub(crate) fn get_insecure_http_parser(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_boolean(bun_http::insecure_http_parser()))
+}
+
 pub(crate) fn set_max_http_header_size(
     global: &JSGlobalObject,
     frame: &CallFrame,

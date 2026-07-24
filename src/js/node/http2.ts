@@ -27,7 +27,13 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const {
+  hideFromStack,
+  throwNotImplemented,
+  hasObserver,
+  enqueueNodeEntry,
+  PerformanceNodeEntry,
+} = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -43,8 +49,6 @@ const kDeferWriteCallback = Symbol("deferWriteCallback");
 const kProxySocket = Symbol("proxySocket");
 const kSessions = Symbol("sessions");
 const kOptions = Symbol("options");
-const kHttp1Connections = Symbol("http1Connections");
-const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 const MAX_ADDITIONAL_SETTINGS = 10;
 const Stream = require("node:stream");
@@ -2163,18 +2167,6 @@ function sessionErrorFromCode(code: number) {
   return $ERR_HTTP2_SESSION_ERROR(code);
 }
 hideFromStack(sessionErrorFromCode);
-// Used for the legacy native error dispatches that still carry a positive HTTP/2 error code
-// (e.g. MAX_PENDING_SETTINGS_ACK, ENHANCE_YOUR_CALM from the outbound paths): the message carries
-// the NGHTTP2_* constant name. Violations detected by the inbound engine arrive as negative
-// nghttp2 library codes and are surfaced as NghttpError (ERR_HTTP2_ERROR), exactly like node.
-// GOAWAY-received errors stay numeric (sessionErrorFromCode) to match node's message exactly.
-function sessionErrorFromCodeNamed(code: number) {
-  if (code === 0xe) {
-    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
-  }
-  return $ERR_HTTP2_SESSION_ERROR(nameForErrorCode[code] || code);
-}
-hideFromStack(sessionErrorFromCodeNamed);
 
 function assertSession(session) {
   if (!session) {
@@ -2217,6 +2209,11 @@ function pushToStream(stream, data) {
   // past the buffer's high-water mark instead of stalling on the receive window.
   // setStreamReading(id, false) only records the paused bit natively, so calling it
   // from inside the dispatch that delivered `data` cannot re-enter the engine.
+  const perf = stream[kPerfState];
+  if (perf !== undefined && data !== null) {
+    if (perf.firstByte === 0) perf.firstByte = performance.now() - perf.start;
+    perf.bytesRead += data.length;
+  }
   if (!stream.push(data) && data !== null) {
     streamOnPause.$call(stream);
   }
@@ -2232,6 +2229,9 @@ enum StreamState {
   // The native side fully closed and freed the stream (state 7 delivered): there is
   // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
+  // END_STREAM already rode the final DATA frame from _write/_writev; _final must not
+  // emit the empty END_STREAM frame on top of it.
+  EndStreamSent = 1 << 7, // 10000000 = 128
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2249,6 +2249,31 @@ const kWriteFlushedWithoutCallback = 0x10;
 function deferWriteCallbackForSocket(nativeSocket) {
   return nativeSocket ? process.nextTick : setImmediate;
 }
+// Whether this chunk is the writable's last: end() already ran and nothing is queued
+// behind it (writableLength still includes the in-flight chunk, in the writable's own
+// units — string chunks count code units), and no trailers are pending (END_STREAM must
+// ride the trailer HEADERS instead). node packs END_STREAM onto that final DATA frame
+// rather than emitting an empty one after it.
+function isFinalWrite(stream: Http2Stream, pendingLength: number) {
+  // `ending` is set only after end()'s own synchronous write has already dispatched, so
+  // end(chunk) — the common case — needs kEndingWithChunk to see the last chunk as final.
+  return (
+    (stream._writableState.ending || stream[kEndingWithChunk] === true) &&
+    stream.writableLength === pendingLength &&
+    !stream[bunHTTP2WaitForTrailers]
+  );
+}
+
+// writeStream settled the stream to HALF_CLOSED_LOCAL synchronously with the dispatch
+// suppressed: the JS side runs the bookkeeping the onStreamEnd(5) handler would have.
+function onEndStreamSettled(stream: Http2Stream) {
+  markWritableDone(stream);
+  if ((stream.id & 1) === 0 && stream[bunHTTP2Session]?.type === constants.NGHTTP2_SESSION_SERVER) {
+    if (!stream.rstCode) stream.rstCode = 0;
+    markStreamClosed(stream);
+  }
+}
+
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
   if (typeof _final === "function") {
@@ -2271,6 +2296,100 @@ function publishStreamCloseChannel(stream: Http2Stream) {
     onServerStreamCloseChannel.publish({ stream });
   }
 }
+// Set across end(chunk)'s synchronous super.end() only: bridges the window where the final
+// chunk dispatches before Writable marks the stream ending.
+const kEndingWithChunk = Symbol("http2EndingWithChunk");
+const kPerfStats = Symbol("http2PerfStats");
+const kPerfState = Symbol("http2PerfState");
+
+// perf_hooks 'http2' entries, mirroring node's Http2Session/Http2Stream statistics.
+// All tracking is armed at construction only while an 'http2' observer exists, so
+// unobserved sessions pay a single hasObserver() check.
+function initHttp2SessionPerf(session, type: "server" | "client") {
+  if (!hasObserver("http2")) return;
+  session[kPerfStats] = {
+    type,
+    start: performance.now(),
+    streamCount: 0,
+    streamDurationSum: 0,
+    closedStreams: 0,
+    live: 0,
+    maxConcurrentStreams: 0,
+    pingRTT: 0,
+    emitted: false,
+  };
+}
+
+function trackHttp2StreamStart(stream, session) {
+  const stats = session?.[kPerfStats];
+  if (stats === undefined) return;
+  stats.streamCount++;
+  stats.live++;
+  if (stats.live > stats.maxConcurrentStreams) stats.maxConcurrentStreams = stats.live;
+  stream[kPerfState] = {
+    start: performance.now(),
+    bytesRead: 0,
+    bytesWritten: 0,
+    firstHeader: 0,
+    firstByte: 0,
+    firstByteSent: 0,
+  };
+}
+
+function emitHttp2StreamPerf(stream) {
+  const state = stream[kPerfState];
+  if (state === undefined) return;
+  stream[kPerfState] = undefined;
+  const now = performance.now();
+  const stats = stream[bunHTTP2Session]?.[kPerfStats];
+  if (stats !== undefined) {
+    stats.live--;
+    stats.closedStreams++;
+    stats.streamDurationSum += now - state.start;
+  }
+  enqueueNodeEntry(
+    new PerformanceNodeEntry("Http2Stream", "http2", state.start, now - state.start, {
+      id: typeof stream.id === "number" ? stream.id : 0,
+      timeToFirstByte: state.firstByte,
+      timeToFirstByteSent: state.firstByteSent,
+      timeToFirstHeader: state.firstHeader,
+      bytesWritten: state.bytesWritten,
+      bytesRead: state.bytesRead,
+    }),
+  );
+}
+
+// Counters as of the moment the session's graceful close completed and the destroy was
+// scheduled: frames arriving during the deferral (e.g. the peer's GOAWAY reply) belong
+// to teardown, which is where node's own accounting stops.
+function captureHttp2PerfFrameSnapshot(session, parser) {
+  const stats = session[kPerfStats];
+  if (stats !== undefined && stats.frameSnapshot === undefined && parser) {
+    stats.frameSnapshot = parser.getFrameCounters();
+  }
+}
+
+function emitHttp2SessionPerf(session, parser, socket) {
+  const stats = session[kPerfStats];
+  if (stats === undefined || stats.emitted) return;
+  stats.emitted = true;
+  const now = performance.now();
+  const counters = stats.frameSnapshot ?? parser?.getFrameCounters() ?? { framesReceived: 0, framesSent: 0 };
+  enqueueNodeEntry(
+    new PerformanceNodeEntry("Http2Session", "http2", stats.start, now - stats.start, {
+      bytesWritten: socket?.bytesWritten ?? 0,
+      bytesRead: socket?.bytesRead ?? 0,
+      framesReceived: counters.framesReceived,
+      framesSent: counters.framesSent,
+      maxConcurrentStreams: stats.maxConcurrentStreams,
+      pingRTT: stats.pingRTT,
+      streamAverageDuration: stats.closedStreams > 0 ? stats.streamDurationSum / stats.closedStreams : 0,
+      streamCount: stats.streamCount,
+      type: stats.type,
+    }),
+  );
+}
+
 function markStreamClosed(stream: Http2Stream) {
   const status = stream[bunHTTP2StreamStatus];
 
@@ -2381,6 +2500,7 @@ class Http2Stream extends Duplex {
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
+    trackHttp2StreamStart(this, session);
     // node ties the stream's receive window to JS-side consumption (readStart/readStop on the
     // native handle): while the readable is paused the peer is not granted more window, so it
     // backpressures instead of the session buffering the whole body.
@@ -2679,6 +2799,7 @@ class Http2Stream extends Duplex {
       }
     }
     this.rstCode = rstCode;
+    emitHttp2StreamPerf(this);
     // node closes the stream from inside _destroy, so the close-channel publish observes
     // closed === true and destroyed === true with the final rstCode. The non-error close path
     // (streamEnd state=7) calls markStreamClosed BEFORE destroy(), where the channel observes
@@ -2733,6 +2854,17 @@ class Http2Stream extends Duplex {
 
     if (onClientStreamBodySentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
       onClientStreamBodySentChannel.publish({ stream: this });
+    }
+    if ((status & StreamState.EndStreamSent) !== 0) {
+      this[bunHTTP2StreamStatus] = status | StreamState.FinalCalled;
+      if ((status & (StreamState.WritableClosed | StreamState.Closed)) !== 0) {
+        callback();
+      } else {
+        // The final DATA is still in flight; the drain-side streamEnd(5) dispatch
+        // completes the writable through markWritableDone.
+        this[bunHTTP2StreamFinal] = callback;
+      }
+      return;
     }
     const session = this[bunHTTP2Session];
     if (session) {
@@ -2861,7 +2993,15 @@ class Http2Stream extends Duplex {
     // Don't create an empty buffer for end() without data - let the Duplex stream
     // handle it naturally (just calls _final without _write for empty data).
     // Creating an empty buffer here causes an extra empty DATA frame to be sent.
-    return super.end(chunk, encoding, callback);
+    const hasChunk = chunk !== undefined && chunk !== null && chunk.length > 0;
+    if (hasChunk) this[kEndingWithChunk] = true;
+    try {
+      return super.end(chunk, encoding, callback);
+    } finally {
+      // Only the synchronous window is bridged: a chunk buffered behind an in-flight
+      // write dispatches later, when `ending` is already set.
+      if (hasChunk) this[kEndingWithChunk] = false;
+    }
   }
 
   _writev(data, callback) {
@@ -2870,10 +3010,22 @@ class Http2Stream extends Duplex {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    const writevPerf = this[kPerfState];
+    if (writevPerf !== undefined) {
+      if (writevPerf.firstByteSent === 0) writevPerf.firstByteSent = performance.now() - writevPerf.start;
+      for (let i = 0; i < data.length; i++) {
+        const { chunk, encoding } = data[i];
+        writevPerf.bytesWritten += typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
+      }
+    }
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
+        let batchLength = 0;
+        for (let i = 0; i < data.length; i++) {
+          batchLength += data[i].chunk.length;
+        }
         const allBuffers = data.allBuffers;
         let chunks;
         if (allBuffers) {
@@ -2897,8 +3049,13 @@ class Http2Stream extends Duplex {
         }
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
-        const status = native.writeStream(this.#id, chunk, undefined, false, callback, true);
+        const endStream = isFinalWrite(this, batchLength);
+        const status = native.writeStream(this.#id, chunk, undefined, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
+        if (endStream) {
+          this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+          if ((status & ~kWriteFlushedWithoutCallback) === 5) onEndStreamSettled(this);
+        }
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: true, data, encoding: "" });
         }
@@ -2915,6 +3072,11 @@ class Http2Stream extends Duplex {
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
       return;
     }
+    const writePerf = this[kPerfState];
+    if (writePerf !== undefined) {
+      if (writePerf.firstByteSent === 0) writePerf.firstByteSent = performance.now() - writePerf.start;
+      writePerf.bytesWritten += typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
+    }
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
@@ -2928,8 +3090,13 @@ class Http2Stream extends Duplex {
           wireEncoding = undefined;
         }
         if (session[kTimeout]) session[kTimeout].refresh();
-        const status = native.writeStream(this.#id, wireChunk, wireEncoding, false, callback, true);
+        const endStream = isFinalWrite(this, chunk.length);
+        const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
+        if (endStream) {
+          this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+          if ((status & ~kWriteFlushedWithoutCallback) === 5) onEndStreamSettled(this);
+        }
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: false, data: chunk, encoding });
         }
@@ -3286,8 +3453,9 @@ class ServerHttp2Stream extends Http2Stream {
     if (onServerStreamStartChannel.hasSubscribers) {
       onServerStreamStartChannel.publish({ stream: pushedStream, headers });
     }
+    let pushResult;
     try {
-      parser.pushPromise(this.id, pushId, headers, sensitiveNames);
+      pushResult = parser.pushPromise(this.id, pushId, headers, sensitiveNames);
     } catch (err) {
       // pushPromise() can throw synchronously (invalid token, invalid pseudo-header, oversized
       // block). The pushed stream was already created by getNextStream's streamStart; tear it
@@ -3302,6 +3470,15 @@ class ServerHttp2Stream extends Http2Stream {
         pushedStream.destroy(err);
       }
       process.nextTick(callback, err);
+      return;
+    }
+    if (pushResult === -1) {
+      // The block could not be encoded: the session is failing with a COMPRESSION_ERROR.
+      // node still delivers the reserved stream to the callback (the caller gets to
+      // attach handlers) and lets the session teardown error it. The PUSH_PROMISE never
+      // reached the wire, so teardown must not send an RST for the reserved id.
+      if (pushedStream) pushedStream[kNeverAnnounced] = true;
+      process.nextTick(callback, null, pushedStream, headers);
       return;
     }
     // node: a HEAD push (or options.endStream) carries no response body, so the pushed stream's
@@ -4083,16 +4260,26 @@ class ServerHttp2Session extends Http2Session {
           // ended before the request body was consumed): node defers the destroy until the
           // consumer drains it ('end'), so the buffered request body is not lost.
           stream.once("end", destroySelfOnEnd);
-        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
-          // The writable side is mid-finish (an in-flight _final settled the native stream
-          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
-          // for the writable side to finish before destroying a cleanly closed stream.
+        } else if (
+          (stream.writableEnded || stream[kEndingWithChunk]) &&
+          !stream.writableFinished &&
+          !stream.destroyed
+        ) {
+          // The writable side is mid-finish (an in-flight _final or _write carrying
+          // END_STREAM settled the native stream synchronously, re-entering here before
+          // Writable.end() has set kEnding): destroying now would swallow 'finish'.
+          // Node's kMaybeDestroy waits for the writable side to finish first.
           stream.once("finish", destroySelfOnEnd);
         } else {
           stream.destroy();
         }
         if (self.#connections === 0 && self.#closed) {
-          self.destroy();
+          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
+            scheduleSettingsAckGraceNT(self);
+          } else {
+            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+            setImmediate(destroyIfNotDestroyedNT, self);
+          }
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed
@@ -4113,6 +4300,10 @@ class ServerHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      const requestPerf = stream[kPerfState];
+      if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
+        requestPerf.firstHeader = performance.now() - requestPerf.start;
+      }
       let rawheaders = headersTuple[0];
       let headers = headersTuple[1];
       if (self.#strictFieldWhitespaceValidation) {
@@ -4164,6 +4355,22 @@ class ServerHttp2Session extends Http2Session {
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      // This ACK may be the only thing a gracefully closed, idle session was waiting for.
+      const pingsDrained = self.#pingCallbacks === null || self.#pingCallbacks.length === 0;
+      if (self.#pendingSettingsAckCount === 0 && pingsDrained && self[kSettingsAckGraceTimer] !== undefined) {
+        clearTimeout(self[kSettingsAckGraceTimer]);
+        self[kSettingsAckGraceTimer] = undefined;
+      }
+      if (
+        self.#closed &&
+        self.#connections === 0 &&
+        self.#pendingSettingsAckCount === 0 &&
+        pingsDrained &&
+        !self.destroyed
+      ) {
+        captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+        setImmediate(destroyIfNotDestroyedNT, self);
+      }
       const queued = self.#pendingSettingsCallbacks.shift();
       // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
       // callback first and emits 'localSettings' after it.
@@ -4187,7 +4394,21 @@ class ServerHttp2Session extends Http2Session {
           const callbackInfo = callbacks.shift();
           if (callbackInfo) {
             const [callback, start] = callbackInfo;
-            callback(null, Date.now() - start, payload);
+            const rtt = Date.now() - start;
+            const stats = self[kPerfStats];
+            if (stats !== undefined) stats.pingRTT = rtt;
+            callback(null, rtt, payload);
+            if (callbacks.length === 0 && self.#pendingSettingsAckCount === 0) {
+              if (self[kSettingsAckGraceTimer] !== undefined) {
+                clearTimeout(self[kSettingsAckGraceTimer]);
+                self[kSettingsAckGraceTimer] = undefined;
+              }
+              // A server session has no pending-request queue.
+              if (self.#closed && self.#connections === 0 && !self.destroyed) {
+                captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+                setImmediate(destroyIfNotDestroyedNT, self);
+              }
+            }
           }
         }
       }
@@ -4446,6 +4667,7 @@ class ServerHttp2Session extends Http2Session {
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
+    initHttp2SessionPerf(this, "server");
     socket.on("data", this.#onRead.bind(this));
     socket.on("drain", this.#onDrain.bind(this));
 
@@ -4500,9 +4722,11 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get socket() {
-    if (this.#socket_proxy) return this.#socket_proxy;
+    // After the session detaches from its socket node reports undefined, even
+    // when the proxy had been handed out earlier.
     const socket = this[bunHTTP2Socket];
-    if (!socket) return null;
+    if (!socket) return undefined;
+    if (this.#socket_proxy) return this.#socket_proxy;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }
@@ -4633,7 +4857,14 @@ class ServerHttp2Session extends Http2Session {
     this[kGoawaySent] = true;
     this.#parser?.flush?.();
     if (this.#connections === 0) {
-      setImmediate(destroyIfNotDestroyedNT, this);
+      // Same bounded grace the client applies: an unACKed SETTINGS or ping still
+      // reaches its callback/'localSettings' before the session is destroyed.
+      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+        scheduleSettingsAckGraceNT(this);
+      } else {
+        captureHttp2PerfFrameSnapshot(this, this.#parser);
+        setImmediate(destroyIfNotDestroyedNT, this);
+      }
     }
   }
 
@@ -4651,6 +4882,7 @@ class ServerHttp2Session extends Http2Session {
       return;
     }
     this.#destroying = true;
+    emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
     try {
       const server = this[kServer];
       if (server) {
@@ -5017,10 +5249,15 @@ class ClientHttp2Session extends Http2Session {
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
           // lose data.
           stream.once("end", destroySelfOnEnd);
-        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
-          // The writable side is mid-finish (an in-flight _final settled the native stream
-          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
-          // for the writable side to finish before destroying a cleanly closed stream.
+        } else if (
+          (stream.writableEnded || stream[kEndingWithChunk]) &&
+          !stream.writableFinished &&
+          !stream.destroyed
+        ) {
+          // The writable side is mid-finish (an in-flight _final or _write carrying
+          // END_STREAM settled the native stream synchronously, re-entering here before
+          // Writable.end() has set kEnding): destroying now would swallow 'finish'.
+          // Node's kMaybeDestroy waits for the writable side to finish first.
           stream.once("finish", destroySelfOnEnd);
         } else {
           stream.destroy();
@@ -5028,10 +5265,14 @@ class ClientHttp2Session extends Http2Session {
         if (self.#connections === 0 && self.#closed) {
           // Deferred like close()'s own destroy: this runs inside a native dispatch
           // batch, and frames the engine already received but has not dispatched yet
-          // must still reach JS. An outstanding settings() ACK gets a bounded grace
-          // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
-          if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
-          else setImmediate(destroyIfNotDestroyedNT, self);
+          // must still reach JS. An outstanding settings() ACK or ping gets a bounded
+          // grace (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
+            scheduleSettingsAckGraceNT(self);
+          } else {
+            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+            setImmediate(destroyIfNotDestroyedNT, self);
+          }
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed
@@ -5092,6 +5333,10 @@ class ClientHttp2Session extends Http2Session {
             } else {
               // Node's ClientHttp2Session emits 'stream' only for pushed streams; a normal request's
               // response arrives solely via the stream's own 'response' event.
+              const responsePerf = stream[kPerfState];
+              if (responsePerf !== undefined && responsePerf.firstHeader === 0) {
+                responsePerf.firstHeader = performance.now() - responsePerf.start;
+              }
               stream.emit("response", headers, flags, rawheaders);
             }
           }
@@ -5104,11 +5349,19 @@ class ClientHttp2Session extends Http2Session {
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       // This ACK may be the only thing a gracefully closed, idle session was waiting for.
-      if (self.#pendingSettingsAckCount === 0 && self[kSettingsAckGraceTimer] !== undefined) {
+      const pingsDrained = self.#pingCallbacks === null || self.#pingCallbacks.length === 0;
+      if (self.#pendingSettingsAckCount === 0 && pingsDrained && self[kSettingsAckGraceTimer] !== undefined) {
         clearTimeout(self[kSettingsAckGraceTimer]);
         self[kSettingsAckGraceTimer] = undefined;
       }
-      if (self.#closed && self.#connections === 0 && self.#pendingSettingsAckCount === 0 && !self.destroyed) {
+      if (
+        self.#closed &&
+        self.#connections === 0 &&
+        self.#pendingSettingsAckCount === 0 &&
+        pingsDrained &&
+        !self.destroyed
+      ) {
+        captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }
       const queued = self.#pendingSettingsCallbacks.shift();
@@ -5136,7 +5389,25 @@ class ClientHttp2Session extends Http2Session {
           const callbackInfo = callbacks.shift();
           if (callbackInfo) {
             const [callback, start] = callbackInfo;
-            callback(null, Date.now() - start, payload);
+            const rtt = Date.now() - start;
+            const stats = self[kPerfStats];
+            if (stats !== undefined) stats.pingRTT = rtt;
+            callback(null, rtt, payload);
+            if (callbacks.length === 0 && self.#pendingSettingsAckCount === 0) {
+              if (self[kSettingsAckGraceTimer] !== undefined) {
+                clearTimeout(self[kSettingsAckGraceTimer]);
+                self[kSettingsAckGraceTimer] = undefined;
+              }
+              if (
+                self.#closed &&
+                self.#connections === 0 &&
+                (self.#pendingRequests === null || self.#pendingRequests.length === 0) &&
+                !self.destroyed
+              ) {
+                captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+                setImmediate(destroyIfNotDestroyedNT, self);
+              }
+            }
           }
         }
       }
@@ -5152,7 +5423,7 @@ class ClientHttp2Session extends Http2Session {
           ? $ERR_HTTP2_TOO_MANY_INVALID_FRAMES()
           : typeof errorCode === "number" && errorCode < 0
             ? new NghttpError(errorCode)
-            : sessionErrorFromCodeNamed(errorCode as number);
+            : sessionErrorFromCode(errorCode as number);
       self.destroy(error_instance);
     },
 
@@ -5451,9 +5722,11 @@ class ClientHttp2Session extends Http2Session {
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
   get socket() {
-    if (this.#socket_proxy) return this.#socket_proxy;
+    // After the session detaches from its socket node reports undefined, even
+    // when the proxy had been handed out earlier.
     const socket = this[bunHTTP2Socket];
-    if (!socket) return null;
+    if (!socket) return undefined;
+    if (this.#socket_proxy) return this.#socket_proxy;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }
@@ -5552,6 +5825,12 @@ class ClientHttp2Session extends Http2Session {
     }
 
     function onConnect() {
+      // The parser's construction re-enters JS and can drain the tick queue, so a
+      // connect that fires from that drain arrives before the constructor finished.
+      if (this.#parser === undefined) {
+        process.nextTick(onConnect.bind(this));
+        return;
+      }
       try {
         this.#onConnect(arguments);
         listener?.$call(this, this);
@@ -5565,6 +5844,7 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options?.maxOutstandingSettings === "number" && options.maxOutstandingSettings >= 1) {
       this.#maxOutstandingSettings = options.maxOutstandingSettings;
     }
+    let connectOnNextTick = false;
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
@@ -5573,7 +5853,7 @@ class ClientHttp2Session extends Http2Session {
         const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
         socket.once(connectEvent, onConnect.bind(this));
       } else {
-        process.nextTick(onConnect.bind(this));
+        connectOnNextTick = true;
       }
     } else {
       socket = connectWithProtocol(
@@ -5614,6 +5894,13 @@ class ClientHttp2Session extends Http2Session {
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
+    initHttp2SessionPerf(this, "client");
+    if (connectOnNextTick) {
+      // Queued only now that the session is fully built: the parser's construction
+      // re-enters JS, which can drain the tick queue, and an earlier-queued onConnect
+      // would then run against a session whose #parser is not assigned yet.
+      process.nextTick(onConnect.bind(this));
+    }
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
@@ -5644,8 +5931,14 @@ class ClientHttp2Session extends Http2Session {
     // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
     // the session down. destroy() remains immediate.
     if (this.#connections === 0 && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
-      if (this.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(this);
-      else setImmediate(destroyIfNotDestroyedNT, this);
+      // An unACKed ping gets the same bounded grace as an unACKed SETTINGS: node always
+      // delivers the ping callback its RTT on a healthy session, never a cancel error.
+      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+        scheduleSettingsAckGraceNT(this);
+      } else {
+        captureHttp2PerfFrameSnapshot(this, this.#parser);
+        setImmediate(destroyIfNotDestroyedNT, this);
+      }
     }
   }
 
@@ -5671,6 +5964,7 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     this.#destroying = true;
+    emitHttp2SessionPerf(this, this.#parser, socket);
     try {
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
@@ -6255,337 +6549,11 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
-// Minimal HTTP/1.1 response writer used by the allowHTTP1 fallback. It mimics
-// the surface of the native NodeHTTPResponse handle that ServerResponse drives
-// (cork/writeHead/write/end/abort/...), serializing directly onto the TLS socket.
-function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
-  const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
-  let head = null;
-  let headWritten = false;
-  let chunked = false;
-  let noBody = false;
-  let closeDelimited = false;
-
-  function writeHeadToSocket(contentLength) {
-    if (headWritten) return;
-    headWritten = true;
-    const statusCode = head?.statusCode ?? 200;
-    let statusMessage = head?.statusMessage;
-    if (typeof statusMessage !== "string" || statusMessage === "") {
-      statusMessage = STATUS_CODES[statusCode] || "unknown";
-    }
-    let out = `HTTP/1.1 ${statusCode} ${statusMessage}\r\n`;
-    let hasContentLength = false;
-    let hasTransferEncoding = false;
-    let hasDate = false;
-    let hasConnection = false;
-    let hasKeepAlive = false;
-    const headers = head?.headers;
-    if (headers) {
-      // ServerResponse drives this handle with renderNativeHeaders(): a flat
-      // [name, value, name, value, ...] array with original-case names.
-      for (let i = 0, end = headers.length - 1; i < end; i += 2) {
-        const name = headers[i];
-        const value = headers[i + 1];
-        if (name.length === 1 && name.charCodeAt(0) === 0) {
-          // node:http's NUL-named framing sentinel pair (see NodeHTTP.cpp):
-          // value "2" = no body (HEAD), anything else = close-delimited.
-          if (value === "2") noBody = true;
-          else closeDelimited = true;
-          continue;
-        }
-        switch (name.toLowerCase()) {
-          case "content-length":
-            hasContentLength = true;
-            break;
-          case "transfer-encoding":
-            hasTransferEncoding = true;
-            if (String(value).toLowerCase().includes("chunked")) chunked = true;
-            break;
-          case "date":
-            hasDate = true;
-            break;
-          case "connection":
-            hasConnection = true;
-            break;
-          case "keep-alive":
-            hasKeepAlive = true;
-            break;
-        }
-        out += `${name}: ${value}\r\n`;
-      }
-    }
-    if (!hasContentLength && !hasTransferEncoding && !noBody && !closeDelimited) {
-      if (contentLength === null) {
-        chunked = true;
-        out += "Transfer-Encoding: chunked\r\n";
-      } else {
-        out += `Content-Length: ${contentLength}\r\n`;
-      }
-    }
-    if (!hasDate) {
-      out += `Date: ${new Date().toUTCString()}\r\n`;
-    }
-    // renderNativeHeaders reports its Connection decision through the
-    // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
-    // NodeHTTP.cpp); honor an explicit close (res.shouldKeepAlive = false,
-    // the graceful-shutdown pattern) over the parser-derived flag.
-    // A close-delimited response still advertises the close it performs: only
-    // the keep-alive line is suppressed, since the connection ends with the
-    // body. When the user removed the Connection header (_removedConnection),
-    // renderNativeHeaders sets neither bit, so nothing is written here.
-    const autoBits = head?.autoHeaderBits ?? 0;
-    if (!hasConnection) {
-      if ((autoBits & 4) !== 0) {
-        out += "Connection: close\r\n";
-      } else if (!closeDelimited) {
-        // No close bit and no Connection pair on a close-delimited response means
-        // the user removed the header (Node's _removedConnection) — write none
-        // rather than inventing keep-alive on a connection that ends with the
-        // body. Every other response still advertises its connection state.
-        if (shouldKeepAlive) {
-          out += "Connection: keep-alive\r\n";
-          // A user-sent Keep-Alive header (already written by the loop above)
-          // suppresses the auto line, like the native writeAutoHeaders. The
-          // bit-carried timeout wins when present; otherwise fall back to this
-          // handle's configured timeout, preserving pre-bits behavior.
-          if (!hasKeepAlive) {
-            const kaSecs =
-              (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
-            out += `Keep-Alive: timeout=${kaSecs}\r\n`;
-          }
-        } else {
-          out += "Connection: close\r\n";
-        }
-      }
-    }
-    out += "\r\n";
-    socket.write(out);
-  }
-
-  function toBuffer(chunk, encoding) {
-    if (chunk == null) return null;
-    if (typeof chunk === "string") return Buffer.from(chunk, encoding || "utf8");
-    return chunk;
-  }
-
-  function writeBody(buf) {
-    const length = buf ? (buf.byteLength ?? buf.length) : 0;
-    if (length) {
-      if (chunked) {
-        socket.write(length.toString(16) + "\r\n");
-        socket.write(buf);
-        socket.write("\r\n");
-      } else {
-        socket.write(buf);
-      }
-    }
-    return length;
-  }
-
-  const handle = {
-    flags: 0,
-    ended: false,
-    finished: false,
-    aborted: false,
-    bufferedAmount: 0,
-    shouldKeepAlive,
-    onfinished: null,
-    cork(callback) {
-      return callback();
-    },
-    writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
-      const originalStatusCode = statusCode;
-      statusCode |= 0;
-      if (statusCode < 100 || statusCode > 999) {
-        throw $ERR_HTTP_INVALID_STATUS_CODE(`${originalStatusCode}`);
-      }
-      if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
-        throw $ERR_INVALID_CHAR("statusMessage");
-      }
-      head = { statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs };
-    },
-    flushHeaders() {
-      writeHeadToSocket(null);
-    },
-    writeHeadAndEnd(
-      statusCode,
-      statusMessage,
-      headers,
-      chunk,
-      encoding,
-      strictContentLength,
-      autoHeaderBits,
-      keepAliveTimeoutSecs,
-    ) {
-      // The native NodeHTTPResponse batches writeHead + end into one call;
-      // this fallback composes the same two steps.
-      this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
-      return this.end(chunk, encoding, undefined, strictContentLength);
-    },
-    write(chunk, encoding, _callback, _strictContentLength) {
-      const buf = toBuffer(chunk, encoding);
-      writeHeadToSocket(null);
-      return writeBody(buf);
-    },
-    end(chunk, encoding, _callback, _strictContentLength) {
-      if (this.ended) return 0;
-      const buf = toBuffer(chunk, encoding);
-      const length = buf ? (buf.byteLength ?? buf.length) : 0;
-      writeHeadToSocket(length);
-      writeBody(buf);
-      // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
-      // response never writes the terminating chunk, even when the user set
-      // Transfer-Encoding: chunked themselves.
-      if (chunked && !noBody) socket.write("0\r\n\r\n");
-      this.ended = true;
-      this.finished = true;
-      const onfinished = this.onfinished;
-      if (onfinished) {
-        this.onfinished = null;
-        onfinished();
-      }
-      // A close-delimited body ends at EOF, so the response ends the connection.
-      if (closeDelimited && !socket.destroyed) {
-        socket.end();
-      }
-      return length;
-    },
-    abort() {
-      this.aborted = true;
-      if (!socket.destroyed) socket.destroy();
-    },
-  };
-  return handle;
-}
-
-// HTTP/1.1 fallback for Http2SecureServer with `allowHTTP1: true`: parses the
-// request from the (already decrypted) TLS socket and emits 'request' with
-// http.IncomingMessage / http.ServerResponse objects, like node does by routing
-// the socket to the HTTP/1 connection listener.
-function connectionListenerHTTP1(server, socket, options) {
-  const http = require("node:http");
-  const { HTTPParser, prepareError } = require("node:_http_common");
-  const { kHandle: kHttp1ResponseHandle } = require("internal/http");
-  const { allMethods } = process.binding("http_parser");
-
-  const http1Options = options.http1Options || {};
-  const IncomingMessageClass = http1Options.IncomingMessage || http.IncomingMessage;
-  const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
-  const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
-
-  const connections = (server[kHttp1Connections] ??= new SafeSet());
-  connections.add(socket);
-  socket[kHttp1ActiveRequests] = 0;
-
-  const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
-  const kOnBody = HTTPParser.kOnBody | 0;
-  const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
-
-  const parser = new HTTPParser();
-  parser.initialize(HTTPParser.REQUEST, {});
-
-  let req = null;
-
-  parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
-    versionMajor,
-    versionMinor,
-    rawHeaders,
-    methodNum,
-    url,
-    _statusCode,
-    _statusMessage,
-    upgrade,
-    shouldKeepAlive,
-  ) {
-    socket[kHttp1ActiveRequests]++;
-
-    req = new IncomingMessageClass(socket);
-    req.socket = socket;
-    req.httpVersionMajor = versionMajor;
-    req.httpVersionMinor = versionMinor;
-    req.httpVersion = `${versionMajor}.${versionMinor}`;
-    req.url = url;
-    req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
-    req.upgrade = upgrade;
-    req._addHeaderLines(rawHeaders, rawHeaders.length);
-    // The body is fed by the parser callbacks below; reading just resumes the socket.
-    req._read = function (_size) {
-      if (socket.readable) socket.resume();
-    };
-
-    const res = new ServerResponseClass(req);
-    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
-    handle.onfinished = function () {
-      socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
-      if (!shouldKeepAlive && !socket.destroyed) {
-        socket.end();
-      }
-    };
-    res[kHttp1ResponseHandle] = handle;
-    res.assignSocket(socket);
-    // node's resOnFinish: release the socket once the response completes so the next
-    // keep-alive request's response can attach (assignSocket throws
-    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
-    res.on("finish", function onFallbackResponseFinish() {
-      this.detachSocket(socket);
-    });
-
-    server.emit("request", req, res);
-    return 0;
-  };
-  parser[kOnBody] = function onHttp1Body(chunk) {
-    if (req && !req._dumped) req.push(chunk);
-  };
-  parser[kOnMessageComplete] = function onHttp1MessageComplete() {
-    if (req) {
-      req.complete = true;
-      req.push(null);
-    }
-  };
-
-  function onHttp1SocketError(err, rawPacket) {
-    // Match Node's http _connectionListener: attach err.rawPacket and, when no
-    // 'clientError' listener is present, write the same raw error response
-    // Node's socketOnError does before destroying.
-    prepareError(err, parser, rawPacket);
-    if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
-        const code = err?.code;
-        socket.write(
-          code === "HPE_HEADER_OVERFLOW"
-            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
-            : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
-          "latin1",
-        );
-      }
-      socket.destroy(err);
-    }
-  }
-  socket.on("data", data => {
-    const ret = parser.execute(data);
-    if (ret instanceof Error) {
-      onHttp1SocketError(ret, data);
-    }
-  });
-  socket.on("error", err => onHttp1SocketError(err, undefined));
-  socket.once("close", () => {
-    connections.delete(socket);
-    try {
-      parser.close();
-    } catch {}
-  });
-}
-
-function closeIdleHttp1Connections(server) {
-  const connections = server[kHttp1Connections];
-  if (!connections) return;
-  for (const socket of connections) {
-    if (!socket[kHttp1ActiveRequests] && !socket.destroyed) {
-      socket.destroy();
-    }
-  }
-}
+const {
+  connectionListenerHTTP1,
+  closeIdleHttp1Connections,
+  kHttp1Connections,
+} = require("internal/http1_server_fallback");
 
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};
@@ -6816,6 +6784,11 @@ class Http2SecureServer extends tls.Server {
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
+      // connectionListenerHTTP1 reads these off the server when initializing
+      // the per-connection parser, matching Node's storeHTTP1Options.
+      this.maxHeaderSize = http1Options.maxHeaderSize;
+      this.insecureHTTPParser = http1Options.insecureHTTPParser;
+      this.httpValidation = http1Options.httpValidation;
     }
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);

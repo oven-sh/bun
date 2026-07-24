@@ -382,6 +382,133 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
+/* node:http flood prevention, resume half. Reads paused mid-buffer parked the
+ * unconsumed pipelined requests on the parser (HttpParser::nodeHttpPausedSpill).
+ * They must be replayed before the socket reads fresh bytes or the stream
+ * reorders, and replaying dispatches request handlers — so it must not run
+ * synchronously inside whatever JS operation made the connection resumable.
+ * Defer it as an event-loop task holding the JS socket wrapper alive; reads
+ * only actually resume once the spill has drained without re-pausing. */
+template<bool SSL>
+static void replayNodeHttpPausedSpill(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    httpResponseData->nodeHttpSpillReplayScheduled = false;
+    httpResponseData->nodeHttpReadsPausedSignal = false;
+    std::string spill = std::move(httpResponseData->nodeHttpPausedSpill);
+    httpResponseData->nodeHttpPausedSpill.clear();
+    if (!spill.empty()) {
+        /* The parser's post-padded fence writes two bytes past the end. */
+        spill.reserve(spill.size() + LIBUS_RECV_BUFFER_PADDING);
+        us_socket_t* returned = uWS::HttpContext<SSL>::feedNodeHttpData(socket, spill.data(), (int)spill.size());
+        if (!returned || us_socket_is_closed(returned)) {
+            return;
+        }
+        socket = returned;
+        httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    }
+    if (httpResponseData->nodeHttpReadsPausedSignal) {
+        /* A dispatch during the replay hit backpressure again and re-parked
+         * the rest; stay paused until the next resumable event. */
+        return;
+    }
+    if (httpResponseData->nodeHttpQueuedPipelinedCount > 0
+        || reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
+        /* The spill drained, but the pipeline has not: keep raw reads paused —
+         * the queue-drain / writable events re-enter the hook. */
+        return;
+    }
+    httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
+}
+
+template<bool SSL>
+static void onNodeHttpReadsResumable(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+        /* Flood prevention owns the pause. Outgoing backpressure holds
+         * everything — an incidental resume (writeHead re-arming the poll,
+         * req.resume()) must not reopen the flood or race fresh reads past the
+         * spill. Queued responses alone must NOT hold the spill replay: the
+         * body a queued response is waiting on may be sitting in the spill,
+         * and holding it would deadlock the pipeline. Raw reads still resume
+         * only once the queue and the spill have both drained. */
+        if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
+            return;
+        }
+        if (httpResponseData->nodeHttpPausedSpill.empty()
+            && httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
+            return;
+        }
+    }
+    if (httpResponseData->nodeHttpPausedSpill.empty()) {
+        httpResponseData->nodeHttpReadsPausedSignal = false;
+        httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+        reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
+        return;
+    }
+    if (httpResponseData->nodeHttpSpillReplayScheduled) {
+        return;
+    }
+    auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
+    if (!cell) {
+        /* No JS wrapper to root a task on; replay in place. Reads are still
+         * paused, so ordering holds. */
+        replayNodeHttpPausedSpill<SSL>(socket);
+        return;
+    }
+    auto* globalObject = defaultGlobalObject(cell->globalObject());
+    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
+    if (!scriptExecutionContext) {
+        replayNodeHttpPausedSpill<SSL>(socket);
+        return;
+    }
+    httpResponseData->nodeHttpSpillReplayScheduled = true;
+    JSC::Strong<JSNodeHTTPServerSocket> protectedSocket(globalObject->vm(), cell);
+    scriptExecutionContext->postTask([protectedSocket = std::move(protectedSocket)](WebCore::ScriptExecutionContext&) {
+        auto* self = protectedSocket.get();
+        us_socket_t* sock = self->socket;
+        if (!sock || us_socket_is_closed(sock)) {
+            return;
+        }
+        if (self->is_ssl) {
+            replayNodeHttpPausedSpill<true>(sock);
+        } else {
+            replayNodeHttpPausedSpill<false>(sock);
+        }
+    });
+}
+
+template<bool SSL>
+static void setReadsPausedSignalImpl(us_socket_t* socket)
+{
+    auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    d->nodeHttpReadsPausedSignal = true;
+    d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+}
+
+extern "C" void Bun__NodeHTTP__setReadsPausedSignal(int ssl, us_socket_t* socket)
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (ssl) {
+        setReadsPausedSignalImpl<true>(socket);
+    } else {
+        setReadsPausedSignalImpl<false>(socket);
+    }
+}
+
+extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
+{
+    if (ssl) {
+        onNodeHttpReadsResumable<true>(socket);
+    } else {
+        onNodeHttpReadsResumable<false>(socket);
+    }
+}
+
 template<bool SSL>
 static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose, bool hasMoreQueued)
 {
@@ -406,16 +533,11 @@ static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
         httpResponseData->nodeHttpQueuedPipelinedCount--;
     }
-    if (!hasMoreQueued && httpResponseData->nodeHttpQueuedPipelinedCount == 0
-        && (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
-        // The pipeline backlog drained. Resume reading new requests only once
-        // the socket has no outgoing backpressure left (Node's flood
-        // prevention keeps the socket paused while responses back up);
-        // otherwise HttpContext::onWritable resumes after the drain.
-        if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
-            httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-            reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
-        }
+    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+        // A pipeline advance while flood-paused: the hook replays parked
+        // request bytes once outgoing backpressure has flushed, and resumes
+        // raw reads only after both the queue and the spill drain.
+        onNodeHttpReadsResumable<SSL>(socket);
     }
     return true;
 }

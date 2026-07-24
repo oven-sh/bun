@@ -3802,7 +3802,7 @@ pub(super) fn server_set_app_flags_(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    use_insecure_http_parser: bool,
+    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
@@ -3816,7 +3816,7 @@ pub(super) fn server_set_app_flags_(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<HTTPSServer>() {
@@ -3824,7 +3824,7 @@ pub(super) fn server_set_app_flags_(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
@@ -3832,7 +3832,7 @@ pub(super) fn server_set_app_flags_(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
@@ -3840,7 +3840,7 @@ pub(super) fn server_set_app_flags_(
         unsafe { &mut *this }.set_flags(
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         );
     } else {
@@ -3898,7 +3898,7 @@ extern "C" fn server_set_app_flags_shim(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
-    use_insecure_http_parser: bool,
+    lenient_http_flags: u8,
     http_allow_half_open: bool,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
@@ -3908,7 +3908,7 @@ extern "C" fn server_set_app_flags_shim(
             server,
             require_host_header,
             use_strict_method_validation,
-            use_insecure_http_parser,
+            lenient_http_flags,
             http_allow_half_open,
         ),
     )

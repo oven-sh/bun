@@ -219,6 +219,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         rgba: out,
         width: w,
         height: h,
+        bit_depth: 8,
         icc_profile: icc,
     })
 }

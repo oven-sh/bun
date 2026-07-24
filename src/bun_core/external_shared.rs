@@ -63,14 +63,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         let this = core::mem::ManuallyDrop::new(self);
         this.ptr.as_ptr()
     }
-
-    /// Consumes `self`, converting into the optional form.
-    pub fn into_optional(self) -> ExternalSharedOptional<T> {
-        let this = core::mem::ManuallyDrop::new(self);
-        ExternalSharedOptional {
-            ptr: Some(this.ptr),
-        }
-    }
 }
 
 impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
@@ -134,18 +126,6 @@ impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
     pub fn take(&mut self) -> Option<ExternalShared<T>> {
         let ptr = self.ptr.take()?;
         Some(ExternalShared { ptr })
-    }
-
-    /// # Safety
-    /// If non-null, `raw` must be a valid pointer managed by the external refcount.
-    pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
-        if let Some(some_raw) = NonNull::new(raw) {
-            // SAFETY: caller contract.
-            unsafe { T::ext_ref(some_raw.as_ptr()) };
-        }
-        Self {
-            ptr: NonNull::new(raw),
-        }
     }
 
     /// Returns the raw pointer without decrementing the ref count. Consumes `self`.

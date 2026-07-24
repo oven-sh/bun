@@ -1081,14 +1081,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.len -= 1;
     }
 
-    /// Adjust the list's length to `new_len`.
-    /// Does not initialize added items, if any.
-    pub fn resize(&mut self, new_len: usize) -> Result<(), AllocError> {
-        self.ensure_total_capacity(new_len)?;
-        self.len = new_len;
-        Ok(())
-    }
-
     /// Attempt to reduce allocated capacity to `new_len`.
     pub fn shrink_and_free(&mut self, new_len: usize) {
         if new_len == 0 {
@@ -1206,21 +1198,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Stable sort by index-based context.
     pub fn sort<C: SortContext>(&mut self, ctx: &C) {
         self.sort_internal::<C, true>(0, self.len, ctx);
-    }
-
-    /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, true>(a, b, ctx);
-    }
-
-    /// Unstable sort by index-based context.
-    pub fn sort_unstable<C: SortContext>(&mut self, ctx: &C) {
-        self.sort_internal::<C, false>(0, self.len, ctx);
-    }
-
-    /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, false>(a, b, ctx);
     }
 
     pub fn capacity_in_bytes(capacity: usize) -> usize {

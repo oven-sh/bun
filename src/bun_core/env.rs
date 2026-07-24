@@ -59,11 +59,6 @@ pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
 } else {
     ""
 };
-pub const GIT_SHA_SHORTER: &str = if !build_options::SHA.is_empty() {
-    const_str_slice(build_options::SHA, 0, 6)
-} else {
-    ""
-};
 pub const IS_CANARY: bool = build_options::IS_CANARY;
 pub(crate) const CANARY_REVISION: &str = if IS_CANARY {
     build_options::CANARY_REVISION
@@ -102,16 +97,6 @@ pub enum OperatingSystem {
     Wasm,
 }
 
-/// OS tag for the targets Bun builds for.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum StdOsTag {
-    Macos,
-    Linux,
-    Freebsd,
-    Windows,
-}
-
 impl OperatingSystem {
     /// user-facing name with capitalization
     pub const fn display_string(self) -> &'static str {
@@ -132,16 +117,6 @@ impl OperatingSystem {
             Self::Freebsd => "freebsd",
             Self::Windows => "win32",
             Self::Wasm => "wasm",
-        }
-    }
-
-    pub const fn std_os_tag(self) -> StdOsTag {
-        match self {
-            Self::Mac => StdOsTag::Macos,
-            Self::Linux => StdOsTag::Linux,
-            Self::Freebsd => StdOsTag::Freebsd,
-            Self::Windows => StdOsTag::Windows,
-            Self::Wasm => unreachable!(),
         }
     }
 
@@ -194,10 +169,6 @@ pub const OS: OperatingSystem = if IS_MAC {
     panic!("Please add your OS to the OperatingSystem enum")
 };
 
-/// `process.platform`-style name for the host OS (`"win32"` on Windows).
-/// NB: Android targets resolve to `"linux"` here — for the user-facing
-/// `"android"` string see `bun_core::Global::os_name`.
-pub const OS_NAME_NODE: &str = OS.name_string();
 /// npm-package / release-archive segment for the host OS (`"windows"` on Windows).
 pub const OS_NAME_NPM: &str = OS.npm_name();
 

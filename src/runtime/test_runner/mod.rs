@@ -158,11 +158,6 @@ cfg_jsc! {
 }
 
 cfg_jsc! {
-    pub mod harness {
-        #[path = "fixtures.rs"] pub mod fixtures;
-        #[path = "recover.rs"]  pub mod recover;
-    }
-
     pub mod timers {
         #[path = "FakeTimers.rs"] pub mod fake_timers;
         pub use fake_timers::FakeTimers;
@@ -384,16 +379,11 @@ pub mod expect {
     /// the bun_jsc inherents.
     pub trait JSGlobalObjectTestExt {
         fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-        fn throw_invalid_arguments2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
     }
     impl JSGlobalObjectTestExt for JSGlobalObject {
         #[inline]
         fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
             self.throw(args)
-        }
-        #[inline]
-        fn throw_invalid_arguments2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            self.throw_invalid_arguments(args)
         }
     }
 
@@ -596,7 +586,6 @@ pub mod expect {
         "toHaveNthReturnedWith.rs"              => to_have_nth_returned_with,
         "toHaveProperty.rs"                     => to_have_property,
         "toHaveReturned.rs"                     => to_have_returned,
-        "toHaveReturnedTimes.rs"                => to_have_returned_times,
         "toHaveReturnedWith.rs"                 => to_have_returned_with,
         "toIncludeRepeated.rs"                  => to_include_repeated,
         "toMatch.rs"                            => to_match,
@@ -614,17 +603,11 @@ pub mod expect {
 
 // public surface for `crate::test_runner::*` consumers
 cfg_jsc! {
-    pub use bun_test::BunTest;
-    pub use diff_format::DiffFormatter;
     pub use done_callback::DoneCallback;
-    pub use execution::Execution;
     pub use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
         ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,
-        ExpectTypeOf, Flags as ExpectFlags,
+        ExpectTypeOf,
     };
-    pub use jest::Jest;
-    pub use pretty_format::JestPrettyFormat;
-    pub use snapshot::Snapshots;
 }

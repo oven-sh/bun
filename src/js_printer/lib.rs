@@ -22,7 +22,6 @@ use bun_core::Output;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_options_types::bundle_enums as bundle_opts;
-use bun_sys::Fd;
 
 /// Local stand-in for `bun_core::strings::Encoding` that derives `ConstParamTy` so it can
 /// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
@@ -53,11 +52,6 @@ use bun_ast::ImportRecordFlags;
 use bun_sourcemap as SourceMap;
 
 pub use bun_options_types::schema::api::CssInJsBehavior;
-
-/// The resolver crate is a sibling
-/// tier-4 crate; the canonical struct was MOVED DOWN to `bun_paths::fs::Path`
-/// so both the resolver and the printer can name it without a dep cycle.
-pub use bun_paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
@@ -123,22 +117,6 @@ pub mod analyze_transpiled_module {
                 Self::ExportInfoStar => 1,
             }
         }
-        #[inline]
-        pub fn try_from_u8(v: u8) -> Option<Self> {
-            Some(match v {
-                0 => Self::DeclaredVariable,
-                1 => Self::LexicalVariable,
-                2 => Self::ImportInfoSingle,
-                3 => Self::ImportInfoSingleTypeScript,
-                4 => Self::ImportInfoNamespace,
-                5 => Self::ExportInfoIndirect,
-                6 => Self::ExportInfoLocal,
-                7 => Self::ExportInfoNamespace,
-                8 => Self::ExportInfoStar,
-                9 => Self::ImportInfoNamespaceDefer,
-                _ => return None,
-            })
-        }
     }
 
     /// Kept as plain bools for ergonomic field access
@@ -155,14 +133,6 @@ pub mod analyze_transpiled_module {
             (self.contains_import_meta as u8)
                 | ((self.is_typescript as u8) << 1)
                 | ((self.has_tla as u8) << 2)
-        }
-        #[inline]
-        pub fn from_byte(b: u8) -> Self {
-            Self {
-                contains_import_meta: b & 0b001 != 0,
-                is_typescript: b & 0b010 != 0,
-                has_tla: b & 0b100 != 0,
-            }
         }
     }
 
@@ -274,169 +244,6 @@ pub mod analyze_transpiled_module {
         }
     }
 
-    /// Heap byte buffer with guaranteed 4-byte alignment.
-    ///
-    /// `as_ref()` below reinterprets interior ranges as `&[u32]` / `&[StringID]` /
-    /// `&[FetchParameters]` via `bytemuck::cast_slice`. A plain `Box<[u8]>` only
-    /// guarantees `align(1)`, so forming an aligned `&[u32]` from it is UB. We
-    /// instead over-align the allocation by storing `Box<[u32]>` and viewing it as
-    /// bytes — no raw alloc/dealloc, and `Send`/`Sync` are auto-derived.
-    struct AlignedBytes {
-        /// 4-byte-aligned backing storage (length rounded up to a whole `u32`).
-        words: Box<[u32]>,
-        /// Logical byte length (`<= words.len() * 4`); trailing pad bytes are zero.
-        len: usize,
-    }
-    impl AlignedBytes {
-        fn copy_from(src: &[u8]) -> Self {
-            let mut words = vec![0u32; src.len().div_ceil(4)].into_boxed_slice();
-            bytemuck::cast_slice_mut::<u32, u8>(&mut words)[..src.len()].copy_from_slice(src);
-            Self {
-                words,
-                len: src.len(),
-            }
-        }
-    }
-    impl core::ops::Deref for AlignedBytes {
-        type Target = [u8];
-        #[inline]
-        fn deref(&self) -> &[u8] {
-            &bytemuck::cast_slice::<u32, u8>(&self.words)[..self.len]
-        }
-    }
-
-    /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
-    pub struct ModuleInfoDeserializedOwned {
-        backing: AlignedBytes,
-        // `RecordKind` is a `#[repr(u8)]` enum (not all bit patterns valid), so
-        // the validated discriminants are decoded once in `create()` and owned
-        // here instead of being reinterpreted from `backing` on every `as_ref()`.
-        record_kinds: Box<[RecordKind]>,
-        // Same story for `ModulePhase` — validated once.
-        requested_modules_phases: Box<[ModulePhase]>,
-        // Offsets/lengths into `backing` — reconstructed as slices in `as_ref()`.
-        buffer: (usize, usize),
-        requested_modules_keys: (usize, usize),
-        requested_modules_values: (usize, usize),
-        strings_lens: (usize, usize),
-        strings_buf: (usize, usize),
-        flags: Flags,
-    }
-    impl ModuleInfoDeserializedOwned {
-        pub fn create(source: &[u8]) -> Result<Box<Self>, BadModuleInfo> {
-            let duped = AlignedBytes::copy_from(source);
-            let mut off = 0usize;
-            macro_rules! eat {
-                ($len:expr) => {{
-                    let len = $len;
-                    if duped.len() < off + len {
-                        return Err(BadModuleInfo);
-                    }
-                    let r = (off, len);
-                    off += len;
-                    r
-                }};
-            }
-            macro_rules! eat_u32 {
-                () => {{
-                    let (o, _) = eat!(4);
-                    u32::from_le_bytes(
-                        duped[o..o + 4]
-                            .try_into()
-                            .expect("infallible: size matches"),
-                    ) as usize
-                }};
-            }
-
-            let record_kinds_len = eat_u32!();
-            let (rk_off, rk_len) = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
-            // Validate + decode every record-kind byte into an owned `Box<[RecordKind]>`.
-            // `RecordKind` is a `#[repr(u8)]` enum, so out-of-range bytes are invalid;
-            // `source` may come from an on-disk cache (`create_from_cached_record`), so it
-            // is untrusted. Decoding once here lets `as_ref()` hand out `&[RecordKind]`
-            // without an `unsafe` reinterpret.
-            let mut record_kinds = Vec::with_capacity(rk_len);
-            for &b in &duped[rk_off..rk_off + rk_len] {
-                match RecordKind::try_from_u8(b) {
-                    Some(k) => record_kinds.push(k),
-                    None => return Err(BadModuleInfo),
-                }
-            }
-            let record_kinds = record_kinds.into_boxed_slice();
-            let _ = eat!((4 - (record_kinds_len % 4)) % 4); // alignment padding
-
-            let buffer_len = eat_u32!();
-            let buffer = eat!(buffer_len * core::mem::size_of::<StringID>());
-
-            let requested_modules_len = eat_u32!();
-            let requested_modules_keys =
-                eat!(requested_modules_len * core::mem::size_of::<StringID>());
-            let requested_modules_values =
-                eat!(requested_modules_len * core::mem::size_of::<FetchParameters>());
-            let (ph_off, ph_len) = eat!(requested_modules_len);
-            let mut requested_modules_phases = Vec::with_capacity(ph_len);
-            for &b in &duped[ph_off..ph_off + ph_len] {
-                requested_modules_phases.push(match b {
-                    0 => ModulePhase::Evaluation,
-                    1 => ModulePhase::Defer,
-                    _ => return Err(BadModuleInfo),
-                });
-            }
-            let requested_modules_phases = requested_modules_phases.into_boxed_slice();
-            let _ = eat!((4 - (requested_modules_len % 4)) % 4); // alignment padding
-
-            let (flags_off, _) = eat!(1);
-            let flags = Flags::from_byte(duped[flags_off]);
-            let _ = eat!(3); // alignment padding
-
-            let strings_len = eat_u32!();
-            let strings_lens = eat!(strings_len * core::mem::size_of::<u32>());
-            let strings_buf = (off, duped.len() - off);
-
-            Ok(Box::new(Self {
-                backing: duped,
-                record_kinds,
-                requested_modules_phases,
-                buffer,
-                requested_modules_keys,
-                requested_modules_values,
-                strings_lens,
-                strings_buf,
-                flags,
-            }))
-        }
-        /// Wrapper around `create` for cache loads; returns `None` on corrupt data.
-        pub fn create_from_cached_record(source: &[u8]) -> Option<Box<Self>> {
-            Self::create(source).ok()
-        }
-        pub fn as_ref(&self) -> ModuleInfoDeserialized<'_> {
-            let bytes: &[u8] = &self.backing;
-            #[inline(always)]
-            fn sub<T: bytemuck::Pod>(bytes: &[u8], (off, len): (usize, usize)) -> &[T] {
-                // `create` derives every (off, len) from `count * size_of::<T>()`
-                // and pads to 4-byte boundaries; `AlignedBytes` guarantees a
-                // 4-aligned base — so `cast_slice`'s align/size checks pass.
-                bytemuck::cast_slice(&bytes[off..off + len])
-            }
-            ModuleInfoDeserialized {
-                record_kinds: &self.record_kinds,
-                buffer: sub::<StringID>(bytes, self.buffer),
-                requested_modules_keys: sub::<StringID>(bytes, self.requested_modules_keys),
-                requested_modules_values: sub::<FetchParameters>(
-                    bytes,
-                    self.requested_modules_values,
-                ),
-                requested_modules_phases: &self.requested_modules_phases,
-                strings_lens: sub::<u32>(bytes, self.strings_lens),
-                strings_buf: &bytes[self.strings_buf.0..self.strings_buf.0 + self.strings_buf.1],
-                flags: self.flags,
-            }
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct BadModuleInfo;
-
     /// Insertion-ordered list of requested modules. Dedup key is
     /// `(specifier, phase)` to match JSC's `ModuleAnalyzer::appendRequestedModule`,
     /// which appends one entry per unique pair — so the same specifier can be
@@ -530,10 +337,6 @@ pub mod analyze_transpiled_module {
                 finalized: false,
             }
         }
-        pub fn destroy(self: Box<Self>) {
-            drop(self);
-        }
-
         pub fn as_deserialized(&self) -> ModuleInfoDeserialized<'_> {
             debug_assert!(self.finalized);
             ModuleInfoDeserialized {
@@ -909,40 +712,6 @@ macro_rules! ws {
 
 // PERF: `ascii_only`/`quote_char` are runtime args — collapses
 // the monomorphization fan-out; the inner branches are cheap and well-predicted.
-pub fn estimate_length_for_utf8(input: &[u8], ascii_only: bool, quote_char: u8) -> usize {
-    let mut remaining = input;
-    let mut len: usize = 2; // for quotes
-
-    while let Some(i) = strings::index_of_needs_escape_for_java_script_string(remaining, quote_char)
-    {
-        let i = i as usize;
-        len += i;
-        remaining = &remaining[i..];
-        let char_len = strings::wtf8_byte_sequence_length_with_invalid(remaining[0]);
-        let bytes: [u8; 4] = match char_len {
-            // 0 is not returned by `wtf8_byte_sequence_length_with_invalid`
-            1 => [remaining[0], 0, 0, 0],
-            2 => [remaining[0], remaining[1], 0, 0],
-            3 => [remaining[0], remaining[1], remaining[2], 0],
-            4 => [remaining[0], remaining[1], remaining[2], remaining[3]],
-            _ => unreachable!(),
-        };
-        let c = strings::decode_wtf8_rune_t::<i32>(bytes, char_len, 0);
-        if can_print_without_escape(c, ascii_only) {
-            len += char_len as usize;
-        } else if c <= 0xFFFF {
-            len += 6;
-        } else {
-            len += 12;
-        }
-        remaining = &remaining[char_len as usize..];
-    }
-    if remaining.as_ptr() == input.as_ptr() {
-        // The branch above already handled the loop body; falling out of the loop with no
-        // iterations means "no escapes anywhere".
-    }
-    len + remaining.len()
-}
 
 /// Thin const-generic facade kept for source-stable call sites (and external
 /// callers in other crates that pass literal const args). It forwards to the
@@ -1258,7 +1027,6 @@ use js_ast::{CommonJSNamedExports, TsEnumsMap};
 
 pub struct Options<'a> {
     pub bundling: bool,
-    pub transform_imports: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
     pub require_ref: Option<Ref>,
@@ -1266,11 +1034,8 @@ pub struct Options<'a> {
     pub hmr_ref: Ref,
     pub indent: Indentation,
     pub runtime_imports: runtime::Imports,
-    pub module_hash: u32,
-    pub source_path: Option<FsPath<'a>>,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
-    pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,
     pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
@@ -1341,7 +1106,6 @@ impl<'a> Default for Options<'a> {
     fn default() -> Self {
         Self {
             bundling: false,
-            transform_imports: true,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
             require_ref: None,
@@ -1349,10 +1113,7 @@ impl<'a> Default for Options<'a> {
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             runtime_imports: runtime::Imports::default(),
-            module_hash: 0,
-            source_path: None,
             source_map_handler: None,
-            source_map_builder: None,
             css_import_behavior: CssInJsBehavior::Facade,
             target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
@@ -1631,13 +1392,9 @@ pub mod __gated_printer {
         pub call_target: Option<ExprData>,
         pub writer: W,
 
-        pub has_printed_bundled_import_statement: bool,
-
         pub renamer: rename::Renamer<'a, 'a>,
         pub prev_stmt_tag: StmtTag,
         pub source_map_builder: SourceMap::chunk::Builder,
-
-        pub symbol_counter: u32,
 
         pub temporary_bindings: Vec<B::Property>,
 
@@ -1849,29 +1606,6 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<()> {
-            self.print(bytes);
-            Ok(())
-        }
-
-        pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {
-            let bytes = [byte; 256];
-            let mut remaining = n;
-            while remaining > 0 {
-                let to_write = remaining.min(bytes.len());
-                self.write_all(&bytes[..to_write])?;
-                remaining -= to_write;
-            }
-            Ok(())
-        }
-
-        pub fn write_bytes_n_times(&mut self, bytes: &[u8], n: usize) -> crate::Result<()> {
-            for _ in 0..n {
-                self.write_all(bytes)?;
-            }
-            Ok(())
-        }
-
         fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
             // Rust can't pre-count `fmt::Arguments` without formatting,
             // so stream each formatted chunk straight into the writer's
@@ -1900,10 +1634,6 @@ pub mod __gated_printer {
                 return Err(adapter.err.unwrap_or(crate::Error::WriteFailed));
             }
             Ok(())
-        }
-
-        pub fn print_buffer(&mut self, str: &[u8]) {
-            self.writer.print_slice(str);
         }
 
         /// Polymorphic print: bytes or single char.
@@ -2218,26 +1948,6 @@ pub mod __gated_printer {
             }
             self.print(b"}");
             self.needs_semicolon = false;
-        }
-
-        pub fn print_two_blocks_in_one(
-            &mut self,
-            loc: bun_ast::Loc,
-            stmts: &[Stmt],
-            prepend: &[Stmt],
-        ) {
-            self.add_source_mapping(loc);
-            self.print(b"{");
-            self.print_newline();
-
-            self.indent();
-            self.print_block_body(prepend, TopLevel::init(IsTopLevel::No));
-            self.print_block_body(stmts, TopLevel::init(IsTopLevel::No));
-            self.unindent();
-            self.needs_semicolon = false;
-
-            self.print_indent();
-            self.print(b"}");
         }
 
         pub fn print_decls(
@@ -7006,11 +6716,9 @@ pub mod __gated_printer {
                 prev_reg_exp_end: -1,
                 call_target: None,
                 writer,
-                has_printed_bundled_import_statement: false,
                 renamer,
                 prev_stmt_tag: StmtTag::SEmpty,
                 source_map_builder,
-                symbol_counter: 0,
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
                 stack_check: bun_core::StackCheck::init(),
@@ -7258,12 +6966,6 @@ impl HasDefaultValue for js_ast::ArrayBinding {
 // Writer (NewWriter)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct WriteResult {
-    pub off: u32,
-    pub len: usize,
-    pub end_off: u32,
-}
-
 /// Backend operations a `Writer` context provides.
 pub trait WriterContext {
     fn write_byte(&mut self, char: u8) -> crate::Result<usize>;
@@ -7273,9 +6975,7 @@ pub trait WriterContext {
     fn reserve_next(&mut self, count: u64) -> crate::Result<*mut u8>;
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
-    fn get_mutable_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
-    fn get_written(&self) -> &[u8];
     fn flush(&mut self) -> crate::Result<()> {
         Ok(())
     }
@@ -7329,9 +7029,6 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
     pub written: i32,
-    // Used by the printer
-    pub prev_char: u8,
-    pub prev_prev_char: u8,
     pub err: Option<crate::Error>,
     pub orig_err: Option<crate::Error>,
 }
@@ -7341,21 +7038,11 @@ impl<C: WriterContext> Writer<C> {
         Self {
             ctx,
             written: -1,
-            prev_char: 0,
-            prev_prev_char: 0,
             err: None,
             orig_err: None,
         }
     }
 
-    pub fn std_writer_write(&mut self, bytes: &[u8]) -> Result<usize, core::convert::Infallible> {
-        self.print_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    pub fn get_mutable_buffer(&mut self) -> &mut MutableString {
-        self.ctx.get_mutable_buffer()
-    }
     pub fn take_buffer(&mut self) -> MutableString {
         self.ctx.take_buffer()
     }
@@ -7393,13 +7080,6 @@ impl<C: WriterContext> Writer<C> {
         // Keep the debug-mode overflow check without paying for it in release.
         debug_assert!(count <= i32::MAX as u64);
         self.written = self.written.wrapping_add(count as i32);
-    }
-
-    pub fn write_all(&mut self, bytes: &[u8]) -> crate::Result<usize> {
-        let written = self.written.max(0);
-        self.print_slice(bytes);
-        debug_assert!(self.written >= 0);
-        Ok((self.written as usize).wrapping_sub(written as usize))
     }
 
     #[inline]
@@ -7545,20 +7225,6 @@ impl<W: WriterTrait> WriterTrait for &mut W {
 // DirectWriter / BufferWriter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct DirectWriter {
-    pub handle: Fd,
-}
-
-impl DirectWriter {
-    pub fn write(&mut self, buf: &[u8]) -> crate::Result<usize> {
-        bun_sys::write(self.handle, buf).map_err(|_| crate::Error::WriteFailed)
-    }
-    pub fn write_all(&mut self, buf: &[u8]) -> crate::Result<()> {
-        let _ = self.write(buf)?;
-        Ok(())
-    }
-}
-
 pub struct BufferWriter {
     pub buffer: MutableString,
     /// Watermark into `buffer.list` set by `done()`. Rust can't keep a
@@ -7572,10 +7238,6 @@ pub struct BufferWriter {
 }
 
 impl BufferWriter {
-    pub fn get_mutable_buffer(&mut self) -> &mut MutableString {
-        &mut self.buffer
-    }
-
     pub fn take_buffer(&mut self) -> MutableString {
         core::mem::replace(&mut self.buffer, MutableString::init_empty())
     }
@@ -7610,22 +7272,6 @@ impl BufferWriter {
             append_null_byte: false,
             append_newline: false,
         }
-    }
-
-    pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
-        Ok(Write::write_fmt(
-            &mut self.buffer.list,
-            format_args!("{}", args),
-        )?)
-    }
-
-    pub fn write_byte_n_times(&mut self, byte: u8, n: usize) -> crate::Result<()> {
-        self.buffer.append_char_n_times(byte, n)?;
-        Ok(())
-    }
-    // alias
-    pub fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::Result<()> {
-        self.write_byte_n_times(byte, n)
     }
 
     #[inline]
@@ -7741,16 +7387,8 @@ impl WriterContext for BufferWriter {
         self.slice()
     }
     #[inline]
-    fn get_mutable_buffer(&mut self) -> &mut MutableString {
-        self.get_mutable_buffer()
-    }
-    #[inline]
     fn take_buffer(&mut self) -> MutableString {
         self.take_buffer()
-    }
-    #[inline]
-    fn get_written(&self) -> &[u8] {
-        self.get_written()
     }
     #[inline]
     fn flush(&mut self) -> crate::Result<()> {

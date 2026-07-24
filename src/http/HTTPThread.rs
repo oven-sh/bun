@@ -312,7 +312,6 @@ pub struct InitOpts {
     // copied into the spawned thread and only read there (see the Send SAFETY note).
     pub ca: Vec<*const c_void>, // *const [*:0]const u8
     pub abs_ca_file_name: &'static [u8],
-    pub for_install: bool,
 
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
@@ -327,7 +326,6 @@ impl Default for InitOpts {
         Self {
             ca: Vec::new(),
             abs_ca_file_name: b"",
-            for_install: false,
             on_init_error: on_init_error_noop,
         }
     }
@@ -368,6 +366,9 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
         }
         InitError::InvalidCA => {
             Output::err("HTTPThread", "the provided CA is invalid", ());
+        }
+        InitError::InvalidCRL => {
+            Output::err("HTTPThread", "the provided CRL is invalid", ());
         }
         InitError::FailedToOpenSocket => {
             bun_core::err_generic!("failed to start HTTP client thread");
@@ -541,6 +542,7 @@ impl HttpThread {
                     });
 
                     return Err(match err {
+                        InitError::InvalidCRL => crate::Error::InvalidCRL,
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
                         | InitError::InvalidCAFile
@@ -568,10 +570,7 @@ impl HttpThread {
                 client.set_custom_ssl_ctx(ctx_nn);
                 // Keepalive is now supported for custom SSL contexts
                 let result = if let Some(url) = client.http_proxy.clone() {
-                    if url.protocol.is_empty()
-                        || url.protocol == b"https"
-                        || url.protocol == b"http"
-                    {
+                    if url.protocol.is_empty() || url.has_http_like_protocol() {
                         custom_context.connect(client, url.hostname, url.get_port_auto())
                     } else {
                         return Err(crate::Error::UnsupportedProxyProtocol);
@@ -587,7 +586,7 @@ impl HttpThread {
         if let Some(url) = client.http_proxy.clone() {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
-                if url.protocol.is_empty() || url.protocol == b"https" || url.protocol == b"http" {
+                if url.protocol.is_empty() || url.has_http_like_protocol() {
                     return self.context::<IS_SSL>().connect(
                         client,
                         url.hostname,

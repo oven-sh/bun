@@ -72,8 +72,6 @@ pub use draft::*;
 // placeholders to be replaced with a real debug-info backend in a later pass.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod debug {
-    use super::draft::StackTrace;
-
     /// `@returnAddress()` — forwards to the canonical stub in bun_core so that
     /// when it's wired to a real intrinsic, all callers (incl. the canonical
     /// `StoredTrace::capture`) pick it up together.
@@ -87,11 +85,6 @@ pub mod debug {
     #[inline]
     pub(crate) fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
         bun_core::capture_stack_trace(begin, addrs)
-    }
-
-    /// Fallback when ENABLE == false.
-    pub fn panic_impl(_ert: Option<&StackTrace<'_>>, _begin: Option<usize>, msg: &[u8]) -> ! {
-        panic!("{}", bstr::BStr::new(msg))
     }
 
     pub(crate) const HAVE_ERROR_RETURN_TRACING: bool = false;
@@ -643,6 +636,10 @@ mod draft {
         BusError(usize),
         /// Posix-only
         FloatingPointError(usize),
+        /// Posix-only; libc/mimalloc `abort()`, `std::terminate`, etc.
+        Abort,
+        /// Posix-only; `__builtin_trap()` / WTF `CRASH()` / `brk` on aarch64.
+        Trap(usize),
         /// Windows-only
         DatatypeMisalignment,
         /// Windows-only
@@ -667,7 +664,9 @@ mod draft {
                 CrashReason::IllegalInstruction(_) => libc::SIGILL,
                 CrashReason::BusError(_) => libc::SIGBUS,
                 CrashReason::FloatingPointError(_) => libc::SIGFPE,
-                CrashReason::Panic(_)
+                CrashReason::Trap(_) => libc::SIGTRAP,
+                CrashReason::Abort
+                | CrashReason::Panic(_)
                 | CrashReason::Unreachable
                 | CrashReason::DatatypeMisalignment
                 | CrashReason::StackOverflow
@@ -691,6 +690,10 @@ mod draft {
                 CrashReason::BusError(addr) => write!(writer, "Bus error at address 0x{:X}", addr),
                 CrashReason::FloatingPointError(addr) => {
                     write!(writer, "Floating point error at address 0x{:X}", addr)
+                }
+                CrashReason::Abort => writer.write_str("abort() called"),
+                CrashReason::Trap(addr) => {
+                    write!(writer, "Trap instruction at address 0x{:X}", addr)
                 }
                 CrashReason::DatatypeMisalignment => writer.write_str("Unaligned memory access"),
                 CrashReason::StackOverflow => writer.write_str("Stack overflow"),
@@ -859,9 +862,10 @@ mod draft {
     /// Where the crash trace is seeded from. Each call site has exactly one.
     #[derive(Clone, Copy)]
     pub enum TraceSeed<'a> {
-        /// Signal/exception handler saved the fault register context: walk frame
-        /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
-        /// becomes frame 0.
+        /// Signal/exception handler saved the fault register context. `pc`
+        /// becomes frame 0. POSIX: `fp` is the saved frame-pointer register and
+        /// the walk follows the fp chain. Windows: `fp` is the `*const CONTEXT`
+        /// from `EXCEPTION_POINTERS` and the walk uses `RtlVirtualUnwind`.
         Fault { pc: usize, fp: usize },
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
@@ -1672,6 +1676,8 @@ mod draft {
                 libc::SIGILL => CrashReason::IllegalInstruction(addr),
                 libc::SIGBUS => CrashReason::BusError(addr),
                 libc::SIGFPE => CrashReason::FloatingPointError(addr),
+                libc::SIGABRT => CrashReason::Abort,
+                libc::SIGTRAP => CrashReason::Trap(addr),
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
@@ -1721,6 +1727,11 @@ mod draft {
             libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
+            // abort() (mimalloc/glibc heap corruption, std::terminate) and
+            // __builtin_trap()/WTF CRASH()/`brk` on aarch64 raise these; without
+            // handlers they bypass bun.report entirely.
+            libc::sigaction(libc::SIGABRT, act_ptr, core::ptr::null_mut());
+            libc::sigaction(libc::SIGTRAP, act_ptr, core::ptr::null_mut());
         }
         Ok(())
     }
@@ -1754,6 +1765,10 @@ mod draft {
         }
         #[cfg(windows)]
         {
+            let range = bun_sys::windows::exe_image_range();
+            WINDOWS_EXE_IMAGE_BASE.store(range.start, Ordering::Relaxed);
+            WINDOWS_EXE_IMAGE_END.store(range.end, Ordering::Relaxed);
+
             // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
             unsafe {
                 // SAFETY: ABI-identical `extern "system" fn(*mut _) -> i32` —
@@ -1770,6 +1785,19 @@ mod draft {
                 // `reset_on_posix`). `HANDLE` is `*mut c_void`; cast is identity.
                 bun_core::WINDOWS_SEGFAULT_HANDLE
                     .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
+
+                // Backstop for exceptions the VEH passed on: runs only after
+                // every frame-based (SEH) handler has declined, so an
+                // exception a foreign module handles itself never reaches it.
+                // The handler JSC registers for JIT frames
+                // (ZigGlobalObject.cpp -> setJITExceptionHandlerWin) catches
+                // the under-JIT case before this.
+                bun_sys::windows::kernel32::SetUnhandledExceptionFilter(Some(
+                    bun_ptr::cast_fn_ptr::<
+                        extern "system" fn(*mut bun_sys::windows::EXCEPTION_POINTERS) -> c_long,
+                        unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
+                    >(handle_unhandled_exception_windows),
+                ));
             }
         }
         #[cfg(any(
@@ -2009,6 +2037,11 @@ mod draft {
                     unsafe { bun_sys::windows::kernel32::RemoveVectoredExceptionHandler(handle) };
                 debug_assert!(rc != 0);
             }
+            // SAFETY: no memory-safety preconditions; clears the top-level
+            // filter back to the OS default.
+            unsafe {
+                bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
+            }
             return;
         }
 
@@ -2027,44 +2060,143 @@ mod draft {
     }
 
     #[cfg(windows)]
-    pub(crate) extern "system" fn handle_segfault_windows(
-        info: *mut bun_sys::windows::EXCEPTION_POINTERS,
-    ) -> c_long {
-        // SAFETY: kernel provides a valid EXCEPTION_POINTERS
-        let info = unsafe { &*info };
-        let reason = match unsafe { (*info.ExceptionRecord).ExceptionCode } {
+    static WINDOWS_EXE_IMAGE_BASE: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(windows)]
+    static WINDOWS_EXE_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(windows)]
+    fn classify_exception_windows(
+        record: &bun_sys::windows::EXCEPTION_RECORD,
+    ) -> Option<CrashReason> {
+        Some(match record.ExceptionCode {
             bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason::DatatypeMisalignment,
             bun_sys::windows::EXCEPTION_ACCESS_VIOLATION => {
-                CrashReason::SegmentationFault(unsafe {
-                    (*info.ExceptionRecord).ExceptionInformation[1]
-                })
+                CrashReason::SegmentationFault(record.ExceptionInformation[1])
             }
             bun_sys::windows::EXCEPTION_ILLEGAL_INSTRUCTION => {
                 // `ExceptionAddress` is the faulting RIP for `STATUS_ILLEGAL_
                 // INSTRUCTION` (winnt.h); avoids depending on the arch-specific
                 // `CONTEXT` layout.
-                CrashReason::IllegalInstruction(
-                    unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize
-                )
+                CrashReason::IllegalInstruction(record.ExceptionAddress as usize)
             }
             bun_sys::windows::EXCEPTION_STACK_OVERFLOW => CrashReason::StackOverflow,
+            _ => return None,
+        })
+    }
 
-            // exception used for thread naming
-            // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
-            // related commit
-            // https://github.com/go-delve/delve/pull/1384
-            bun_sys::windows::MS_VC_EXCEPTION => {
-                return bun_sys::windows::EXCEPTION_CONTINUE_EXECUTION;
-            }
+    #[cfg(windows)]
+    pub(crate) extern "system" fn handle_segfault_windows(
+        info: *mut bun_sys::windows::EXCEPTION_POINTERS,
+    ) -> c_long {
+        // SAFETY: kernel provides a valid EXCEPTION_POINTERS / EXCEPTION_RECORD.
+        let info = unsafe { &*info };
+        let record = unsafe { &*info.ExceptionRecord };
 
-            _ => return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH,
+        // exception used for thread naming
+        // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
+        // related commit
+        // https://github.com/go-delve/delve/pull/1384
+        if record.ExceptionCode == bun_sys::windows::MS_VC_EXCEPTION {
+            return bun_sys::windows::EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        let Some(reason) = classify_exception_windows(record) else {
+            return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH;
         };
-        // SAFETY: kernel provides a valid EXCEPTION_RECORD; ExceptionAddress is
-        // the faulting instruction.
-        let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
-        // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
-        // by `pc`; the frame-pointer slot is unused.
-        crash_handler(reason, TraceSeed::Fault { pc, fp: 0 });
+
+        // VEH runs before any frame-based (SEH) handler. Windows system code
+        // deliberately uses SEH to probe unchecked handles: CRYPTSP.dll, for
+        // example, validates an HCRYPTPROV by reading `[rcx+0E8h]` inside a
+        // `__try`/`__except` that turns the access violation into
+        // `ERROR_INVALID_PARAMETER`. Treating that first-chance exception as
+        // fatal kills the process for what the callee was about to recover
+        // from. So only take over here when the faulting instruction is inside
+        // Bun's own image; for foreign code, let SEH dispatch proceed. JSC
+        // registers unwind info for its JIT pool with a language-specific
+        // handler (LLInt is pending build-time offlineasm .seh_* emission)
+        // that routes back to `Bun__crashHandlerFromJSCFrame`, and
+        // `handle_unhandled_exception_windows` reports anything that still
+        // goes unhandled. Stack overflow is always claimed here: no foreign
+        // `__except` recovers from it in practice, and SEH dispatch itself
+        // costs stack the guard reserve may not have.
+        let pc = record.ExceptionAddress as usize;
+        let base = WINDOWS_EXE_IMAGE_BASE.load(Ordering::Relaxed);
+        let end = WINDOWS_EXE_IMAGE_END.load(Ordering::Relaxed);
+        if !matches!(reason, CrashReason::StackOverflow) && base != 0 && !(base..end).contains(&pc)
+        {
+            return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        // Windows: capture_from_context walks via RtlVirtualUnwind seeded from
+        // the fault CONTEXT, so the handler's own frames are never captured.
+        crash_handler(
+            reason,
+            TraceSeed::Fault {
+                pc,
+                fp: info.ContextRecord as usize,
+            },
+        );
+    }
+
+    /// Called from JSC's `jscJITSEHHandler` when SEH dispatch reaches a JIT
+    /// frame with an unhandled exception. Reports the crash if the reason is
+    /// one we classify; otherwise continues the search so an outer handler
+    /// (or UEF) can claim it.
+    #[cfg(windows)]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__crashHandlerFromJSCFrame(
+        record: *mut bun_sys::windows::EXCEPTION_RECORD,
+        _establisher_frame: *mut core::ffi::c_void,
+        context: *mut core::ffi::c_void,
+        _dispatcher: *mut core::ffi::c_void,
+    ) -> c_long {
+        use bun_sys::windows::disposition::ExceptionContinueSearch;
+        // SAFETY: kernel provides a valid EXCEPTION_RECORD.
+        let record = unsafe { &*record };
+        // A PEXCEPTION_ROUTINE can also be invoked during the unwind phase if
+        // the frame's UNWIND_INFO carries UNW_FLAG_UHANDLER (the WebKit side
+        // currently sets EHANDLER only; this matches SpiderMonkey's guard).
+        // Also decline once `reset_segfault_handler` has torn down the VEH so
+        // a re-fault during teardown reaches the OS default instead of
+        // re-entering `crash_handler`.
+        if record.ExceptionFlags & bun_sys::windows::EXCEPTION_UNWIND != 0
+            || bun_core::WINDOWS_SEGFAULT_HANDLE
+                .load(Ordering::Relaxed)
+                .is_null()
+        {
+            return ExceptionContinueSearch;
+        }
+        let Some(reason) = classify_exception_windows(record) else {
+            return ExceptionContinueSearch;
+        };
+        let pc = record.ExceptionAddress as usize;
+        crash_handler(
+            reason,
+            TraceSeed::Fault {
+                pc,
+                fp: context as usize,
+            },
+        );
+    }
+
+    #[cfg(windows)]
+    pub(crate) extern "system" fn handle_unhandled_exception_windows(
+        info: *mut bun_sys::windows::EXCEPTION_POINTERS,
+    ) -> c_long {
+        // SAFETY: kernel provides a valid EXCEPTION_POINTERS / EXCEPTION_RECORD.
+        let info = unsafe { &*info };
+        let record = unsafe { &*info.ExceptionRecord };
+        let Some(reason) = classify_exception_windows(record) else {
+            return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH;
+        };
+        let pc = record.ExceptionAddress as usize;
+        crash_handler(
+            reason,
+            TraceSeed::Fault {
+                pc,
+                fp: info.ContextRecord as usize,
+            },
+        );
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -2679,6 +2811,12 @@ mod draft {
             }
 
             CrashReason::OutOfMemory => writer.write_byte(b'9')?,
+
+            CrashReason::Abort => writer.write_byte(b'a')?,
+            CrashReason::Trap(addr) => {
+                writer.write_byte(b'b')?;
+                write_u64_as_two_vlqs(writer, addr)?;
+            }
         }
 
         if opts.action == TraceStringAction::ViewTrace {
@@ -3054,18 +3192,6 @@ mod draft {
         }
     }
 
-    /// In many places we catch errors, the trace for them is absorbed and only a
-    /// single line (the error name) is printed. When this is set, we will print
-    /// trace strings for those errors (or full stacks in debug builds).
-    ///
-    /// This can be enabled by passing `--verbose-error-trace` to the CLI.
-    /// In release builds with error return tracing enabled, this is also exposed.
-    /// You can test if this feature is available by checking `bun --help` for the flag.
-    #[inline]
-    pub fn handle_error_return_trace(err_name: &[u8], maybe_trace: Option<&StackTrace>) {
-        handle_error_return_trace_extra::<false>(err_name, maybe_trace);
-    }
-
     unsafe extern "C" {
         fn WTF__DumpStackTrace(ptr: *const usize, count: usize);
     }
@@ -3253,22 +3379,6 @@ mod draft {
         Ok(())
     }
 
-    pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
-        // Not `unwrap_or_else`: the default trim anchor must be read from this
-        // frame, not from a closure's popped frame (see `panic_impl`).
-        let first_address = match first_address {
-            Some(addr) => addr,
-            None => debug::return_address(),
-        };
-        let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(first_address, &mut addrs);
-        let stack = StackTrace {
-            index: n,
-            instruction_addresses: &addrs,
-        };
-        dump_stack_trace(&stack, limits);
-    }
-
     /// If POSIX, and the existing soft limit for core dumps (ulimit -Sc) is nonzero, change it to zero.
     /// Used in places where we intentionally crash for testing purposes so that we don't clutter CI
     /// with core dumps.
@@ -3309,16 +3419,11 @@ mod draft {
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
 
-    /// For large codebases such as bun.bake.DevServer, it may be helpful
-    /// to dump a large amount of state to a file to aid debugging a crash.
-    ///
     /// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
     pub fn append_pre_crash_handler<T: 'static>(
         ptr: *mut T,
         handler: fn(&mut T) -> crate::Result<()>,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Rust can't capture `handler` in a bare `fn` item, so box a closure that
-        // performs the cast+call. Errors are intentionally swallowed (best-effort dump).
         let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
             // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
             // when registered and remove_pre_crash_handler() unregisters it before drop.

@@ -105,7 +105,6 @@ pub mod bun_install_js_bindings {
         // `Vec<u8>`.
         let mut w = WriteStream::new(WriteStreamOptions {
             indent: 2,
-            emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
         // `jsonStringify` only surfaces the underlying writer's error; the

@@ -1,12 +1,10 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
-// `jsc.Strong.Optional` and `jsc.Weak(T)` collide with this module's own `Strong`/`Weak`,
-// so import them under aliases.
+// `jsc.Strong.Optional` collides with this module's own `Strong`, so import it under an alias.
 use crate::JsTerminated;
 use crate::strong::Optional as JscStrong;
 use crate::virtual_machine::VirtualMachine;
-use crate::weak::{Weak as JscWeak, WeakRefType};
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
@@ -59,101 +57,12 @@ unsafe extern "C" {
 
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
     safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
-    safe fn JSC__JSPromise__isHandled(this: &JSPromise) -> bool;
     safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
     // The resolve/reject/rejectAsHandled shims are `void` on the C side
     // (bindings.cpp) — there is no bool sentinel on the wire; a pending
     // exception is surfaced by checking `global.has_exception()` after the
     // call.
 }
-
-// ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
-
-pub struct Weak<T> {
-    weak: JscWeak<T>,
-}
-
-impl<T> Default for Weak<T> {
-    fn default() -> Self {
-        Self {
-            weak: JscWeak::default(),
-        }
-    }
-}
-
-impl<T> Weak<T> {
-    pub fn reject(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let _ = self.swap().reject(global, Ok(val));
-    }
-
-    /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        // The safe wrapper funnels through the single audited deref in
-        // `enter_event_loop_scope`.
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.reject(global, val);
-    }
-
-    pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let _ = self.swap().resolve(global, val);
-    }
-
-    /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.resolve(global, val);
-    }
-
-    pub fn init(
-        global: &JSGlobalObject,
-        promise: JSValue,
-        ref_type: WeakRefType,
-        ctx: &mut T,
-    ) -> Self {
-        // `Weak<T>` encodes the finalizer via `WeakRefType` (one variant per
-        // finalizer — see Weak.rs).
-        Self {
-            weak: JscWeak::<T>::create(promise, global, ref_type, ctx),
-        }
-    }
-
-    /// Borrow the GC-rooted `JSPromise` cell. Panics if the weak slot is empty
-    /// or no longer a promise.
-    ///
-    /// Safe because `JSPromise` is an `opaque_ffi!` ZST handle: a `&mut` to it
-    /// covers zero bytes (see [`bun_opaque::opaque_deref_mut`] for the proof),
-    /// so two callers cannot alias any Rust-visible memory. The pointer comes
-    /// from the JSValue payload (not derived from `&self`) and the weak ref
-    /// keeps the cell observable while held.
-    pub fn get(&self) -> &mut JSPromise {
-        JSPromise::opaque_mut(self.weak.get().unwrap().as_promise().unwrap())
-    }
-
-    /// See [`get`]; returns `None` instead of panicking when the slot is empty.
-    pub fn get_or_null(&self) -> Option<&mut JSPromise> {
-        let promise_value = self.weak.get()?;
-        promise_value.as_promise().map(JSPromise::opaque_mut)
-    }
-
-    pub fn value(&self) -> JSValue {
-        self.weak.get().unwrap()
-    }
-
-    pub fn value_or_empty(&self) -> JSValue {
-        self.weak.get().unwrap_or(JSValue::ZERO)
-    }
-
-    pub fn swap(&mut self) -> &mut JSPromise {
-        let prom = self.weak.swap().as_promise().unwrap();
-        // Drop the underlying weak handle now.
-        self.weak = JscWeak::default();
-        // `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
-        // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
-        JSPromise::opaque_mut(prom)
-    }
-}
-
-// Cleanup is subsumed by `Drop` on `JscWeak<T>`; no explicit `Drop` impl needed.
 
 // ───────────────────────────── JSPromise.Strong ──────────────────────────────
 
@@ -167,17 +76,6 @@ impl Strong {
         Self {
             strong: JscStrong::empty(),
         }
-    }
-
-    pub fn reject_without_swap(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) {
-        let Some(v) = self.strong.get() else { return };
-        let val = val.unwrap_or_else(|_| global.try_take_exception().unwrap());
-        let _ = JSPromise::opaque_mut(v.as_promise().unwrap()).reject(global, Ok(val));
-    }
-
-    pub fn resolve_without_swap(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let Some(v) = self.strong.get() else { return };
-        let _ = JSPromise::opaque_mut(v.as_promise().unwrap()).resolve(global, val);
     }
 
     pub fn reject(
@@ -391,10 +289,6 @@ impl JSPromise {
 
     pub fn result(&mut self, vm: &VM) -> JSValue {
         JSC__JSPromise__result(self, vm)
-    }
-
-    pub fn is_handled(&self) -> bool {
-        JSC__JSPromise__isHandled(self)
     }
 
     pub fn set_handled(&mut self) {

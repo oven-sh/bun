@@ -449,10 +449,33 @@ impl FileRoute {
         };
 
         let status_code: u16 = 'brk: {
-            // RFC 9110 §13.2.2: conditional preconditions are evaluated before
-            // Range. If-None-Match is evaluated first; when present it suppresses
-            // If-Modified-Since regardless of outcome (step 3 vs step 4). Both
-            // only apply to GET/HEAD for 304 purposes.
+            // RFC 9110 §13.2.2: preconditions evaluate before Range, in order:
+            // (1) If-Match, else (2) If-Unmodified-Since; then (3) If-None-Match,
+            // else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must
+            // run before steps 3/4 can yield 304.
+            if (method == Method::HEAD || method == Method::GET) && this.status_code == 200 {
+                // Step 1: If-Match (strong comparison).
+                if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
+                    let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
+                    if !ETag::if_match(etag, im) {
+                        break 'brk 412;
+                    }
+                // Step 2: If-Unmodified-Since (only when If-Match is absent).
+                } else if let Some(ius) = req
+                    .header(b"if-unmodified-since")
+                    .and_then(crate::jsc_hooks::parse_http_date)
+                {
+                    let Ok(lmd) = this.last_modified_date() else {
+                        return;
+                    };
+                    if let Some(lm) = lmd {
+                        if lm / 1000 > ius / 1000 {
+                            break 'brk 412;
+                        }
+                    }
+                }
+            }
+
             if method == Method::HEAD || method == Method::GET {
                 if let Some(inm) = req.header(b"if-none-match").filter(|v| !v.is_empty()) {
                     if this.status_code == 200 {
@@ -509,6 +532,10 @@ impl FileRoute {
         // null-body status must never start it; 307/308 routes skip it too.
         if HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308) {
             resp.end_without_body(resp.should_close_connection());
+            return;
+        }
+        if status_code == 412 {
+            resp.end(b"", resp.should_close_connection());
             return;
         }
 

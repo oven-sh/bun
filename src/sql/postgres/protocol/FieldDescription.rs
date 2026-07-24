@@ -7,8 +7,6 @@ pub struct FieldDescription {
     /// JavaScriptCore treats numeric property names differently than string property names.
     /// so we do the work to figure out if the property name is a number ahead of time.
     pub name_or_index: ColumnIdentifier,
-    pub table_oid: Int4,
-    pub column_index: Short,
     pub type_oid: Int4,
     pub binary: bool,
 }
@@ -17,8 +15,6 @@ impl Default for FieldDescription {
     fn default() -> Self {
         Self {
             name_or_index: ColumnIdentifier::Name(Default::default()),
-            table_oid: 0,
-            column_index: 0,
             type_oid: 0,
             binary: false,
         }
@@ -41,11 +37,11 @@ impl FieldDescription {
         let field_name = ColumnIdentifier::init(name).map_err(|_| AnyPostgresError::OutOfMemory)?;
         // Table OID (4 bytes)
         // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
-        let table_oid = reader.int4()?;
+        reader.int4()?;
 
         // Column attribute number (2 bytes)
         // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
-        let column_index = reader.short()?;
+        reader.short()?;
 
         // Data type OID (4 bytes)
         // The object ID of the field's data type. The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
@@ -63,8 +59,6 @@ impl FieldDescription {
             _ => return Err(AnyPostgresError::UnknownFormatCode),
         };
         Ok(Self {
-            table_oid,
-            column_index,
             type_oid,
             binary,
             name_or_index: field_name,

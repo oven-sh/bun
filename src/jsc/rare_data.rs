@@ -14,7 +14,7 @@ use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
-use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
+use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
@@ -37,7 +37,7 @@ use super::uuid::UUID;
 //     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
 //     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
-//     `__bun_stdio_blob_store_new` (link-time extern; same fn MiniEventLoop uses).
+//     `__bun_stdio_blob_store_new` (link-time extern).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
 //   - `s3_default_client` / `default_client_ssl_ctx` / typed HotMap get/insert
 //     → bodies live in `bun_runtime` (they call high-tier ctors); RareData
@@ -547,11 +547,6 @@ impl RefCountedEnvValue {
     }
 }
 
-// `AWSSignatureCache` moved DOWN to `bun_s3_signing::credentials` (process
-// static). Re-exported for any out-of-tree callers that named the type via
-// `bun_jsc::rare_data::AWSSignatureCache`.
-pub use bun_s3_signing::credentials::AWSSignatureCache;
-
 // ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
@@ -661,11 +656,6 @@ impl RareData {
             .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
     }
 
-    pub fn file_polls(&mut self, _vm: &mut VirtualMachine) -> &mut FilePollStore {
-        self.file_polls_
-            .get_or_insert_with(|| Box::new(FilePollStore::init()))
-    }
-
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
         // The raw `ENGINE_new()` result is cached without a null check:
         // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
@@ -749,14 +739,6 @@ impl RareData {
         let mut sockets = self.listening_sockets_for_watch_mode.lock();
         if let Some(i) = sockets.iter().position(|s| *s == socket) {
             sockets.swap_remove(i);
-        }
-    }
-
-    pub fn close_all_listen_sockets_for_watch_mode(&self) {
-        for socket in core::mem::take(&mut *self.listening_sockets_for_watch_mode.lock()) {
-            // Prevent TIME_WAIT state so the relaunched process can rebind.
-            syscall::disable_linger(socket);
-            socket.close();
         }
     }
 
@@ -1092,5 +1074,3 @@ impl Drop for RareData {
         });
     }
 }
-
-pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;

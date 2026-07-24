@@ -122,16 +122,14 @@ impl us_socket_t {
         c::us_socket_is_shut_down(self) > 0
     }
 
-    pub fn is_tls(&self) -> bool {
-        c::us_socket_is_tls(self) > 0
+    /// `None` when `getsockname()` fails or the address family has no port.
+    pub fn local_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_local_port(self)).ok()
     }
 
-    pub fn local_port(&self) -> i32 {
-        c::us_socket_local_port(self)
-    }
-
-    pub fn remote_port(&self) -> i32 {
-        c::us_socket_remote_port(self)
+    /// `None` when `getpeername()` fails or the address family has no port.
+    pub fn remote_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_remote_port(self)).ok()
     }
 
     /// Returned slice is a view into `buf`.
@@ -204,19 +202,6 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
-    /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
-    pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
-        if !self.is_tls() {
-            return None;
-        }
-        unsafe {
-            // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
-            c::us_socket_get_native_handle(self)
-                .cast::<bun_boringssl_sys::SSL>()
-                .as_mut()
-        }
-    }
-
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
     /// plain TCP. Consumers that want one or the other should call `ssl()` /
     /// `get_fd()` directly; this is the round-trip-to-JS form.
@@ -261,20 +246,6 @@ impl us_socket_t {
         c::us_socket_set_kind(self, k as u8);
     }
 
-    /// Move this socket to a new group/kind, optionally resizing its ext.
-    /// Returns the (possibly relocated) socket; `self` is invalid after.
-    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
-    pub fn adopt(
-        &mut self,
-        g: &mut SocketGroup,
-        k: SocketKind,
-        old_ext: i32,
-        new_ext: i32,
-    ) -> Option<NonNull<us_socket_t>> {
-        // SAFETY: self and g are live; C may realloc and return a different us_socket_t*
-        unsafe { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
-    }
-
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
     /// side for the socket's lifetime). Does NOT kick the handshake — the
     /// caller must repoint `ext` first (so any dispatch lands in the new
@@ -288,6 +259,8 @@ impl us_socket_t {
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
         is_client: bool,
+        request_cert: bool,
+        reject_unauthorized: bool,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
@@ -301,6 +274,8 @@ impl us_socket_t {
                 ssl_ctx,
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
                 is_client as i32,
+                request_cert as i32,
+                reject_unauthorized as i32,
                 old_ext,
                 new_ext,
             ))
@@ -522,7 +497,6 @@ mod c {
         pub(super) safe fn us_socket_kind(s: &us_socket_t) -> u8;
         pub(super) safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
         pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
-        pub(super) safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
 
         pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         #[cfg(not(windows))]
@@ -577,13 +551,6 @@ mod c {
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
 
-        pub(super) fn us_socket_adopt(
-            s: *mut us_socket_t,
-            group: *mut SocketGroup,
-            kind: u8,
-            old_ext_size: i32,
-            ext_size: i32,
-        ) -> *mut us_socket_t;
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,
@@ -592,6 +559,8 @@ mod c {
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
             is_client: i32,
+            request_cert: i32,
+            reject_unauthorized: i32,
             old_ext_size: i32,
             ext_size: i32,
         ) -> *mut us_socket_t;

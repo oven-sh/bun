@@ -171,28 +171,6 @@ impl SerializedFailure {
     }
 }
 
-/// This assumes the hash map contains only one SerializedFailure per owner.
-/// This is okay since SerializedFailure can contain more than one error.
-pub struct ArrayHashContextViaOwner;
-impl ArrayHashContextViaOwner {
-    pub fn hash(&self, k: &SerializedFailure) -> u32 {
-        bun_wyhash::hash_int(k.get_owner().encode().bits())
-    }
-    pub fn eql(&self, a: &SerializedFailure, b: &SerializedFailure, _: usize) -> bool {
-        a.get_owner().encode().bits() == b.get_owner().encode().bits()
-    }
-}
-
-pub struct ArrayHashAdapter;
-impl ArrayHashAdapter {
-    pub fn hash(&self, own: Owner) -> u32 {
-        bun_wyhash::hash_int(own.encode().bits())
-    }
-    pub fn eql(&self, a: Owner, b: &SerializedFailure, _: usize) -> bool {
-        a.encode().bits() == b.get_owner().encode().bits()
-    }
-}
-
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ErrorKind {

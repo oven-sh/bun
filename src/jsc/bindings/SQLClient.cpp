@@ -171,6 +171,13 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         break;
     case DataCellTag::DateWithTimeZone:
     case DataCellTag::Date: {
+        // Postgres 'infinity'::date / '-infinity'::timestamp arrive here as
+        // ±Infinity. DateInstance::create applies timeClip, which maps every
+        // non-finite input to NaN and loses the sign. Return the Number
+        // ±Infinity instead, matching node-postgres (pg-types / postgres-date).
+        if (std::isinf(cell.value.date)) {
+            return jsDoubleNumber(cell.value.date);
+        }
         return JSC::DateInstance::create(vm, globalObject->dateStructure(), cell.value.date);
         break;
     }

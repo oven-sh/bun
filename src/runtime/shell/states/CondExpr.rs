@@ -2,10 +2,10 @@
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::{Expansion, ExpansionOpts};
+use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
 pub struct CondExpr {
@@ -37,7 +37,7 @@ impl CondExpr {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::CondExpr(CondExpr {
-            base: Base::new(StateKind::Condexpr, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: CondExprState::Idle,
@@ -68,17 +68,7 @@ impl CondExpr {
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
                     let io = interp.as_condexpr(this).io.clone();
-                    let child = Expansion::init(
-                        interp,
-                        shell,
-                        atom,
-                        this,
-                        io,
-                        ExpansionOpts {
-                            for_spawn: false,
-                            single: true,
-                        },
-                    );
+                    let child = Expansion::init(interp, shell, atom, this, io);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),

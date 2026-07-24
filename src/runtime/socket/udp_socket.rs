@@ -7,8 +7,8 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, Ref as JscRef,
-    StringJsc, SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -527,7 +527,6 @@ pub struct UDPSocket {
     pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsCell<JsRef>,
 
-    pub jsc_ref: JscRef,
     pub poll_ref: JsCell<KeepAlive>,
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
@@ -537,7 +536,6 @@ pub struct UDPSocket {
     /// replaces the config. POSIX-only, like the registry itself.
     #[cfg(not(windows))]
     registered_fd: Cell<Option<c_int>>,
-    pub vm: *mut VirtualMachine,
 }
 
 impl UDPSocket {
@@ -564,15 +562,12 @@ impl UDPSocket {
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
-        let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(global_this),
             loop_: uws::Loop::get(),
-            vm,
             this_value: JsCell::new(JsRef::empty()),
-            jsc_ref: JscRef::init(),
             poll_ref: JsCell::new(KeepAlive::init()),
             closed: Cell::new(false),
             connect_info: Cell::new(None),

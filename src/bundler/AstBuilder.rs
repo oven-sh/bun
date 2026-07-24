@@ -6,13 +6,12 @@
 //! inside of `js_parser`
 
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
 
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_ast::{Loc, Log, Range, Source};
+use bun_ast::{Loc, Range, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
@@ -29,7 +28,6 @@ use bun_ast::{
     NamedExport, Part, PartSymbolUseMap, Scope, Stmt, Symbol,
 };
 use bun_ast::{E, G, S};
-use bun_js_parser as js_parser;
 
 use crate::options;
 
@@ -46,9 +44,7 @@ pub struct AstBuilder<'a, 'bump> {
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
     pub import_records_for_current_part: Vec<u32>,
-    pub export_star_import_records: Vec<u32>,
     pub current_scope: *mut Scope,
-    pub log: Log,
     pub module_ref: Ref,
     pub declared_symbols: DeclaredSymbolList,
     /// When set, codegen is altered
@@ -62,14 +58,6 @@ pub struct AstBuilder<'a, 'bump> {
 // AstBuilder emits; if `ImportScanner` ever grows a host trait in
 // `bun_js_parser`, these stubs are the surface it would formalize.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
-    // stub for ImportScanner duck typing
-    pub fn import_items_for_namespace_get(
-        &self,
-        _ref: Ref,
-    ) -> Option<&js_parser::parser::ImportItemForNamespaceMap> {
-        None
-    }
-
     pub fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,
@@ -89,8 +77,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             import_records_for_current_part: Vec::new(),
             named_imports: Default::default(),
             named_exports: Default::default(),
-            log: Log::init(),
-            export_star_import_records: Vec::new(),
             declared_symbols: Default::default(),
             hot_reloading,
             module_ref: Ref::NONE,  // overwritten below
@@ -120,27 +106,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // SAFETY: see fn doc — non-null bump-arena slot, exclusively borrowed
         // through `&mut self`.
         unsafe { &mut *self.current_scope }
-    }
-
-    pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
-        self.scopes.reserve(1);
-        self.current_scope_mut().children.ensure_unused_capacity(1);
-        let scope = NonNull::from(self.bump.alloc(Scope {
-            kind,
-            label_ref: Ref::NONE,
-            parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
-            ..Default::default()
-        }));
-        self.current_scope_mut()
-            .children
-            .append_assume_capacity(scope.into());
-        self.scopes.push(self.current_scope);
-        self.current_scope = scope.as_ptr();
-        Ok(scope.as_ptr())
-    }
-
-    pub fn pop_scope(&mut self) {
-        self.current_scope = self.scopes.pop().unwrap();
     }
 
     pub fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
@@ -643,29 +608,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             }
         }
     }
-
-    pub fn ignore_usage(&mut self, _ref: Ref) {}
-
-    pub fn panic(&self, args: core::fmt::Arguments<'_>) -> ! {
-        Output::panic(args);
-    }
-
-    /// Builds the `module.exports` member expression.
-    pub fn module_exports(&self, loc: Loc) -> Expr {
-        self.new_expr(E::Dot {
-            name: b"exports".into(),
-            name_loc: loc,
-            target: self.new_expr(E::Identifier {
-                ref_: self.module_ref,
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-    }
 }
 
 use bun_ast::Ref;
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

@@ -768,26 +768,6 @@ impl Time {
 
         time
     }
-
-    pub fn to_js_timestamp(&self) -> f64 {
-        let mut total_ms: i64 = 0;
-        total_ms = total_ms.saturating_add((self.days as i64) * 86400000);
-        total_ms = total_ms.saturating_add((self.hours as i64) * 3600000);
-        total_ms = total_ms.saturating_add((self.minutes as i64) * 60000);
-        total_ms = total_ms.saturating_add((self.seconds as i64) * 1000);
-        total_ms = total_ms.saturating_add((self.microseconds / 1000) as i64);
-
-        if self.negative {
-            total_ms = -total_ms;
-        }
-
-        total_ms as f64
-    }
-
-    pub fn to_js(self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::js_double_number(self.to_js_timestamp())
-    }
-
     pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_TIME | FieldType::MYSQL_TYPE_TIME2 => {

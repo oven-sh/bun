@@ -24,13 +24,6 @@ impl StringMap {
         }
     }
 
-    pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self {
-            map: self.map.clone()?,
-            dupe_keys: self.dupe_keys,
-        })
-    }
-
     #[inline]
     pub fn keys(&self) -> &[Box<[u8]>] {
         self.map.keys()
@@ -61,20 +54,6 @@ impl StringMap {
     #[inline]
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
         self.insert(key, value)
-    }
-
-    pub fn get(&self, key: &[u8]) -> Option<&[u8]> {
-        self.map.get(key).map(|v| &**v)
-    }
-
-    /// Forwards to the inner map's order-preserving sort. The closure
-    /// receives the parallel key/value slices plus the two indices so it can
-    /// compare on either column.
-    pub fn sort(
-        &mut self,
-        less_than: impl FnMut(&[Box<[u8]>], &[Box<[u8]>], usize, usize) -> bool,
-    ) {
-        self.map.sort(less_than);
     }
 
     // `deinit` → Drop on the inner Vecs.

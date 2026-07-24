@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Scalar RFC 4648 §5 base64url reference (no padding), independent of any
 // native base64 implementation. `bun_base64::encode_url_safe` (simdutf's
@@ -69,6 +72,35 @@ describe("URL-safe base64 encoding", () => {
     for (const len of [32 * 1024, 32 * 1024 + 1, 32 * 1024 + 2]) {
       const bytes = fillDeterministic(new Uint8Array(len));
       expect(Buffer.from(bytes).toString("base64url")).toBe(base64UrlReference(bytes));
+    }
+  });
+
+  test("fs.readFileSync(path, 'base64url') matches Buffer.toString", () => {
+    // readFileSync encodes via `to_bun_string` for files that fit in the
+    // 256 KiB pre-stat read buffer and via `to_bun_string_from_owned_slice`
+    // for anything larger; both must agree with Buffer.prototype.toString.
+    // 24 * 1024 input bytes encode to exactly 32 KiB, straddling
+    // `encode_base64_to_bun_string`'s inline/external-string branch.
+    using dir = tempDir("base64url-fs", {});
+    const path = join(String(dir), "bytes.bin");
+    const source = fillDeterministic(new Uint8Array(256 * 1024 + 2));
+    const lengths = [0, 1, 2, 3, 4, 5, 6, 7, 8, 510, 511, 512, 513, 24 * 1024 - 1, 24 * 1024, 24 * 1024 + 1];
+    for (const len of lengths) {
+      const bytes = source.subarray(0, len);
+      writeFileSync(path, bytes);
+      const expected = base64UrlReference(bytes);
+      expect(readFileSync(path, "base64url")).toBe(expected);
+      expect(Buffer.from(bytes).toString("base64url")).toBe(expected);
+    }
+    // Overflows the 256 KiB pre-stat buffer so readFileSync takes the
+    // owned-slice path. Buffer.toString is the reference here: every length
+    // above already proved it byte-exact against the scalar encoder, and
+    // running that encoder over 256 KiB on a debug build exceeds the test
+    // time budget.
+    for (const len of [256 * 1024, 256 * 1024 + 1, 256 * 1024 + 2]) {
+      const bytes = source.subarray(0, len);
+      writeFileSync(path, bytes);
+      expect(readFileSync(path, "base64url")).toBe(Buffer.from(bytes).toString("base64url"));
     }
   });
 

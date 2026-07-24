@@ -55,17 +55,6 @@ pub struct DiskCacheCtx {
     pub timestamp_for_manifest_cache_control: u32,
 }
 
-impl DiskCacheCtx {
-    /// Context for the [`CacheBehavior::LoadFromMemory`] path, which never
-    /// reads any of these fields.
-    pub const MEMORY_ONLY: Self = Self {
-        enable_manifest_cache: false,
-        enable_manifest_cache_control: false,
-        cache_directory: None,
-        timestamp_for_manifest_cache_control: 0,
-    };
-}
-
 impl PackageManifestMap {
     pub fn by_name(
         &mut self,

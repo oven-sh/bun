@@ -6,6 +6,11 @@
 #include <JavaScriptCore/JSString.h>
 #include "ZigGlobalObject.h"
 
+#if OS(WINDOWS)
+#include <JavaScriptCore/ExecutableAllocator.h>
+#include <JavaScriptCore/JSBigInt.h>
+#endif
+
 namespace Bun {
 using namespace JSC;
 
@@ -49,6 +54,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
     return {};
 }
 
+#if OS(WINDOWS)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
+    (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<uint64_t>(JSC::startOfFixedExecutableMemoryPool<uintptr_t>()))));
+}
+#endif
+
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -64,6 +79,13 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
         vm, globalObject, JSC::Identifier::fromString(vm, "isLatin1String"_s), 1,
         jsFunctionIsLatin1String, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
+
+#if OS(WINDOWS)
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "startOfFixedExecutableMemoryPool"_s), 0,
+        jsFunctionStartOfFixedExecutableMemoryPool, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+#endif
 
     return object;
 }

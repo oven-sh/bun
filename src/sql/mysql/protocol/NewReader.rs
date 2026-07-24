@@ -21,8 +21,6 @@ pub struct NewReader<C: ReaderContext> {
 }
 
 impl<C: ReaderContext> NewReader<C> {
-    pub const IS_WRAPPED: bool = true;
-
     pub fn mark_message_start(self) {
         self.wrapped.mark_message_start();
     }
@@ -121,23 +119,3 @@ impl<C: ReaderContext> NewReader<C> {
 /// `bun_sql::ReadableInt`) keep their paths.
 /// MySQL's u24/i24 are NOT routed through this trait — see `int_u24`/`int_i24`.
 pub use bun_core::NativeEndianInt as ReadableInt;
-
-impl<C: ReaderContext> From<C> for NewReader<C> {
-    fn from(wrapped: C) -> Self {
-        Self { wrapped }
-    }
-}
-
-pub trait Decode: Sized {
-    fn decode_internal<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), AnyMySQLError>;
-
-    fn decode<C: ReaderContext>(
-        &mut self,
-        context: impl Into<NewReader<C>>,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(context.into())
-    }
-}

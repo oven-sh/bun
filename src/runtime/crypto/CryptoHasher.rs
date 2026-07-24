@@ -578,19 +578,39 @@ impl CryptoHasher {
                 global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
             );
         }
-        let encoding = arguments.ptr[1];
-        let buffer =
-            match BlobOrStringOrBuffer::from_js_with_encoding_value(global, input, encoding)? {
-                Some(b) => b,
-                None => {
-                    if !global.has_exception() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected blob, string or buffer"
-                        )));
-                    }
-                    return Err(JsError::Thrown);
+        let encoding_value = arguments.ptr[1];
+        // Encoding only affects string inputs (same gate as JSHash.cpp); don't
+        // coerce it for Blob/Buffer inputs where it is ignored.
+        let encoding = if input.is_string() && encoding_value.is_cell() {
+            Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8)
+        } else {
+            Encoding::Utf8
+        };
+        if input.is_string_literal() && encoding == Encoding::Hex {
+            let length = input.to_js_string(global)?.length();
+            if length % 2 != 0 {
+                let actual = JSGlobalObject::inspect_for_error_message(global, encoding_value)?;
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The argument 'encoding' is invalid for data of length {}. Received {}",
+                            length, actual
+                        ),
+                    )
+                    .throw());
+            }
+        }
+        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)? {
+            Some(b) => b,
+            None => {
+                if !global.has_exception() {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
                 }
-            };
+                return Err(JsError::Thrown);
+            }
+        };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
             return Err(global.throw(format_args!(

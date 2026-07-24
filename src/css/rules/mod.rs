@@ -27,7 +27,6 @@ pub mod scope;
 pub mod starting_style;
 pub mod style;
 pub mod supports;
-pub mod tailwind;
 pub mod unknown;
 pub mod viewport;
 
@@ -59,14 +58,10 @@ macro_rules! css_rule_variants {
                 match self {
                     $( CssRule::$Variant(x) => x.to_css(dest), )+
                     CssRule::Unknown(x) => x.to_css(dest),
-                    // There are TWO concrete `R` types — `DefaultAtRule` (whose
-                    // `to_css` errors unconditionally) and `TailwindAtRule`,
-                    // whose `to_css` succeeds and writes `@tailwind <name>;`.
-                    // Tailwind parsing is disabled (`ENABLE_TAILWIND_PARSING =
-                    // false`, `BundlerAtRule = DefaultAtRule` in css_parser.rs),
-                    // so erroring here is correct for every `R` that is
-                    // actually instantiated. If
-                    // `TailwindAtRule` is ever enabled, thread a `ToCss`-style bound
+                    // The only concrete `R` is `DefaultAtRule` (whose `to_css`
+                    // errors unconditionally), so erroring here is correct for
+                    // every `R` that is actually instantiated. If another `R`
+                    // is ever added, thread a `ToCss`-style bound
                     // (or per-`R` vtable) so `Custom(x)` dispatches to
                     // `x.to_css(dest)` and only the error path maps through
                     // `add_fmt_error()`; that bound cascades through every nested

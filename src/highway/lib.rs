@@ -2,8 +2,6 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
 unsafe extern "C" {
-    fn highway_char_frequency(text: *const u8, text_len: usize, freqs: *mut i32, delta: i32);
-
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
     fn highway_memmem(
@@ -114,20 +112,6 @@ unsafe extern "C" {
 // straight into the caller. Without this the profile shows the C shim as a
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
-
-/// Count frequencies of [a-zA-Z0-9_$] characters in a string
-/// Updates the provided frequency array with counts (adds delta for each occurrence)
-#[inline(always)]
-pub fn scan_char_frequency(text: &[u8], freqs: &mut [i32; 64], delta: i32) {
-    if text.is_empty() || delta == 0 {
-        return;
-    }
-
-    // SAFETY: text.ptr/len are a valid readable range; freqs is a valid 64-elem writable array.
-    unsafe {
-        highway_char_frequency(text.as_ptr(), text.len(), freqs.as_mut_ptr(), delta);
-    }
-}
 
 #[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {

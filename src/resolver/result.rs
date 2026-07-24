@@ -3,16 +3,12 @@
 //! value types the [`crate::Resolver`] state machine produces and threads
 //! through `resolve_without_remapping` / `load_as_file_or_directory`.
 
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
-use bun_ast::Msg;
 use bun_core::MutableString;
-use bun_paths::SEP_STR;
-use bun_paths::strings;
 use bun_sys::Fd as FD;
 
 use crate::dir_info::DirInfoRef;
@@ -25,18 +21,6 @@ use crate::resolver::Dependency;
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
 // without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
-
-pub struct SideEffectsData {
-    // Modeled as
-    // `Option<NonNull>`: no constructor ever
-    // populates the field, so `None` stands in for the
-    // never-written pointer until lifetime modeling is actually needed.
-    pub source: Option<NonNull<bun_ast::Source>>,
-    pub range: bun_ast::Range,
-
-    // If true, "sideEffects" was an array. If false, "sideEffects" was false.
-    pub is_side_effects_array_in_json: bool,
-}
 
 pub struct PathPair {
     pub primary: Path,
@@ -118,8 +102,6 @@ pub struct Result {
     // This is the "type" field from "package.json"
     pub module_type: options::ModuleType,
 
-    pub debug_meta: Option<DebugMeta>,
-
     pub dirname_fd: FD,
     pub file_fd: FD,
     pub import_kind: ast::ImportKind,
@@ -138,7 +120,6 @@ impl Default for Result {
             diff_case: None,
             primary_side_effects_data: SideEffects::HasSideEffects,
             module_type: options::ModuleType::Unknown,
-            debug_meta: None,
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
             import_kind: ast::ImportKind::Stmt,
@@ -155,10 +136,6 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
-        // If true, unused imports are retained in TypeScript code. This matches the
-        // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
-        // value is not "remove".
-        const PRESERVE_UNUSED_IMPORTS_TS = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         // _padding: u1
@@ -270,107 +247,6 @@ impl Result {
         }
 
         None
-    }
-
-    // remember: non-node_modules can have package.json
-    // checking package.json may not be relevant
-    pub fn is_likely_node_module(&self) -> bool {
-        let Some(path_) = self.path_const() else {
-            return false;
-        };
-        self.flags.is_from_node_modules()
-            || strings::index_of(path_.text(), b"/node_modules/").is_some()
-    }
-
-    // Most NPM modules are CommonJS
-    // If unspecified, assume CommonJS.
-    // If internal app code, assume ESM.
-    pub fn should_assume_common_js(&self, kind: ast::ImportKind) -> bool {
-        match self.module_type {
-            options::ModuleType::Esm => false,
-            options::ModuleType::Cjs => true,
-            _ => {
-                if kind == ast::ImportKind::Require || kind == ast::ImportKind::RequireResolve {
-                    return true;
-                }
-
-                // If we rely just on isPackagePath, we mess up tsconfig.json baseUrl paths.
-                self.is_likely_node_module()
-            }
-        }
-    }
-
-    pub fn hash(&self, _: &[u8], _: options::Loader) -> u32 {
-        let module = self.path_pair.primary.text();
-        // SEP_STR ++ "node_modules" ++ SEP_STR
-        let node_module_root = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
-        if let Some(end_) = strings::last_index_of(module, node_module_root) {
-            let end: usize = end_ + node_module_root.len();
-            return bun_wyhash::hash(&module[end..]) as u32;
-        }
-
-        bun_wyhash::hash(self.path_pair.primary.text()) as u32
-    }
-}
-
-pub struct DebugMeta {
-    pub notes: Vec<bun_ast::Data>,
-    pub suggestion_text: &'static [u8],
-    pub suggestion_message: &'static [u8],
-    pub suggestion_range: SuggestionRange,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SuggestionRange {
-    Full,
-    End,
-}
-
-impl DebugMeta {
-    pub fn init() -> DebugMeta {
-        DebugMeta {
-            notes: Vec::new(),
-            suggestion_text: b"",
-            suggestion_message: b"",
-            suggestion_range: SuggestionRange::Full,
-        }
-    }
-
-    pub fn log_error_msg(
-        &mut self,
-        log: &mut bun_ast::Log,
-        source: Option<&bun_ast::Source>,
-        r: bun_ast::Range,
-        args: core::fmt::Arguments<'_>,
-    ) -> core::result::Result<(), crate::Error> {
-        // Uses the broad `crate::Error` per repo-wide convention.
-        if source.is_some() && !self.suggestion_message.is_empty() {
-            let suggestion_range = if self.suggestion_range == SuggestionRange::End {
-                bun_ast::Range {
-                    loc: bun_ast::Loc {
-                        start: r.end_i() as i32 - 1,
-                    },
-                    ..Default::default()
-                }
-            } else {
-                r
-            };
-            let data = bun_ast::range_data(source, suggestion_range, self.suggestion_message);
-            // NOTE: `logger.Location` has no `suggestion` field, so
-            // `suggestion_text` is intentionally unused (no-op).
-            let _ = &self.suggestion_text;
-            self.notes.push(data);
-        }
-
-        let mut msg_text = Vec::new();
-        write!(&mut msg_text, "{}", args).ok();
-        log.add_msg(Msg {
-            kind: bun_ast::Kind::Err,
-            data: bun_ast::range_data(source, r, msg_text),
-            notes: core::mem::take(&mut self.notes).into_boxed_slice(),
-            ..Default::default()
-        });
-        Ok(())
     }
 }
 
@@ -530,7 +406,6 @@ impl MatchStatus {
 pub struct PendingResolution {
     pub esm: crate::package_json::PackageExternal,
     pub dependency: Dependency::Version,
-    pub resolution_id: Install::PackageID,
     pub root_dependency_id: Install::DependencyID,
     pub import_record_id: u32,
     pub string_buf: Vec<u8>,
@@ -542,37 +417,11 @@ impl Default for PendingResolution {
         Self {
             esm: Default::default(),
             dependency: Default::default(),
-            resolution_id: Install::INVALID_PACKAGE_ID,
             root_dependency_id: Install::INVALID_PACKAGE_ID,
             import_record_id: u32::MAX,
             string_buf: Vec::new(),
             tag: PendingResolutionTag::Download,
         }
-    }
-}
-
-impl PendingResolution {
-    // NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>
-    // (`dependency` + `string_buf` are owned fields with Drop.)
-
-    // deinit → Drop (frees dependency + string_buf; both have Drop)
-
-    pub fn init(
-        esm: crate::package_json::Package<'_>,
-        dependency: Dependency::Version,
-        resolution_id: Install::PackageID,
-    ) -> core::result::Result<PendingResolution, crate::Error> {
-        // NOTE: `Package::copy` is the count→allocate→clone Builder dance the live
-        // call sites open-code, so thread the freshly-allocated buffer into
-        // `string_buf` here so `Drop` frees what backs the cloned `esm` strings.
-        let (esm, string_buf) = esm.copy()?;
-        Ok(PendingResolution {
-            esm,
-            dependency,
-            resolution_id,
-            string_buf,
-            ..PendingResolution::default()
-        })
     }
 }
 

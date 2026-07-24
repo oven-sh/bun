@@ -315,6 +315,20 @@ export const globalFlags: Flag[] = [
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
   },
 
+  {
+    // The MSVC STL auto-enables ASan container annotations under
+    // -fsanitize=address and stamps each object with detect_mismatch keys
+    // (annotate_string / annotate_vector). The -asan WebKit prebuilt is built
+    // with them OFF, and lld-link's /failifmismatch rejects mixing the two
+    // layouts, so every object linked into bun (deps included) must match.
+    // Global for the same reason -fsanitize=address is. Also passed with -D
+    // through clang-cl. The container-overflow class these feed is
+    // suppressed at run time anyway (detect_container_overflow=0).
+    flag: ["-D_DISABLE_STRING_ANNOTATION", "-D_DISABLE_VECTOR_ANNOTATION"],
+    when: c => c.windows && c.asan,
+    desc: "Disable MSVC STL ASan container annotations to match the -asan WebKit prebuilt's ABI",
+  },
+
   // ─── C++ language behavior ───
   {
     flag: "-fno-exceptions",

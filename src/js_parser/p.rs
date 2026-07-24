@@ -450,11 +450,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub module_scope_directive_loc: bun_ast::Loc,
     pub is_control_flow_dead: bool,
 
-    /// True while visiting the unbraced body of `if`/`else`/`while`/`do`/`for`
-    /// via `visit_single_stmt`. Those statements don't introduce a lexical
-    /// scope, so `current_scope == module_scope` still holds inside them even
-    /// though the body is not a top-level module statement. Checks that mean
-    /// "is this a direct child of the module stmt list" must also consult this.
+    /// True while `visit_single_stmt` is visiting a non-block body. `if`,
+    /// `else`, `while`, and `do` reach it without pushing a scope, so inside
+    /// their unbraced body `current_scope == module_scope` is still true at
+    /// module level even though the statement is not a top-level module
+    /// statement. `s_expr` consults this together with the scope check to
+    /// gate the CJS→ESM `export {}` rewrite. (`for`/`with`/`label` callers
+    /// push a scope first, and braced bodies take the `visit_single_stmt_block`
+    /// path which also pushes a scope, so this flag is redundant for those.)
     pub is_inside_single_stmt_body: bool,
 
     /// We must be careful to avoid revisiting nodes that have scopes.

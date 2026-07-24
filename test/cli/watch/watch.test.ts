@@ -43,8 +43,16 @@ for (const dir of ["dir", "©️"]) {
   );
 }
 
-afterEach(() => {
-  watchee?.kill();
+afterEach(async () => {
+  // SIGKILL, not the default SIGTERM: the wedge fixtures below register a
+  // SIGTERM handler and never yield, so SIGTERM can't kill them — a leaked
+  // pair spins at full CPU until someone notices. Await the exit so a test
+  // failure can't strand the child past the suite.
+  if (watchee) {
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+    watchee = undefined;
+  }
 });
 
 it.skipIf(isWindows)(
@@ -188,8 +196,13 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
       process.on("SIGTERM", () => {});
       console.log("iter first");
       // The busy loop never yields to the event loop, so the posted
-      // WatchReloadTask cannot run. The watcher-thread fallback must fire.
-      for (;;) {}
+      // WatchReloadTask cannot run and the watcher-thread fallback must
+      // fire. Self-limiting: it spins far past the 500ms fallback window
+      // but exits on its own, so a leaked watch pair cannot burn CPU
+      // forever if the test dies before killing it.
+      const end = Date.now() + 30_000;
+      while (Date.now() < end) {}
+      process.exit(1);
     `,
   });
 
@@ -222,6 +235,6 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
   await waitFor("iter second");
 
   reader.releaseLock();
-  watchee.kill();
+  watchee.kill("SIGKILL");
   await watchee.exited;
 }, 30000);

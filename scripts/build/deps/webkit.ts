@@ -5,7 +5,6 @@
  */
 export const WEBKIT_VERSION = "autobuild-preview-pr-330-6d8df126";
 
-
 /**
  * WebKit (JavaScriptCore) — the JS engine.
  *

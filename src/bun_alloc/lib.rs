@@ -339,7 +339,7 @@ pub mod default_alloc {
         #[cfg(all(bun_asan, target_os = "macos"))]
         return unsafe { libc::malloc_size(ptr) };
         #[cfg(all(bun_asan, target_os = "windows"))]
-        return unsafe { win_crt::_msize(ptr.cast_mut()) };
+        return unsafe { crate::win_crt::_msize(ptr.cast_mut()) };
         // SAFETY: caller guarantees `ptr` is a live mimalloc allocation (the
         // non-null check above already handled null).
         #[cfg(not(any(
@@ -387,7 +387,7 @@ pub mod default_alloc {
         if align <= crate::MAX_ALIGN_T {
             return unsafe { libc::malloc(size) };
         }
-        unsafe { win_crt::_aligned_malloc(size, align) }
+        unsafe { crate::win_crt::_aligned_malloc(size, align) }
     }
 
     #[cfg(not(bun_asan))]
@@ -451,7 +451,7 @@ pub mod default_alloc {
         }
         // SAFETY: caller guarantees `ptr` is null or a live `_aligned_malloc`
         // block with alignment `align`; `_aligned_realloc` accepts null.
-        unsafe { win_crt::_aligned_realloc(ptr, new_size, align) }
+        unsafe { crate::win_crt::_aligned_realloc(ptr, new_size, align) }
     }
 
     /// Frees a block obtained from `malloc_aligned`/`zalloc_aligned`/`realloc_aligned`.
@@ -468,7 +468,7 @@ pub mod default_alloc {
         #[cfg(all(bun_asan, target_os = "windows"))]
         if align > crate::MAX_ALIGN_T {
             // SAFETY: caller contract — over-aligned block from `_aligned_malloc`.
-            return unsafe { win_crt::_aligned_free(ptr) };
+            return unsafe { crate::win_crt::_aligned_free(ptr) };
         }
         #[cfg(not(all(bun_asan, target_os = "windows")))]
         let _ = align;
@@ -489,7 +489,7 @@ pub mod default_alloc {
         if align > crate::MAX_ALIGN_T {
             // SAFETY: caller contract — over-aligned block from `_aligned_malloc`,
             // whose size is only queryable via `_aligned_msize` with its alignment.
-            return unsafe { win_crt::_aligned_msize(ptr.cast_mut(), align, 0) };
+            return unsafe { crate::win_crt::_aligned_msize(ptr.cast_mut(), align, 0) };
         }
         #[cfg(not(all(bun_asan, target_os = "windows")))]
         let _ = align;

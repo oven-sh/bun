@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createServer } from "node:http";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
 // Security test: with two cork slots that can be stolen/evicted, a bug in slot

@@ -1190,9 +1190,9 @@ impl AsyncModule {
         // Take `parse_result` by value via `mem::take`, then restore below, to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
-        let arena = *self.parse_result.ast.parts.allocator();
+        let alloc = self.parse_result.ast.alloc();
         let mut parse_result =
-            core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
+            core::mem::replace(&mut self.parse_result, ParseResult::empty(alloc));
         // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
         // stable for the lifetime of `*self`; this fn never replaces it, so
         // slices into it remain valid across the `&mut self` reborrows below
@@ -1252,8 +1252,8 @@ impl AsyncModule {
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
         let input_fd = self.parse_result.input_fd;
-        let arena = *self.parse_result.ast.parts.allocator();
-        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
+        let alloc = self.parse_result.ast.alloc();
+        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(alloc));
 
         // `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so

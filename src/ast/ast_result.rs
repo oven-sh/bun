@@ -93,6 +93,14 @@ pub struct Ast<'a> {
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
 // so `Default` no longer applies; use `Ast::empty_in(alloc)`.
 impl<'a> Ast<'a> {
+    /// The [`AstAlloc`] this AST's arena-backed lists were built in (recovered
+    /// from an existing `AstVec` field so callers outside `allocator_api`
+    /// crates can `mem::replace` against `Ast::empty_in` in the same arena).
+    #[inline]
+    pub fn alloc(&self) -> AstAlloc {
+        *self.export_star_import_records.allocator()
+    }
+
     pub fn empty_in(alloc: AstAlloc) -> Self {
         let arena = alloc.arena();
         Self {

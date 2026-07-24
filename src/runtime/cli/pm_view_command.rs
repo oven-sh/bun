@@ -1,5 +1,4 @@
 use bstr::BStr;
-use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -24,7 +23,9 @@ pub(crate) fn view(
     property_path: Option<&[u8]>,
     json_output: bool,
 ) -> Result<(), crate::Error> {
-    let bump = Bump::new();
+    let ast_arena = bun_alloc::AstArena::new();
+    let alloc = ast_arena.alloc();
+    let bump = alloc.arena();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
@@ -52,10 +53,10 @@ pub(crate) fn view(
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
-                let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, &bump) else {
+                let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, alloc) else {
                     break 'from_package_json;
                 };
-                if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
+                if let Some(name) = pkg_json.get_string_cloned(alloc, bump, b"name").ok().flatten() {
                     if !name.is_empty() {
                         break 'brk name;
                     }
@@ -140,7 +141,7 @@ pub(crate) fn view(
 
     let mut log = bun_ast::Log::init();
     let source = &bun_ast::Source::init_path_string(b"view.json", response_buf.list.as_slice());
-    let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
+    let json: ast::Expr = match JSON::parse_utf8(source, &mut log, alloc) {
         Ok(j) => j,
         Err(err) => {
             Output::err(err, "failed to parse response body as JSON", ());
@@ -182,7 +183,7 @@ pub(crate) fn view(
     // Note: reshaped for borrowck.
     'brk: {
         'from_versions: {
-            if let Some(versions_obj) = json.get_object(b"versions") {
+            if let Some(versions_obj) = json.get_object(alloc, b"versions") {
                 // Find the version string from JSON that matches the resolved version
                 let versions_e_obj = versions_obj
                     .data
@@ -215,7 +216,7 @@ pub(crate) fn view(
                     let Some(key) = prop.key.as_ref() else {
                         continue;
                     };
-                    let Some(version_str) = key.as_string(&bump) else {
+                    let Some(version_str) = key.as_string(bump) else {
                         continue;
                     };
                     let sliced_version = Semver::SlicedString::init(version_str, version_str);
@@ -268,25 +269,26 @@ pub(crate) fn view(
     }
 
     // Treat versions specially because npm does some normalization on there.
-    if let Some(versions_object) = json.get_object(b"versions") {
+    if let Some(versions_object) = json.get_object(alloc, b"versions") {
         let versions_e_obj = versions_object
             .data
             .e_object()
             .expect("infallible: variant checked");
         let props = versions_e_obj.properties.slice();
-        let mut keys: Vec<ast::Expr> = Vec::with_capacity(props.len());
+        let mut keys = alloc.vec_with_capacity(props.len());
         debug_assert_eq!(props.len(), keys.capacity());
         for prop in props {
             keys.push(prop.key.expect("infallible: prop has key"));
         }
         let versions_array = ast::Expr::init(
+            alloc,
             ast::E::Array {
-                items: ast::ExprNodeList::from_owned_slice(keys.into_boxed_slice()),
-                ..Default::default()
+                items: keys,
+                ..ast::E::Array::empty(alloc)
             },
             bun_ast::Loc { start: -1 },
         );
-        manifest.set(&bump, b"versions", versions_array)?;
+        manifest.set(alloc, b"versions", versions_array)?;
     }
 
     // Handle property lookup if specified
@@ -295,8 +297,8 @@ pub(crate) fn view(
         // `bun pm view react version ` => 1.2.3
         // `bun pm view react versions` => ['1.2.3', '1.2.4', '1.2.5']
         if let Some(value) = manifest
-            .get_path_may_be_index(&bump, prop_path)
-            .or_else(|| json.get_path_may_be_index(&bump, prop_path))
+            .get_path_may_be_index(alloc, bump, prop_path)
+            .or_else(|| json.get_path_may_be_index(alloc, bump, prop_path))
         {
             if let bun_ast::ExprData::EString(e_string) = &value.data {
                 // JSON parse_utf8 always produces UTF-8 strings, so the raw
@@ -319,6 +321,7 @@ pub(crate) fn view(
             let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
             let _ = JSPrinter::print_json(
                 &mut package_json_writer,
+                alloc,
                 value,
                 source,
                 JSPrinter::PrintJsonOptions {
@@ -363,6 +366,7 @@ pub(crate) fn view(
         let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
         let _ = JSPrinter::print_json(
             &mut package_json_writer,
+            alloc,
             manifest,
             source,
             JSPrinter::PrintJsonOptions {
@@ -383,22 +387,22 @@ pub(crate) fn view(
     }
 
     let pkg_name: &[u8] = manifest
-        .get_string_cloned(&bump, b"name")
+        .get_string_cloned(alloc, bump, b"name")
         .ok()
         .flatten()
         .unwrap_or(name);
     let pkg_version: &[u8] = manifest
-        .get_string_cloned(&bump, b"version")
+        .get_string_cloned(alloc, bump, b"version")
         .ok()
         .flatten()
         .unwrap_or(version);
     let license: &[u8] = manifest
-        .get_string_cloned(&bump, b"license")
+        .get_string_cloned(alloc, bump, b"license")
         .ok()
         .flatten()
         .unwrap_or(b"");
     let mut dep_count: usize = 0;
-    let dependencies_object = manifest.get_object(b"dependencies");
+    let dependencies_object = manifest.get_object(alloc, b"dependencies");
     if let Some(deps) = &dependencies_object {
         dep_count = deps
             .data
@@ -418,18 +422,26 @@ pub(crate) fn view(
     );
 
     // Get description and homepage from the top-level package manifest, not the version-specific one
-    if let Some(desc) = json.get_string_cloned(&bump, b"description").ok().flatten() {
+    if let Some(desc) = json
+        .get_string_cloned(alloc, bump, b"description")
+        .ok()
+        .flatten()
+    {
         prettyln!("{}", BStr::new(desc));
     }
-    if let Some(hp) = json.get_string_cloned(&bump, b"homepage").ok().flatten() {
+    if let Some(hp) = json
+        .get_string_cloned(alloc, bump, b"homepage")
+        .ok()
+        .flatten()
+    {
         prettyln!("<blue>{}<r>", BStr::new(hp));
     }
 
-    if let Some(mut iter) = json.get_array(b"keywords") {
+    if let Some(mut iter) = json.get_array(alloc, b"keywords") {
         let mut keywords = MutableString::init(64)?;
         let mut first = true;
-        while let Some(kw_expr) = iter.next() {
-            if let Some(kw) = kw_expr.as_string(&bump) {
+        while let Some(kw_expr) = iter.next(alloc) {
+            if let Some(kw) = kw_expr.as_string(bump) {
                 if !first {
                     keywords.append_slice(b", ")?;
                 } else {
@@ -459,7 +471,7 @@ pub(crate) fn view(
                 .key
                 .as_ref()
                 .expect("infallible: prop has key")
-                .as_string(&bump)
+                .as_string(bump)
             else {
                 continue;
             };
@@ -467,7 +479,7 @@ pub(crate) fn view(
                 .value
                 .as_ref()
                 .expect("infallible: prop has value")
-                .as_string(&bump)
+                .as_string(bump)
             else {
                 continue;
             };
@@ -479,18 +491,26 @@ pub(crate) fn view(
         }
     }
 
-    if let Some(dist) = manifest.get_object(b"dist") {
+    if let Some(dist) = manifest.get_object(alloc, b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
-        if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
+        if let Some(t) = dist
+            .get_string_cloned(alloc, bump, b"tarball")
+            .ok()
+            .flatten()
+        {
             prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
         }
-        if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
+        if let Some(s) = dist.get_string_cloned(alloc, bump, b"shasum").ok().flatten() {
             prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));
         }
-        if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
+        if let Some(i) = dist
+            .get_string_cloned(alloc, bump, b"integrity")
+            .ok()
+            .flatten()
+        {
             prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", BStr::new(i));
         }
-        if let Some(u) = dist.get_number(b"unpackedSize") {
+        if let Some(u) = dist.get_number(alloc, b"unpackedSize") {
             prettyln!(
                 " <d>.<r>unpackedSize<r><d>:<r> <blue>{}<r>",
                 bun_fmt::size(u.0 as usize, Default::default()),
@@ -498,7 +518,7 @@ pub(crate) fn view(
         }
     }
 
-    if let Some(tags_obj) = json.get_object(b"dist-tags") {
+    if let Some(tags_obj) = json.get_object(alloc, b"dist-tags") {
         prettyln!("\n<b>dist-tags<r><d>:<r>");
         for prop in tags_obj
             .data
@@ -512,8 +532,8 @@ pub(crate) fn view(
             }
             let tagname_expr = prop.key.as_ref().expect("infallible: prop has key");
             let val_expr = prop.value.as_ref().expect("infallible: prop has value");
-            if let Some(tag) = tagname_expr.as_string(&bump) {
-                if let Some(val) = val_expr.as_string(&bump) {
+            if let Some(tag) = tagname_expr.as_string(bump) {
+                if let Some(val) = val_expr.as_string(bump) {
                     if tag == b"latest" {
                         prettyln!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
                     } else if tag == b"beta" {
@@ -526,16 +546,16 @@ pub(crate) fn view(
         }
     }
 
-    if let Some(mut iter) = json.get_array(b"maintainers") {
+    if let Some(mut iter) = json.get_array(alloc, b"maintainers") {
         prettyln!("\nmaintainers<r><d>:<r>");
-        while let Some(m) = iter.next() {
+        while let Some(m) = iter.next(alloc) {
             let nm: &[u8] = m
-                .get_string_cloned(&bump, b"name")
+                .get_string_cloned(alloc, bump, b"name")
                 .ok()
                 .flatten()
                 .unwrap_or(b"");
             let em: &[u8] = m
-                .get_string_cloned(&bump, b"email")
+                .get_string_cloned(alloc, bump, b"email")
                 .ok()
                 .flatten()
                 .unwrap_or(b"");
@@ -548,16 +568,16 @@ pub(crate) fn view(
     }
 
     // Add published date information
-    if let Some(time_obj) = json.get_object(b"time") {
+    if let Some(time_obj) = json.get_object(alloc, b"time") {
         // TODO: use a relative time formatter
         if let Some(published_time) = time_obj
-            .get_string_cloned(&bump, pkg_version)
+            .get_string_cloned(alloc, bump, pkg_version)
             .ok()
             .flatten()
         {
             prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time));
         } else if let Some(modified_time) = time_obj
-            .get_string_cloned(&bump, b"modified")
+            .get_string_cloned(alloc, bump, b"modified")
             .ok()
             .flatten()
         {

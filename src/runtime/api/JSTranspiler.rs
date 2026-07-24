@@ -372,14 +372,17 @@ impl Config {
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
                 let vm = VirtualMachine::get().as_mut();
-                let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
+                let json_cache = &mut vm.transpiler.resolver.caches.json;
+                let json_alloc = json_cache.alloc();
+                let Ok(Some(json)) = json_cache.parse_json(
                     &mut self.log,
                     &source,
                     bun_resolver::tsconfig_json::JsonMode::Json,
                 ) else {
                     break 'macros;
                 };
-                self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
+                self.macro_map =
+                    PackageJSON::parse_macros_json(json_alloc, json, &mut self.log, &source);
             }
         }
 
@@ -1025,7 +1028,7 @@ impl JSTranspiler {
             config: JsCell::new(config),
             arena,
             transpiler: JsCell::new(transpiler),
-            scan_pass_result: JsCell::new(ScanPassResult::init()),
+            scan_pass_result: JsCell::new(ScanPassResult::init(alloc)),
             buffer_writer: JsCell::new(None),
             log_level: bun_ast::Level::Err,
             ref_count: bun_ptr::RefCount::init(),

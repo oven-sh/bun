@@ -39,11 +39,12 @@ use crate::api::bun_process::sync as spawn_sync;
 // its own `as_property` / `as_string_cloned` surface.
 #[inline]
 fn json_get_string_cloned<'b>(
+    alloc: bun_alloc::AstAlloc,
     expr: &bun_ast::Expr,
     bump: &'b bun_alloc::Arena,
     name: &[u8],
 ) -> Result<Option<&'b [u8]>, AllocError> {
-    match expr.as_property(name) {
+    match expr.as_property(alloc, name) {
         Some(q) => q.expr.as_string_cloned(bump),
         None => Ok(None),
     }
@@ -330,11 +331,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // alive across `normalized_package`. Zero-copy.
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
-        let bump = bun_alloc::Arena::new();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let bump = alloc.arena();
         let (package_name, package_version, json, json_source) = {
             let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
             let log = manager.log_mut();
-            let json = match json_mod::parse_package_json_utf8(&source, log, &bump) {
+            let json = match json_mod::parse_package_json_utf8(&source, log, alloc) {
                 Ok(j) => j,
                 Err(e) => {
                     if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
@@ -344,7 +347,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             };
 
-            if let Some(private) = json.get(b"private") {
+            if let Some(private) = json.get(alloc, b"private") {
                 if let Some(is_private) = private.as_bool() {
                     if is_private {
                         return Err(FromTarballError::PrivatePackage);
@@ -352,9 +355,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             }
 
-            if let Some(config) = json.get(b"publishConfig") {
+            if let Some(config) = json.get(alloc, b"publishConfig") {
                 if manager.options.publish_config.tag.is_empty() {
-                    if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
+                    if let Some(tag) = json_get_string_cloned(alloc, &config, bump, b"tag")? {
                         // Note: `PublishConfig.tag` is `&'static [u8]`; dupe the
                         // bump-owned slice into the process-lifetime CLI arena.
                         manager.options.publish_config.tag = crate::cli::cli_dupe(tag);
@@ -362,7 +365,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
 
                 if manager.options.publish_config.access.is_none() {
-                    if let Some(access) = json_get_string_cloned(&config, &bump, b"access")? {
+                    if let Some(access) = json_get_string_cloned(alloc, &config, bump, b"access")? {
                         manager.options.publish_config.access = match Access::from_str(access) {
                             Some(a) => Some(a),
                             None => {
@@ -379,7 +382,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 // maybe otp
             }
 
-            let name: Box<[u8]> = json_get_string_cloned(&json, &bump, b"name")?
+            let name: Box<[u8]> = json_get_string_cloned(alloc, &json, bump, b"name")?
                 .ok_or(FromTarballError::MissingPackageName)?
                 .into();
             let is_scoped = dependency::is_scoped_package_name(&name)
@@ -391,7 +394,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             }
 
-            let version: Box<[u8]> = json_get_string_cloned(&json, &bump, b"version")?
+            let version: Box<[u8]> = json_get_string_cloned(alloc, &json, bump, b"version")?
                 .ok_or(FromTarballError::MissingPackageVersion)?
                 .into();
             if version.is_empty() {
@@ -859,14 +862,15 @@ impl PublishCommand {
         // Parse the response to check if this specific version exists
         let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
         let mut log = bun_ast::Log::init();
-        let bump = bun_alloc::Arena::new();
-        let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let Ok(json) = json_mod::parse_utf8(&source, &mut log, alloc) else {
             return false;
         };
 
         // Check if the version exists in the versions object
-        if let Some(versions) = json.get(b"versions") {
-            if versions.get(version).is_some() {
+        if let Some(versions) = json.get(alloc, b"versions") {
+            if versions.get(alloc, version).is_some() {
                 return true;
             }
         }
@@ -1147,11 +1151,13 @@ impl PublishCommand {
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
-        let bump = bun_alloc::Arena::new();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let bump = alloc.arena();
         let manager_log: &mut bun_ast::Log = ctx.manager.log_mut();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
-        let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
+        let res_json = match json_mod::parse_utf8(&res_source, manager_log, alloc) {
             Ok(j) => Some(j),
             Err(e) => {
                 if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
@@ -1165,7 +1171,8 @@ impl PublishCommand {
 
         if let Some(json) = res_json {
             'try_web: {
-                let Some(auth_url_str) = json_get_string_cloned(&json, &bump, b"authUrl")? else {
+                let Some(auth_url_str) = json_get_string_cloned(alloc, &json, bump, b"authUrl")?
+                else {
                     break 'try_web;
                 };
                 // Note: bump-owned `&[u8]` — dupe into the process-lifetime
@@ -1182,7 +1189,8 @@ impl PublishCommand {
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
-                let Some(done_url_str) = json_get_string_cloned(&json, &bump, b"doneUrl")? else {
+                let Some(done_url_str) = json_get_string_cloned(alloc, &json, bump, b"doneUrl")?
+                else {
                     break 'try_web;
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
@@ -1326,7 +1334,9 @@ impl PublishCommand {
                         }
                         200 => {
                             // login successful
-                            let done_bump = bun_alloc::Arena::new();
+                            let done_arena = bun_alloc::AstArena::new();
+                            let done_alloc = done_arena.alloc();
+                            let done_bump = done_alloc.arena();
                             let otp_done_source = bun_ast::Source::init_path_string(
                                 b"???",
                                 response_buf.list.as_slice(),
@@ -1334,7 +1344,7 @@ impl PublishCommand {
                             let otp_done_json = match json_mod::parse_utf8(
                                 &otp_done_source,
                                 manager_log,
-                                &done_bump,
+                                done_alloc,
                             ) {
                                 Ok(j) => j,
                                 Err(e) => {
@@ -1347,7 +1357,7 @@ impl PublishCommand {
                             };
 
                             let token =
-                                json_get_string_cloned(&otp_done_json, &done_bump, b"token")?
+                                json_get_string_cloned(done_alloc, &otp_done_json, done_bump, b"token")?
                                     .unwrap_or_else(|| {
                                         Output::err(
                                             "WebLogin",
@@ -1411,7 +1421,9 @@ impl PublishCommand {
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 
-        let bump = bun_alloc::Arena::new();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let bump = alloc.arena();
         // Note: `E::String` stores `&'static [u8]` (lifetime erased per the
         // parser's Str convention); dupe formatted buffers into the
         // process-lifetime CLI arena so they outlive the AST nodes through printing.
@@ -1438,7 +1450,7 @@ impl PublishCommand {
 
         Expr::set_string(
             json,
-            &bump,
+            alloc,
             b"_id",
             leak!({
                 let mut v = Vec::new();
@@ -1452,48 +1464,63 @@ impl PublishCommand {
                 v
             }),
         )?;
-        Expr::set_string(json, &bump, b"_integrity", integrity_fmt)?;
+        Expr::set_string(json, alloc, b"_integrity", integrity_fmt)?;
         Expr::set_string(
             json,
-            &bump,
+            alloc,
             b"_nodeVersion",
             Environment::REPORTED_NODEJS_VERSION.as_bytes(),
         )?;
         // TODO: npm version
-        Expr::set_string(json, &bump, b"_npmVersion", b"10.8.3")?;
-        Expr::set_string(json, &bump, b"integrity", integrity_fmt)?;
-        Expr::set_string(json, &bump, b"shasum", shasum_fmt)?;
+        Expr::set_string(json, alloc, b"_npmVersion", b"10.8.3")?;
+        Expr::set_string(json, alloc, b"integrity", integrity_fmt)?;
+        Expr::set_string(json, alloc, b"shasum", shasum_fmt)?;
 
         // Include README contents in the registry payload so `npm view <pkg>
         // readme` shows something, matching `npm publish`. User-provided
         // `readme` in package.json wins.
         if let Some(r) = readme {
-            if json.get(b"readme").is_none() {
-                Expr::set_string(json, &bump, b"readme", leak!(r.contents))?;
-                Expr::set_string(json, &bump, b"readmeFilename", leak!(r.filename))?;
+            if json.get(alloc, b"readme").is_none() {
+                Expr::set_string(json, alloc, b"readme", leak!(r.contents))?;
+                Expr::set_string(json, alloc, b"readmeFilename", leak!(r.filename))?;
             }
         }
 
-        let mut dist_props: Vec<G::Property> = Vec::with_capacity(3);
+        let mut dist_props = alloc.vec_with_capacity(3);
         dist_props.push(G::Property {
             key: Some(Expr::init(
+                alloc,
                 E::String::init(b"integrity"),
                 bun_ast::Loc::EMPTY,
             )),
             value: Some(Expr::init(
+                alloc,
                 E::String::init(integrity_fmt),
                 bun_ast::Loc::EMPTY,
             )),
-            ..Default::default()
+            ..G::Property::empty(alloc)
         });
         dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"shasum"), bun_ast::Loc::EMPTY)),
-            value: Some(Expr::init(E::String::init(shasum_fmt), bun_ast::Loc::EMPTY)),
-            ..Default::default()
-        });
-        dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"tarball"), bun_ast::Loc::EMPTY)),
+            key: Some(Expr::init(
+                alloc,
+                E::String::init(b"shasum"),
+                bun_ast::Loc::EMPTY,
+            )),
             value: Some(Expr::init(
+                alloc,
+                E::String::init(shasum_fmt),
+                bun_ast::Loc::EMPTY,
+            )),
+            ..G::Property::empty(alloc)
+        });
+        dist_props.push(G::Property {
+            key: Some(Expr::init(
+                alloc,
+                E::String::init(b"tarball"),
+                bun_ast::Loc::EMPTY,
+            )),
+            value: Some(Expr::init(
+                alloc,
                 E::String::init(leak!({
                     let mut v = Vec::new();
                     write!(
@@ -1517,16 +1544,17 @@ impl PublishCommand {
                 })),
                 bun_ast::Loc::EMPTY,
             )),
-            ..Default::default()
+            ..G::Property::empty(alloc)
         });
 
         json.set(
-            &bump,
+            alloc,
             b"dist",
             Expr::init(
+                alloc,
                 E::Object {
-                    properties: G::PropertyList::move_from_list(dist_props),
-                    ..Default::default()
+                    properties: dist_props,
+                    ..E::Object::empty(alloc)
                 },
                 bun_ast::Loc::EMPTY,
             ),
@@ -1551,7 +1579,7 @@ impl PublishCommand {
                 let _ = fd.close();
             });
 
-            Self::normalize_bin(json, &bump, package_name, workspace_root)?;
+            Self::normalize_bin(json, alloc, bump, package_name, workspace_root)?;
         }
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -1559,6 +1587,7 @@ impl PublishCommand {
 
         let written = match bun_js_printer::print_json(
             &mut writer,
+            alloc,
             *json,
             json_source,
             bun_js_printer::PrintJsonOptions {
@@ -1615,6 +1644,7 @@ impl PublishCommand {
 
     fn normalize_bin(
         json: &mut Expr,
+        alloc: bun_alloc::AstAlloc,
         bump: &bun_alloc::Arena,
         package_name: &[u8],
         workspace_root: Fd,
@@ -1628,10 +1658,10 @@ impl PublishCommand {
             };
         }
         let mut path_buf = PathBuffer::uninit();
-        if let Some(bin_query) = json.as_property(b"bin") {
+        if let Some(bin_query) = json.as_property(alloc, b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
-                    let mut bin_props: Vec<G::Property> = Vec::new();
+                    let mut bin_props = alloc.vec();
                     let normalized = strings::without_prefix_comptime_z(
                         normalize_buf_z::<path::platform::Posix>(
                             bin_str.string(bump)?,
@@ -1648,14 +1678,16 @@ impl PublishCommand {
 
                     bin_props.push(G::Property {
                         key: Some(Expr::init(
+                            alloc,
                             E::String::init(leak!(package_name)),
                             bun_ast::Loc::EMPTY,
                         )),
                         value: Some(Expr::init(
+                            alloc,
                             E::String::init(leak!(normalized.as_bytes())),
                             bun_ast::Loc::EMPTY,
                         )),
-                        ..Default::default()
+                        ..G::Property::empty(alloc)
                     });
 
                     json.data
@@ -1664,15 +1696,16 @@ impl PublishCommand {
                         .properties
                         .slice_mut()[bin_query.i as usize]
                         .value = Some(Expr::init(
+                        alloc,
                         E::Object {
-                            properties: G::PropertyList::move_from_list(bin_props),
-                            ..Default::default()
+                            properties: bin_props,
+                            ..E::Object::empty(alloc)
                         },
                         bun_ast::Loc::EMPTY,
                     ));
                 }
                 ExprData::EObject(bin_obj) => {
-                    let mut bin_props: Vec<G::Property> = Vec::new();
+                    let mut bin_props = alloc.vec();
                     for bin_prop in bin_obj.properties.slice() {
                         let key: Option<Box<[u8]>> = 'key: {
                             if let Some(key) = &bin_prop.key {
@@ -1732,14 +1765,16 @@ impl PublishCommand {
 
                         bin_props.push(G::Property {
                             key: Some(Expr::init(
+                                alloc,
                                 E::String::init(crate::cli::cli_dupe(&key)),
                                 bun_ast::Loc::EMPTY,
                             )),
                             value: Some(Expr::init(
+                                alloc,
                                 E::String::init(leak!(value.as_bytes())),
                                 bun_ast::Loc::EMPTY,
                             )),
-                            ..Default::default()
+                            ..G::Property::empty(alloc)
                         });
                     }
 
@@ -1749,21 +1784,22 @@ impl PublishCommand {
                         .properties
                         .slice_mut()[bin_query.i as usize]
                         .value = Some(Expr::init(
+                        alloc,
                         E::Object {
-                            properties: G::PropertyList::move_from_list(bin_props),
-                            ..Default::default()
+                            properties: bin_props,
+                            ..E::Object::empty(alloc)
                         },
                         bun_ast::Loc::EMPTY,
                     ));
                 }
                 _ => {}
             }
-        } else if let Some(directories_query) = json.as_property(b"directories") {
-            if let Some(bin_query) = directories_query.expr.as_property(b"bin") {
+        } else if let Some(directories_query) = json.as_property(alloc, b"directories") {
+            if let Some(bin_query) = directories_query.expr.as_property(alloc, b"bin") {
                 let Some(bin_dir_str) = bin_query.expr.as_string(bump) else {
                     return Ok(());
                 };
-                let mut bin_props: Vec<G::Property> = Vec::new();
+                let mut bin_props = alloc.vec();
                 let normalized_bin_dir = bun_core::ZBox::from_bytes(
                     strings::without_trailing_slash(strings::without_prefix(
                         normalize_buf::<path::platform::Posix>(bin_dir_str, &mut *path_buf),
@@ -1852,16 +1888,18 @@ impl PublishCommand {
 
                         bin_props.push(G::Property {
                             key: Some(Expr::init(
+                                alloc,
                                 E::String::init(leak!(bun_paths::basename_posix(
                                     subpath.as_bytes()
                                 ))),
                                 bun_ast::Loc::EMPTY,
                             )),
                             value: Some(Expr::init(
+                                alloc,
                                 E::String::init(subpath.as_bytes()),
                                 bun_ast::Loc::EMPTY,
                             )),
-                            ..Default::default()
+                            ..G::Property::empty(alloc)
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
@@ -1875,12 +1913,13 @@ impl PublishCommand {
                 }
 
                 json.set(
-                    bump,
+                    alloc,
                     b"bin",
                     Expr::init(
+                        alloc,
                         E::Object {
-                            properties: G::PropertyList::move_from_list(bin_props),
-                            ..Default::default()
+                            properties: bin_props,
+                            ..E::Object::empty(alloc)
                         },
                         bun_ast::Loc::EMPTY,
                     ),

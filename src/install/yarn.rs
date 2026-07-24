@@ -737,7 +737,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     continue;
                 };
 
-                let Ok(name_slice) = key_str.string(&json_bump) else {
+                let Ok(name_slice) = key_str.string(json_bump) else {
                     continue;
                 };
                 let Some(value) = &p.value else { continue };
@@ -745,7 +745,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     continue;
                 };
 
-                let Ok(version_slice) = value_str.string(&json_bump) else {
+                let Ok(version_slice) = value_str.string(json_bump) else {
                     continue;
                 };
                 if version_slice.is_empty() {

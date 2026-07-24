@@ -352,6 +352,91 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
+// https://github.com/oven-sh/bun/issues/5267
+// readline puts the TTY into raw mode (no ICANON, no ECHO, no ICRNL), so
+// Enter delivers a bare CR and typed input is invisible. alert/confirm/prompt
+// must temporarily restore cooked mode so the blocking line read sees LF and
+// the user can see what they typed, then put raw mode back for readline.
+test.skipIf(isWindows)("alert/confirm/prompt work while readline has stdin in raw mode", async () => {
+  const childSrc = `
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask = q => new Promise(resolve => rl.question(q, resolve));
+    const say = s => process.stdout.write(s + "\\n");
+    (async () => {
+      say("RL1 " + JSON.stringify(await ask("rl1? ")));
+      say("PROMPT " + JSON.stringify(prompt("name?")));
+      say("CONFIRM " + JSON.stringify(confirm("ok?")));
+      alert("bye");
+      say("ALERT done");
+      say("ISRAW " + process.stdin.isRaw);
+      say("RL2 " + JSON.stringify(await ask("rl2? ")));
+      rl.close();
+      process.exit(0);
+    })().catch(e => { say("ERR " + e.message); process.exit(1); });
+  `;
+
+  const decoder = new TextDecoder();
+  let out = "";
+  const waiters = [];
+  const pump = () => {
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      if (out.includes(waiters[i].marker)) waiters.splice(i, 1)[0].resolve();
+    }
+  };
+  const exited = Promise.withResolvers();
+  const waitFor = marker =>
+    Promise.race([
+      new Promise(resolve => {
+        waiters.push({ marker, resolve });
+        pump();
+      }),
+      exited.promise.then(() =>
+        Promise.reject(new Error("child exited before " + JSON.stringify(marker) + "; out=" + JSON.stringify(out))),
+      ),
+    ]);
+
+  await using terminal = new Bun.Terminal({
+    data(_t, chunk) {
+      out += decoder.decode(chunk, { stream: true });
+      pump();
+    },
+    exit() {
+      exited.resolve();
+    },
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", childSrc], env: bunEnv, terminal });
+
+  await waitFor("rl1? ");
+  terminal.write("first\r");
+  await waitFor('RL1 "first"');
+
+  await waitFor("name?");
+  terminal.write("alice\r");
+  await waitFor('PROMPT "alice"');
+
+  await waitFor("ok?");
+  terminal.write("y\r");
+  await waitFor("CONFIRM true");
+
+  await waitFor("[Enter]");
+  terminal.write("\r");
+  await waitFor("ALERT done");
+
+  // Raw mode must have been restored so readline keeps working.
+  await waitFor("ISRAW true");
+  await waitFor("rl2? ");
+  terminal.write("second\r");
+  await waitFor('RL2 "second"');
+
+  await proc.exited;
+
+  // Echo must have been on during prompt(): the characters we typed should be
+  // visible between the prompt text and the PROMPT result line.
+  const flat = Bun.stripANSI(out).replace(/\r/g, "");
+  expect(flat).toContain("name? alice");
+}, 20_000);
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

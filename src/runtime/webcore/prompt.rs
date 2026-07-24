@@ -6,6 +6,62 @@ use bun_core::Output;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;
 
+/// RAII guard that forces stdin into canonical ("cooked") mode for the
+/// duration of a blocking line read and restores whatever termios were in
+/// effect afterwards.
+///
+/// `node:readline` (and anything else that calls `setRawMode(true)`) clears
+/// `ICANON`, `ECHO`, `ISIG` and `ICRNL`. While in that state, Enter delivers a
+/// bare `\r`, typed characters are not echoed, and Ctrl+C is not translated to
+/// `SIGINT`. `alert`/`confirm`/`prompt` all do a blocking read that waits for
+/// `\n`, so without this guard they hang with no visible feedback.
+///
+/// On non-TTY stdin `tcgetattr` fails and the guard is inert, so piped input
+/// keeps its existing behaviour.
+#[cfg(unix)]
+struct CookedStdinGuard {
+    saved: Option<libc::termios>,
+}
+
+#[cfg(unix)]
+impl CookedStdinGuard {
+    fn new() -> Self {
+        let saved = match bun_sys::posix::tcgetattr(0) {
+            Ok(orig) => {
+                let mut cooked = orig;
+                cooked.c_iflag |= libc::ICRNL;
+                cooked.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN;
+                match bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Drain, &cooked) {
+                    Ok(()) => Some(orig),
+                    Err(_) => None,
+                }
+            }
+            Err(_) => None,
+        };
+        Self { saved }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CookedStdinGuard {
+    fn drop(&mut self) {
+        if let Some(orig) = self.saved.as_ref() {
+            let _ = bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Drain, orig);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+struct CookedStdinGuard;
+
+#[cfg(not(unix))]
+impl CookedStdinGuard {
+    #[inline]
+    fn new() -> Self {
+        Self
+    }
+}
+
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
 fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -47,6 +103,8 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // 6. Invoke WebDriver BiDi user prompt opened with this, "alert", and message.
     // *  Not pertinent to use their complex system in a server context.
     Output::flush();
+
+    let _cooked = CookedStdinGuard::new();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
     let mut reader = Output::stdin_reader();
@@ -101,6 +159,8 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // 5. Invoke WebDriver BiDi user prompt opened with this, "confirm", and message.
     // *  Not relevant in a server context.
     Output::flush();
+
+    let _cooked = CookedStdinGuard::new();
 
     // 6. Pause until the user responds either positively or negatively.
     let mut reader = Output::stdin_reader();
@@ -293,13 +353,17 @@ pub mod prompt {
         // *  Not relevant in a server context.
         Output::flush();
 
+        let _cooked = CookedStdinGuard::new();
+
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+                set: bun_sys::windows::ENABLE_LINE_INPUT
+                    | bun_sys::windows::ENABLE_ECHO_INPUT
+                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
                 unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
             });
 
         // 7. Pause while waiting for the user's response.

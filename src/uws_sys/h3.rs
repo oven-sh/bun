@@ -188,6 +188,9 @@ impl Response {
     pub fn is_connect_request(&self) -> bool {
         false
     }
+    pub fn from_ancient_request(&self) -> bool {
+        false
+    }
     pub fn prepare_for_sendfile(&mut self) {}
     pub fn mark_needs_more(&mut self) {}
     pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {

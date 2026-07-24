@@ -2503,7 +2503,7 @@ where
         if !body_decides_framing {
             if let Some(headers) = response.get_init_headers_mut() {
                 // first respect the headers
-                if !HTTP3 {
+                if !HTTP3 && !resp.from_ancient_request() {
                     if let Some(transfer_encoding) =
                         headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
                     {
@@ -2601,7 +2601,10 @@ where
             }
             Body::Value::Locked(_) => {
                 this.render_metadata();
-                if !HTTP3 {
+                // RFC 9112 §6.1: Transfer-Encoding is HTTP/1.1-only. uWS's own
+                // write path skips it for ancient (HTTP/1.0) requests; mirror
+                // that here so HEAD matches the close-delimited GET.
+                if !HTTP3 && !resp.from_ancient_request() {
                     // SAFETY: FFI handle
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }

@@ -243,6 +243,7 @@ impl Loader {
             let region: Box<[u8]> = self
                 .get(b"S3_REGION")
                 .or_else(|| self.get(b"AWS_REGION"))
+                .or_else(|| self.get(b"AWS_DEFAULT_REGION"))
                 .map(Box::from)
                 .unwrap_or_default();
 

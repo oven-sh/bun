@@ -1847,7 +1847,11 @@ static void ssl_update_handshake(struct us_socket_t *s) {
 
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-  int batching = loop_ssl_data && !loop_ssl_data->ssl_write_batching;
+  /* Same gate as us_internal_ssl_write: an occupied spill slot means a later
+   * ssl_flush_write_batch could short-write into it and clobber another
+   * socket's pending ciphertext, so write through per record instead. */
+  int batching = loop_ssl_data && !loop_ssl_data->ssl_write_batching &&
+                 !loop_ssl_data->ssl_spill_owner;
   if (batching) loop_ssl_data->ssl_write_batching = 1;
 
   unsigned char ssl_was_in_use = s->ssl_in_use;
@@ -2089,9 +2093,12 @@ restart:
     /* While the handshake is pending, SSL_read may seal this side's final
      * flight (TLS 1.3 client Finished, TLS 1.2 server Finished). Batch it so
      * ssl_trigger_handshake_success can let the JS on_handshake callback
-     * discard it when verification is rejected. */
+     * discard it when verification is rejected. Same gate as
+     * us_internal_ssl_write: only when the spill slot is free, so a later
+     * flush cannot short-write over another socket's pending spill. */
     int hs_batching = s->ssl_handshake_state == HANDSHAKE_PENDING &&
-                      !loop_ssl_data->ssl_write_batching;
+                      !loop_ssl_data->ssl_write_batching &&
+                      !loop_ssl_data->ssl_spill_owner;
     if (hs_batching) loop_ssl_data->ssl_write_batching = 1;
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;

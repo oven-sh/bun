@@ -9,19 +9,12 @@
 const kNumStreamBaseStateFields = 4;
 
 class ShutdownWrap {
-  oncomplete: unknown;
-  callback: unknown;
-  handle: unknown;
-  constructor() {
-    this.oncomplete = null;
-    this.callback = null;
-    this.handle = null;
-  }
+  oncomplete = null;
+  callback = null;
+  handle = null;
 }
 
-class WriteWrap {
-  constructor() {}
-}
+class WriteWrap {}
 
 const ObjectDefineProperty = Object.defineProperty;
 

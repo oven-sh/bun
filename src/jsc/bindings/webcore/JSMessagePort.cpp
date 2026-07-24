@@ -198,11 +198,19 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
-    setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageEvent, value, thisObject);
+    auto& impl = thisObject.wrapped();
+    // m_hasRef must track the handler: ref while one is installed, release when an
+    // existing one is removed. A null assignment that removes nothing leaves an
+    // explicit ref() from JS (which also sets m_hasRef) undisturbed.
+    bool hadEventHandler = !!impl.attributeEventListener(eventNames().messageEvent, worldForDOMObject(thisObject));
+    setEventHandlerAttribute<JSEventListener>(impl, eventNames().messageEvent, value, thisObject);
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    if (value.isObject())
+        impl.jsRef(&lexicalGlobalObject);
+    else if (hadEventHandler)
+        impl.jsUnrefHandler(&lexicalGlobalObject);
 
     return true;
 }
@@ -227,11 +235,10 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
+    // Unlike onmessage, a messageerror handler never refs the event loop (same as Node.js).
     setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageerrorEvent, value, thisObject);
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
-
-    thisObject.wrapped().jsRef(&lexicalGlobalObject);
 
     return true;
 }

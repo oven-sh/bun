@@ -112,6 +112,9 @@ public:
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
+    // Release only the m_hasRef keepalive taken for an onmessage handler; leaves
+    // m_isRefd alone so a later addEventListener can still ref the loop.
+    void jsUnrefHandler(JSGlobalObject*);
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 

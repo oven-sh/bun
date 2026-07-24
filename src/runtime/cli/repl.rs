@@ -1802,6 +1802,12 @@ impl<'a> Repl<'a> {
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
+        opts.features.emit_decorator_metadata = vm.transpiler.options.emit_decorator_metadata;
+        opts.features.standard_decorators = bun_js_parser::RuntimeFeatures::standard_decorators_for(
+            bun_ast::Loader::Tsx,
+            vm.transpiler.options.experimental_decorators,
+            vm.transpiler.options.emit_decorator_metadata,
+        );
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
         // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a

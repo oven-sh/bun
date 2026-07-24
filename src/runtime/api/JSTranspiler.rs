@@ -1743,6 +1743,14 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        // Keep the scanner's grammar in sync with `parse()` (see `get_parse_result`),
+        // or the fast path rejects decorators and `accessor` fields the transpiler accepts.
+        let tsconfig = self.config.get().tsconfig.as_deref();
+        opts.features.standard_decorators = bun_js_parser::RuntimeFeatures::standard_decorators_for(
+            loader,
+            tsconfig.is_some_and(|ts| ts.experimental_decorators),
+            tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
+        );
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

@@ -2450,6 +2450,48 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    describe.each(["ts", "tsx", "js", "jsx"])("with the %s loader", loader => {
+      const scanner = new Bun.Transpiler({ loader });
+      const expected = [{ kind: "import-statement", path: "./dep" }];
+
+      it("accepts auto-accessor fields", () => {
+        const source = `import { a } from "./dep";\nclass C { accessor x = a; }`;
+        expect(scanner.scanImports(source)).toEqual(expected);
+        expect(scanner.scan(source).imports).toEqual(expected);
+      });
+
+      it("accepts standard decorators on a class", () => {
+        const source = `import { dec } from "./dep";\n@dec class C {}`;
+        expect(scanner.scanImports(source)).toEqual(expected);
+        expect(scanner.scan(source).imports).toEqual(expected);
+      });
+
+      it("accepts standard decorators on class members", () => {
+        const source = `import { dec } from "./dep";\nclass C { @dec accessor x = 1; @dec foo() {} }`;
+        expect(scanner.scanImports(source)).toEqual(expected);
+        expect(scanner.scan(source).imports).toEqual(expected);
+      });
+    });
+
+    // `@dec()()` parses under TypeScript's legacy decorator grammar but not under the
+    // TC39 standard one, so it tells the two apart.
+    const legacyOnlyDecorator = `import { dec } from "./dep";\n@dec()() class C {}`;
+
+    it("uses the standard decorator grammar by default, like transformSync", () => {
+      const standard = new Bun.Transpiler({ loader: "ts" });
+      expect(() => standard.scanImports(legacyOnlyDecorator)).toThrow("Failed to scan imports");
+      expect(() => standard.transformSync(legacyOnlyDecorator)).toThrow("Parse error");
+    });
+
+    it("honors experimentalDecorators, like transformSync", () => {
+      const legacy = new Bun.Transpiler({
+        loader: "ts",
+        tsconfig: { compilerOptions: { experimentalDecorators: true } },
+      });
+      expect(legacy.scanImports(legacyOnlyDecorator)).toEqual([{ kind: "import-statement", path: "./dep" }]);
+      expect(legacy.transformSync(legacyOnlyDecorator)).toContain("class C");
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

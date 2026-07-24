@@ -81,22 +81,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // `leak:uws_create_app` silently stops matching and CI reports the
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
-    //
-    // Windows adds two more:
-    // detect_odr_violation=0: link.exe/lld-link fold identical string
-    //   literals across TUs; the runtime's global-registration sees two
-    //   registrations at one address and reports a false ODR violation
-    //   before main runs.
-    // detect_container_overflow=0: uWS's HttpParser is post-padded by
-    //   design — its fence write lands in deliberate padding past the
-    //   receive container's logical size() but inside its capacity, which
-    //   is the container-annotation false-positive class.
-    #[cfg(not(windows))]
-    const OPTIONS: &core::ffi::CStr = c"detect_stack_use_after_return=0:detect_leaks=0";
-    #[cfg(windows)]
-    const OPTIONS: &core::ffi::CStr =
-        c"detect_stack_use_after_return=0:detect_leaks=0:detect_odr_violation=0:detect_container_overflow=0";
-    OPTIONS.as_ptr()
+    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
 }
 
 /// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`

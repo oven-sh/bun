@@ -104,10 +104,25 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
+// https://url.spec.whatwg.org/#host-state: the parser removes ASCII tab and
+// newline, then ':', '/', '?', '#', and '\' end the host. A special non-file
+// URL must be left unchanged when nothing in the value precedes that point.
+static bool hostPartIsEmpty(StringView value)
+{
+    for (unsigned i = 0; i < value.length(); ++i) {
+        auto character = value[i];
+        // https://infra.spec.whatwg.org/#ascii-tab-or-newline
+        if (character == 0x0009 || character == 0x000A || character == 0x000D)
+            continue;
+        return character == ':' || character == '/' || character == '?' || character == '#' || character == '\\';
+    }
+    return true;
+}
+
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
-    if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
+    if (hostPartIsEmpty(value) && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
 
     size_t separator = value.reverseFind(':');
@@ -148,7 +163,7 @@ String URLDecomposition::hostname() const
 void URLDecomposition::setHostname(StringView host)
 {
     auto fullURL = this->fullURL();
-    if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
+    if (hostPartIsEmpty(host) && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
     if (fullURL.hasOpaquePath())
         return;

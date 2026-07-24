@@ -2,17 +2,26 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
-  // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
-  // remaining files; otherwise one fast worker handles all three.
-  const fixture = `import {test} from "bun:test"; test("t", async () => { await Bun.sleep(200); console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID); });`;
+  // Each file rendezvous-waits on a shared gate dir until all three workers
+  // have started one, so worker 0 can't finish and work-steal worker 1's file
+  // before worker 1 boots (ASAN worker startup exceeds any fixed sleep).
+  const print = `console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID+" pid="+process.pid)`;
+  const fixture = `import {test} from "bun:test";
+    test("t", async () => {
+      await Bun.write(process.env.GATE+"/"+process.pid, "");
+      while ((await Array.fromAsync(new Bun.Glob("*").scan(process.env.GATE))).length < 3) await Bun.sleep(1);
+      ${print};
+    });`;
   using dir = tempDir("parallel-worker-id", {
     "a.test.js": fixture,
     "b.test.js": fixture,
     "c.test.js": fixture,
+    "gate/.keep": "",
   });
+  const gate = String(dir) + "/gate";
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=3"],
-    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", GATE: gate },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
@@ -20,17 +29,21 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = stdout + stderr;
   expect(out).not.toContain("WID=undefined");
-  // 1-indexed; JEST_WORKER_ID and BUN_TEST_WORKER_ID always match.
-  const seen = [...out.matchAll(/WID=(\d+) (\d+)/g)].map(m => {
+  // 1-indexed; JEST_WORKER_ID and BUN_TEST_WORKER_ID always match; each
+  // pid sees exactly one WID (stable per worker process).
+  const seen = [...out.matchAll(/WID=(\d+) (\d+) pid=(\d+)/g)].map(m => {
     expect(m[1]).toBe(m[2]);
-    return m[1];
+    return { wid: m[1], pid: m[3] };
   });
-  expect(seen.sort()).toEqual(["1", "2", "3"]);
+  expect(seen.map(s => s.wid).sort()).toEqual(["1", "2", "3"]);
+  expect(new Set(seen.map(s => s.pid)).size).toBe(3);
   expect(exitCode).toBe(0);
 
   // K<=1 serial-fallback (single file, or --parallel=1) still sets WORKER_ID=1
   // so tests can rely on it whenever --parallel is passed (matches Jest).
-  using single = tempDir("parallel-worker-id-single", { "a.test.js": fixture });
+  using single = tempDir("parallel-worker-id-single", {
+    "a.test.js": `import {test} from "bun:test"; test("t", () => { ${print}; });`,
+  });
   await using p2 = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=5"],
     env: bunEnv,
@@ -504,10 +517,12 @@ test("--parallel never interleaves console output across files", async () => {
 });
 
 test("--parallel lazily scales workers based on file duration", async () => {
-  // Each test file appends its PID so we can count distinct worker processes.
+  // Each file prints its PID so we can count distinct workers. Avoid
+  // `import "fs"`: under debug+ASAN+isolate it re-evaluates node:fs per file
+  // (~800ms each), which by itself blows past the fast-case threshold below.
   const body = (sleepMs: number) =>
-    `import {test,expect} from "bun:test"; import {appendFileSync} from "fs";
-     test("t", async()=>{ appendFileSync(process.env.PIDS, process.pid+"\\n"); await Bun.sleep(${sleepMs}); expect(1).toBe(1); });`;
+    `import {test,expect} from "bun:test";
+     test("t", async()=>{ console.error("PID="+process.pid); await Bun.sleep(${sleepMs}); expect(1).toBe(1); });`;
   const fixture = (sleepMs: number) => ({
     "a.test.js": body(sleepMs),
     "b.test.js": body(sleepMs),
@@ -515,16 +530,15 @@ test("--parallel lazily scales workers based on file duration", async () => {
     "d.test.js": body(sleepMs),
   });
   const run = async (dir: string, scaleMs: number) => {
-    const pids = dir + "/pids.txt";
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=4"],
-      env: { ...bunEnv, PIDS: pids, BUN_TEST_PARALLEL_SCALE_MS: String(scaleMs) },
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: String(scaleMs) },
       cwd: dir,
       stderr: "pipe",
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode, pids: new Set((await Bun.file(pids).text()).trim().split("\n")) };
+    return { stderr, exitCode, pids: new Set([...stderr.matchAll(/^PID=(\d+)$/gm)].map(m => m[1])) };
   };
 
   // Fast: 4 files × 0ms with a 250ms threshold. Each file (load + run +
@@ -559,19 +573,18 @@ test("--parallel partitions by directory and steals from the end", async () => {
   // exhausts its own chunk. With K=4 each worker's initial chunk is one
   // directory; the assertion is that each directory's first-dispatched file
   // ran on a distinct PID (i.e. files were not round-robined across workers).
-  const body = `import {test,expect} from "bun:test"; import {appendFileSync} from "fs";
+  const body = `import {test,expect} from "bun:test";
     test("t", async () => {
-      appendFileSync(process.env.LOG, JSON.stringify({pid: process.pid, file: import.meta.path}) + "\\n");
+      console.error("ROW="+JSON.stringify({pid: process.pid, file: import.meta.path}));
       await Bun.sleep(150);
       expect(1).toBe(1);
     });`;
   const files: Record<string, string> = {};
   for (const d of ["a", "b", "c", "d"]) for (let i = 0; i < 4; i++) files[`${d}/${d}${i}.test.js`] = body;
   using dir = tempDir("parallel-affinity", files);
-  const log = String(dir) + "/log.ndjson";
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=4"],
-    env: { ...bunEnv, LOG: log, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
@@ -580,11 +593,11 @@ test("--parallel partitions by directory and steals from the end", async () => {
   expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("16 pass");
 
+  // ROW= lines are flushed at test_done, so within a PID they appear in
+  // dispatch order; across PIDs they interleave, which the grouping tolerates.
   type Row = { pid: number; file: string };
-  const rows: Row[] = (await Bun.file(log).text())
-    .trim()
-    .split("\n")
-    .map(l => JSON.parse(l));
+  const rows: Row[] = [...stderr.matchAll(/^ROW=(.+)$/gm)].map(m => JSON.parse(m[1]));
+  expect(rows.length).toBe(16);
   const dirOf = (r: Row) => r.file.replaceAll("\\", "/").split("/").slice(-2, -1)[0]!;
   const byPid = new Map<number, Row[]>();
   for (const r of rows) (byPid.get(r.pid) ?? byPid.set(r.pid, []).get(r.pid)!).push(r);
@@ -603,20 +616,19 @@ test("--parallel work-stealing balances an uneven directory split", async () => 
   // worker 3 owns the three fast files and finishes first. It then steals
   // from the back of the largest a-range. Assertions: all 11 complete, and the
   // PID that ran d/ also ran at least one a/ file (the steal).
-  const slow = `import {test,expect} from "bun:test"; import {appendFileSync} from "fs";
-    test("t", async () => { appendFileSync(process.env.LOG, JSON.stringify({pid: process.pid, file: import.meta.path}) + "\\n"); await Bun.sleep(250); expect(1).toBe(1); });`;
-  const fast = `import {test,expect} from "bun:test"; import {appendFileSync} from "fs";
-    test("t", () => { appendFileSync(process.env.LOG, JSON.stringify({pid: process.pid, file: import.meta.path}) + "\\n"); expect(1).toBe(1); });`;
+  const slow = `import {test,expect} from "bun:test";
+    test("t", async () => { console.error("ROW="+JSON.stringify({pid: process.pid, file: import.meta.path})); await Bun.sleep(250); expect(1).toBe(1); });`;
+  const fast = `import {test,expect} from "bun:test";
+    test("t", () => { console.error("ROW="+JSON.stringify({pid: process.pid, file: import.meta.path})); expect(1).toBe(1); });`;
   const files: Record<string, string> = {};
   for (let i = 0; i < 8; i++) files[`a/a${i}.test.js`] = slow;
   files["b/b0.test.js"] = fast;
   files["c/c0.test.js"] = fast;
   files["d/d0.test.js"] = fast;
   using dir = tempDir("parallel-steal", files);
-  const log = String(dir) + "/log.ndjson";
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=4"],
-    env: { ...bunEnv, LOG: log, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
@@ -627,10 +639,7 @@ test("--parallel work-stealing balances an uneven directory split", async () => 
   expect(stderr).toContain("0 fail");
 
   type Row = { pid: number; file: string };
-  const rows: Row[] = (await Bun.file(log).text())
-    .trim()
-    .split("\n")
-    .map(l => JSON.parse(l));
+  const rows: Row[] = [...stderr.matchAll(/^ROW=(.+)$/gm)].map(m => JSON.parse(m[1]));
   // The PID that ran b0/c0/d0 (worker 3's chunk) must also appear on at least
   // one a/ file — that's the steal.
   const norm = (s: string) => s.replaceAll("\\", "/");

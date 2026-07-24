@@ -76,6 +76,7 @@ class NodeInspector {
         options.host,
         options.port,
         FunctionPrototypeBind(this.childPrint, this),
+        { __proto__: null, deferBreakToClient: true },
       );
     } else {
       this._runScript = () => PromiseResolve([null, options.port, options.host]);
@@ -161,6 +162,12 @@ class NodeInspector {
       try {
         await this.client.connect(port, host);
         debuglog("connection established");
+        if (this.options.script) {
+          // See launchChildProcess: the child is parked in --inspect-wait, so
+          // arm the break on its first statement before the REPL resumes it.
+          await this.client.callMethod("Debugger.enable");
+          await this.client.callMethod("Debugger.pause");
+        }
         this.stdout.write(" ok\n");
         return;
       } catch (error) {

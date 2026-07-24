@@ -300,6 +300,87 @@ function ownSourceMappingURL(source: string): string {
   return source.slice(at + SOURCE_MAPPING_URL_COMMENT.length, end < 0 ? source.length : end).trim();
 }
 
+// ── RemoteObject / ObjectPreview ───────────────────────────────────────────
+// JSON cannot carry NaN, ±Infinity or -0, so V8 moves them out of `value` into
+// `unserializableValue`; bigints are reported the same way. JSC instead sends
+// `value: null` plus a `description`, so the two protocols disagree on every
+// such value.
+// https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-UnserializableValue
+const UNSERIALIZABLE_NUMBERS = new SafeSet(["NaN", "Infinity", "-Infinity", "-0"]);
+
+// JSC names a collection by its class alone and puts the element count in a
+// separate `size` field; V8 folds the count into the description and has no
+// such field.
+function collectionDescription(description: string | undefined, size: number | undefined): string | undefined {
+  if (description === undefined || size === undefined) return description;
+  return `${description}(${size})`;
+}
+
+function toCdpObjectPreview(preview: AnyObject | undefined): AnyObject | undefined {
+  if (!preview) return preview;
+  const { lossless, size, properties, entries, valuePreview, ...rest } = preview;
+  const out: AnyObject = rest;
+  out.description = collectionDescription(preview.description, size);
+  // JSC's `lossless` is the negation of V8's `overflow`. JSC sends `overflow`
+  // too, but only for some types, so derive it whenever `lossless` is present.
+  if (lossless !== undefined) out.overflow = !lossless;
+  if (properties) out.properties = properties.map(toCdpPropertyPreview);
+  if (entries) out.entries = entries.map(toCdpEntryPreview);
+  if (valuePreview) out.valuePreview = toCdpObjectPreview(valuePreview);
+  return out;
+}
+
+function toCdpPropertyPreview(property: AnyObject): AnyObject {
+  if (!property.valuePreview) return property;
+  return { ...property, valuePreview: toCdpObjectPreview(property.valuePreview) };
+}
+
+function toCdpEntryPreview(entry: AnyObject): AnyObject {
+  const out: AnyObject = { ...entry };
+  if (entry.key) out.key = toCdpObjectPreview(entry.key);
+  if (entry.value) out.value = toCdpObjectPreview(entry.value);
+  return out;
+}
+
+function toCdpRemoteObject(remote: AnyObject | undefined): AnyObject | undefined {
+  if (!remote || typeof remote !== "object") return remote;
+  const { size, preview, ...rest } = remote;
+  const out: AnyObject = rest;
+  if (remote.type === "number" && UNSERIALIZABLE_NUMBERS.$has(remote.description)) {
+    delete out.value;
+    out.unserializableValue = remote.description;
+  } else if (remote.type === "bigint" && remote.description !== undefined) {
+    delete out.value;
+    out.unserializableValue = remote.description;
+  } else if (size !== undefined) {
+    out.description = collectionDescription(remote.description, size);
+  }
+  if (preview) out.preview = toCdpObjectPreview(preview);
+  return out;
+}
+
+function toCdpPropertyDescriptor(property: AnyObject): AnyObject {
+  const out: AnyObject = { configurable: false, enumerable: false, ...property };
+  if (property.value) out.value = toCdpRemoteObject(property.value);
+  if (property.get) out.get = toCdpRemoteObject(property.get);
+  if (property.set) out.set = toCdpRemoteObject(property.set);
+  if (property.symbol) out.symbol = toCdpRemoteObject(property.symbol);
+  return out;
+}
+
+// JSC and V8 word the same protocol failures differently. CDP clients match on
+// the message text, so translate the ones with a V8 counterpart.
+// https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-debugger-breakpoint-exists.js
+const BACKEND_ERROR_MESSAGES: Record<string, string> = {
+  __proto__: null,
+  "Breakpoint for given location already exists": "Breakpoint at specified location already exists.",
+} as any;
+
+function toCdpErrorMessage(message: string | undefined): string {
+  if (message === undefined) return "Unknown error";
+  return BACKEND_ERROR_MESSAGES[message] ?? message;
+}
+
 // Null-proto so a key not present as an own property does not fall through to
 // Object.prototype: the in-process Session runs this adapter on the user's
 // main thread, where Object.prototype may have been tampered with.
@@ -370,6 +451,9 @@ class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
   #nextExceptionId = 1;
+  // V8 reports the pause that ends a step command with reason "step"; JSC does
+  // not distinguish it from any other pause, so track the step here.
+  #steppingToNextPause = false;
   #pending = new Map<
     number,
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
@@ -532,7 +616,7 @@ class InspectorCDPAdapter {
 
   #onEvaluateForAwaitPromise(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {
     if (error) {
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
       return;
     }
     const remote = result.result;
@@ -564,7 +648,7 @@ class InspectorCDPAdapter {
   #onProfilerStartReply(id: number, _result: AnyObject, error: AnyObject) {
     if (error) {
       this.#profilerTracking = false;
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
       return;
     }
     this.#replyToClient(id, {});
@@ -575,7 +659,7 @@ class InspectorCDPAdapter {
     if (error) {
       const at = this.#profilerStopClientIds.indexOf(id);
       if (at >= 0) this.#profilerStopClientIds.splice(at, 1);
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
     }
   }
 
@@ -600,7 +684,7 @@ class InspectorCDPAdapter {
   #onGlobalObjectForCallFunctionOn(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {
     const globalObjectId = result.result?.objectId;
     if (error || !globalObjectId) {
-      this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
+      this.#replyErrorToClient(id, error?.code ?? -32000, error ? toCdpErrorMessage(error.message) : "Failed to resolve global object");
       return;
     }
     this.#forwardCallFunctionOn(id, method, params, globalObjectId);
@@ -617,7 +701,7 @@ class InspectorCDPAdapter {
     error: AnyObject,
   ) {
     if (error) {
-      this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+      this.#replyErrorToClient(id, error.code ?? -32000, toCdpErrorMessage(error.message));
       return;
     }
     const breakpointId = result.breakpointId;
@@ -776,7 +860,7 @@ class InspectorCDPAdapter {
       }
       if (clientId === null || clientId === undefined) return;
       if (error) {
-        this.#replyErrorToClient(clientId, error.code ?? -32000, error.message ?? "Unknown error");
+        this.#replyErrorToClient(clientId, error.code ?? -32000, toCdpErrorMessage(error.message));
         return;
       }
       this.#replyToClient(clientId, this.#translateResult(pending.method, parsed.result || {}));
@@ -959,13 +1043,18 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Debugger.setPauseOnDebuggerStatements", { enabled: true }, id, method);
         return;
 
-      case "Debugger.disable":
-      case "Debugger.pause":
-      case "Debugger.resume":
       case "Debugger.stepInto":
       case "Debugger.stepOut":
       case "Debugger.stepOver":
+        this.#steppingToNextPause = true;
+        this.#sendToBackend(method, params, id, method);
+        return;
+
+      case "Debugger.disable":
+      case "Debugger.pause":
+      case "Debugger.resume":
       case "Debugger.setBreakpointsActive":
+        this.#steppingToNextPause = false;
         this.#sendToBackend(method, params, id, method);
         return;
 
@@ -1230,28 +1319,24 @@ class InspectorCDPAdapter {
       case "Runtime.evaluate":
       case "Runtime.callFunctionOn":
       case "Debugger.evaluateOnCallFrame": {
-        const out: AnyObject = { result: result.result ?? { type: "undefined" } };
+        const remote = toCdpRemoteObject(result.result) ?? { type: "undefined" };
+        const out: AnyObject = { result: remote };
         if (result.wasThrown) {
           out.exceptionDetails = {
             exceptionId: this.#nextExceptionId++,
             text: result.result?.description ?? "Uncaught",
             lineNumber: 0,
             columnNumber: 0,
-            exception: result.result,
+            exception: remote,
           };
         }
         return out;
       }
 
       case "Runtime.getProperties": {
-        const properties = (result.properties ?? []).map((property: AnyObject) => ({
-          configurable: false,
-          enumerable: false,
-          ...property,
-        }));
-        const out: AnyObject = { result: properties };
+        const out: AnyObject = { result: (result.properties ?? []).map(toCdpPropertyDescriptor) };
         const { internalProperties } = result;
-        if (internalProperties) out.internalProperties = internalProperties;
+        if (internalProperties) out.internalProperties = internalProperties.map(toCdpPropertyDescriptor);
         return out;
       }
 
@@ -1338,7 +1423,9 @@ class InspectorCDPAdapter {
           canBeRestarted: false,
         }));
         const { data, asyncStackTrace } = params;
-        const cdpParams: AnyObject = { callFrames, reason: "other", data };
+        const stepped = this.#steppingToNextPause;
+        this.#steppingToNextPause = false;
+        const cdpParams: AnyObject = { callFrames, reason: stepped ? "step" : "other", data };
         switch (params.reason) {
           case "exception":
             cdpParams.reason = "exception";
@@ -1347,6 +1434,9 @@ class InspectorCDPAdapter {
             cdpParams.reason = "assert";
             break;
           case "Breakpoint":
+            // A breakpoint reached mid-step is a breakpoint hit to V8, not a
+            // completed step.
+            cdpParams.reason = "other";
             if (data?.breakpointId) cdpParams.hitBreakpoints = [this.#toClientBreakpointId(data.breakpointId)];
             break;
         }

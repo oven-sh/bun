@@ -1794,3 +1794,122 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+// A throw from a user listener invoked synchronously from a native socket
+// dispatch must reach process.on('uncaughtException') the way Node reports it,
+// not be routed to the socket's 'error' event or silently dropped, and the
+// connection must stay alive so subsequent bytes are still delivered.
+describe.concurrent("uncaughtException from socket listeners", () => {
+  async function runFixture(src: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("server-side 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    const { stdout, stderr, exitCode } = await runFixture(`
+      const net = require("node:net");
+      const ev = [];
+      const done = () => { console.log(JSON.stringify(ev)); process.exit(0); };
+      process.on("uncaughtException", e => ev.push("uncaught:" + e.message));
+      const srv = net.createServer(s => {
+        ev.push("connection");
+        s.on("error", e => ev.push("socket-error:" + e.message));
+        s.on("data", d => {
+          ev.push("data:" + d);
+          // Queued before the throw so the client can pace the next write on
+          // the ack instead of time.
+          s.write(".");
+          if (String(d) === "A") throw new Error("data-boom");
+        });
+        s.on("close", had => { ev.push("close:" + had); srv.close(done); });
+      });
+      srv.listen(0, "127.0.0.1", () => {
+        const c = net.connect(srv.address().port, "127.0.0.1", () => c.write("A"));
+        let acks = 0;
+        c.on("data", () => { ++acks === 1 ? c.write("B") : c.end(); });
+        c.on("error", () => {});
+      });
+      setTimeout(done, 5000).unref();
+    `);
+    expect({ stdout: stdout.trim(), exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({
+      stdout: JSON.stringify(["connection", "data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("client-side 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    const { stdout, stderr, exitCode } = await runFixture(`
+      const net = require("node:net");
+      const ev = [];
+      const done = () => { console.log(JSON.stringify(ev)); process.exit(0); };
+      process.on("uncaughtException", e => ev.push("uncaught:" + e.message));
+      const srv = net.createServer(s => {
+        s.write("A");
+        s.once("data", () => s.end("B"));
+      });
+      srv.listen(0, "127.0.0.1", () => {
+        const c = net.connect(srv.address().port, "127.0.0.1");
+        c.on("error", e => ev.push("socket-error:" + e.message));
+        c.on("data", d => {
+          ev.push("data:" + d);
+          if (String(d) === "A") { c.write("."); throw new Error("data-boom"); }
+        });
+        c.on("close", had => { ev.push("close:" + had); srv.close(done); });
+      });
+      setTimeout(done, 5000).unref();
+    `);
+    expect({ stdout: stdout.trim(), exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({
+      stdout: JSON.stringify(["data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("'connection' listener throw reaches uncaughtException and the accepted socket keeps reading", async () => {
+    const { stdout, stderr, exitCode } = await runFixture(`
+      const net = require("node:net");
+      const ev = [];
+      const done = () => { console.log(JSON.stringify(ev)); process.exit(0); };
+      process.on("uncaughtException", e => ev.push("uncaught:" + e.message));
+      const srv = net.createServer(s => {
+        ev.push("connection");
+        s.on("error", e => ev.push("socket-error:" + e.message));
+        s.on("data", d => { ev.push("data:" + d); s.write("."); });
+        s.on("close", had => { ev.push("close:" + had); srv.close(done); });
+        throw new Error("conn-boom");
+      });
+      srv.on("error", e => ev.push("server-error:" + e.message));
+      srv.listen(0, "127.0.0.1", () => {
+        const c = net.connect(srv.address().port, "127.0.0.1", () => c.write("A"));
+        let acks = 0;
+        c.on("data", () => { ++acks === 1 ? c.write("B") : c.end(); });
+        c.on("error", () => {});
+      });
+      setTimeout(done, 5000).unref();
+    `);
+    expect({ stdout: stdout.trim(), exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({
+      stdout: JSON.stringify(["connection", "uncaught:conn-boom", "data:A", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("without an uncaughtException handler a throwing 'data' listener crashes the process", async () => {
+    const { stdout, stderr, exitCode } = await runFixture(`
+      const net = require("node:net");
+      const srv = net.createServer(s => s.end("x"));
+      srv.listen(0, "127.0.0.1", () => {
+        const c = net.connect(srv.address().port, "127.0.0.1");
+        c.on("error", e => { console.log("socket-error:" + e.message); process.exit(7); });
+        c.on("data", () => { throw new Error("fatal-boom"); });
+      });
+    `);
+    expect(stdout).not.toContain("socket-error:");
+    expect(stderr).toContain("fatal-boom");
+    expect(exitCode).toBe(1);
+  });
+});

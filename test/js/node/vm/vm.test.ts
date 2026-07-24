@@ -1238,7 +1238,7 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/31885
-describe.skipIf(isWindows)("breakOnSigint restores the previous SIGINT disposition", () => {
+describe.concurrent.skipIf(isWindows)("breakOnSigint restores the previous SIGINT disposition", () => {
   // Printed after the vm run, so the parent only signals once SIGINT is back in
   // whatever state the script left it. kill() delivers the signal before it
   // returns, so a child still alive here swallowed it: fail, rather than hang.
@@ -1252,7 +1252,7 @@ describe.skipIf(isWindows)("breakOnSigint restores the previous SIGINT dispositi
       cmd: [bunExe(), "-e", fixture],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
 
     let stdout = "";
@@ -1269,9 +1269,9 @@ describe.skipIf(isWindows)("breakOnSigint restores the previous SIGINT dispositi
     await ready.promise;
     proc.kill("SIGINT");
 
-    const exitCode = await proc.exited;
+    const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
     await drained;
-    return { stdout, exitCode, signalCode: proc.signalCode };
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
   test("SIGINT terminates the process when no listener was ever registered", async () => {
@@ -1281,7 +1281,7 @@ describe.skipIf(isWindows)("breakOnSigint restores the previous SIGINT dispositi
     `);
 
     // SIG_DFL, same as node: exit 130, no "survived".
-    expect(result).toEqual({ stdout: "ready\n", exitCode: 130, signalCode: "SIGINT" });
+    expect(result).toEqual({ stdout: "ready\n", stderr: "", exitCode: 130, signalCode: "SIGINT" });
   });
 
   test("a listener registered before the run still receives SIGINT after it", async () => {
@@ -1291,7 +1291,7 @@ describe.skipIf(isWindows)("breakOnSigint restores the previous SIGINT dispositi
       ${stayAliveThenReady}
     `);
 
-    expect(result).toEqual({ stdout: "ready\nlistener\n", exitCode: 0, signalCode: null });
+    expect(result).toEqual({ stdout: "ready\nlistener\n", stderr: "", exitCode: 0, signalCode: null });
   });
 
   test("removing the last listener after the run hands SIGINT back to the default", async () => {
@@ -1303,6 +1303,23 @@ describe.skipIf(isWindows)("breakOnSigint restores the previous SIGINT dispositi
       ${stayAliveThenReady}
     `);
 
-    expect(result).toEqual({ stdout: "ready\n", exitCode: 130, signalCode: "SIGINT" });
+    expect(result).toEqual({ stdout: "ready\n", stderr: "", exitCode: 130, signalCode: "SIGINT" });
+  });
+
+  test("a listener registered during the run still receives SIGINT after it", async () => {
+    // Node v26 exits 130 here: its SigintWatchdog restores the sigaction it
+    // replaced without checking who owns SIGINT now, so the listener stays in
+    // process.listeners("SIGINT") but never fires. Bun leaves a handler
+    // installed mid-run in place so signalToContextIdsMap and the sigaction
+    // agree; uninstall() only restores when its own handler is still current.
+    const result = await sigintAfterReady(`
+      require("node:vm").runInThisContext(
+        'process.on("SIGINT", () => { process.stdout.write("listener\\\\n"); process.exit(0); })',
+        { breakOnSigint: true },
+      );
+      ${stayAliveThenReady}
+    `);
+
+    expect(result).toEqual({ stdout: "ready\nlistener\n", stderr: "", exitCode: 0, signalCode: null });
   });
 });

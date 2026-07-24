@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -154,4 +154,54 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     emptyErr: "Unexpected end of JSON input",
   });
   expect(exitCode).toBe(0);
+});
+
+test("Bun.file().type maps uppercase and mixed-case extensions to the same MIME type", async () => {
+  using dir = tempDir("bun-file-ext-case", {
+    "a.png": "x",
+    "A.PNG": "x",
+    "a.PnG": "x",
+    "IMG_0001.JPG": "x",
+    "INDEX.HTML": "x",
+    "LOGO.SVG": "x",
+    "S.CSS": "x",
+    "MAIN.JS": "x",
+    "DATA.JSON": "x",
+    "clip.MP4": "x",
+  });
+  const d = String(dir);
+
+  const typeOf = (name: string) => Bun.file(join(d, name)).type.split(";")[0];
+
+  expect({
+    "a.png": typeOf("a.png"),
+    "A.PNG": typeOf("A.PNG"),
+    "a.PnG": typeOf("a.PnG"),
+    "IMG_0001.JPG": typeOf("IMG_0001.JPG"),
+    "INDEX.HTML": typeOf("INDEX.HTML"),
+    "LOGO.SVG": typeOf("LOGO.SVG"),
+    "S.CSS": typeOf("S.CSS"),
+    "MAIN.JS": typeOf("MAIN.JS"),
+    "DATA.JSON": typeOf("DATA.JSON"),
+    "clip.MP4": typeOf("clip.MP4"),
+  }).toEqual({
+    "a.png": "image/png",
+    "A.PNG": "image/png",
+    "a.PnG": "image/png",
+    "IMG_0001.JPG": "image/jpeg",
+    "INDEX.HTML": "text/html",
+    "LOGO.SVG": "image/svg+xml",
+    "S.CSS": "text/css",
+    "MAIN.JS": "text/javascript",
+    "DATA.JSON": "application/json",
+    "clip.MP4": "video/mp4",
+  });
+
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(Bun.file(join(d, "IMG_0001.JPG"))),
+  });
+  const res = await fetch(server.url);
+  await res.arrayBuffer();
+  expect(res.headers.get("content-type")).toStartWith("image/jpeg");
 });

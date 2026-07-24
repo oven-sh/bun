@@ -777,6 +777,187 @@ it("chrome: reload resolves after Page.loadEventFired", async () => {
   expect(after).not.toBe(before);
 });
 
+// --- navigate({ waitUntil, timeout }) -------------------------------------
+// A page whose main document is parseable but whose only subresource
+// never finishes → `load` never fires. Without { waitUntil:
+// "domcontentloaded" } (or a timeout), `await navigate()` hangs forever
+// on Page.loadEventFired.
+
+it("chrome: navigate({waitUntil:'domcontentloaded'}) settles when `load` never fires", async () => {
+  // Main document is tiny; /hang keeps the connection open so the
+  // <img> subresource never completes → the page's `load` event never
+  // fires (Chrome waits for all <img>s). DOMContentLoaded DOES fire —
+  // the document is fully parsed.
+  let releaseHang: (() => void) | undefined;
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/hang") {
+        // A ReadableStream that enqueues nothing until we release it.
+        // Chrome treats the <img> as loading while the body is open.
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              releaseHang = () => {
+                try {
+                  controller.close();
+                } catch {}
+              };
+            },
+          }),
+          { headers: { "content-type": "image/png" } },
+        );
+      }
+      return new Response(`<!doctype html><title>dcl</title><body>ready<img src="/hang"></body>`, {
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
+
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  try {
+    // `load` never fires; Page.lifecycleEvent(name=DOMContentLoaded)
+    // does. The handler matches on the main frame's loaderId (stashed
+    // by frameNavigated) so the about:blank replay and any subframe
+    // events can't mis-settle it.
+    await view.navigate(`http://127.0.0.1:${server.port}/`, { waitUntil: "domcontentloaded" });
+    // `await navigate()` chains Runtime.evaluate("document.title")
+    // before settling, so title/url are populated at DCL too.
+    expect(view.title).toBe("dcl");
+    // view.loading tracks the REAL load state (flipped by loadEventFired),
+    // not the user's waitUntil milestone — still loading here.
+    expect(view.loading).toBe(true);
+    // The DOM is fully parsed at DOMContentLoaded.
+    expect(await view.evaluate("document.body.textContent")).toBe("ready");
+    expect(await view.evaluate("document.readyState")).toBe("interactive");
+  } finally {
+    // Let the <img> finish so close() doesn't race Chrome's network stack.
+    releaseHang?.();
+  }
+});
+
+it("chrome: navigate({timeout}) rejects when `load` never fires", async () => {
+  let releaseHang: (() => void) | undefined;
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/hang") {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              releaseHang = () => {
+                try {
+                  controller.close();
+                } catch {}
+              };
+            },
+          }),
+          { headers: { "content-type": "image/png" } },
+        );
+      }
+      return new Response(`<!doctype html><body><img src="/hang"></body>`, {
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
+
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  try {
+    // Default waitUntil:'load' — loadEventFired never comes. The
+    // parent-side RunLoop::dispatchAfter timer rejects. No cancel: the
+    // timer captures m_navGeneration and no-ops if a later navigate
+    // (or this settle) bumped it.
+    await expect(view.navigate(`http://127.0.0.1:${server.port}/`, { timeout: 500 })).rejects.toThrow(
+      /Navigation timeout of 500ms exceeded/,
+    );
+    // The slot is clear after the timeout rejection — a fresh
+    // navigate works and its own 30s default timer is independent
+    // (generation bumped).
+    await view.navigate(html("<body>after</body>"));
+    expect(await view.evaluate("document.body.textContent")).toBe("after");
+  } finally {
+    releaseHang?.();
+  }
+});
+
+it("chrome: reload({waitUntil:'domcontentloaded'}) settles on DCL", async () => {
+  // reload() has no loaderId in its CDP response; frameNavigated
+  // supplies it. Same lifecycleEvent path as navigate().
+  let releaseHang: (() => void) | undefined;
+  let hits = 0;
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/hang") {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              releaseHang = () => {
+                try {
+                  controller.close();
+                } catch {}
+              };
+            },
+          }),
+          { headers: { "content-type": "image/png" } },
+        );
+      }
+      hits++;
+      return new Response(`<!doctype html><body data-hit="${hits}"><img src="/hang"></body>`, {
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
+
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  try {
+    await view.navigate(`http://127.0.0.1:${server.port}/`, { waitUntil: "domcontentloaded" });
+    expect(await view.evaluate("document.body.dataset.hit")).toBe("1");
+    releaseHang?.();
+    await view.reload({ waitUntil: "domcontentloaded" });
+    expect(await view.evaluate("document.body.dataset.hit")).toBe("2");
+  } finally {
+    releaseHang?.();
+  }
+});
+
+it("chrome: navigate({waitUntil:'domcontentloaded'}) ignores subframe lifecycle events", async () => {
+  // The <iframe> fires its own Page.lifecycleEvent(DOMContentLoaded)
+  // before the main document does (it's srcdoc — parsed inline). The
+  // frameId gate (main frame only, matched against m_frameId from
+  // frameNavigated) must filter it out.
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html(`<!doctype html><body><iframe srcdoc="<p>sub</p>"></iframe><p id=m>main</p></body>`), {
+    waitUntil: "domcontentloaded",
+  });
+  // If the subframe's DCL had settled us, #m wouldn't exist yet (the
+  // iframe is before it in the stream). Settling on the MAIN frame's
+  // DCL means the whole document is parsed.
+  expect(await view.evaluate("document.getElementById('m')?.textContent")).toBe("main");
+});
+
+it("chrome: navigate() option validation", () => {
+  // Option parsing throws before any I/O. Needs a valid `this` so we
+  // construct a view (Chrome is already up from earlier tests); the
+  // throws happen in parseNavOptions before the slot check.
+  const v = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  try {
+    expect(() => v.navigate("about:blank", { waitUntil: "networkidle" as any })).toThrow(
+      /must be "load" or "domcontentloaded"/,
+    );
+    expect(() => v.navigate("about:blank", { waitUntil: 42 as any })).toThrow(/waitUntil.*string/);
+    expect(() => v.navigate("about:blank", { timeout: -1 })).toThrow(/non-negative finite/);
+    expect(() => v.navigate("about:blank", { timeout: Infinity })).toThrow(/non-negative finite/);
+    // reload/goBack/goForward share parseNavOptions.
+    expect(() => v.reload({ waitUntil: "x" as any })).toThrow(/must be "load" or "domcontentloaded"/);
+  } finally {
+    v.close();
+  }
+});
+
 it("chrome: sequential navigates work", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
 

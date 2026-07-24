@@ -20,6 +20,18 @@ enum class WebViewBackend : uint8_t {
     Chrome, // Chrome DevTools Protocol via --remote-debugging-pipe
 };
 
+// navigate()/reload()/goBack()/goForward() `waitUntil` option. Chrome
+// settles on the matching Page.lifecycleEvent; WebKit only exposes
+// didFinishNavigation (= load), so DOMContentLoaded degrades to Load
+// there. Values are also the wire enum for a future IPC NavigatePayload.
+enum class NavWaitUntil : uint8_t {
+    Load = 0, // window `load` fired — all subresources done. Default.
+    DOMContentLoaded = 1, // document parsed; subresources may still be
+                          // loading. Lets navigate() settle when the page
+                          // holds a never-ending connection (SSE/long-poll)
+                          // that would otherwise block `load` forever.
+};
+
 enum class ScreenshotFormat : uint8_t {
     Png, // lossless, default.
     Jpeg, // lossy, quality 0-100.
@@ -98,6 +110,21 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // Main-frame id + the CURRENT navigation's loaderId. frameNavigated
+    // updates both (parentId absent = main frame); Page.lifecycleEvent
+    // only settles when its frameId/loaderId match — subframe events and
+    // the about:blank replay from setLifecycleEventsEnabled don't match.
+    // m_loaderId is cleared by beginChromeNavigation() (so a PRIOR
+    // document's trailing lifecycle/loadEventFired can be identified as
+    // stale) and repopulated by the next frameNavigated.
+    WTF::String m_frameId;
+    WTF::String m_loaderId;
+    // Set once chainTitle() has enqueued the PageTitle fetch for THIS
+    // navigation. Further lifecycle/loadEventFired triggers for the
+    // same document drop instead of enqueuing duplicate PageTitle
+    // requests (whose responses could settle a LATER navigate). Cleared
+    // by beginChromeNavigation().
+    bool m_navTitleChained = false;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.
@@ -114,6 +141,13 @@ public:
     // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
     ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
+    // navigate()/reload()/goBack()/goForward() stash — read by the
+    // Chrome Page.lifecycleEvent handler to pick which event settles.
+    // Generation bumps on every navigation start; the parent-side
+    // timeout timer captures it and no-ops if a later navigation (or the
+    // settle path) bumped it first. No explicit timer cancel.
+    NavWaitUntil m_navWaitUntil = NavWaitUntil::Load;
+    uint32_t m_navGeneration = 0;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;
@@ -157,7 +191,7 @@ public:
     // before reaching here) and m_closed is false. WebKit paths are
     // Darwin-only; calling one on the WebKit backend off-Darwin is a bug
     // (constructor already threw).
-    JSC::JSPromise* navigate(JSC::JSGlobalObject*, const WTF::String& url);
+    JSC::JSPromise* navigate(JSC::JSGlobalObject*, const WTF::String& url, NavWaitUntil, uint32_t timeoutMs);
     JSC::JSPromise* evaluate(JSC::JSGlobalObject*, const WTF::String& script);
     JSC::JSPromise* screenshot(JSC::JSGlobalObject*, ScreenshotFormat, uint8_t quality);
     // Chrome-only. Raw CDP escape hatch — method is "Domain.method",
@@ -171,10 +205,18 @@ public:
     JSC::JSPromise* scroll(JSC::JSGlobalObject*, double dx, double dy);
     JSC::JSPromise* scrollTo(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t block);
     JSC::JSPromise* resize(JSC::JSGlobalObject*, uint32_t width, uint32_t height);
-    JSC::JSPromise* goBack(JSC::JSGlobalObject*);
-    JSC::JSPromise* goForward(JSC::JSGlobalObject*);
-    JSC::JSPromise* reload(JSC::JSGlobalObject*);
+    JSC::JSPromise* goBack(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
+    JSC::JSPromise* goForward(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
+    JSC::JSPromise* reload(JSC::JSGlobalObject*, NavWaitUntil, uint32_t timeoutMs);
     void doClose();
+
+    // Arm the parent-side navigation timeout. dispatchAfter self-manages
+    // lifetime; the closure captures {viewId, backend, generation} and
+    // no-ops if the view was collected or m_navGeneration moved on.
+    // 0 = no timeout (Playwright convention). Must be called AFTER the
+    // backend op stored a promise in m_pendingNavigate — a sync-rejected
+    // op (transport dead) leaves the slot empty and we skip the timer.
+    void armNavTimeout(JSC::JSGlobalObject*, uint32_t timeoutMs);
 
 #if OS(DARWIN)
     // WebKit constructor: spawn host if needed, allocate viewId, register

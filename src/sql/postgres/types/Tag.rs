@@ -206,6 +206,17 @@ impl Tag {
         0
     }
 
+    /// True when this type's binary `*send()` output is byte-identical to its
+    /// text output, so decoding the binary datum via the text path is already
+    /// correct. `jsonb` is intentionally absent (jsonb_send prepends a version
+    /// byte).
+    pub fn is_binary_format_textlike(self) -> bool {
+        matches!(
+            self,
+            Tag::text | Tag::varchar | Tag::bpchar | Tag::name | Tag::char | Tag::json | Tag::xml
+        )
+    }
+
     // `toJSTypedArrayType` / `toJS` / `fromJS` are extension-trait methods in
     // `bun_sql_jsc`.
 

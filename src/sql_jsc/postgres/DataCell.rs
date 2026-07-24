@@ -95,6 +95,9 @@ fn try_slice(slice: &[u8], count: usize) -> &[u8] {
 
 const MAX_ARRAY_NESTING_DEPTH: usize = 100;
 
+// Microseconds in a day. PostgreSQL's TIME/TIMETZ range is [00:00:00, 24:00:00].
+const USECS_PER_DAY: i64 = 86_400_000_000;
+
 // PERF: `array_type` and `is_json_sub_array` are only used in value
 // position (branch selectors), never type position. Profile if it shows up on a hot path.
 fn parse_array(
@@ -681,9 +684,20 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     } else {
         let mut out: Box<[u8]> = vec![0u8; out_bytes].into_boxed_slice();
         for i in 0..array_len {
-            // Wire layout per element for the 4-byte types this path
-            // supports (int4/float4): [elem_size length prefix][elem_size value]
-            let src_off = 20 + i * element_stride + (element_stride - elem_size);
+            // Wire layout per element: [int4 length prefix][value]. For the
+            // fixed-size types this path supports (int4/float4) the declared
+            // length must equal elem_size; validate before trusting the stride.
+            let len_off = 20 + i * element_stride;
+            let elem_len = i32::from_ne_bytes(
+                bytes[len_off..len_off + 4]
+                    .try_into()
+                    .expect("infallible: size matches"),
+            )
+            .swap_bytes();
+            if elem_len != elem_size as i32 {
+                return Err(AnyPostgresError::InvalidBinaryData);
+            }
+            let src_off = len_off + 4;
             // `bytes.len() >= 20 + array_len*element_stride` was validated
             // above; `out` has `array_len*elem_size` bytes. The trait's
             // `from_unaligned_ne_bytes`/`write_unaligned_ne_bytes` are safe
@@ -775,7 +789,9 @@ pub(crate) fn from_bytes(
             }
         }
         T::float8 => {
-            if binary && bytes.len() == 8 {
+            if binary {
+                // Binary float8 is exactly 8 bytes; reject a short/long datum
+                // instead of falling through to the text parser (which yields NaN).
                 Ok(SQLDataCell::float8(parse_binary_float8(bytes)?))
             } else {
                 Ok(SQLDataCell::float8(
@@ -784,7 +800,13 @@ pub(crate) fn from_bytes(
             }
         }
         T::float4 => {
-            if binary && bytes.len() == 4 {
+            if binary {
+                // Binary float4 is exactly 4 bytes. parse_binary_float4 goes
+                // through parse_binary_int4, which also accepts 1/2 bytes, so
+                // enforce the width here.
+                if bytes.len() != 4 {
+                    return Err(AnyPostgresError::InvalidBinaryData);
+                }
                 Ok(SQLDataCell::float8(parse_binary_float4(bytes)? as f64))
             } else {
                 Ok(SQLDataCell::float8(
@@ -809,16 +831,23 @@ pub(crate) fn from_bytes(
         T::jsonb | T::json => Ok(SQLDataCell::json(bytes)),
         T::bool => {
             if binary {
-                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == 1))
+                // Binary bool is exactly 1 byte valued 0 or 1.
+                if bytes.len() != 1 || bytes[0] > 1 {
+                    return Err(AnyPostgresError::InvalidBinaryData);
+                }
+                Ok(SQLDataCell::bool_(bytes[0] == 1))
             } else {
                 Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == b't'))
             }
         }
         tag @ (T::date | T::timestamp | T::timestamptz) => {
-            if bytes.is_empty() {
-                return Ok(SQLDataCell::null());
-            }
-            if binary && bytes.len() == 8 {
+            if binary {
+                // Binary timestamp/timestamptz is an 8-byte int64 of
+                // microseconds. A 0-byte or wrong-width datum is rejected
+                // rather than surfaced as null or an Invalid Date.
+                if bytes.len() != 8 {
+                    return Err(AnyPostgresError::InvalidBinaryData);
+                }
                 match tag {
                     T::timestamptz => Ok(SQLDataCell::date_with_tz(
                         crate::postgres::types::date::from_binary(bytes),
@@ -829,6 +858,9 @@ pub(crate) fn from_bytes(
                     _ => unreachable!(),
                 }
             } else {
+                if bytes.is_empty() {
+                    return Ok(SQLDataCell::null());
+                }
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell::null());
                 }
@@ -858,13 +890,16 @@ pub(crate) fn from_bytes(
             }
         }
         tag @ (T::time | T::timetz) => {
-            if bytes.is_empty() {
-                return Ok(SQLDataCell::null());
-            }
             if binary {
                 if tag == T::time && bytes.len() == 8 {
                     // PostgreSQL sends time as microseconds since midnight in binary format
                     let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes();
+
+                    // Valid range is [0, 24h]; out-of-range microseconds would
+                    // otherwise feed the C formatter and yield garbage strings.
+                    if !(0..=USECS_PER_DAY).contains(&microseconds) {
+                        return Err(AnyPostgresError::InvalidTimeFormat);
+                    }
 
                     // Use C++ helper for formatting
                     let mut buffer = [0u8; 32];
@@ -876,6 +911,10 @@ pub(crate) fn from_bytes(
                     let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes();
                     let tz_offset_seconds = i32::from_ne_bytes(bytes[8..12].try_into().expect("infallible: size matches")).swap_bytes();
 
+                    if !(0..=USECS_PER_DAY).contains(&microseconds) {
+                        return Err(AnyPostgresError::InvalidTimeFormat);
+                    }
+
                     // Use C++ helper for formatting with timezone
                     let mut buffer = [0u8; 48];
                     let len = Postgres__formatTimeTz(microseconds, tz_offset_seconds, &mut buffer, 48);
@@ -885,6 +924,9 @@ pub(crate) fn from_bytes(
                     Err(AnyPostgresError::InvalidBinaryData)
                 }
             } else {
+                if bytes.is_empty() {
+                    return Ok(SQLDataCell::null());
+                }
                 // Text format - just return as string
                 Ok(SQLDataCell::string(bytes))
             }
@@ -1024,6 +1066,16 @@ fn parse_binary_numeric<'a>(
         sign,
         dscale
     );
+
+    // The wire format is the 8-byte header followed by exactly `ndigits`
+    // base-10000 digits (2 bytes each). Reject a negative count, a negative
+    // display scale, and any trailing bytes before trusting the header.
+    if ndigits < 0 || dscale < 0 {
+        return Err(err!("InvalidBuffer"));
+    }
+    if input.len() != 8 + (ndigits as usize) * 2 {
+        return Err(err!("InvalidBuffer"));
+    }
 
     // Handle special cases
     match sign {
@@ -1259,6 +1311,14 @@ impl<'a> Putter<'a> {
                 // construct directly, no transmute needed.
                 types::Tag(oid as types::short)
             };
+            // Reject a binary format code on a type we have no binary decoder
+            // for so raw datum bytes cannot surface as a value. Text-family
+            // types are exempt: their `*send()` output is byte-identical to
+            // text (and a BINARY CURSOR FETCH sets format=1 on every column).
+            if field.binary && !tag.is_binary_format_supported() && !tag.is_binary_format_textlike()
+            {
+                return Err(AnyPostgresError::UnknownFormatCode);
+            }
             *cell = if let Some(data) = optional_bytes {
                 from_bytes(
                     (field.binary || self.binary) && tag.is_binary_format_supported(),

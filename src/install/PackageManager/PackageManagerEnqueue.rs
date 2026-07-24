@@ -2303,8 +2303,8 @@ fn get_or_put_resolved_package(
                             // dependency version is wildcard
                             || (workspace_path.is_some() && npm_group.is_star())
                     }
-                    // A dist-tag ("latest", "") names a workspace member: link
-                    // it instead of fetching from the registry (npm behavior).
+                    // npm only links the workspace for "" (coerced to "*");
+                    // bun also links for "latest"/"beta"/... (issue #4830).
                     dependency::version::Tag::DistTag => workspace_path.is_some(),
                     _ => unreachable!(),
                 };
@@ -2448,50 +2448,6 @@ fn get_or_put_resolved_package(
             let find_result = match find_result_opt {
                 Some(r) => r,
                 None => {
-                    'resolve_workspace_from_dist_tag: {
-                        // choose a workspace for a dist_tag only if a version was not found
-                        if version.tag == dependency::version::Tag::DistTag {
-                            let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
-                                this.lockfile.workspace_paths.get(&name_hash)
-                            } else {
-                                None
-                            };
-                            if workspace_path.is_some() {
-                                let Some(root_package) = this.lockfile.root_package() else {
-                                    break 'resolve_workspace_from_dist_tag;
-                                };
-                                let root_dependencies = root_package
-                                    .dependencies
-                                    .get(this.lockfile.buffers.dependencies.as_slice());
-                                let root_resolutions = root_package
-                                    .resolutions
-                                    .get(this.lockfile.buffers.resolutions.as_slice());
-
-                                debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
-                                for (root_dep, &workspace_package_id) in
-                                    root_dependencies.iter().zip(root_resolutions)
-                                {
-                                    if workspace_package_id != invalid_package_id
-                                        && root_dep.version.tag
-                                            == dependency::version::Tag::Workspace
-                                        && root_dep.name_hash == name_hash
-                                    {
-                                        // make sure verifyResolutions sees this resolution as a valid package id
-                                        success_fn(this, dependency_id, workspace_package_id);
-                                        return Ok(Some(ResolvedPackageResult {
-                                            package: *this
-                                                .lockfile
-                                                .packages
-                                                .get(workspace_package_id as usize),
-                                            is_first_time: false,
-                                            task: None,
-                                        }));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     if behavior.is_peer() {
                         return Ok(None);
                     }

@@ -1,10 +1,10 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { inspect } from "util";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
+import { inspect } from "util";
 
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {

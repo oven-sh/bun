@@ -3211,6 +3211,17 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobal
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
 
+/// `--disallow-code-generation-from-strings`. V8's flag makes both `eval()` and
+/// the `Function` constructor throw `EvalError: Code generation from strings
+/// disallowed for this context`; JSC's `setEvalEnabled` gates the same two
+/// entry points and throws the same error type, so the message is spelled to
+/// match V8's verbatim. node:vm's `codeGeneration: { strings: false }` already
+/// uses this mechanism (NodeVM.cpp).
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__disallowCodeGenerationFromStrings(JSC::JSGlobalObject* globalObject)
+{
+    globalObject->setEvalEnabled(false, "Code generation from strings disallowed for this context"_s);
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject)
 {
     return globalObject->jsDateNow();

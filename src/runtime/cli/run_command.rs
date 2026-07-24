@@ -1316,6 +1316,9 @@ impl Run {
         unsafe extern "C" {
             fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
+            fn JSC__JSGlobalObject__disallowCodeGenerationFromStrings(
+                global: *const JSGlobalObject,
+            );
         }
         // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
         // `boot()` before the API-lock trampoline runs.
@@ -1329,6 +1332,10 @@ impl Run {
         if ro.expose_gc {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
             unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+        }
+        if ro.disallow_code_generation_from_strings {
+            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
+            unsafe { JSC__JSGlobalObject__disallowCodeGenerationFromStrings(vm.global) };
         }
     }
 

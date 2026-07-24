@@ -2869,13 +2869,16 @@ impl RunCommand {
             ..Default::default()
         });
 
-        // A pipe/socket/char-device entry point (e.g. `bun <(echo ...)` opens
-        // `/dev/fd/N`) cannot be re-opened from its canonical path:
+        // A pipe entry point (e.g. `bun <(echo ...)` opens `/dev/fd/N`, or a
+        // named FIFO) cannot be re-opened from its canonical path:
         // `get_fd_path` yields `pipe:[inode]` on Linux and fails outright on
         // macOS. Read it now from the open fd and serve it as the
         // `eval_source`, booting with the path as given so `process.argv[1]`
-        // and `__filename` reflect what the user typed.
-        if !bun_sys::S::ISREG(mode) {
+        // and `__filename` reflect what the user typed. Deliberately only
+        // FIFOs: sockets cannot be re-opened via /dev/fd on Linux so `open`
+        // above already failed, and char/block devices (e.g. /dev/zero) would
+        // read forever.
+        if bun_sys::S::ISFIFO(mode) {
             let mut contents: Vec<u8> = Vec::new();
             if bun_sys::File::from_fd(fd)
                 .read_to_end_into(&mut contents)

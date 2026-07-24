@@ -2409,12 +2409,19 @@ impl<'a> Resolver<'a> {
                 // written to catch it. Only applies to `require` / dynamic
                 // `import()` / `require.resolve`, where deferring the error to
                 // runtime is sound; a static ESM `import` still errors.
-                if matches!(
-                    kind,
-                    ast::ImportKind::Require
-                        | ast::ImportKind::RequireResolve
-                        | ast::ImportKind::Dynamic
-                ) {
+                //
+                // Skip this when iterating `require.resolve(id, { paths })`:
+                // those entries are arbitrary caller-supplied directories, and
+                // returning Success here would stop the loop before later
+                // entries are tried.
+                if self.custom_dir_paths.is_none()
+                    && matches!(
+                        kind,
+                        ast::ImportKind::Require
+                            | ast::ImportKind::RequireResolve
+                            | ast::ImportKind::Dynamic
+                    )
+                {
                     if let Some(pkg) = source_dir_info.enclosing_package_json {
                         if pkg.is_optional_peer_dependency(unremapped_import_path) {
                             let mut primary = Path::init(unremapped_import_path);

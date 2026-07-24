@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 // When a package declares an optional peer dependency via `peerDependenciesMeta`
@@ -216,6 +218,39 @@ describe("bundler", () => {
     bundleErrors: {
       "/node_modules/lib/index.js": [`Could not resolve: "missing-peer". Maybe you need to "bun install"?`],
     },
+  });
+
+  // The resolver path that handles optional peers must not short-circuit
+  // `require.resolve(id, { paths: [...] })` iteration at runtime: an entry
+  // whose package.json lists `id` as an optional peer should fall through to
+  // later entries, not resolve to a disabled path.
+  test("optional-peer/RequireResolveCustomPathsIteratesPast", async () => {
+    using dir = tempDir("optional-peer-paths", {
+      "a/node_modules/thepkg/package.json": JSON.stringify({
+        name: "thepkg",
+        peerDependenciesMeta: { target: { optional: true } },
+      }),
+      "a/node_modules/thepkg/index.js": "module.exports = 1;",
+      "b/node_modules/target/package.json": JSON.stringify({ name: "target" }),
+      "b/node_modules/target/index.js": "module.exports = 2;",
+      "entry.js": `
+        const path = require("path");
+        const a = path.join(__dirname, "a", "node_modules", "thepkg");
+        const b = path.join(__dirname, "b");
+        console.log(require.resolve("target", { paths: [a, b] }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(join(String(dir), "b", "node_modules", "target", "index.js"));
+    expect(exitCode).toBe(0);
   });
 
   // Static ESM `import` statements cannot defer their error to runtime (the

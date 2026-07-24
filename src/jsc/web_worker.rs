@@ -1114,7 +1114,7 @@ impl WebWorker {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    true,
+                    crate::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection,
                 );
                 if !handled {
                     // exit_code is already 1 from uncaught_exception; re-setting it here

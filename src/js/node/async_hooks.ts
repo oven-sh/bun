@@ -33,6 +33,12 @@ function sameValue(a, b) {
   return a !== a && b !== b;
 }
 
+// Installed by node:domain when it loads. Until then AsyncResource never
+// touches process.domain, matching Node where the tagging lives in
+// lib/domain.js's own createHook init hook (async_hooks itself is
+// domain-agnostic).
+let domainActiveGetter: (() => any) | null = null;
+
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
@@ -374,6 +380,22 @@ class AsyncResource {
     this.type = type;
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
+
+    // Node's domain init hook tags every async resource created while a
+    // domain is active with a non-enumerable `domain` property. The getter
+    // is null until node:domain has actually loaded, so a userland write to
+    // process.domain (or a throwing getter) is not observable here.
+    if (domainActiveGetter !== null) {
+      const domain = domainActiveGetter();
+      if (domain != null) {
+        Object.defineProperty(this, "domain", {
+          configurable: true,
+          enumerable: false,
+          value: domain,
+          writable: true,
+        });
+      }
+    }
   }
 
   emitBefore() {
@@ -612,6 +634,12 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
+// Internal hook point for node:domain — not part of the public API surface.
+// The registry-symbol string is forgeable, but only the informational
+// AsyncResource `.domain` tag flows through it; error routing uses the
+// tamper-proof captured ALS methods.
+const kSetDomainActiveGetter = Symbol.for("::bunternal::async_hooks.setDomainActiveGetter");
+
 export default {
   AsyncLocalStorage,
   createHook,
@@ -620,4 +648,7 @@ export default {
   executionAsyncResource,
   asyncWrapProviders,
   AsyncResource,
+  [kSetDomainActiveGetter](fn: () => any) {
+    domainActiveGetter = fn;
+  },
 };

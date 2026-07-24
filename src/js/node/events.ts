@@ -62,6 +62,12 @@ var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
+  EventEmitter.init.$call(this, opts);
+}
+
+// Exposed as a static like in Node.js so that node:domain (and userland code
+// that calls `EventEmitter.init.call(this)`) can observe and wrap it.
+EventEmitter.init = function init(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
@@ -77,16 +83,10 @@ function EventEmitter(opts) {
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
     validateBoolean(opts.captureRejections, "options.captureRejections");
     this[kCapture] = !!opts.captureRejections;
-    this.emit = emitWithRejectionCapture;
   } else {
     this[kCapture] = EventEmitterPrototype[kCapture];
-    const capture = EventEmitterPrototype[kCapture];
-    this[kCapture] = capture;
-    if (capture) {
-      this.emit = emitWithRejectionCapture;
-    }
   }
-}
+};
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
 const EventEmitterPrototype = (EventEmitter.prototype = {});
 
@@ -155,6 +155,7 @@ function applyHandlers(handlers, emitter, args) {
 }
 
 function addCatch(emitter, promise, type, args) {
+  if (!emitter[kCapture]) return;
   promise.then(undefined, function (err) {
     // The callback is called with nextTick to avoid a follow-up rejection from this promise.
     process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
@@ -177,64 +178,7 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   }
 }
 
-const emitWithoutRejectionCapture = function emit(type, ...args) {
-  $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
-
-  if (type === "error") {
-    return emitError(this, args);
-  }
-  var { _events: events } = this;
-  if (events === undefined) return false;
-  var handler = events[type];
-  if (handler === undefined) return false;
-  // For performance reasons Function.call(...) is used whenever possible.
-  if (typeof handler === "function") {
-    switch (args.length) {
-      case 0:
-        handler.$call(this);
-        break;
-      case 1:
-        handler.$call(this, args[0]);
-        break;
-      case 2:
-        handler.$call(this, args[0], args[1]);
-        break;
-      case 3:
-        handler.$call(this, args[0], args[1], args[2]);
-        break;
-      default:
-        handler.$apply(this, args);
-        break;
-    }
-    return true;
-  }
-  // No defensive clone: stored arrays are never mutated in place (mutators
-  // install a copy), so this list stays stable for the whole loop even if a
-  // listener adds/removes listeners.
-  for (let i = 0, { length } = handler; i < length; i++) {
-    const listener = handler[i];
-    switch (args.length) {
-      case 0:
-        listener.$call(this);
-        break;
-      case 1:
-        listener.$call(this, args[0]);
-        break;
-      case 2:
-        listener.$call(this, args[0], args[1]);
-        break;
-      case 3:
-        listener.$call(this, args[0], args[1], args[2]);
-        break;
-      default:
-        listener.$apply(this, args);
-        break;
-    }
-  }
-  return true;
-};
-
-const emitWithRejectionCapture = function emit(type, ...args) {
+EventEmitterPrototype.emit = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
   if (type === "error") {
     return emitError(this, args);
@@ -263,6 +207,9 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
+    // Node's fast-path guard (lib/events.js): the extra local + undefined
+    // check are cheap enough to keep a single prototype emit; addCatch
+    // itself early-returns when this[kCapture] is false.
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
@@ -297,8 +244,6 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   }
   return true;
 };
-
-EventEmitterPrototype.emit = emitWithoutRejectionCapture;
 
 function _addListener(target, type, fn, prepend) {
   checkListener(fn);
@@ -904,13 +849,6 @@ class EventEmitterAsyncResource extends EventEmitter {
     }
     super(options);
     this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
-    // EventEmitter's constructor stamps `this.emit = emitWithRejectionCapture`
-    // as an OWN property when captureRejections is on, which would shadow the
-    // prototype's runInAsyncScope-wrapped emit below. Remove it so listeners
-    // still run in the resource's async scope; the prototype emit re-checks
-    // this[kCapture] on every call, so rejection capture is preserved. delete
-    // is a no-op when the property is absent, so no own-property check needed.
-    delete (this as { emit? }).emit;
   }
 
   // No explicit receiver guards: like node v26 (lib/events.js), the private
@@ -930,13 +868,11 @@ class EventEmitterAsyncResource extends EventEmitter {
 
   emit(event, ...args) {
     const asyncResource = this.#asyncResource;
-    // The base EventEmitter picks its emit variant by stamping an own property;
-    // that own property is deleted in the constructor above, so pick per-call
-    // from this[kCapture]. The default branch reads super.emit at call time
-    // (Node routes through super.emit) so a userland monkeypatch of
-    // EventEmitter.prototype.emit is observed like it is for plain emitters.
-    const emit = this[kCapture] ? emitWithRejectionCapture : super.emit;
-    ArrayPrototypeUnshift.$call(args, emit, this, event);
+    // Node routes through super.emit; the single prototype emit already gates
+    // rejection capture on this[kCapture], and reading super.emit at call time
+    // means a userland monkeypatch of EventEmitter.prototype.emit is observed
+    // like it is for plain emitters.
+    ArrayPrototypeUnshift.$call(args, super.emit, this, event);
     return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }
 
@@ -992,7 +928,6 @@ Object.assign(EventEmitter, {
   EventEmitterAsyncResource,
   errorMonitor: kErrorMonitor,
   addAbortListener,
-  init: EventEmitter,
   listenerCount,
 });
 

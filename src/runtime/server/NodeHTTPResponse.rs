@@ -1550,7 +1550,15 @@ pub(crate) fn node_http_request_on_reject(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
+    // Rejection so listeners see origin "unhandledRejection" (pre-existing
+    // contract). Under --abort-on-uncaught-exception this aborts
+    // unconditionally like Node's JS-side triggerUncaughtException binding;
+    // Bun.serve has no Node equivalent to differ from.
+    let _ = bun_vm_mut(global_object).uncaught_exception(
+        global_object,
+        err,
+        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Rejection,
+    );
     if had_promise {
         this.deref();
     }
@@ -1630,7 +1638,11 @@ impl NodeHTTPResponse {
                     Ok(b) => b,
                     Err(err) => {
                         let exc = global_this.take_exception(err);
-                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                        let _ = bun_vm_mut(global_this).uncaught_exception(
+                            global_this,
+                            exc,
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                        );
                         return JSValue::UNDEFINED;
                     }
                 };
@@ -1645,7 +1657,11 @@ impl NodeHTTPResponse {
                     Ok(b) => b,
                     Err(err) => {
                         let exc = global_this.take_exception(err);
-                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                        let _ = bun_vm_mut(global_this).uncaught_exception(
+                            global_this,
+                            exc,
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                        );
                         return JSValue::UNDEFINED;
                     }
                 };

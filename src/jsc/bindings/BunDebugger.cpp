@@ -1073,6 +1073,8 @@ static NodeInspectorState& nodeInspectorState()
     return instance.get();
 }
 
+extern "C" void Bun__setProcessDebugPort(uint16_t port);
+
 // Called by internal/debugger.ts on the debugger thread once the node:inspector
 // server is listening (url, controlCallback) or failed to start ("", undefined, error).
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted);
@@ -1086,6 +1088,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
     JSValue controlCallbackValue = callFrame->argument(1);
     String error = callFrame->argument(2).isUndefined() ? String() : callFrame->argument(2).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // Node resolves process.debugPort to the bound port once the inspector
+    // server is listening; mirror that for the CLI-started server (the
+    // inspector.open() path assigns process.debugPort from JS instead).
+    if (!url.isEmpty()) {
+        if (auto port = WTF::URL(url).port())
+            Bun__setProcessDebugPort(*port);
+    }
 
     auto& state = nodeInspectorState();
     {

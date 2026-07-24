@@ -4175,6 +4175,14 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
 
 static uint16_t debugPort = 9229;
 
+// The CLI inspector server binds on the debugger thread; once it is listening
+// it reports the resolved port here so process.debugPort reflects it, as in
+// Node. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/pre_execution.js (updates via the inspector)
+extern "C" void Bun__setProcessDebugPort(uint16_t port)
+{
+    debugPort = port;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(processDebugPort, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     return JSC::JSValue::encode(jsNumber(debugPort));

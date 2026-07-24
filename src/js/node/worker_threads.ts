@@ -28,6 +28,8 @@ function normalizeWorkerName(rawName) {
 
 const { isAbsolute: pathIsAbsolute } = require("node:path");
 
+const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
+
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
@@ -1091,6 +1093,12 @@ class Worker extends EventEmitter {
         });
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+    }
+
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({
+        worker: this,
+      });
     }
   }
 

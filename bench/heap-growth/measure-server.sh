@@ -10,7 +10,9 @@ if [ "$1" = "--" ]; then shift; fi
 
 DURATION="${DURATION:-15}"
 CONCURRENCY="${CONCURRENCY:-64}"
-BUN=/workspace/bun/build/release/bun
+# Loadgen + parser run in a clean env so unknown BUN_JSC_* on whatever bun they
+# use don't spray warnings into their output.
+BUN=(env -u BUN_JSC_minEdenToOldGenerationRatio -u BUN_JSC_heapGrowthMaxIncrease -u BUN_JSC_heapGrowthSteepnessFactor -u BUN_JSC_smallHeapGrowthFactor -u BUN_JSC_forceRAMSize -u BUN_JSC_logGC /workspace/bun/build/release/bun)
 GCLOG=$(mktemp)
 OUTLOG=$(mktemp)
 LOADLOG=$(mktemp)
@@ -58,7 +60,7 @@ UTIME0=$UTIME; STIME0=$STIME
 START_NS=$(date +%s%N)
 
 # Drive load in background; poll server proc meanwhile
-"$BUN" /workspace/heapgrowth/workloads/servers/loadgen.ts "$PORT" "$DURATION" "$CONCURRENCY" 2>"$LOADLOG" &
+"${BUN[@]}" /workspace/heapgrowth/workloads/servers/loadgen.ts "$PORT" "$DURATION" "$CONCURRENCY" 2>"$LOADLOG" &
 LOADPID=$!
 while kill -0 "$LOADPID" 2>/dev/null; do poll; sleep 0.02; done
 wait "$LOADPID"
@@ -74,8 +76,8 @@ WALL_MS=$(( (END_NS - START_NS) / 1000000 ))
 USER_MS=$(( (UTIME - UTIME0) * 1000 / CLK_TCK ))
 SYS_MS=$(( (STIME - STIME0) * 1000 / CLK_TCK ))
 
-GC_JSON=$("$BUN" /workspace/heapgrowth/parse-gclog.ts < "$GCLOG")
-LOAD_JSON=$(tail -1 "$LOADLOG")
+GC_JSON=$("${BUN[@]}" /workspace/heapgrowth/parse-gclog.ts < "$GCLOG")
+LOAD_JSON=$(grep '^{' "$LOADLOG" | tail -1)
 : "${LOAD_JSON:=null}"
 
 printf '{"label":"%s","wall_ms":%d,"user_ms":%d,"sys_ms":%d,"peak_rss_kb":%d,"load":%s,"gc":%s}\n' \

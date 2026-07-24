@@ -104,28 +104,68 @@ No effect: `heap/RAM ≈ 0.003`, so `e^(−s·x) ≈ 1` for any `s` tested. Stee
 
 RSS is 342-366 MB across the entire range; tightening the factor buys nothing on servers.
 
+## With `minEdenToOldGenerationRatio` as a knob ([oven-sh/WebKit#332](https://github.com/oven-sh/WebKit/pull/332))
+
+Re-swept with a local-WebKit build exposing `Options::minEdenToOldGenerationRatio()`. The cliff moves exactly as `floor = 1/(1-ratio)` predicts:
+
+### express full-GC count /15s (thrash indicator)
+
+| MI → | 0.3 | 0.5 | 0.75 | 1.0 |
+|---|---|---|---|---|
+| ratio = 1/3 (current) | 205 | 182 | 4 | 3 |
+| ratio = 0.25 | 203 | 5 | 3 | 2 |
+| **ratio = 0.20** | 10 | 3 | 2 | 2 |
+
+### tsc RSS / wall / CPU by ratio × MI (median of 3)
+
+| ratio | MI | RSS MB | wall s | CPU s | full GCs |
+|---|---|---|---|---|---|
+| 1/3 | 2.0 (current) | 1035 | 4.29 | 12.1 | 2 |
+| 1/3 | 1.0 | 875 | 4.45 | 12.5 | 3 |
+| **0.20** | **0.5** | **800** | 4.41 | 12.5 | 4 |
+| 0.20 | 0.3 | 748 | 4.45 | 14.2 | 8 |
+
+### <16 GB (forceRAMSize=8GB) tsc RSS by ratio × smallHeapGrowthFactor
+
+| ratio | small | RSS MB | wall s | CPU s | full GCs |
+|---|---|---|---|---|---|
+| 1/3 | 2.0 (current) | 887 | 4.20 | 11.8 | 3 |
+| **0.20** | **1.5** | **793** | 4.40 | 13.1 | 4 |
+| 0.20 | 1.3 | 747 | 4.58 | 14.9 | 8 |
+
+Server RSS unchanged across every arm. Full dataset: `results2.ndjson`.
+
 ## Recommendations
 
-### ≥16 GB (`heapGrowthMaxIncrease`)
+Two options depending on appetite:
 
-**Change from 2.0 to 1.0** (trigger ratio ~2.0× instead of ~3.0×).
+### Conservative (no WebKit change)
 
-- tsc: −14% peak RSS, ≤5% wall cost
+Set `heapGrowthMaxIncrease = 1.0` (from 2.0) in `ZigGlobalObject.cpp`. Keep everything else.
+
+- tsc: −15% peak RSS, ≤5% wall
 - next build: −21% peak RSS, wall flat
-- servers: no measurable effect
-- margin above the 1.5 thrash floor
+- servers: neutral
+- safe margin above the 1.5 floor
 
-Going lower (0.75) saves a few more % on tsc but shrinks the margin; 1.0 is the conservative pick. Keep `heapGrowthSteepnessFactor=1.0`.
+### With the eden-ratio knob (after oven-sh/WebKit#332 lands)
 
-### <16 GB (`smallHeapGrowthFactor`)
+Set in `ZigGlobalObject.cpp`:
 
-**Keep at 2.0.** The `minEdenToOldGenerationRatio=1/3` constraint makes any value <1.75 risky and any value ≤1.5 a thrash trap. 2.0 is already near-optimal.
+- `minEdenToOldGenerationRatio = 0.2`
+- `heapGrowthMaxIncrease = 0.5`
+- `smallHeapGrowthFactor = 1.5`
 
-`mediumHeapGrowthFactor=1.5` and `largeHeapGrowthFactor=1.24` are both below the 1.5 cliff. With Bun's `RAMFraction` at 0.8/0.9 they only bind when RSS ≥ 80% of RAM, where the `criticalGCMemoryThreshold` path also engages. If these tiers are ever relied on, they should be raised to ≥1.75.
+Effect vs current:
 
-### If deeper savings are wanted
+- tsc: **−23% peak RSS** (1035 → 800 MB), +3% wall, +3% CPU
+- <16 GB tsc: **−11% peak RSS** (887 → 793 MB), +5% wall
+- servers: neutral (no thrash at these settings with ratio=0.2)
+- Node v26.3.0 reference: tsc 606 MB; this closes ~55% of the gap
 
-The growth factors are bounded below by `minEdenToOldGenerationRatio`. To go tighter safely, that constant would need to become an option or be lowered, which is a JSC change. Alternatively, `gcMaxHeapSize` caps absolute heap size regardless of factor (the unmerged patch's 400 MiB), which is a different mechanism not evaluated here.
+Going tighter (MI=0.3, small=1.3) saves another ~5% RSS but costs +15-25% CPU on builds; not recommended.
+
+`heapGrowthSteepnessFactor` stays 1.0 (no effect for heap ≪ RAM). `mediumHeapGrowthFactor`/`largeHeapGrowthFactor` are moot with `RAMFraction` at 0.8/0.9; leave at defaults.
 
 ## Caveats
 

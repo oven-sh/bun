@@ -14,7 +14,7 @@ if [ "$1" = "--" ]; then shift; fi
 GCLOG=$(mktemp)
 OUTLOG=$(mktemp)
 CLK_TCK=$(getconf CLK_TCK)
-BUN=/workspace/bun/build/release/bun
+BUN=(env -u BUN_JSC_minEdenToOldGenerationRatio -u BUN_JSC_heapGrowthMaxIncrease -u BUN_JSC_heapGrowthSteepnessFactor -u BUN_JSC_smallHeapGrowthFactor -u BUN_JSC_forceRAMSize -u BUN_JSC_logGC /workspace/bun/build/release/bun)
 
 (
   cd "$CWD" || exit 127
@@ -54,7 +54,7 @@ WALL_MS=$(( (END_NS - START_NS) / 1000000 ))
 USER_MS=$(( (UTIME + CUTIME) * 1000 / CLK_TCK ))
 SYS_MS=$(( (STIME + CSTIME) * 1000 / CLK_TCK ))
 
-GC_JSON=$("$BUN" /workspace/heapgrowth/parse-gclog.ts < "$GCLOG")
+GC_JSON=$("${BUN[@]}" /workspace/heapgrowth/parse-gclog.ts < "$GCLOG")
 
 printf '{"label":"%s","wall_ms":%d,"user_ms":%d,"sys_ms":%d,"peak_rss_kb":%d,"exit":%d,"gc":%s}\n' \
   "$LABEL" "$WALL_MS" "$USER_MS" "$SYS_MS" "$PEAK_RSS_KB" "$EC" "$GC_JSON"

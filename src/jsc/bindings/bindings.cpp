@@ -814,8 +814,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
         }
 
-        Structure* a1Structure = array1->structure();
-        Structure* a2Structure = array2->structure();
+        uint64_t arrayIndex = 0;
 
         // Tight indexed-storage loop. Read the backing store once instead of
         // re-switching on indexingType() per element via tryGetIndexQuickly().
@@ -844,20 +843,22 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             if ((shape1 == ContiguousShape || shape1 == Int32Shape) && (shape2 == ContiguousShape || shape2 == Int32Shape)) {
-                const WriteBarrier<Unknown>* d1 = b1->contiguous().data();
-                const WriteBarrier<Unknown>* d2 = b2->contiguous().data();
-                for (size_t i = 0; i < array1Length; i++) {
-                    JSValue left = d1[i].get();
-                    JSValue right = d2[i].get();
+                for (; arrayIndex < array1Length; arrayIndex++) {
+                    // Re-load the butterfly each iteration: a recursion below can enter
+                    // user JS (Proxy traps, getters) that grows the array and reallocates it.
+                    JSValue left = array1->butterfly()->contiguous().data()[arrayIndex].get();
+                    JSValue right = array2->butterfly()->contiguous().data()[arrayIndex].get();
                     if (left == right)
                         continue;
 
-                    if constexpr (isStrict) {
-                        if (!left || !right)
+                    if (!left || !right) {
+                        if constexpr (isStrict) {
                             return false;
-                    } else {
-                        if ((!left || !right) && (left.isUndefined() || right.isUndefined()))
-                            continue;
+                        } else {
+                            if (left.isUndefined() || right.isUndefined())
+                                continue;
+                            return false;
+                        }
                     }
 
                     if constexpr (!enableAsymmetricMatchers) {
@@ -872,13 +873,22 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
                     RETURN_IF_EXCEPTION(scope, false);
                     if (!eql) return false;
+
+                    // User JS may have transitioned the array (same butterfly pointer means
+                    // same shape; fastArrayJoin uses the same check). If it moved, finish
+                    // the remaining elements via the generic loop below.
+                    if (array1->butterfly() != b1 || array2->butterfly() != b2) [[unlikely]] {
+                        arrayIndex++;
+                        goto arrayGenericLoop;
+                    }
                 }
                 goto compareArraySymbols;
             }
         }
 
+    arrayGenericLoop:
         {
-            uint64_t i = 0;
+            uint64_t i = arrayIndex;
             for (; i < array1Length; i++) {
                 JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -923,7 +933,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     compareArraySymbols:
         // A structure with isQuickPropertyAccessAllowedForEnumeration() set has no
         // symbol keys and no DontEnum properties; skip enumeration outright.
-        if (a1Structure->isQuickPropertyAccessAllowedForEnumeration() && a2Structure->isQuickPropertyAccessAllowedForEnumeration())
+        // Re-read the structure in case user JS reached from element comparison mutated it.
+        if (array1->structure()->isQuickPropertyAccessAllowedForEnumeration() && array2->structure()->isQuickPropertyAccessAllowedForEnumeration())
             return true;
 
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
@@ -1001,6 +1012,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     unsigned inlineSize = o1Structure->inlineSize();
                     unsigned outOfLineSize = o1Structure->outOfLineSize();
                     if (inlineSize) {
+                        // Inline storage is part of the JSObject allocation and never moves.
                         const WriteBarrierBase<Unknown>* s1 = o1->inlineStorage();
                         const WriteBarrierBase<Unknown>* s2 = o2->inlineStorage();
                         for (unsigned i = 0; i < inlineSize; i++) {
@@ -1012,17 +1024,16 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                             if (!eql) return false;
                         }
                     }
-                    if (outOfLineSize) {
-                        const WriteBarrierBase<Unknown>* s1 = o1->outOfLineStorage();
-                        const WriteBarrierBase<Unknown>* s2 = o2->outOfLineStorage();
-                        for (unsigned i = 0; i < outOfLineSize; i++) {
-                            JSValue left = s1[-1 - static_cast<int>(i)].get();
-                            JSValue right = s2[-1 - static_cast<int>(i)].get();
-                            if (left == right) continue;
-                            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
-                            RETURN_IF_EXCEPTION(scope, false);
-                            if (!eql) return false;
-                        }
+                    for (unsigned i = 0; i < outOfLineSize; i++) {
+                        // Out-of-line storage lives in the butterfly, which user JS reached
+                        // from a recursion can reallocate. getDirect() re-reads it each call.
+                        PropertyOffset offset = firstOutOfLineOffset + i;
+                        JSValue left = o1->getDirect(offset);
+                        JSValue right = o2->getDirect(offset);
+                        if (left == right) continue;
+                        auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        if (!eql) return false;
                     }
                     return true;
                 }

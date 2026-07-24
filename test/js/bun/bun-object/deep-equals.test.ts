@@ -118,6 +118,21 @@ describe("Bun.deepEquals fast-path coverage", () => {
       expect(eq(a, b)).toBe(true);
     });
 
+    it("Contiguous-shape hole vs non-undefined is not equal", () => {
+      expect(eq(["x", , "z"], ["x", "y", "z"])).toBe(false);
+      expect(eq(["x", "y", "z"], ["x", , "z"])).toBe(false);
+      expect(eq([1, , 3], [1, {}, 3])).toBe(false);
+      expect(eq(["x", , "z"], ["x", undefined, "z"])).toBe(!strict);
+    });
+
+    it("survives an element that mutates the outer array during comparison", () => {
+      const a: any[] = [new Proxy({}, { ownKeys: () => { for (let j = 0; j < 1e5; j++) a.push(j); return []; } }), {}];
+      const b = [{}, {}];
+      // The result itself is unspecified once the input is mutated mid-compare;
+      // we only require that it does not crash.
+      expect(() => eq(a, b)).not.toThrow();
+    });
+
     it("Contiguous arrays with nested objects", () => {
       const a = [{ x: 1 }, { x: 2 }, { x: 3 }];
       const b = [{ x: 1 }, { x: 2 }, { x: 3 }];

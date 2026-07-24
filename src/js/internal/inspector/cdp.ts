@@ -320,6 +320,22 @@ function collectionDescription(description: string | undefined, size: number | u
   return `${description}(${size})`;
 }
 
+// JSC gives every Error line/column/sourceURL own properties (plus the raw
+// originalLine/originalColumn pair) that V8 errors do not have; previews must
+// not show them. V8 lists stack before message.
+const JSC_ERROR_LOCATION_PROPS = new Set(["line", "column", "sourceURL", "originalLine", "originalColumn"]);
+
+function toV8ErrorPreviewProperties(properties: AnyObject[]): AnyObject[] {
+  const filtered = properties.filter(property => !JSC_ERROR_LOCATION_PROPS.$has(property?.name));
+  const stackAt = filtered.findIndex(property => property?.name === "stack");
+  if (stackAt > 0) {
+    const stack = filtered[stackAt];
+    filtered.splice(stackAt, 1);
+    filtered.unshift(stack);
+  }
+  return filtered;
+}
+
 function toCdpObjectPreview(preview: AnyObject | undefined, nested = false): AnyObject | undefined {
   if (!preview) return preview;
   const { lossless, size, properties, entries, valuePreview, description, ...rest } = preview;
@@ -328,7 +344,14 @@ function toCdpObjectPreview(preview: AnyObject | undefined, nested = false): Any
   // JSC's `lossless` is the negation of V8's `overflow`. JSC sends `overflow`
   // too, but only for some types, so derive it whenever `lossless` is present.
   if (lossless !== undefined) out.overflow = !lossless;
-  if (properties) out.properties = properties.map(toCdpPropertyPreview);
+  if (properties) {
+    out.properties =
+      rest.subtype === "error"
+        ? toV8ErrorPreviewProperties(properties).map(toCdpPropertyPreview)
+        : properties.map(toCdpPropertyPreview);
+    // The JSC-only properties were what made the preview lossy.
+    if (rest.subtype === "error") out.overflow = false;
+  }
   // V8 omits `entries` from the preview of an empty Map/Set; JSC sends an
   // empty array. Node's debugger REPL branches on the field's presence
   // (`Map(0) {}` vs `Map(0) {  }`), so keep it presence-equivalent. V8 also
@@ -514,6 +537,11 @@ class InspectorCDPAdapter {
   #profilerTracking = false;
   #profilerStartTime = 0;
   #profilerStopClientIds: (number | string)[] = [];
+  // console.profile() starts JSC tracking with no client Profiler.start;
+  // V8 announces those as consoleProfileStarted/Finished instead of a
+  // Profiler.stop reply.
+  #consoleProfileActive = false;
+  #consoleProfileSeq = 0;
   // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
@@ -1371,6 +1399,43 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Heap.gc", undefined, id, method);
         return;
 
+      // V8 streams the snapshot as addHeapSnapshotChunk events, then answers
+      // the command. JSC's Heap.snapshot uses its own format, so build the
+      // V8-format snapshot on the inspected thread instead and chunk it here.
+      case "HeapProfiler.takeHeapSnapshot": {
+        const reportProgress = !!params.reportProgress;
+        this.#sendToBackend(
+          "Runtime.evaluate",
+          {
+            expression: 'Bun.generateHeapSnapshot("v8")',
+            returnByValue: true,
+            doNotPauseOnExceptionsAndMuteConsole: true,
+          },
+          null,
+          method,
+          (result, error) => {
+            const snapshot = !error && !result.wasThrown ? result.result?.value : undefined;
+            if (typeof snapshot !== "string") {
+              this.#replyErrorToClient(id, -32000, "Failed to take heap snapshot");
+              return;
+            }
+            if (reportProgress) {
+              this.#emitToClient("HeapProfiler.reportHeapSnapshotProgress", {
+                done: 1,
+                total: 1,
+                finished: true,
+              });
+            }
+            const chunkSize = 100 * 1024;
+            for (let offset = 0; offset < snapshot.length; offset += chunkSize) {
+              this.#emitToClient("HeapProfiler.addHeapSnapshotChunk", { chunk: snapshot.slice(offset, offset + chunkSize) });
+            }
+            this.#replyToClient(id, {});
+          },
+        );
+        return;
+      }
+
       // V8's CPU profiler maps onto JSC's ScriptProfiler: track with samples,
       // then reshape them into a V8 profile (#translateSamplingProfile).
       case "Profiler.start":
@@ -1591,12 +1656,6 @@ class InspectorCDPAdapter {
         const stepped = this.#steppingToNextPause;
         this.#steppingToNextPause = false;
         const cdpParams: AnyObject = { callFrames, reason: stepped ? "step" : "other", data };
-        // The first pause after releasing a parked target is the scheduled
-        // break on start, unless something with its own reason (an exception,
-        // a breakpoint) fired first -- then the chance has passed either way.
-        const breakOnStart = this.#breakOnStartPending;
-        this.#breakOnStartPending = false;
-        if (breakOnStart) cdpParams.reason = "Break on start";
         switch (params.reason) {
           case "exception":
             cdpParams.reason = "exception";
@@ -1610,6 +1669,16 @@ class InspectorCDPAdapter {
             cdpParams.reason = "other";
             if (data?.breakpointId) cdpParams.hitBreakpoints = [this.#toClientBreakpointId(data.breakpointId)];
             break;
+        }
+        // The first pause after releasing a parked target is the scheduled
+        // break on start; it precedes all user code, so it wins over a
+        // breakpoint on the first statement (V8 labels that pause the same
+        // way) -- but not over an exception, which means user code already
+        // ran and the chance has passed.
+        const breakOnStart = this.#breakOnStartPending;
+        this.#breakOnStartPending = false;
+        if (breakOnStart && cdpParams.reason !== "exception" && cdpParams.reason !== "assert") {
+          cdpParams.reason = "Break on start";
         }
         if (asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(asyncStackTrace);
         this.#emitToClient("Debugger.paused", cdpParams);
@@ -1637,6 +1706,16 @@ class InspectorCDPAdapter {
 
       case "ScriptProfiler.trackingStart":
         this.#profilerStartTime = params.timestamp ?? 0;
+        // Tracking that no client requested was started programmatically by
+        // console.profile(); V8 announces it. JSC does not report the call
+        // site, so the location is empty.
+        if (!this.#profilerTracking) {
+          this.#consoleProfileActive = true;
+          this.#emitToClient("Profiler.consoleProfileStarted", {
+            id: String(++this.#consoleProfileSeq),
+            location: { scriptId: "0", lineNumber: 0, columnNumber: 0 },
+          });
+        }
         return;
 
       case "ScriptProfiler.trackingComplete": {
@@ -1644,7 +1723,18 @@ class InspectorCDPAdapter {
         // Broadcast to every session sharing this backend: all of them learn
         // tracking ended; only the one whose Profiler.stop is waiting replies.
         this.#profilerTracking = false;
-        if (clientId === undefined) return;
+        if (clientId === undefined) {
+          if (this.#consoleProfileActive) {
+            this.#consoleProfileActive = false;
+            this.#emitToClient("Profiler.consoleProfileFinished", {
+              id: String(this.#consoleProfileSeq),
+              location: { scriptId: "0", lineNumber: 0, columnNumber: 0 },
+              profile: this.#translateSamplingProfile(params),
+            });
+            this.#profilerStartTime = 0;
+          }
+          return;
+        }
         this.#replyToClient(clientId, { profile: this.#translateSamplingProfile(params) });
         this.#profilerStartTime = 0;
         return;

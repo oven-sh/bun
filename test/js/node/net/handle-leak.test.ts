@@ -80,20 +80,19 @@ console.log(
     `(warmup ${(warmup_rss / 1024 / 1024) | 0} MB -> ${(post_rss / 1024 / 1024) | 0} MB)`,
 );
 
-// bytes/conn sensitivity at these margins is the same as the previous
-// 100k-connection version (~270 bytes/conn linux, ~330 bytes/conn Windows) and
-// was verified to fail against bun v1.2.22.
+// glibc linux and Windows are the calibrated detectors: bytes/conn sensitivity
+// at these margins matches the previous 100k-connection version (~270 bytes/conn
+// linux, ~330 bytes/conn Windows) and both were verified to fail against v1.2.22.
 let margin = 1024 * 1024 * 16;
 if (isWindows) margin = 1024 * 1024 * 20;
-// musl mallocng retains freed pages longer than glibc/mimalloc on this workload
-// (alpine CI observed ~17 MB at 60k with no leak). The previous 100k-connection
-// version ran at 24 MB on alpine, so reuse that here; v1.2.22's ~30 MB of leaked
-// native handles sits well above it regardless of libc.
+// musl mallocng retains freed pages longer than glibc on this workload (alpine
+// CI observed ~17 MB at 60k with no leak); widen to clear that retention. Like
+// the ASAN lane below this is a secondary check: the calibrated glibc/Windows
+// lanes are what guarantee #22913 is caught.
 if (isMusl) margin = 1024 * 1024 * 24;
 // Under ASAN we use the system allocator so the interceptor sees every
 // allocation. The ASAN free-quarantine (default 256 MB) plus glibc malloc
 // retaining freed pages causes RSS to grow well past the native margin above
-// even with no real leak; allow up to the default quarantine size. The release
-// lanes above are the leak detector.
+// even with no real leak; allow up to the default quarantine size.
 if (isASAN) margin = 1024 * 1024 * 256;
 expect(delta).toBeLessThan(margin);

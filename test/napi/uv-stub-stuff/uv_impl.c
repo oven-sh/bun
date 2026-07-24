@@ -102,6 +102,25 @@ static napi_value test_uv_once(napi_env env, napi_callback_info info) {
   return ret;
 }
 
+// Test napi_get_uv_event_loop: on posix Bun has no real uv loop, so it must
+// return napi_generic_failure and write NULL rather than a fake pointer.
+static napi_value test_get_uv_event_loop(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = (uv_loop_t *)(uintptr_t)-1;
+  napi_status status = napi_get_uv_event_loop(env, &loop);
+
+  napi_value obj;
+  napi_create_object(env, &obj);
+
+  napi_value status_value, is_null_value;
+  napi_create_int32(env, (int32_t)status, &status_value);
+  napi_get_boolean(env, loop == NULL, &is_null_value);
+
+  napi_set_named_property(env, obj, "status", status_value);
+  napi_set_named_property(env, obj, "isNull", is_null_value);
+
+  return obj;
+}
+
 // Test uv_hrtime
 static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   uint64_t time1 = uv_hrtime();
@@ -149,6 +168,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_uv_once, NULL, &fn);
   napi_set_named_property(env, exports, "testUvOnce", fn);
+
+  napi_create_function(env, NULL, 0, test_get_uv_event_loop, NULL, &fn);
+  napi_set_named_property(env, exports, "testGetUvEventLoop", fn);
 
   napi_create_function(env, NULL, 0, test_hrtime, NULL, &fn);
   napi_set_named_property(env, exports, "testHrtime", fn);

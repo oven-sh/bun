@@ -92,6 +92,16 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(nativeModule.testUvOnce()).toBe(1);
   });
 
+  test("napi_get_uv_event_loop returns failure + NULL on posix", () => {
+    // Bun has no real uv_loop_t on posix; previously this returned napi_ok with a
+    // non-null pointer to Bun's internal EventLoop, which passed callers' guards and
+    // then aborted in the uv stubs on first touch. It must fail at acquisition instead.
+    expect(nativeModule.testGetUvEventLoop()).toEqual({
+      status: 9, // napi_generic_failure
+      isNull: true,
+    });
+  });
+
   test("hrtime", () => {
     const result = nativeModule.testHrtime();
 

@@ -3,7 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean, validateObject } = require("internal/validators");
 const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
@@ -219,30 +219,176 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
-  validateString(text, "text");
+// Ported from https://github.com/nodejs/node/blob/v26.3.0/lib/util.js#L110-L325
+const kEscape = "\u001b[";
+const kEscapeEnd = "m";
+// dim (2) and bold (1) share close code 22, so a nested close must be kept.
+const kDimCode = 2;
+const kBoldCode = 1;
+const kHexCloseSeq = kEscape + "39" + kEscapeEnd;
+const kHexStyleCacheMax = 256;
+// Matches #RGB or #RRGGBB
+const hexColorRegExp = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
-  if ($isJSArray(format)) {
-    let left = "";
-    let right = "";
-    for (const key of format) {
-      const formatCodes = inspect.colors[key];
-      if (formatCodes == null) {
-        validateOneOf(key, "format", ObjectKeys(inspect.colors));
+var styleCache;
+var hexStyleCache;
+
+function getHexStyleCache() {
+  return (hexStyleCache ??= new Map());
+}
+
+function getStyleCache() {
+  if (styleCache === undefined) {
+    styleCache = { __proto__: null };
+    const colors = inspect.colors;
+    for (const key of Object.getOwnPropertyNames(colors)) {
+      const codes = colors[key];
+      if (codes) {
+        const openNum = codes[0];
+        const closeNum = codes[1];
+        styleCache[key] = {
+          __proto__: null,
+          openSeq: kEscape + openNum + kEscapeEnd,
+          closeSeq: kEscape + closeNum + kEscapeEnd,
+          keepClose: openNum === kDimCode || openNum === kBoldCode,
+        };
       }
-      left += `\u001b[${formatCodes[0]}m`;
-      right = `\u001b[${formatCodes[1]}m${right}`;
+    }
+  }
+  return styleCache;
+}
+
+function hexToRgb(hex) {
+  let hexStr;
+  if (hex.length === 4) {
+    hexStr = hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
+  } else if (hex.length === 7) {
+    hexStr = hex.slice(1);
+  } else {
+    throw $ERR_OUT_OF_RANGE("hex", "#RGB or #RRGGBB", hex);
+  }
+  return Buffer.from(hexStr, "hex");
+}
+
+function getHexStyle(hex) {
+  const cache = getHexStyleCache();
+  const cached = cache.$get(hex);
+  if (cached !== undefined) return cached;
+  const { 0: r, 1: g, 2: b } = hexToRgb(hex);
+  const style = {
+    __proto__: null,
+    openSeq: `${kEscape}38;2;${r};${g};${b}${kEscapeEnd}`,
+    closeSeq: kHexCloseSeq,
+  };
+  if (cache.size >= kHexStyleCacheMax) {
+    cache.$delete(cache.keys().next().value);
+  }
+  cache.$set(hex, style);
+  return style;
+}
+
+function replaceCloseCode(str, closeSeq, openSeq, keepClose) {
+  const closeLen = closeSeq.length;
+  let index = str.indexOf(closeSeq);
+  if (index === -1) return str;
+
+  let result = "";
+  let lastIndex = 0;
+  const replacement = keepClose ? closeSeq + openSeq : openSeq;
+
+  do {
+    const afterClose = index + closeLen;
+    if (afterClose < str.length) {
+      result += str.slice(lastIndex, index) + replacement;
+      lastIndex = afterClose;
+    } else {
+      break;
+    }
+    index = str.indexOf(closeSeq, lastIndex);
+  } while (index !== -1);
+
+  return result + str.slice(lastIndex);
+}
+
+function styleText(format, text, options) {
+  const validateStream = options?.validateStream ?? true;
+  const cache = getStyleCache();
+
+  // Fast path: single format string with validateStream=false
+  if (!validateStream && typeof format === "string" && typeof text === "string") {
+    if (format === "none") return text;
+    const style = cache[format];
+    if (style !== undefined) {
+      const processed = replaceCloseCode(text, style.closeSeq, style.openSeq, style.keepClose);
+      return style.openSeq + processed + style.closeSeq;
     }
 
-    return `${left}${text}${right}`;
+    if (format[0] === "#") {
+      let hexStyle = getHexStyleCache().$get(format);
+      if (hexStyle === undefined && hexColorRegExp.test(format)) {
+        hexStyle = getHexStyle(format);
+      }
+      if (hexStyle !== undefined) {
+        const processed = replaceCloseCode(text, hexStyle.closeSeq, hexStyle.openSeq, false);
+        return hexStyle.openSeq + processed + hexStyle.closeSeq;
+      }
+    }
   }
 
-  let formatCodes = inspect.colors[format];
-
-  if (formatCodes == null) {
-    validateOneOf(format, "format", ObjectKeys(inspect.colors));
+  validateString(text, "text");
+  if (options !== undefined) {
+    validateObject(options, "options");
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+  validateBoolean(validateStream, "options.validateStream");
+
+  let skipColorize;
+  if (validateStream) {
+    const { isReadableStream, isWritableStream, isNodeStream } = require("internal/streams/utils");
+    const stream = options?.stream ?? process.stdout;
+    if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
+    }
+    skipColorize = !require("internal/util/colors").shouldColorize(stream);
+  }
+
+  const formatArray = $isJSArray(format) ? format : [format];
+
+  let openCodes = "";
+  let closeCodes = "";
+  let processedText = text;
+
+  for (const key of formatArray) {
+    if (key === "none") continue;
+
+    if (typeof key === "string" && key[0] === "#") {
+      let hexStyle = getHexStyleCache().$get(key);
+      if (hexStyle === undefined) {
+        if (!hexColorRegExp.test(key)) {
+          throw $ERR_INVALID_ARG_VALUE("format", key, "must be a valid hex color (#RGB or #RRGGBB)");
+        }
+        if (skipColorize) continue;
+        hexStyle = getHexStyle(key);
+      } else if (skipColorize) {
+        continue;
+      }
+      openCodes += hexStyle.openSeq;
+      closeCodes = hexStyle.closeSeq + closeCodes;
+      processedText = replaceCloseCode(processedText, hexStyle.closeSeq, hexStyle.openSeq, false);
+      continue;
+    }
+
+    const style = cache[key];
+    if (style === undefined) {
+      validateOneOf(key, "format", Object.getOwnPropertyNames(inspect.colors));
+    }
+    openCodes += style.openSeq;
+    closeCodes = style.closeSeq + closeCodes;
+    processedText = replaceCloseCode(processedText, style.closeSeq, style.openSeq, style.keepClose);
+  }
+
+  if (skipColorize) return text;
+
+  return `${openCodes}${processedText}${closeCodes}`;
 }
 
 function getSystemErrorName(err: any) {

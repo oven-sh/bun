@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import path from "node:path";
 
 // On POSIX, `cat` falls through to the subprocess path unless
@@ -106,6 +106,16 @@ describe.concurrent("cat (builtin)", () => {
     expect(await Bun.file(path.join(String(dir), "o1.txt")).text()).toBe("A\n");
     expect(await Bun.file(path.join(String(dir), "o2.txt")).text()).toBe("B\n");
     expect(await Bun.file(path.join(String(dir), "o3.txt")).text()).toBe("C\n");
+  });
+
+  // Opening a directory succeeds on Linux but the first read fails (and the
+  // epoll registration returns EPERM), landing in `Cat::on_io_reader_done`
+  // with no chunk queued. With fd-backed stdout that previously suspended
+  // forever instead of finishing.
+  test.if(isPosix)("directory as file argument with fd stdout does not hang", async () => {
+    using dir = tempDir("shell-cat-isdir", { "sub/keep": "" });
+    const { exitCode } = await runShell(String(dir), "cat sub > out.txt");
+    expect(exitCode).not.toBe(0);
   });
 
   test("many file arguments", async () => {

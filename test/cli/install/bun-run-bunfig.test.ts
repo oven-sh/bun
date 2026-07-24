@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harne
 import { join as pathJoin } from "node:path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
-  const runCmd = cmd === "bun" ? ["-c=bunfig.toml", "run"] : ["-c=bunfig.toml"];
+  const runCmd = cmd === "bun" ? ["--config=bunfig.toml", "run"] : ["--config=bunfig.toml"];
   const node = Bun.which("node")!;
   const execPath = process.execPath;
 

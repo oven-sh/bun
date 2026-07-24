@@ -3393,19 +3393,9 @@ static std::optional<size_t> bufferReadVarWidthOffset(JSC::JSGlobalObject* lexic
     return static_cast<size_t>(offset);
 }
 
-// The writer's offset validation is checkBounds(): validateNumber(offset) then boundsError().
-static std::optional<size_t> bufferWriteVarWidthOffset(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSArrayBufferView* view, JSValue offsetValue, size_t byteLength)
-{
-    if (!offsetValue.isNumber()) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetValue);
-        return std::nullopt;
-    }
-    return bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->byteLength(), byteLength);
-}
-
 // checkInt()'s value range for byteLength <= 4 and the ">= -(2 ** N) and < 2 ** N" wording it uses
 // for the 5- and 6-byte widths.
-static bool bufferWriteVarWidthCheckValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue valueValue, double number, size_t byteLength, bool isSigned)
+static bool bufferWriteVarWidthCheckValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, double number, size_t byteLength, bool isSigned)
 {
     double min = isSigned ? -std::pow(2.0, 8.0 * byteLength - 1) : 0;
     double max = (isSigned ? std::pow(2.0, 8.0 * byteLength - 1) : std::pow(2.0, 8.0 * byteLength)) - 1;
@@ -3489,7 +3479,7 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
         return throwBufferInvalidByteLength(lexicalGlobalObject, scope, byteLengthValue);
     size_t byteLength = static_cast<size_t>(byteLengthNumber);
 
-    if (!bufferWriteVarWidthCheckValue(lexicalGlobalObject, scope, valueValue, number, byteLength, isSigned)) [[unlikely]]
+    if (!bufferWriteVarWidthCheckValue(lexicalGlobalObject, scope, number, byteLength, isSigned)) [[unlikely]]
         return {};
 
     if (!offsetValue.isNumber()) [[unlikely]]
@@ -3499,7 +3489,8 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
         bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
-    auto checkedOffset = bufferWriteVarWidthOffset(lexicalGlobalObject, scope, view, offsetValue, byteLength);
+    // checkBounds(): the offset type was validated above; the range check is boundsError().
+    auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->byteLength(), byteLength);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkedOffset)
         return {};

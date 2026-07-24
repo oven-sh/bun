@@ -73,7 +73,6 @@ using namespace JSC;
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
-    macro(dataView) \
     macro(decode) \
     macro(dest) \
     macro(dirname) \

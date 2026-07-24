@@ -23,6 +23,9 @@
 #![allow(internal_features)]
 #![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
+
+extern crate alloc;
+
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
 
@@ -2553,10 +2556,9 @@ mod draft {
 
     struct StackLine {
         address: i32,
-        // None -> from bun.exe
-        object: Option<Box<[u8]>>,
-        // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
-        // since the only caller writes into a stack buffer and the value is consumed immediately.
+        /// `None` → from bun.exe. `Cow` so static labels (`b"JIT"`) encode
+        /// without touching the allocator; only the Windows DLL path owns.
+        object: Option<alloc::borrow::Cow<'static, [u8]>>,
     }
 
     impl StackLine {
@@ -2571,7 +2573,7 @@ mod draft {
                 let _ = name_bytes;
                 return Some(StackLine {
                     address: offset as i32,
-                    object: Some(Box::<[u8]>::from(&b"JIT"[..])),
+                    object: Some(alloc::borrow::Cow::Borrowed(b"JIT")),
                 });
             }
             #[cfg(windows)]
@@ -2598,8 +2600,8 @@ mod draft {
                         // or bare drive prefix, so `basename_windows`'s
                         // stripping is a no-op on this domain.
                         let basename = bun_paths::basename_windows(name);
-                        Some(Box::<[u8]>::from(
-                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
+                        Some(alloc::borrow::Cow::Owned(
+                            strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename).to_vec(),
                         ))
                     } else {
                         None
@@ -2875,12 +2877,13 @@ mod draft {
         Ok(())
     }
 
-    /// `bun:internal-for-testing` hook: what module label would the
-    /// trace-string encoder give this address. `None` → encoded as `_`;
-    /// `Some(None)` → bun's own image; `Some(Some(name))` → named object.
-    pub fn stack_line_object_for_testing(addr: usize) -> Option<Option<Box<[u8]>>> {
+    /// `bun:internal-for-testing` hook: the `(address, object)` the
+    /// trace-string encoder would record for this PC. `None` → encoded as `_`.
+    pub fn stack_line_for_testing(
+        addr: usize,
+    ) -> Option<(i32, Option<alloc::borrow::Cow<'static, [u8]>>)> {
         let mut name_bytes: [u8; 1024] = [0; 1024];
-        StackLine::from_address(addr, &mut name_bytes).map(|l| l.object)
+        StackLine::from_address(addr, &mut name_bytes).map(|l| (l.address, l.object))
     }
 
     pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {
@@ -3414,6 +3417,11 @@ mod draft {
             let Some(line) = StackLine::from_address(addr, &mut name_bytes) else {
                 continue;
             };
+            // `--exe` is bun's own image; a foreign-object offset (system
+            // DLL or JIT pool) would symbolize against the wrong binary.
+            if line.object.is_some() {
+                continue;
+            }
             argv.push(format!("0x{:X}", line.address).into_bytes());
         }
 

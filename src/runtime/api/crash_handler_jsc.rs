@@ -33,7 +33,7 @@ pub mod js_bindings {
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
             ("jitPoolRange", __jsc_host_js_jit_pool_range),
-            ("stackLineObject", __jsc_host_js_stack_line_object),
+            ("stackLine", __jsc_host_js_stack_line),
         ];
         let obj = JSValue::create_empty_object(global, ENTRIES.len());
         for &(name, func) in ENTRIES {
@@ -215,35 +215,41 @@ pub mod js_bindings {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let (start, end) = crash_handler::cli_state::jit_pool_range();
+        // User-space addresses are <2^48 on every supported arch, so a double
+        // is exact; matches `getMachOImageZeroOffset`'s number return and
+        // avoids `JSBigInt::tryCreateFrom`'s throw scope.
         let arr = JSValue::create_empty_array(global, 2)?;
-        arr.put_index(
-            global,
-            0,
-            JSValue::from_uint64_no_truncate(global, start as u64),
-        )?;
-        arr.put_index(
-            global,
-            1,
-            JSValue::from_uint64_no_truncate(global, end as u64),
-        )?;
+        arr.put_index(global, 0, JSValue::js_number_from_uint64(start as u64))?;
+        arr.put_index(global, 1, JSValue::js_number_from_uint64(end as u64))?;
         Ok(arr)
     }
 
     /// Returns what the crash-report encoder would record for an address:
-    /// `undefined` → unknown (encoded as `_`), `null` → bun's own image,
-    /// `"<name>"` → named object (system DLL, `"JIT"`, …).
+    /// `undefined` → unknown (encoded as `_`); otherwise `{ address, object }`
+    /// where `object` is `null` for bun's own image, or the name (system DLL,
+    /// `"JIT"`, …).
     #[bun_jsc::host_fn]
-    pub(crate) fn js_stack_line_object(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn js_stack_line(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [addr] = frame.arguments_as_array::<1>();
         let addr = addr.to_uint64_no_truncate() as usize;
-        Ok(match crash_handler::stack_line_object_for_testing(addr) {
-            None => JSValue::UNDEFINED,
-            Some(None) => JSValue::NULL,
-            Some(Some(name)) => BunString::clone_utf8(&name).transfer_to_js(global)?,
-        })
+        let Some((address, object)) = crash_handler::stack_line_for_testing(addr) else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let obj = JSValue::create_empty_object(global, 2);
+        obj.put(
+            global,
+            "address",
+            JSValue::js_number_from_int64(address as i64),
+        );
+        obj.put(
+            global,
+            "object",
+            match object {
+                None => JSValue::NULL,
+                Some(name) => BunString::clone_utf8(&name).transfer_to_js(global)?,
+            },
+        );
+        Ok(obj)
     }
 
     #[bun_jsc::host_fn]

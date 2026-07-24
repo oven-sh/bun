@@ -2,7 +2,7 @@ import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
 import path from "path";
-const { getMachOImageZeroOffset, jitPoolRange, stackLineObject } = crash_handler;
+const { getMachOImageZeroOffset, jitPoolRange, stackLine } = crash_handler;
 
 // CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
 // deliberate crashes must not upload there or the runner pins them on the
@@ -17,22 +17,24 @@ const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symboli
 // that `GetModuleHandleExW`/`dl_iterate_phdr`/`_dyld_get_image_header` cannot
 // map to a loaded image. JSC's JIT pool is a bare VirtualAlloc/mmap (not an
 // image), so JIT frames were encoded as the single byte `_` and bun.report
-// rendered them as `pkg:"?" addr:0x0000`. ~16% of Windows crash events in
-// the week before this change had ≥1 such frame.
+// rendered them as `pkg:"?" addr:0x0000`.
 test("JIT pool addresses are tagged in crash-report frames", () => {
   const [start, end] = jitPoolRange();
   // JSCInitialize calls Bun__setJITPoolRange after JSC::initialize(); the
   // test runner has already brought up a VM, so the pool must be registered.
-  expect(start).toBeGreaterThan(0n);
+  expect(start).toBeGreaterThan(0);
   expect(end).toBeGreaterThan(start);
 
   // A PC inside the pool is now encoded with object "JIT" (reusing the
-  // existing foreign-module slot, so bun.report needs no decoder change).
-  expect(stackLineObject(start)).toBe("JIT");
-  expect(stackLineObject(end - 1n)).toBe("JIT");
+  // existing foreign-module slot, so bun.report needs no decoder change) and
+  // address = offset-into-pool so the value is stable across ASLR.
+  expect(stackLine(start)).toEqual({ object: "JIT", address: 0 });
+  expect(stackLine(start + 0x100)).toEqual({ object: "JIT", address: 0x100 });
+  // `| 0` mirrors the Rust `offset as i32` wrap for a hypothetical >2GB pool.
+  expect(stackLine(end - 1)).toEqual({ object: "JIT", address: (end - start - 1) | 0 });
   // Boundaries: end is exclusive, and 0 is never a valid PC.
-  expect(stackLineObject(end)).not.toBe("JIT");
-  expect(stackLineObject(0n)).toBeUndefined();
+  expect(stackLine(end)?.object).not.toBe("JIT");
+  expect(stackLine(0)).toBeUndefined();
 });
 
 test.if(isDebug && isLinux && hasSymbolizer)(

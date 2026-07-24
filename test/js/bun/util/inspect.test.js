@@ -2,6 +2,48 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
+
+it("Proxy prototype with throwing getPrototypeOf trap does not crash", () => {
+  const obj = {};
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("trap threw");
+        },
+      },
+    ),
+  );
+  expect(() => Bun.inspect(obj)).not.toThrow();
+});
+
+it("Proxy prototype with throwing get trap does not crash", () => {
+  // The `get` trap must throw so ProxyObject's performGet throws and
+  // getPropertySlot returns false with a pending exception — exercising
+  // the CLEAR_IF_EXCEPTION before the `if (!found) continue` in
+  // forEachPropertyImpl. ownKeys/getOwnPropertyDescriptor ensure the
+  // property names are enumerated so the loop reaches the get trap.
+  const obj = {};
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(
+      {},
+      {
+        ownKeys: () => ["x", "foo"],
+        getOwnPropertyDescriptor: () => ({ configurable: true, enumerable: true, value: 1 }),
+        get(_, p) {
+          if (p === "x") throw new Error("trap threw");
+          return 1;
+        },
+      },
+    ),
+  );
+  const out = Bun.inspect(obj);
+  expect(out).toContain("foo");
+});
+
 it("prototype", () => {
   const prototypes = [
     Request.prototype,

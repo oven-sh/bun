@@ -51,10 +51,31 @@ impl Drop for CookedStdinGuard {
     }
 }
 
-#[cfg(not(unix))]
+/// Windows equivalent of the cooked-mode guard: re-enable line input, echo and
+/// Ctrl+C processing on the console and clear `ENABLE_VIRTUAL_TERMINAL_INPUT`
+/// so Backspace edits the line instead of arriving as an escape sequence.
+/// `StdinModeGuard` is inert when stdin is not a console.
+#[cfg(windows)]
+struct CookedStdinGuard(#[allow(dead_code)] bun_sys::windows::StdinModeGuard);
+
+#[cfg(windows)]
+impl CookedStdinGuard {
+    fn new() -> Self {
+        Self(bun_sys::windows::StdinModeGuard::set(
+            bun_sys::windows::UpdateStdioModeFlagsOpts {
+                set: bun_sys::windows::ENABLE_LINE_INPUT
+                    | bun_sys::windows::ENABLE_ECHO_INPUT
+                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+            },
+        ))
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 struct CookedStdinGuard;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl CookedStdinGuard {
     #[inline]
     fn new() -> Self {
@@ -354,17 +375,6 @@ pub mod prompt {
         Output::flush();
 
         let _cooked = CookedStdinGuard::new();
-
-        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
-        // deleting the entire line
-        #[cfg(windows)]
-        let _restore =
-            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                set: bun_sys::windows::ENABLE_LINE_INPUT
-                    | bun_sys::windows::ENABLE_ECHO_INPUT
-                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-            });
 
         // 7. Pause while waiting for the user's response.
         // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.

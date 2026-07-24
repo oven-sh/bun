@@ -1,4 +1,4 @@
-use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult};
+use crate::{JSGlobalObject, JSInternalPromise, JsError, JsResult};
 use bun_core::String as BunString;
 
 bun_opaque::opaque_ffi! {
@@ -6,24 +6,7 @@ bun_opaque::opaque_ffi! {
     pub struct JSModuleLoader;
 }
 
-// `JSGlobalObject` is an opaque ZST handle on the Rust side; Rust never reads or
-// writes bytes through it. C++ mutates VM state internally, but that is outside
-// Rust's aliasing model, so these externs take `*const JSGlobalObject` (matching
-// the convention in `JSGlobalObject.rs`) rather than forcing callers to launder
-// `&JSGlobalObject` through a `*const _ as *mut _` cast.
 unsafe extern "C" {
-    fn JSC__JSModuleLoader__evaluate(
-        globalObject: *const JSGlobalObject,
-        sourceCodePtr: *const u8,
-        sourceCodeLen: usize,
-        originUrlPtr: *const u8,
-        originUrlLen: usize,
-        referrerUrlPtr: *const u8,
-        referrerUrlLen: usize,
-        thisValue: JSValue,
-        exception: *mut JSValue,
-    ) -> JSValue;
-
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
     // to a nullable `*const BunString` via the guaranteed null-pointer optimization.
@@ -42,45 +25,7 @@ unsafe extern "C" {
 }
 
 impl JSModuleLoader {
-    pub fn evaluate(
-        global_object: &JSGlobalObject,
-        source_code: &[u8],
-        origin_url: &[u8],
-        referrer_url: &[u8],
-        this_value: JSValue,
-        exception: &mut JSValue,
-    ) -> JSValue {
-        // SAFETY: thin wrapper over C++ JSC__JSModuleLoader__evaluate; slice ptr/len pairs are
-        // valid for reads for the duration of the FFI call and `exception` is a unique writable
-        // JSValue slot. `global_object` is an opaque ZST handle — passed as `*const` per the FFI
-        // convention in `JSGlobalObject.rs`; C++-side mutation is outside Rust's aliasing model.
-        unsafe {
-            JSC__JSModuleLoader__evaluate(
-                global_object,
-                source_code.as_ptr(),
-                source_code.len(),
-                origin_url.as_ptr(),
-                origin_url.len(),
-                referrer_url.as_ptr(),
-                referrer_url.len(),
-                this_value,
-                exception,
-            )
-        }
-    }
-
-    pub fn load_and_evaluate_module<'a>(
-        global_object: &'a JSGlobalObject,
-        module_name: Option<&BunString>,
-    ) -> Option<&'a JSInternalPromise> {
-        // C++ returns a nullable JSInternalPromise cell pointer owned by the JSC
-        // heap. `JSInternalPromise` is an opaque ZST handle so the deref is the
-        // centralised `opaque_ref` proof.
-        let p = JSC__JSModuleLoader__loadAndEvaluateModule(global_object, module_name);
-        (!p.is_null()).then(|| JSInternalPromise::opaque_ref(p))
-    }
-
-    /// Raw-pointer variant of [`load_and_evaluate_module`]. Returns the FFI
+    /// Raw-pointer variant of `load_and_evaluate_module`. Returns the FFI
     /// `*mut JSInternalPromise` directly so callers that need to store or pass
     /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
     pub fn load_and_evaluate_module_ptr(
@@ -95,20 +40,7 @@ impl JSModuleLoader {
         ))
     }
 
-    pub fn import<'a>(
-        global_object: &'a JSGlobalObject,
-        module_name: &BunString,
-    ) -> JsResult<&'a JSInternalPromise> {
-        // C++ returns null iff an exception was thrown on the VM.
-        // `JSInternalPromise` is an opaque ZST handle so the deref is the
-        // centralised `opaque_ref` proof.
-        let p = JSModuleLoader__import(global_object, module_name);
-        (!p.is_null())
-            .then(|| JSInternalPromise::opaque_ref(p))
-            .ok_or(JsError::Thrown)
-    }
-
-    /// Raw-pointer variant of [`Self::import`]. Returns the FFI
+    /// Raw-pointer variant of `Self::import`. Returns the FFI
     /// `*mut JSInternalPromise` directly so callers that need to store or pass
     /// a mutable cell pointer (e.g. `VirtualMachine::pending_internal_promise`)
     /// don't launder provenance through `&T -> *mut T`. Mirrors

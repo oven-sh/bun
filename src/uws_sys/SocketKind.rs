@@ -97,23 +97,6 @@ impl SocketKind {
             _ => unreachable!("invalid SocketKind discriminant {v} from C"),
         }
     }
-
-    #[inline]
-    pub const fn is_tls(self) -> bool {
-        matches!(
-            self,
-            SocketKind::BunSocketTls
-                | SocketKind::BunListenerTls
-                | SocketKind::HttpClientTls
-                | SocketKind::WsClientUpgradeTls
-                | SocketKind::WsClientTls
-                | SocketKind::PostgresTls
-                | SocketKind::MysqlTls
-                | SocketKind::ValkeyTls
-                | SocketKind::UwsHttpTls
-                | SocketKind::UwsWsTls
-        )
-    }
 }
 
 // `unsigned char kind` on us_socket_t — full byte, not the flags bitfield.

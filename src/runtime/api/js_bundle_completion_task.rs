@@ -41,7 +41,6 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
@@ -163,22 +162,6 @@ pub(crate) fn create_and_schedule_completion_task(
     };
 
     Ok(completion)
-}
-
-/// `BundleV2.generateFromJavaScript` — schedule a build and return its Promise.
-pub fn generate_from_javascript(
-    config: JSBundlerConfig,
-    plugins: Option<NonNull<Plugin>>,
-    global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
-) -> crate::Result<JSValue> {
-    let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
-    // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
-    // thread until the enqueued task runs.
-    unsafe {
-        (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-        Ok((*completion).promise.value())
-    }
 }
 
 /// `if (s.slice().len > 0) s.slice() else null` for the windows-options block.
@@ -668,12 +651,6 @@ impl JSBundleCompletionTask {
                             global_this,
                             result,
                         );
-                        if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
-                            // SAFETY: `as_` returned a live `*mut BuildArtifact`
-                            // owned by the JS wrapper; the borrow lasts only for
-                            // this `set` call (no other Rust alias exists).
-                            unsafe { (*artifact).sourcemap.set(global_this, result) };
-                        }
                         to_assign_on_sourcemap = JSValue::ZERO;
                     }
 

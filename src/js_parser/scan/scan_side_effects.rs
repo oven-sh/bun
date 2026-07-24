@@ -116,10 +116,6 @@ impl SideEffects {
     pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
         data.to_typeof()
     }
-    #[inline(always)]
-    pub fn to_type_of(data: &ExprData) -> Option<&'static [u8]> {
-        data.to_typeof()
-    }
 
     pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
         matches!(
@@ -912,11 +908,11 @@ impl SideEffects {
                 ok: true,
             },
             ExprData::EBigInt(e) => {
-                let v = e.value.slice();
+                let equal = E::BigInt::check_equality(&e.value, b"0");
                 Result {
-                    value: !bun_core::eql_comptime(v, b"0"),
+                    value: equal == Some(false),
                     side_effects: SideEffects::NoSideEffects,
-                    ok: true,
+                    ok: equal.is_some(),
                 }
             }
             ExprData::EString(e) => Result {

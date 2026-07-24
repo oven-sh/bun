@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
 
 import {
@@ -666,13 +666,10 @@ it("dlopen throws an error instead of returning it", () => {
   expect(err).toBeTruthy();
 });
 
-// TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
-const isFFIUnavailable = isWindows && isArm64;
-
 // Windows: dlopen must accept paths with non-ASCII characters. Previously the
 // path was handed to LoadLibraryA as UTF-8, which the OS decodes as the system
 // ANSI codepage, so any non-ASCII byte mangled the path.
-it.skipIf(!isWindows || isFFIUnavailable)("dlopen accepts non-ASCII library paths on Windows", async () => {
+it.skipIf(!isWindows)("dlopen accepts non-ASCII library paths on Windows", async () => {
   const fixture = `
     const { dlopen, FFIType } = require("bun:ffi");
     const { mkdirSync, copyFileSync } = require("node:fs");
@@ -720,7 +717,7 @@ it(".ptr is not leaked", () => {
 
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.
-it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native call", async () => {
+it("JSCallback exceptions propagate out of the native call", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -757,7 +754,7 @@ it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native c
 // worker.terminate() delivered inside a threadsafe JSCallback used to trip
 // "ASSERTION FAILED: !isTerminationException(exception) || hasTerminationRequest()"
 // in JSC::VM::setException on the worker thread and re-enter the terminated VM.
-it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
+it("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
   using dir = tempDir("ffi-jscallback-terminate", {
     "main.js": `
       import { join } from "node:path";

@@ -336,8 +336,3 @@ impl Drop for EVP {
 }
 
 pub(crate) type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
-
-// The `crypto::EVP` re-export (module alias) lets `crypto::EVP::pbkdf2` /
-// `crypto::EVP::PBKDF2` resolve through this module.
-pub use super::pbkdf2;
-pub use super::pbkdf2 as PBKDF2;

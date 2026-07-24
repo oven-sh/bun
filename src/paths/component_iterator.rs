@@ -23,12 +23,6 @@ pub enum PathFormat {
 }
 
 impl PathFormat {
-    /// The native path format for the target OS.
-    #[cfg(windows)]
-    pub const NATIVE: Self = Self::Windows;
-    #[cfg(not(windows))]
-    pub const NATIVE: Self = Self::Posix;
-
     #[inline(always)]
     pub fn is_sep<T: PathChar>(self, c: T) -> bool {
         match self {
@@ -101,22 +95,6 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
         } else {
             Some(&self.path[..self.root_end])
         }
-    }
-
-    /// Returns the first component and seeks to it.
-    pub fn first(&mut self) -> Option<Component<'a, T>> {
-        self.start = self.root_end;
-        self.end = self.start;
-        while self.end < self.path.len() && !self.is_sep(self.path[self.end]) {
-            self.end += 1;
-        }
-        if self.end == self.start {
-            return None;
-        }
-        Some(Component {
-            name: &self.path[self.start..self.end],
-            path: &self.path[..self.end],
-        })
     }
 
     /// Returns the last component and seeks to it.
@@ -204,13 +182,6 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
             path: &self.path[..end],
         })
     }
-}
-
-/// Native-format convenience wrapper over
-/// `ComponentIterator::init` for `u8` paths.
-#[inline]
-pub fn component_iterator(path: &[u8]) -> crate::Result<ComponentIterator<'_, u8>> {
-    ComponentIterator::init(path, PathFormat::NATIVE)
 }
 
 /// Outcome of one `mkdir`-like step in [`make_path_with`]. The closure maps

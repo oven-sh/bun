@@ -18,6 +18,8 @@
  */
 import { linearFifoOrderedRemoveProbe } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
 test("ordered_remove_item preserves FIFO order in the wrapped tail sub-branch (head < count)", () => {
   // write 12, read 8, write 10 -> head=8, count=14, buf_len=16 (wraps).
@@ -32,3 +34,49 @@ test("ordered_remove_item preserves FIFO order in the wrapped prefix sub-branch 
   // remove offset 5 -> index=(12+5)&15=1 < head -> wrapped-prefix sub-branch, drops 205.
   expect(linearFifoOrderedRemoveProbe(1)).toEqual([200, 201, 202, 203, 204, 206, 207]);
 });
+
+// The intra-slice `ptr::copy` calls in `shift_down_one` / `realign` used to
+// pass `slice.as_ptr()` as src and `slice.as_mut_ptr()` as dst in one call;
+// under Stacked Borrows the second retag invalidates the first. This has no
+// runtime-observable effect, so the discriminator is `cargo miri test` itself.
+// `bun run rust:miri` pins Tree Borrows (which accepts the old shape); this
+// test clears MIRIFLAGS to use miri's default Stacked Borrows model. Skipped
+// where miri is not installed, or where the cargo workspace is not resolvable
+// (test-only lanes run a prebuilt binary and lack vendor/lolhtml; see
+// scripts/rust-miri.ts for the same prerequisite check).
+const cargoBin = Bun.which("cargo");
+const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const workspaceResolvable =
+  existsSync(path.join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) &&
+  existsSync(path.join(repoRoot, "build", "debug", "codegen", "build_options.rs"));
+const miriAvailable =
+  !!cargoBin &&
+  workspaceResolvable &&
+  Bun.spawnSync({
+    cmd: [cargoBin, "miri", "--version"],
+    cwd: repoRoot,
+    stdout: "ignore",
+    stderr: "ignore",
+    timeout: 30_000,
+  }).exitCode === 0;
+
+test.skipIf(!miriAvailable)(
+  "linear_fifo unit tests are clean under Stacked Borrows miri",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [cargoBin!, "miri", "test", "--locked", "-p", "bun_collections", "--", "linear_fifo"],
+      cwd: repoRoot,
+      env: { ...process.env, MIRIFLAGS: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      // Surface miri's diagnostic so the gate/CI log shows the actual UB.
+      console.error(stderr || stdout);
+    }
+    expect(stderr).not.toContain("Undefined Behavior");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

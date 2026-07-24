@@ -67,9 +67,8 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         match p.jsx_imports.get_with_tag(kind) {
             Some(existing) => existing,
             None => {
-                let new_ref = p
-                    .declare_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name())
-                    .expect("oom");
+                let new_ref =
+                    p.declare_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name());
                 let loc_ref = js_ast::LocRef {
                     loc: bun_ast::Loc::EMPTY,
                     ref_: new_ref,
@@ -84,9 +83,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn new_generated(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
-        let ref_ = p
-            .new_symbol(js_ast::symbol::Kind::Other, name)
-            .expect("oom");
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
         VecExt::append(&mut p.module_scope_mut().generated, ref_);
         ref_
     }
@@ -94,9 +91,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn new_import_item(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
-        let ref_ = p
-            .new_symbol(js_ast::symbol::Kind::Import, name)
-            .expect("oom");
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, name);
         VecExt::append(&mut p.module_scope_mut().generated, ref_);
         p.is_import_item.insert(ref_, ());
         ref_
@@ -128,9 +123,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let p = &mut *self.p;
         let path = p.arena.alloc_slice_copy(path);
         let index = p.add_import_record_by_range(kind, bun_ast::Range::NONE, path);
-        let namespace_ref = p
-            .new_symbol(js_ast::symbol::Kind::Other, path)
-            .expect("oom");
+        let namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, path);
         VecExt::append(&mut p.module_scope_mut().generated, namespace_ref);
         (index, namespace_ref)
     }

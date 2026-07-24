@@ -574,7 +574,6 @@ impl ExtractTarball {
                         sys::WindowsOpenDirOptions {
                             can_rename_or_delete: true,
                             iterable: false,
-                            read_only: true,
                             ..Default::default()
                         },
                     ) {

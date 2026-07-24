@@ -93,16 +93,4 @@ impl HeaderBuilder {
             value: value_ptr,
         });
     }
-
-    pub fn apply(&mut self, client: &mut crate::HTTPClient) {
-        client.header_entries = core::mem::take(&mut self.entries);
-        // header_buf is a non-owning slice into self.content's
-        // allocation; the builder's owner must
-        // keep `self.content` alive for as long as the client uses the slice.
-        // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
-        // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
-        // holds it past this call); the lifetime is intentionally unbound.
-        client.header_buf =
-            unsafe { bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
-    }
 }

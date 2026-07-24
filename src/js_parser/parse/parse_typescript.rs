@@ -93,7 +93,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let loc = p.lexer.loc();
         let ident = p.lexer.identifier;
-        let ref_ = p.store_name_in_ref(ident)?;
+        let ref_ = p.store_name_in_ref(ident);
         let mut expr = p.new_expr(
             E::Identifier {
                 ref_,
@@ -132,7 +132,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let name = p.lexer.identifier;
                         let name_loc = p.lexer.loc();
                         p.lexer.next()?;
-                        let ref_ = p.store_name_in_ref(name)?;
+                        let ref_ = p.store_name_in_ref(name);
                         let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);
                         expr = p.new_expr(
                             E::Index {
@@ -447,15 +447,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     underscores += 1;
                 };
-                arg_ref = p
-                    .new_symbol(SymbolKind::Hoisted, prefixed)
-                    .expect("unreachable");
+                arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
                 // SAFETY: see above.
                 VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             } else {
-                arg_ref = p
-                    .new_symbol(SymbolKind::Hoisted, name_text)
-                    .expect("unreachable");
+                arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             }
             ts_namespace.arg_ref = arg_ref;
         }
@@ -492,7 +488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let kind = js_ast::LocalKind::KConst;
         let name = p.lexer.identifier;
-        let target_ref = p.store_name_in_ref(name).expect("unreachable");
+        let target_ref = p.store_name_in_ref(name);
         let target_loc = p.lexer.loc();
         let target = p.new_expr(
             E::Identifier {
@@ -632,25 +628,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name: js_ast::StoreStr::new(b"" as &[u8]),
                 value: None,
             };
-            // Assigned in both live arms below; the third arm returns.
-            let needs_symbol: bool;
-
             // Parse the name
-            if p.lexer.token == T::TStringLiteral {
+            let needs_symbol: bool = if p.lexer.token == T::TStringLiteral {
                 // `slice8()` is currently duplicated in E.rs (two impl blocks);
                 // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
                 let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
-                needs_symbol = js_lexer::is_identifier(value.name.slice());
+                js_lexer::is_identifier(value.name.slice())
             } else if p.lexer.is_identifier_or_keyword() {
                 value.name = js_ast::StoreStr::new(p.lexer.identifier);
-                needs_symbol = true;
+                true
             } else {
                 p.lexer.expect(T::TIdentifier)?;
                 // error early, name is still `undefined`
                 return Err(crate::Error::SyntaxError);
-            }
+            };
             p.lexer.next()?;
 
             // Identifiers can be referenced by other values
@@ -722,9 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // PERF: strings::cat heap-allocates — could allocate into p.arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
-                arg_ref = p
-                    .new_symbol(SymbolKind::Hoisted, prefixed)
-                    .expect("unreachable");
+                arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
                 // SAFETY: see above.
                 VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             } else {

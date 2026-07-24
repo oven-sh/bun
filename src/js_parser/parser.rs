@@ -9,13 +9,6 @@ use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
 // and `ReactRefresh.HookContext`. NOT interchangeable with `bun_wyhash::Wyhash11`.
 use bun_wyhash::Wyhash;
 
-// Re-exports.
-// Round-C: stub the still-gated submodules so the helper *types* in this file
-// compile; the real bodies arrive in rounds D/E.
-#[allow(non_snake_case)]
-pub mod ConvertESMExportsForHmr {
-    pub type Ctx = ();
-}
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference
@@ -40,16 +33,6 @@ pub mod options {
     pub use JSX::Runtime as JSXRuntime;
     pub use bun_options_types::jsx as JSX;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    #[allow(non_camel_case_types)]
-    pub enum OutputFormat {
-        #[default]
-        Preserve,
-        Cjs,
-        Esm,
-        Iife,
-        Internal_BakeDev,
-    }
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub enum Format {
         #[default]
         Esm,
@@ -61,10 +44,6 @@ pub mod options {
         #[inline]
         pub const fn is_esm(self) -> bool {
             matches!(self, Format::Esm)
-        }
-        #[inline]
-        pub const fn is_cjs(self) -> bool {
-            matches!(self, Format::Cjs)
         }
     }
     /// Canonical home is here (the parser is the consumer
@@ -178,7 +157,6 @@ pub mod options {
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
 pub use crate::renamer;
 pub use crate::scan::scan_side_effects::SideEffects;
-pub use bun_paths::is_package_path;
 
 pub(crate) use bun_ast::base::Ref;
 
@@ -293,13 +271,9 @@ pub mod Runtime {
         /// - Assigns functions to context for persistence
         pub repl_mode: bool,
 
-        // ── Vestigial bool stubs. ─────────────────────────────────────────────
-        // Retained until their last reader (parseJSXElement.rs et al.) is ported to
-        // the real predicate; they default false and are otherwise inert.
+        // Vestigial bool stub retained until its last reader (parseJSXElement.rs)
+        // is ported to the real predicate; defaults false and is otherwise inert.
         pub jsx_optimization_inline: bool,
-        pub dynamic_require: bool,
-        pub remove_whitespace: bool,
-        pub use_import_meta_require: bool,
     }
 
     impl Default for Features {
@@ -339,9 +313,6 @@ pub mod Runtime {
                 bundler_feature_flags: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
-                dynamic_require: false,
-                remove_whitespace: false,
-                use_import_meta_require: false,
             }
         }
     }
@@ -453,12 +424,10 @@ pub mod Runtime {
     use bun_options_types::schema;
     use bun_options_types::schema::api;
     use core::fmt;
-    use std::sync::atomic::{AtomicU32, Ordering};
 
     pub struct Fallback;
 
     impl Fallback {
-        pub const HTML_TEMPLATE: &'static [u8] = include_bytes!("../fallback.html");
         pub const HTML_BACKEND_TEMPLATE: &'static [u8] = include_bytes!("../fallback-backend.html");
 
         #[inline]
@@ -474,43 +443,6 @@ pub mod Runtime {
         #[inline]
         pub fn fallback_decoder_js() -> &'static [u8] {
             bun_core::runtime_embed_file!(Codegen, "fallback-decoder.js").as_bytes()
-        }
-
-        // Wired via build.rs.
-        pub const VERSION_HASH: &'static str = bun_core::build_options::FALLBACK_HTML_VERSION;
-
-        pub fn version_hash() -> u32 {
-            static CACHED: AtomicU32 = AtomicU32::new(0);
-            let v = CACHED.load(Ordering::Relaxed);
-            if v != 0 {
-                return v;
-            }
-            let parsed = u64::from_str_radix(Self::version(), 16).expect("unreachable") as u32; // @truncate
-            CACHED.store(parsed, Ordering::Relaxed);
-            parsed
-        }
-
-        pub fn version() -> &'static str {
-            Self::VERSION_HASH
-        }
-
-        pub fn render(
-            msg: &api::FallbackMessageContainer,
-            preload: &[u8],
-            entry_point: &[u8],
-            writer: &mut impl bun_io::Write,
-        ) -> bun_io::Result<()> {
-            // The embedded template uses `{[name]s}`-style named placeholders;
-            // substitute by scanning it byte-for-byte.
-            let blob = Base64FallbackMessage { msg };
-            let fallback = Self::fallback_decoder_js();
-            render_named_template(writer, Self::HTML_TEMPLATE, &mut |w, name| match name {
-                b"blob" => w.write_fmt(format_args!("{}", blob)),
-                b"preload" => w.write_all(preload),
-                b"fallback" => w.write_all(fallback),
-                b"entry_point" => w.write_all(entry_point),
-                _ => Ok(()),
-            })
         }
 
         pub fn render_backend(
@@ -588,7 +520,7 @@ pub mod Runtime {
 pub type RuntimeFeatures = Runtime::Features;
 pub(crate) type RuntimeImports = Runtime::Imports;
 
-pub use crate::p::{NewParser, P};
+pub use crate::p::P;
 
 // NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
@@ -855,61 +787,6 @@ pub struct VisitArgsOpts<'a> {
     pub is_unique_formal_parameters: bool,
 }
 
-/// Generic transposer over `if` expressions.
-///
-/// `visitor` is stored as a plain `fn` pointer.
-pub struct ExpressionTransposer<'a, Context, State: Copy> {
-    pub context: &'a mut Context,
-    visitor: fn(&mut Context, Expr, State) -> Expr,
-}
-
-impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
-    pub fn init(c: &'a mut Context, visitor: fn(&mut Context, Expr, State) -> Expr) -> Self {
-        Self {
-            context: c,
-            visitor,
-        }
-    }
-
-    pub fn maybe_transpose_if(&mut self, arg: Expr, state: State) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if(ex.yes, state),
-                    no: self.maybe_transpose_if(ex.no, state),
-                    test_: ex.test_,
-                },
-                arg.loc,
-            ),
-            _ => (self.visitor)(self.context, arg, state),
-        }
-    }
-
-    pub fn transpose_known_to_be_if(&mut self, arg: Expr, state: State) -> Expr {
-        // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else {
-            unreachable!()
-        };
-        Expr::init(
-            E::If {
-                yes: self.maybe_transpose_if(ex.yes, state),
-                no: self.maybe_transpose_if(ex.no, state),
-                test_: ex.test_,
-            },
-            arg.loc,
-        )
-    }
-}
-
-pub fn loc_after_op(e: &E::Binary) -> bun_ast::Loc {
-    if e.left.loc.start < e.right.loc.start {
-        e.right.loc
-    } else {
-        // handle the case when we have transposed the operands
-        e.left.loc
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct TransposeState {
     pub is_await_target: bool,
@@ -996,7 +873,7 @@ impl<'a> JSXTag<'a> {
 
         // Otherwise, this is an identifier
         // <Button>
-        let ref_ = p.store_name_in_ref(name)?;
+        let ref_ = p.store_name_in_ref(name);
         let mut tag = p.new_expr(
             E::Identifier {
                 ref_,
@@ -1052,59 +929,6 @@ impl<'a> JSXTag<'a> {
             name,
         })
     }
-}
-
-/// We must prevent collisions from generated names with user's names.
-///
-/// When transpiling for the runtime, we want to avoid adding a pass over all
-/// the symbols in the file (we do this in the bundler since there is more than
-/// one file, and user symbols from different files may collide with each
-/// other).
-///
-/// This makes sure that there's the lowest possible chance of having a generated name
-/// collide with a user's name. This is the easiest way to do so
-//
-// The const-fn Wyhash one-shot lives in `bun_wyhash::hash_const` next to the
-// runtime impl it must stay in lock-step with; the const-fn suffix encoder is
-// `bun_core::fmt::truncated_hash32_bytes` (re-exported here so the
-// `$crate::parser::__generated_symbol_hash::truncated_hash32` macro path keeps
-// working).
-#[doc(hidden)]
-pub mod __generated_symbol_hash {
-
-    /// 8-byte base32-ish suffix (native-endian).
-    pub use bun_core::fmt::truncated_hash32_bytes as truncated_hash32;
-}
-
-#[macro_export]
-macro_rules! generated_symbol_name {
-    ($name:literal) => {{
-        const __NAME: &str = $name;
-        const __LEN: usize = __NAME.len() + 1 + 8;
-        const __BYTES: [u8; __LEN] = {
-            let name = __NAME.as_bytes();
-            let suffix = $crate::parser::__generated_symbol_hash::truncated_hash32(
-                $crate::parser::__generated_symbol_hash::wyhash0(name),
-            );
-            let mut out = [0u8; __LEN];
-            let mut i = 0;
-            while i < name.len() {
-                out[i] = name[i];
-                i += 1;
-            }
-            out[i] = b'_';
-            let mut j = 0;
-            while j < 8 {
-                out[i + 1 + j] = suffix[j];
-                j += 1;
-            }
-            out
-        };
-        // SAFETY: `__NAME` is valid UTF-8 (a `&str` literal), '_' and the suffix
-        // bytes (drawn from the lowercase-alnum CHARS table) are all ASCII.
-        const __OUT: &str = unsafe { ::core::str::from_utf8_unchecked(&__BYTES) };
-        __OUT
-    }};
 }
 
 pub struct ExprOrLetStmt {
@@ -1277,32 +1101,6 @@ pub struct ExprIn {
     ///
     /// Some examples:
     ///
-    ///   (a?.b).c  // EDot
-    ///   (a?.b)[c] // EIndex
-    ///   (a?.b)()  // ECall
-    pub has_chain_parent: bool,
-
-    /// If our parent is an ECall node with an OptionalChain value of
-    /// OptionalChainStart, then we will need to store the value for the "this" of
-    /// that call somewhere if the current expression is an optional chain that
-    /// ends in a property access. That's because the value for "this" will be
-    /// used twice: once for the inner optional chain and once for the outer
-    /// optional chain.
-    ///
-    /// Example:
-    ///
-    ///   // Original
-    ///   a?.b?.();
-    ///
-    ///   // Lowered
-    ///   var _a;
-    ///   (_a = a == null ? void 0 : a.b) == null ? void 0 : _a.call(a);
-    ///
-    /// In the example above we need to store "a" as the value for "this" so we
-    /// can substitute it back in when we call "_a" if "_a" is indeed present.
-    /// See also "thisArgFunc" and "thisArgWrapFunc" in "exprOut".
-    pub store_this_arg_for_parent_optional_chain: bool,
-
     /// Certain substitutions of identifiers are disallowed for assignment targets.
     /// For example, we shouldn't transform "undefined = 1" into "void 0 = 1". This
     /// isn't something real-world code would do but it matters for conformance
@@ -1325,7 +1123,6 @@ pub(crate) fn is_eval_or_arguments(name: &[u8]) -> bool {
 
 #[derive(Clone, Copy, Default)]
 pub struct PrependTempRefsOpts {
-    pub fn_body_loc: Option<bun_ast::Loc>,
     pub kind: StmtsKind,
 }
 
@@ -1348,12 +1145,6 @@ pub struct ExprBindingTuple {
 pub struct TempRef {
     pub r#ref: Ref,
     pub value: Option<Expr>,
-}
-
-#[derive(Clone, Copy)]
-pub struct ImportNamespaceCallOrConstruct {
-    pub r#ref: Ref,
-    pub is_construct: bool,
 }
 
 pub struct ThenCatchChain {
@@ -1554,7 +1345,6 @@ pub struct FnOrArrowDataParse {
     pub is_return_disallowed: bool,
     pub is_this_disallowed: bool,
 
-    pub has_async_range: bool,
     pub arrow_arg_errors: DeferredArrowArgErrors,
     pub track_arrow_arg_errors: bool,
 
@@ -1581,20 +1371,10 @@ impl Default for FnOrArrowDataParse {
             has_decorators: false,
             is_return_disallowed: false,
             is_this_disallowed: false,
-            has_async_range: false,
             arrow_arg_errors: DeferredArrowArgErrors::default(),
             track_arrow_arg_errors: false,
             allow_missing_body_for_type_script: false,
             allow_ts_decorators: false,
-        }
-    }
-}
-
-impl FnOrArrowDataParse {
-    pub fn i() -> FnOrArrowDataParse {
-        FnOrArrowDataParse {
-            allow_await: AwaitOrYield::ForbidAll,
-            ..Default::default()
         }
     }
 }
@@ -1604,8 +1384,6 @@ impl FnOrArrowDataParse {
 /// arrow expressions.
 #[derive(Clone, Copy, Default)]
 pub struct FnOrArrowDataVisit {
-    // super_index_ref: Option<&mut Ref>,
-    pub is_arrow: bool,
     pub is_async: bool,
     pub is_inside_loop: bool,
     pub is_inside_switch: bool,
@@ -1627,13 +1405,6 @@ pub struct FnOnlyDataVisit<'a> {
     /// otherwise.
     pub arguments_ref: Option<Ref>,
 
-    /// Arrow functions don't capture the value of "this" and "arguments". Instead,
-    /// the values are inherited from the surrounding context. If arrow functions
-    /// are turned into regular functions due to lowering, we will need to generate
-    /// local variables to capture these values so they are preserved correctly.
-    pub this_capture_ref: Option<Ref>,
-    pub arguments_capture_ref: Option<Ref>,
-
     /// This is a reference to the enclosing class name if there is one. It's used
     /// to implement "this" and "super" references. A name is automatically generated
     /// if one is missing so this will always be present inside a class body.
@@ -1653,13 +1424,6 @@ pub struct FnOnlyDataVisit<'a> {
     /// function. That means references to "arguments" inside the arrow function
     /// will have to reference a captured variable instead of the real variable.
     pub is_inside_async_arrow_fn: bool,
-
-    /// If false, disallow "new.target" expressions. We disallow all "new.target"
-    /// expressions at the top-level of the file (i.e. not inside a function or
-    /// a class field). Technically since CommonJS files are wrapped in a function
-    /// you can use "new.target" in node as an alias for "undefined" but we don't
-    /// support that.
-    pub is_new_target_allowed: bool,
 
     /// If false, the value for "this" is the top-level module scope "this" value.
     /// That means it's "undefined" for ECMAScript modules and "exports" for
@@ -1684,7 +1448,6 @@ pub struct DeferredErrors {
     /// These are errors for expressions
     pub invalid_expr_default_value: Option<bun_ast::Range>,
     pub invalid_expr_after_question: Option<bun_ast::Range>,
-    pub array_spread_feature: Option<bun_ast::Range>,
 }
 
 impl DeferredErrors {
@@ -1695,7 +1458,6 @@ impl DeferredErrors {
         to.invalid_expr_after_question = self
             .invalid_expr_after_question
             .or(to.invalid_expr_after_question);
-        to.array_spread_feature = self.array_spread_feature.or(to.array_spread_feature);
     }
 }
 
@@ -1747,7 +1509,6 @@ pub struct ScanPassResult {
     pub import_records: Vec<ImportRecord>,
     pub named_imports: bun_ast::ast_result::NamedImports,
     pub used_symbols: ParsePassSymbolUsageMap,
-    pub import_records_to_keep: Vec<u32>,
     pub approximate_newline_count: usize,
 }
 
@@ -1755,12 +1516,6 @@ pub struct ScanPassResult {
 pub struct ParsePassSymbolUse {
     pub r#ref: Ref,
     pub used: bool,
-    pub import_record_index: u32,
-}
-
-#[derive(Clone, Copy)]
-pub struct NamespaceCounter {
-    pub count: u16,
     pub import_record_index: u32,
 }
 
@@ -1772,7 +1527,6 @@ impl ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),
             used_symbols: ParsePassSymbolUsageMap::default(),
-            import_records_to_keep: Vec::new(),
             approximate_newline_count: 0,
         }
     }
@@ -1781,8 +1535,6 @@ impl ScanPassResult {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
-        // import_records_to_keep is intentionally NOT cleared here;
-        // the keep-list persists across reset().
         self.approximate_newline_count = 0;
     }
 }
@@ -1867,7 +1619,6 @@ pub mod prefill {
 
     pub mod value {
         use super::*;
-        pub const E_THIS: E::This = E::This {};
         pub(crate) const ZERO: E::Number = E::Number::new(0.0);
     }
 
@@ -1915,18 +1666,12 @@ pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
 pub struct MacroState<'a> {
     pub refs: MacroRefs<'a>,
-    pub prepend_stmts: &'a mut Vec<Stmt>,
-    pub imports: ArrayHashMap<i32, Ref>,
 }
 
 impl<'a> MacroState<'a> {
-    // The field is write-only, but a `&mut` field cannot be left
-    // uninitialized, so the caller supplies a placeholder list.
-    pub fn init(prepend_stmts: &'a mut Vec<Stmt>) -> MacroState<'a> {
+    pub fn init() -> MacroState<'a> {
         MacroState {
             refs: MacroRefs::default(),
-            prepend_stmts,
-            imports: ArrayHashMap::default(),
         }
     }
 }
@@ -1994,10 +1739,7 @@ impl Default for Jest {
 
 // Named parser aliases live in `ast/Parser.rs` (where the JsxT ZSTs are
 // in scope). Re-export here.
-pub use crate::parse::parse_entry::{
-    JSXImportScanner, JSXParser, JavaScriptImportScanner, JavaScriptParser, TSXImportScanner,
-    TSXParser, TypeScriptImportScanner, TypeScriptParser,
-};
+pub use crate::parse::parse_entry::{JavaScriptParser, TSXParser};
 
 /// The "await" and "yield" expressions are never allowed in argument lists but
 /// may or may not be allowed otherwise depending on the details of the enclosing

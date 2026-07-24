@@ -29,7 +29,7 @@ impl Default for CompileTarget {
         Self {
             os: Environment::OS,
             arch: Environment::ARCH,
-            baseline: !Environment::ENABLE_SIMD,
+            baseline: false,
             version: Version {
                 major: Environment::VERSION.major as _, // @truncate
                 minor: Environment::VERSION.minor as _, // @truncate

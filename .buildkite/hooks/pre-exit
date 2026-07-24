@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Fallback Buildkite annotation for infra failures.
+#
+# `scripts/runner.node.mjs` (test steps) and `scripts/build/ci.ts` (build steps)
+# post their own failure annotations, then set build meta-data key
+# `reported-$BUILDKITE_JOB_ID` via markBuildkiteStepReported() just before
+# exiting. Anything that kills the step before that marker is written (agent
+# command-hook failures such as a tart guest that never boots, artifact
+# download failures, `node` missing, the runner/build script itself crashing)
+# leaves the job red with nothing in the build's annotation list, so the
+# failure is only discoverable by opening the raw log. This repository pre-exit
+# hook posts a generic annotation for any such job so it shows up alongside
+# test/build failures.
+#
+# The marker is build meta-data, which is server-side and so remains visible
+# here even when the reporter ran inside an ephemeral VM (the darwin tart
+# agents forward the Job API socket into the guest). Repository hooks run on
+# every posix agent, and on Windows via Git Bash. Never exits non-zero.
+
+set -uo pipefail
+
+status="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
+[ "$status" = "0" ] && exit 0
+[ -n "${BUILDKITE_JOB_ID:-}" ] || exit 0
+
+# Skip canceled/timed-out jobs: on cancel the agent SIGTERMs then SIGKILLs the
+# command, so the reporter had no chance to set the marker, and a canceled
+# build annotating every running job is noise, not signal. The agent's
+# Executor.Cancel() sets BUILDKITE_JOB_CANCELLED=true in the shell env
+# (buildkite/agent@3ab8ab31, v3.94.0+), and additionally
+# BUILDKITE_JOB_TIMED_OUT=true when the cancel was a job-level timeout.
+if [ "${BUILDKITE_JOB_CANCELLED:-}" = "true" ]; then exit 0; fi
+# TODO(ci): the exit-code fallback below is only needed while agents older than
+# v3.94.0 remain in the fleet (as of 2026-07: the linux queue=ci image is still
+# on v3.87.0 and several bare-metal darwin boxes are on v3.87.0/v3.94.0;
+# scripts/bootstrap.sh already pins 3.114.0, those images just need rebaking).
+# -1 is the posix agent-killed code, 3221225786 is Windows STATUS_CONTROL_C_EXIT,
+# both observed on cancel in build 76127. Delete this `case` once every agent is
+# v3.94.0+.
+case "$status" in -1|3221225786) exit 0 ;; esac
+
+if buildkite-agent meta-data exists "reported-${BUILDKITE_JOB_ID}" 2>/dev/null; then
+  exit 0
+fi
+
+label="${BUILDKITE_LABEL:-${BUILDKITE_STEP_KEY:-job}}"
+job_url="${BUILDKITE_BUILD_URL:-}#${BUILDKITE_JOB_ID}"
+
+# darwin tart agents redirect `tart run` to /tmp/{bk,sc}-<job-id>.log on the
+# host. A guest that booted and was cleanly stopped writes only
+# `Stopping VM...`; anything else is tart reporting why it exited.
+detail=""
+for log in "/tmp/bk-${BUILDKITE_JOB_ID}.log" "/tmp/sc-${BUILDKITE_JOB_ID}.log"; do
+  [ -s "$log" ] || continue
+  # Cap per-log output so a pathological tart dump cannot push the shared
+  # `--append`ed annotation past Buildkite's 1 MiB body limit.
+  body=$(grep -v '^Stopping VM\.\.\.' "$log" 2>/dev/null | head -c 2048 || true)
+  [ -n "$body" ] && detail+="${detail:+$'\n'}${log##*/}: ${body}"
+done
+[ -n "$detail" ] || detail="see the job log for output"
+
+# Match escapeCodeBlock() in scripts/runner.node.mjs: the body renders inside a
+# ```terminal fence, so only backticks need escaping.
+preview=$(printf '%s' "$detail" | sed 's/`/\\`/g')
+
+printf '<details><summary><a><code>step failed outside runner</code></a> - exit %s on <a href="%s">%s</a></summary>\n\n```terminal\n%s\n```\n\n</details>\n\n' \
+  "$status" "$job_url" "$label" "$preview" \
+  | buildkite-agent annotate --append --style error --context step-failed-outside-runner --priority 5 2>&1 \
+  || echo "pre-exit: buildkite-agent annotate failed (non-fatal)"
+
+exit 0

@@ -879,7 +879,6 @@ pub(crate) fn edit(
             // paths between the top of this `for` body and here, so a plain post-loop assert
             // suffices (and avoids a `scopeguard` borrow conflict on
             // `request.e_string`).
-            #[cfg(debug_assertions)]
             debug_assert!(request.e_string.is_some());
         }
 

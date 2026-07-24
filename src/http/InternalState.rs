@@ -167,27 +167,13 @@ impl<'a> InternalState<'a> {
     }
 
     pub fn reset(&mut self) {
-        // allocator param dropped (global mimalloc).
-        self.compressed_body = MutableString::init_empty();
-        self.response_message_buffer = MutableString::init_empty();
-
         let body_msg = self.body_out_str;
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
         }
-        // The boxed
-        // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
-        // (see the note in Decompressor.rs), so the `*self = ...` assignment below
-        // frees the FFI handle via drop glue — no explicit reset needed.
-
-        // just in case we check and free to avoid leaks
-        // (Option<HTTPResponseMetadata> drops on assignment; allocator param removed)
-        self.cloned_metadata = None;
-
-        // if exists we own this info
-        // (Option<CertificateInfo> drops on assignment; allocator param removed)
-        self.certificate_info = None;
-
+        // `*self = ...` below drops every field via drop glue. Only
+        // `original_request_body` needs an explicit `deinit()` because
+        // `HTTPRequestBody` deliberately has no `Drop` (see HTTPRequestBody.rs).
         self.original_request_body.deinit();
         *self = InternalState {
             body_out_str: body_msg,
@@ -253,6 +239,29 @@ impl<'a> InternalState<'a> {
 
         // Content-Type: text/event-stream we should be done only when Close/End/Timeout connection
         self.flags.received_last_chunk
+    }
+
+    /// True when a socket close during `in_progress` completes the body rather
+    /// than failing it: chunked decoder already in the trailers state, or a
+    /// close-delimited response (no Content-Length, no Transfer-Encoding).
+    pub fn is_body_complete_on_close(&self) -> bool {
+        if self.is_chunked_encoding() {
+            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
+            return matches!(self.chunked_decoder._state, 4 | 5);
+        }
+        self.content_length.is_none() && self.response_stage == HTTPStage::Body
+    }
+
+    /// Mark the body complete and drive `process_body_buffer` one last time
+    /// with `is_final_chunk = true` so a compressed stream that never reached
+    /// stream-end is rejected. Call from every site that flips
+    /// `received_last_chunk` on an end-of-body signal that arrives with no
+    /// accompanying body bytes (h1 FIN, proxy-tunnel close, h2/h3 END_STREAM).
+    /// No-op for complete, empty, or uncompressed bodies.
+    pub fn finalize_body_on_eof(&mut self) -> Result<(), Error> {
+        self.flags.received_last_chunk = true;
+        let buffer_snap = core::mem::take(&mut self.get_body_buffer().list);
+        self.process_body_buffer(buffer_snap, true).map(drop)
     }
 
     pub fn decompress_bytes(
@@ -395,15 +404,6 @@ impl<'a> InternalState<'a> {
 
         self.compressed_body.reset();
         Ok(())
-    }
-
-    pub fn decompress(
-        &mut self,
-        buffer: &MutableString,
-        body_out_str: &mut MutableString,
-        is_final_chunk: bool,
-    ) -> Result<(), Error> {
-        self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
     }
 
     // `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under

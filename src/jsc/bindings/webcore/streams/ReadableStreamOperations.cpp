@@ -286,6 +286,35 @@ void readableStreamCloseIfPossible(JSGlobalObject* globalObject, JSReadableStrea
         readableStreamClose(globalObject, stream);
 }
 
+// `$webStreamControllerError` — what node:stream's addAbortSignal() does to a WHATWG stream.
+// Node keeps a bound `controller.error` on the stream under a symbol; Bun's controllers live
+// in C++, so the dispatch happens here instead and the common case allocates nothing.
+// A no-op once the stream is no longer readable, exactly like controller.error().
+void webStreamControllerError(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue error)
+{
+    if (stream->m_state != ReadableStreamState::Readable)
+        return;
+    switch (stream->m_controllerKind) {
+    case ControllerKind::Default:
+        readableStreamDefaultControllerError(globalObject, defaultControllerOf(stream), error);
+        return;
+    case ControllerKind::Byte:
+        readableByteStreamControllerError(globalObject, byteControllerOf(stream), error);
+        return;
+    case ControllerKind::Direct:
+        // handleError is what the direct controller's own error() method dispatches to:
+        // it tears the sink down, rejects any pending read, and errors the stream.
+        // onClose() is the graceful end() path and would resolve the read instead.
+        uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->handleError(globalObject, error);
+        return;
+    case ControllerKind::None:
+    case ControllerKind::NativeSink:
+        // No spec controller to reset a queue on; error the stream itself.
+        readableStreamError(globalObject, stream, error);
+        return;
+    }
+}
+
 // ReadableStreamError(stream, e)
 void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue error)
 {
@@ -383,7 +412,12 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     JSPromise* sourceCancelPromise = nullptr;
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
-        sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        if (stream->m_bunMode == BunStreamMode::NativePending)
+            sourceCancelPromise = cancelPendingNativeSource(globalObject, stream, reason);
+        else {
+            stream->m_bunMode = BunStreamMode::Default;
+            sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        }
         break;
     case ControllerKind::Default:
         sourceCancelPromise = defaultControllerOf(stream)->cancelSteps(globalObject, reason);
@@ -751,9 +785,21 @@ JSReadableStream* createReadableByteStream(JSGlobalObject* globalObject, SourceK
     return stream;
 }
 
+// `ReadableStream.from(x)` where x has no usable @@asyncIterator/@@iterator. The spec only
+// says "throw a TypeError"; Node additionally tags it and renders the argument the way `%s`
+// does, e.g. `{ a: 1 } must be iterable`.
+static void throwNotIterable(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue iterable)
+{
+    WTF::StringBuilder builder;
+    Bun::JSValueToStringSafe(globalObject, builder, iterable, false);
+    RETURN_IF_EXCEPTION(scope, );
+    builder.append(" must be iterable"_s);
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ARG_NOT_ITERABLE, builder.toString());
+}
+
 // GetMethod(value, propertyName): a [[Get]] on the boxed value (GetV — legal on primitives),
-// yielding undefined for undefined/null and a TypeError only for a non-callable value.
-static JSValue getMethodOnValue(JSC::VM& vm, JSGlobalObject* globalObject, JSValue value, PropertyName propertyName, ASCIILiteral notCallableMessage)
+// yielding undefined for undefined/null. A non-callable method is "not iterable" to Node.
+static JSValue getMethodOnValue(JSC::VM& vm, JSGlobalObject* globalObject, JSValue value, PropertyName propertyName)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue method = value.get(globalObject, propertyName);
@@ -761,7 +807,7 @@ static JSValue getMethodOnValue(JSC::VM& vm, JSGlobalObject* globalObject, JSVal
     if (method.isUndefinedOrNull())
         return jsUndefined();
     if (!method.isCallable()) {
-        throwTypeError(globalObject, scope, notCallableMessage);
+        throwNotIterable(globalObject, scope, value);
         return {};
     }
     return method;
@@ -774,20 +820,20 @@ static IterationRecord getIteratorAsync(JSC::VM& vm, JSGlobalObject* globalObjec
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue asyncMethod = getMethodOnValue(vm, globalObject, iterable, vm.propertyNames->asyncIteratorSymbol, "@@asyncIterator must be a function"_s);
+    JSValue asyncMethod = getMethodOnValue(vm, globalObject, iterable, vm.propertyNames->asyncIteratorSymbol);
     RETURN_IF_EXCEPTION(scope, {});
     if (asyncMethod.isUndefined()) {
-        JSValue syncMethod = getMethodOnValue(vm, globalObject, iterable, vm.propertyNames->iteratorSymbol, "@@iterator must be a function"_s);
+        JSValue syncMethod = getMethodOnValue(vm, globalObject, iterable, vm.propertyNames->iteratorSymbol);
         RETURN_IF_EXCEPTION(scope, {});
         if (syncMethod.isUndefined()) {
-            throwTypeError(globalObject, scope, "The argument to ReadableStream.from() is not iterable: it has no @@asyncIterator or @@iterator method"_s);
+            throwNotIterable(globalObject, scope, iterable);
             return {};
         }
         auto callData = JSC::getCallData(syncMethod);
         JSValue syncIterator = JSC::call(globalObject, syncMethod, callData, iterable, ArgList());
         RETURN_IF_EXCEPTION(scope, {});
         if (!syncIterator.isObject()) {
-            throwTypeError(globalObject, scope, "The @@iterator method must return an object"_s);
+            Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The iterator method must return an object"_s);
             return {};
         }
         IterationRecord syncRecord = iteratorDirect(globalObject, syncIterator);
@@ -800,7 +846,7 @@ static IterationRecord getIteratorAsync(JSC::VM& vm, JSGlobalObject* globalObjec
     JSValue iterator = JSC::call(globalObject, asyncMethod, callData, iterable, ArgList());
     RETURN_IF_EXCEPTION(scope, {});
     if (!iterator.isObject()) {
-        throwTypeError(globalObject, scope, "The @@asyncIterator method must return an object"_s);
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The iterator method must return an object"_s);
         return {};
     }
     RELEASE_AND_RETURN(scope, iteratorDirect(globalObject, iterator));

@@ -190,23 +190,26 @@ declare module "bun" {
      * Subscribes a client to the topic.
      *
      * @param topic The topic name.
+     * @returns `true` if the client is now subscribed, `false` if the socket is closed.
      * @example
      * ```ts
      * ws.subscribe("chat");
      * ```
      */
-    subscribe(topic: string): void;
+    subscribe(topic: string): boolean;
 
     /**
      * Unsubscribes a client from the topic.
      *
      * @param topic The topic name.
+     * @returns `true` if the client was subscribed and is now unsubscribed,
+     * `false` if the socket is closed or the client was not subscribed to the topic.
      * @example
      * ```ts
      * ws.unsubscribe("chat");
      * ```
      */
-    unsubscribe(topic: string): void;
+    unsubscribe(topic: string): boolean;
 
     /**
      * Returns whether the client is subscribed to the topic.

@@ -329,9 +329,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     JSHash* original = nullptr;
     const EVP_MD* md = nullptr;
     ExternZigHash::Hasher* zigHasher = nullptr;
-    if (algorithmOrHashInstanceValue.inherits(JSHash::info())) {
-        original = dynamicDowncast<JSHash>(algorithmOrHashInstanceValue);
-        if (!original || original->m_finalized) {
+    if ((original = dynamicDowncast<JSHash>(algorithmOrHashInstanceValue))) {
+        if (original->m_finalized) {
             return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
         }
 

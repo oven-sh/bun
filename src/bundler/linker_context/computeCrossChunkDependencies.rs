@@ -620,8 +620,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     Ok(())
 }
 
-pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
-
 // `Format` is the bundler output-format enum (Esm/Cjs/Iife/...);
 // aliased so callsites read as `c.options.output_format`.
 use crate::options::Format as OutputFormat;

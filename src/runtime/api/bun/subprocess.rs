@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{RefCount, RefPtr};
+use bun_ptr::RefCount;
 
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
@@ -174,8 +174,6 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 // spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
 
-pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
-
 // ── manual `#[bun_jsc::JsClass]` expansion (generic struct) ──────────────────
 // Routes through the codegen'd `crate::generated_classes::js_Subprocess`
 // wrappers (which are typed against `Subprocess<'static>`) so the extern
@@ -293,7 +291,6 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
-        const KILLED                       = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const DEREF_ON_STDIN_DESTROYED     = 1 << 4;
@@ -302,6 +299,9 @@ bitflags::bitflags! {
         /// by the caller). Owned terminals are closed when the subprocess exits
         /// so the exit callback fires; borrowed terminals are left open for reuse.
         const OWNS_TERMINAL                = 1 << 6;
+        /// `handle_abort_signal` sent `kill_signal`; `on_process_exit` closes
+        /// pipe readers instead of waiting on EOF a grandchild may never send.
+        const ABORT_SIGNAL_KILLED          = 1 << 7;
     }
 }
 
@@ -322,6 +322,9 @@ impl Subprocess<'_> {
     #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]
     fn handle_abort_signal(&self, _reason: JSValue) {
         self.clear_abort_signal();
+        if !self.has_exited() {
+            self.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
+        }
         let _ = self.try_kill(self.kill_signal);
     }
 }
@@ -679,9 +682,35 @@ impl Subprocess<'_> {
         let _ = self.try_kill(self.kill_signal);
     }
 
-    /// Close any still-open stdout/stderr pipe readers so the sync wait loop
-    /// stops waiting for EOF after timeout/maxBuffer. Matches Node.js
-    /// `SyncProcessRunner::Kill()`. Called outside any reader callback.
+    /// `MaxBuf::Owner::on_overflow` target. Routes straight from the `MaxBuf`
+    /// allocation to this `Subprocess`, independent of whichever pipe reader
+    /// currently holds the budget (the `.stdout`/`.stderr` getter transfers it
+    /// to a `FileReader`).
+    ///
+    /// # Safety
+    /// `sp` is the `Subprocess` passed to `MaxBuf::create_for_subprocess`; it
+    /// is live while the matching `*_maxbuf` slot is `Some` (cleared in
+    /// `finalize` and below).
+    pub(crate) unsafe fn on_max_buffer_overflow(sp: NonNull<()>, maxbuf: NonNull<MaxBuf::MaxBuf>) {
+        // SAFETY: caller contract; all accessed fields are `Cell<_>`.
+        let sp = unsafe { sp.cast::<Subprocess<'static>>().as_ref() };
+        let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
+            let mut mb = sp.stdout_maxbuf.get();
+            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stdout_maxbuf.set(mb);
+            MaxBuf::Kind::Stdout
+        } else {
+            let mut mb = sp.stderr_maxbuf.get();
+            MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
+            sp.stderr_maxbuf.set(mb);
+            MaxBuf::Kind::Stderr
+        };
+        sp.on_max_buffer(kind);
+    }
+
+    /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
+    /// kill; a grandchild may still hold the write end (Node.js
+    /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
     pub fn close_readable_pipes(&self) {
         if matches!(self.stdout.get(), Readable::Pipe(_)) {
             self.stdout.with_mut(|s| s.close());
@@ -930,9 +959,13 @@ impl Subprocess<'_> {
         unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
 
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
-            // Deliver EOF to the terminal reader without closing the Terminal:
+            // Deliver EOF to the terminal reader without closing the Terminal.
             // POSIX drains then releases slave_fd (BSD kernels flush on last
-            // slave close); Windows closes the ConPTY pseudoconsole.
+            // slave close). Windows: the ConDrv \Reference handle was released
+            // at spawn time, so conhost exits and breaks the output pipe once
+            // its last client (this child, or a grandchild it left behind) has
+            // disconnected; unref the writer here and leave the reader ref'd
+            // until that EOF arrives.
             if let Some(terminal) = self.terminal.get() {
                 // `BackRef` invariant holds: the terminal is owned by (or
                 // borrowed from a JS wrapper kept live by) this subprocess and
@@ -941,7 +974,7 @@ impl Subprocess<'_> {
                 #[cfg(unix)]
                 term.drain_and_close_slave_fd();
                 #[cfg(windows)]
-                term.close_pseudoconsole();
+                term.unref_after_inline_child_exit();
             }
         }
 
@@ -990,17 +1023,33 @@ impl Subprocess<'_> {
 
         // Node.js keeps reading stdout/stderr until EOF after the direct child
         // is reaped (a grandchild may still be writing). Sync and async both
-        // resume reads here; timeout/maxBuffer bound the sync wait.
+        // resume reads here; timeout/maxBuffer bound the sync wait. A lazy
+        // reader is paused until JS pulls, so unpause it first; backpressure
+        // is moot once the direct child has exited.
         if let Readable::Pipe(pipe) = self.stdout.get() {
             if !pipe.reader.is_done() {
-                Readable::pipe_reader_mut(pipe).reader.read();
+                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
+                reader.unpause();
+                reader.read();
             }
         }
 
         if let Readable::Pipe(pipe) = self.stderr.get() {
             if !pipe.reader.is_done() {
-                Readable::pipe_reader_mut(pipe).reader.read();
+                let reader = &mut Readable::pipe_reader_mut(pipe).reader;
+                reader.unpause();
+                reader.read();
             }
+        }
+
+        // When Bun itself killed the child (timeout/maxBuffer/AbortSignal) stop
+        // waiting on pipe EOF after the drain above: a grandchild may still
+        // hold the write end and the caller already opted into a bounded wait.
+        if self.event_loop_timer.get().state == EventLoopTimerState::FIRED
+            || self.exited_due_to_maxbuf.get().is_some()
+            || self.flags.get().contains(Flags::ABORT_SIGNAL_KILLED)
+        {
+            self.close_readable_pipes();
         }
 
         if let Some(pipe_ptr) = stdin {
@@ -1443,10 +1492,6 @@ impl Subprocess<'_> {
         // `JsCell` and callers do not hold the borrow across JS re-entry that
         // touches `ipc_data` itself.
         unsafe { self.ipc_data.get_mut() }.as_mut()
-    }
-
-    pub fn get_global_this(&self) -> Option<&JSGlobalObject> {
-        Some(self.global_this())
     }
 }
 

@@ -319,20 +319,6 @@ pub enum Event {
     Close,
 }
 
-impl Event {
-    #[cfg(not(windows))]
-    pub fn dupe(&self) -> Event {
-        match self {
-            Event::Rename(path) => Event::Rename(Box::<[u8]>::from(&path[..])),
-            Event::Change(path) => Event::Change(Box::<[u8]>::from(&path[..])),
-            Event::Error(err) => Event::Error(err.clone()),
-            Event::NoFilename(event_type) => Event::NoFilename(*event_type),
-            Event::Abort => Event::Abort,
-            Event::Close => Event::Close,
-        }
-    }
-}
-
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy, strum::IntoStaticStr)]
 pub enum EventType {

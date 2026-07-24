@@ -195,6 +195,31 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // Covers a family of HTTP-thread crashes (sentry BUN-2WC6 and siblings) where
+  // a certificate identity failure during a handshake completed from the
+  // SSL_read path, racing aborts, idle timeouts, and keepalive churn, caused a
+  // finished HTTPClient to deliver its final result twice: the second delivery
+  // read the freed AsyncHTTP clone and called through a null callback pointer.
+  // The fixture drives that exact traffic shape and exits non-zero on any
+  // unexpected outcome; every failure must surface as a catchable error.
+  it("rejects a trusted cert with a mismatched hostname cleanly under abort/timeout/keepalive churn", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")],
+      env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Check stderr for sanitizer reports first (and unconditionally): a
+    // recovered ASAN report can leave exit code 0, and on an abort this
+    // surfaces the actual report instead of a bare exit-code mismatch.
+    // Don't assert emptiness: debug builds emit benign startup noise.
+    expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
+    // Fixture reports unexpected outcomes on stdout.
+    expect(stdout).toStartWith("OK ");
+    expect(exitCode).toBe(0);
+  });
+
   // When checkServerIdentity is provided, the HTTP thread sends an intermediate
   // progress update carrying the server certificate before response headers
   // arrive. If the connection then fails (e.g. an mTLS server rejects a
@@ -524,7 +549,10 @@ describe.concurrent("fetch-tls", () => {
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,
-      hostname: "localhost",
+      // Explicit 127.0.0.1 (in the cert's SAN): "localhost" binds ::1 on
+      // v6-first resolvers while the fetch client pins localhost to
+      // 127.0.0.1, turning the timeout under test into ConnectionRefused.
+      hostname: "127.0.0.1",
       port: 0,
       rejectUnauthorized: false,
       async fetch() {

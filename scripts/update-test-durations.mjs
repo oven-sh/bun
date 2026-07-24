@@ -4,9 +4,9 @@
  * Regenerate test/expected-durations.json from recent Buildkite runs.
  *
  * The file maps each test path (relative to test/, forward slashes) to its
- * median wall-clock ms on the release and asan linux-x64 lanes.
- * runner.node.mjs uses it to bin-pack test files across --max-shards so every
- * shard does roughly the same amount of work instead of `index % shards`.
+ * median per-lane cost in ms (see `lanes` below). runner.node.mjs uses it
+ * to bin-pack test files across --max-shards so every shard does roughly
+ * the same amount of work instead of `index % shards`.
  *
  * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
@@ -36,49 +36,69 @@ if (!token) {
 }
 
 // default + asan are both linux-x64-debian-13 (lowest-variance runner pool);
-// windows gets its own column because process-spawn cost and per-test skip
-// behaviour differ enough from linux to leave 150-300s of shard spread when
-// packed with the linux timings.
+// windows and musl get their own columns because process-spawn cost and
+// per-test skip behaviour differ enough from the glibc lane to leave
+// 150-300s of shard spread when packed with the debian timings.
 const lanes = {
   default: "linux-x64-debian-13-test-bun",
   asan: "linux-x64-asan-debian-13-test-bun",
+  musl: "linux-x64-musl-alpine-323-test-bun",
   windows: "windows-x64-2019-test-bun",
 };
 
-const api = path =>
-  fetch(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(60_000),
-  }).then(r => {
-    if (!r.ok) throw new Error(`${path}: ${r.status} ${r.statusText}`);
-    return r;
-  });
+const api = async path => {
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (r.ok) return r;
+    if ((r.status === 429 || r.status >= 500) && attempt < 5) {
+      const backoff = Number(r.headers.get("retry-after")) * 1000 || 1000 * 2 ** attempt;
+      await new Promise(resolve => setTimeout(resolve, backoff));
+      continue;
+    }
+    throw new Error(`${path}: ${r.status} ${r.statusText}`);
+  }
+};
 
-// Per-file wall clock is derived from the APC timestamps Buildkite injects
-// into log lines (ESC `_bk;t=<ms>` BEL) bracketing each `--- [N/M] <path>`
-// header the runner prints; that captures spawn + test + teardown, unlike
-// bun test's own `[Xms]`.
+// Per-file cost is the gap between the APC timestamps Buildkite injects into
+// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests
+// prefix the header with `--- `; the parallel-safe phase (runner.node.mjs)
+// prints the bare form. For that concurrent phase the gap is an inter-dispatch
+// delta, not wall clock; we clamp it so the last-dispatched file on each shard
+// does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
 function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
   let path = null;
   let start = null;
+  let concurrent = false;
+  const emit = ts => {
+    if (path === null || start === null || ts === null) return;
+    out.push([path, concurrent ? Math.min(ts - start, 500) : ts - start]);
+  };
   for (let line of lines) {
     if (line.endsWith("\r")) line = line.slice(0, -1);
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
     const ts = m ? Number(m[1]) : null;
     const text = m ? m[2] : line;
-    const hdr = /^--- \[\d+\/\d+\] (.+)$/.exec(text);
+    const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
     if (hdr) {
-      if (path !== null && start !== null && ts !== null) out.push([path, ts - start]);
-      path = hdr[1].trim();
-      start = ts;
+      emit(ts);
+      // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
+      // paths; treat them as a delimiter so the preceding span closes cleanly.
+      const title = hdr[2].trim();
+      const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
+      path = isPath ? title : null;
+      start = isPath ? ts : null;
+      concurrent = isPath && !hdr[1];
       continue;
     }
-    if (/^--- End\b/.test(text)) {
-      if (path !== null && start !== null && ts !== null) out.push([path, ts - start]);
-      path = null;
-      start = null;
+    if (/^--- (?:End\b|Running \d+ parallel-safe)/.test(text)) {
+      emit(ts);
+      path = start = null;
+      concurrent = false;
     }
   }
   return out;
@@ -141,7 +161,7 @@ async function collect(build, stepKey, into) {
       }
     }
   };
-  await Promise.all(Array.from({ length: 6 }, worker));
+  await Promise.all(Array.from({ length: 4 }, worker));
 }
 
 const want = Math.max(1, parseInt(opts.builds, 10) || 5);

@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -98,6 +98,8 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     ["panic", "SIGABRT"],
     ["outOfMemory", "SIGABRT"],
     ["segfault", "SIGSEGV"],
+    ["abort", "SIGABRT"],
+    ["trap", "SIGTRAP"],
   ] as const)("%s terminates with %s", async (approach, expectedSignal) => {
     await using proc = Bun.spawn({
       cmd: [
@@ -115,10 +117,191 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
       expect(stderr).toContain("Segmentation fault at address");
     } else if (approach === "panic") {
       expect(stderr).toContain("invoked crashByPanic() handler");
+    } else if (approach === "abort") {
+      expect(stderr).toContain("abort() called");
+    } else if (approach === "trap") {
+      expect(stderr).toContain("Trap instruction");
     }
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
     void stdout;
+  });
+});
+
+// Windows: the VEH handler must walk the stack from the fault CONTEXT record
+// (RtlVirtualUnwind), not from inside the handler. When the fault is in an
+// external DLL the old RtlCaptureStackBackTrace path could stop at
+// KiUserExceptionDispatcher on some Windows versions, leaving only the
+// handler's own frames in the trace and none of the bun callers.
+test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures the bun callers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+  expect(exitCode).not.toBe(0);
+
+  // The debug build's fallback printer emits one `???:?:?: 0x<addr>` line per
+  // captured frame. A walk seeded from the fault CONTEXT reaches through the
+  // DLL into the bun call chain (the JS host-fn dispatch is several frames
+  // deep), so a short trace means the unwind stopped at the exception
+  // dispatcher and the handler's own frames are all that was captured.
+  const frameAddrs = [...stderr.matchAll(/: (0x[0-9a-f]{6,}) in /gi)].map(m => BigInt(m[1]));
+  expect(frameAddrs.length).toBeGreaterThanOrEqual(7);
+
+  // Frame 0 is the fault PC inside ntdll.dll; frames 1+ must be the bun call
+  // chain with no handler or ntdll-dispatch frames interleaved. Frames 1..6 all
+  // coming from one image means their address span fits inside that image's
+  // mapped range; the old RtlCaptureStackBackTrace path left
+  // [handler x3][ntdll-dispatch x3] ahead of the first real caller, so frames
+  // 4-6 landed in ntdll and the span covered the >10 GiB gap between the EXE
+  // and system-DLL HEASLR regions.
+  const callers = frameAddrs.slice(1, 7);
+  const span = callers.reduce((a, b) => (a > b ? a : b)) - callers.reduce((a, b) => (a < b ? a : b));
+  expect(span).toBeLessThan(2n ** 31n);
+});
+
+// The Windows crash handler is a Vectored Exception Handler, which sees every
+// first-chance exception process-wide before frame-based SEH does. Third-party
+// DLLs injected into the process (AV/EDR agents such as BeyondTrust's
+// PGHook.dll, virtualization guest tools, shell extensions) routinely raise
+// and then handle access violations under SEH as part of normal operation.
+// The VEH must let those through rather than treating them as a fatal crash.
+// `IsBadReadPtr` is the canonical example: it probes its argument inside a
+// `__try`/`__except` in kernel32, so the AV it raises is inside a system DLL
+// and is immediately swallowed by that DLL's own SEH.
+//
+// See https://github.com/oven-sh/bun/issues/10056 (Carbon Black),
+// https://github.com/oven-sh/bun/issues/11898 (Trend Micro).
+describe.if(isWindows)("Windows VEH handler and first-chance faults in external DLLs", () => {
+  test("SEH-guarded probe survives", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const lib = dlopen("kernel32.dll", {
+           IsBadReadPtr: { args: ["usize", "usize"], returns: "i32" },
+         });
+         const rc = lib.symbols.IsBadReadPtr(0xE8, 8);
+         console.log("SURVIVED rc=" + rc);`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Segmentation fault");
+    // rc=1: kernel32's SEH caught the AV and reported the pointer as bad.
+    expect(stdout.trim()).toBe("SURVIVED rc=1");
+    expect(exitCode).toBe(0);
+  });
+
+  // `RtlFillMemory` has no `__try`/`__except` around its store. With the VEH
+  // now returning CONTINUE_SEARCH for out-of-image PCs, the catch point is
+  // JSC's jscJITSEHHandler (registered for JIT frames), which routes to
+  // Bun__crashHandlerFromJSCFrame, or UEF. This exercises that the crash is
+  // still reported and the report carries the fault address.
+  test("unguarded fault still crash-reports", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const lib = dlopen("ntdll.dll", {
+           RtlFillMemory: { args: ["usize", "usize", "i32"], returns: "void" },
+         });
+         lib.symbols.RtlFillMemory(0xE8, 8, 0);
+         console.log("SHOULD NOT REACH");`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xE8");
+    expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // Validate WebKit's registerJITUnwindInfo against the actual unwinder:
+  // RtlLookupFunctionEntry must return a RUNTIME_FUNCTION for a JIT pool PC.
+  // This is the smoke test for the hand-encoded UNWIND_INFO / .xdata bytes.
+  // LLInt PCs are not covered here: LLInt lives in image .text and Windows
+  // only consults static .pdata for in-module PCs; that needs build-time
+  // .seh_* emission in offlineasm (follow-up).
+  test("RtlLookupFunctionEntry resolves JSC JIT pool PCs", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen, FFIType, ptr } = require("bun:ffi");
+         const { symbols } = dlopen("ntdll.dll", {
+           RtlLookupFunctionEntry: {
+             args: [FFIType.u64, FFIType.pointer, FFIType.pointer],
+             returns: FFIType.pointer,
+           },
+         });
+         const { jscInternals } = require("bun:internal-for-testing");
+         const pool = jscInternals.startOfFixedExecutableMemoryPool();
+         const imageBase = new BigUint64Array(1);
+         const jitEntry = symbols.RtlLookupFunctionEntry(pool + 0x100n, ptr(imageBase), null);
+         console.log(JSON.stringify({
+           pool: pool.toString(16),
+           jitEntry: jitEntry === null ? "null" : "ok",
+         }));`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect(out.jitEntry).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
+  // End-to-end: warm a JS function into the JIT, then fault from inside it
+  // via FFI. The crash report must fire via jscJITSEHHandler at the JIT
+  // boundary. Clears the UEF backstop first so the assertion isolates the JSC
+  // handler (deleting setJITExceptionHandlerWin would break this test, not
+  // just fall through to UEF). Disables the concurrent JIT so warm-up is
+  // deterministic.
+  test("unguarded fault from inside a JIT-compiled frame still crash-reports via the JSC handler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const ntdll = dlopen("ntdll.dll", {
+           RtlFillMemory: { args: ["usize", "usize", "i32"], returns: "void" },
+         });
+         const k32 = dlopen("kernel32.dll", {
+           SetUnhandledExceptionFilter: { args: ["usize"], returns: "usize" },
+         });
+         function hot(i) {
+           if (i === 10000) ntdll.symbols.RtlFillMemory(0xE8, 8, 0);
+           return i;
+         }
+         for (let i = 0; i < 10000; i++) hot(i);
+         k32.symbols.SetUnhandledExceptionFilter(0);
+         hot(10000);
+         console.log("SHOULD NOT REACH");`,
+      ],
+      env: { ...noReportEnv, BUN_JSC_jitPolicyScale: "0", BUN_JSC_useConcurrentJIT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xE8");
+    expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(exitCode).not.toBe(0);
   });
 });
 
@@ -159,6 +342,121 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
 
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
+});
+
+// SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
+// SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)
+// must route through the crash handler so they are not silently lost.
+describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
+  test.concurrent.each([
+    ["abort", "SIGABRT", "abort() called"],
+    ["trap", "SIGTRAP", "Trap instruction"],
+  ] as const)("%s produces a crash report", async (approach, expectedSignal, expectedMsg) => {
+    let sent = false;
+    const resolve_handler = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        expect(request.url).toEndWith("/ack");
+        sent = true;
+        resolve_handler.resolve();
+        return new Response("OK");
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        approach,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(expectedMsg);
+    expect(stderr).toContain("oh no");
+    expect(stderr).toContain(server.url.toString());
+    expect(proc.signalCode).toBe(expectedSignal);
+    expect(exitCode).not.toBe(0);
+
+    await resolve_handler.promise;
+    expect(sent).toBe(true);
+  });
+
+  // These two tests terminate via SIG_DFL (not via a test hook that calls
+  // suppress_core_dumps_if_necessary()), so on the --coredump-upload CI lane
+  // the runner would flag leaked core files as a hard failure. ulimit -c 0 in
+  // a shell wrapper is inherited by the bun child; the whole describe is
+  // isPosix-gated so /bin/sh is available.
+  const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
+  // The above goes via the internal test hook, which under ASAN calls the
+  // handler directly because ASAN owns the fault signals. This case raises the
+  // signal for real to prove the sigaction registration itself; ASAN builds
+  // never install those handlers so skip there.
+  test.skipIf(isASAN).concurrent.each(["SIGABRT", "SIGTRAP"] as const)(
+    "raised %s produces a crash report",
+    async signal => {
+      await using proc = Bun.spawn({
+        cmd: noCoreCmd([
+          bunExe(),
+          "-e",
+          `process.kill(process.pid, "${signal}")`,
+          "--debug-crash-handler-use-trace-string",
+        ]),
+        env: noReportEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("oh no");
+      expect(proc.signalCode).toBe(signal);
+    },
+  );
+
+  // process.abort() is a deliberate user action, not a Bun crash. It must still
+  // terminate with SIGABRT but must not print a crash report or upload one.
+  test.concurrent("process.abort() does not report a crash", async () => {
+    let sent = false;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        sent = true;
+        return new Response("OK");
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: noCoreCmd([bunExe(), "-e", "process.abort()"]),
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Bun has crashed");
+    expect(stderr).not.toContain(server.url.toString());
+    expect(proc.signalCode).toBe("SIGABRT");
+    expect(sent).toBe(false);
+  });
 });
 
 describe("automatic crash reporter", () => {

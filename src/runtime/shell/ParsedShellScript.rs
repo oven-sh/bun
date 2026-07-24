@@ -8,9 +8,10 @@ use bun_jsc::{
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
+use super::env_map::EnvMap;
 use super::interpreter::ShellArgs;
 use super::shell_body::{JsStrings, shell_cmd_from_js};
-use super::{EnvMap, EnvStr, Interpreter};
+use super::{EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
@@ -277,13 +278,13 @@ fn create_parsed_shell_script_impl(
                 if let Some(lex) = out_lex_result.as_ref() {
                     debug_assert!(!lex.errors.is_empty());
                     let str = lex.combine_errors(arena);
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     debug_assert!(!p.errors.is_empty());
                     let errstr = p.combine_errors();
-                    return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))));
+                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
                 }
 
                 return Err(global.throw_error(err, "failed to lex/parse shell"));

@@ -1,25 +1,30 @@
 #!/usr/bin/env bun
 /**
- * Generates the lld `--symbol-ordering-file` that packs bun's startup-hot
+ * Generates the linker symbol-ordering file that packs bun's startup-hot
  * functions together at the front of `.text`.
  *
- * Why it exists: a `bun -e 'console.log(1)'` only executes ~8.5 MB worth of
- * pages, but they are scattered over a 50 MB `.text`, and Linux faults in 64 KB
- * around every one of them. Sorting those functions to the front of `.text`
+ * Why it exists: a `bun -e 'console.log(1)'` only executes ~5k of bun's ~80k
+ * functions, but they are scattered over a 50 MB `.text`, and the kernel faults
+ * in 16-64 KB around every one of them. Sorting those functions to the front
  * cuts the resident binary pages roughly in half with no change to the binary's
  * size and no change to what the code does.
  *
- * How: `pagetrace.c` is an LD_PRELOAD shim that mprotects the executable's own
- * text+rodata to PROT_NONE and unprotects one page per SIGSEGV, so it records
- * exactly the pages a run touches. We run a handful of representative
- * workloads, map every touched page back to the function that owns it (`nm -S`
- * on the unstripped `bun-profile`), and emit those function names in first-touch
- * order. Symbols lld cannot find are ignored, so the file degrades gracefully
- * as code moves.
+ * How: `functrace.c` is an injected-library shim that plants a breakpoint (INT3
+ * on x86-64, BRK on arm64) at every function's first instruction and restores
+ * it the first time it fires, so it records exactly the functions a run enters.
+ * We run a handful of representative workloads, map every recorded address back
+ * to its linker-visible name (`nm` on the unstripped binary), and emit those
+ * names in first-entry order. Symbols the linker cannot find are ignored, so
+ * the file degrades gracefully as code moves.
+ *
+ * This replaced an earlier page-fault tracer. A page trace lists every function
+ * that shares a page with a hot one, so ~5k real entries turned into ~38k
+ * names, most of which never ran; the extra names still sort to the front and
+ * dilute the hot set. Recording exact entries lists only what ran.
  *
  * One workload runs under `ptyrun.c`, on a pseudo-terminal: bun's stdio, tty
  * and readline code is a different path on a terminal than on a pipe, and the
- * functions it reaches are ~2k that no other workload touches.
+ * functions it reaches are a couple of thousand that no other workload touches.
  *
  * The file is never committed. Release builds generate it from their own pass-1
  * binary and relink against it; canary builds inherit the last successful
@@ -33,14 +38,8 @@
  * linked with a file generated from the plain release build lands at 22.6 MB,
  * and at 21.6 MB with its own.
  *
- * Re-running against a build that already has an order file converges rather
- * than drifting: a cold function only ever gets listed because it shares a page
- * with a hot one, and once the hot functions are packed together those cold
- * neighbours stop being touched and drop out. Hot functions always own at least
- * one touched page, so they are never lost.
- *
- * Linux only — it is the `--symbol-ordering-file` input for the ELF link, and
- * the tracer depends on /proc/self/maps.
+ * Linux x86-64/arm64 and macOS arm64. Linux is the lld `--symbol-ordering-file`
+ * input; macOS is Apple ld's `-order_file`.
  */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -48,15 +47,18 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HEADER_WORDS = 2; // must match pagetrace.c: page size, count
+const STARTS_HEADER_WORDS = 3; // must match functrace.c: magic, version, count
+const TRACE_HEADER_WORDS = 5; // magic, version, slide, starts, count
+const STARTS_MAGIC = 0x4e55425354525453n; // "STRTSBUN"
+const TRACE_MAGIC = 0x4e55424543415254n; // "TRACEBUN"
 
 // `import.meta.dir` is Bun-only; scripts/build/ imports this under node too.
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
  * A trace that resolves almost nothing is worse than no file at all: it silently
- * costs the win while looking like it worked. Real runs land near ~16k
- * functions, so anything this low means the tracer or the symbol table broke.
+ * costs the win while looking like it worked. A real `bun -e` alone lands near
+ * ~5k entries, so anything this low means the tracer or the symbol table broke.
  */
 const MIN_FUNCTIONS = 4000;
 
@@ -124,17 +126,70 @@ export interface GenerateOptions {
   verbose?: boolean;
 }
 
+/**
+ * Linker-visible function names, by address. Multiple names can share one
+ * address (aliases, and ICF on darwin), and the order file must list every name
+ * the linker might know a function by. On macOS nm prints names with the C
+ * leading underscore, which is also what `-order_file` expects, so no
+ * stripping — lld and ld take exactly what nm gave.
+ */
+function readSymbolTable(bunProfile: string): Map<number, string[]> {
+  // Bare `nm` with no GNU-only long options: the regex below is the
+  // defined-text-symbol filter, and nothing here depends on output order.
+  const nm = process.env.NM || "nm";
+  const r = runCommand([nm, bunProfile]);
+  if (r.status !== 0) throw new Error(`${nm} failed on ${bunProfile}\n${r.stderr}`);
+
+  const symbols = new Map<number, string[]>();
+  for (const line of r.stdout.toString().split("\n")) {
+    const m = /^([0-9a-f]+) ([tT]) (\S+)$/.exec(line);
+    if (!m) continue;
+    const address = parseInt(m[1]!, 16);
+    const names = symbols.get(address);
+    if (names) names.push(m[3]!);
+    else symbols.set(address, [m[3]!]);
+  }
+  if (symbols.size === 0) throw new Error(`${nm} reported no text symbols — is ${bunProfile} stripped?`);
+  return symbols;
+}
+
+/** Write function starts for functrace.c: u64 magic, version, count, addresses. */
+function writeStarts(path: string, addresses: number[]): void {
+  const buffer = new ArrayBuffer((STARTS_HEADER_WORDS + addresses.length) * 8);
+  const words = new BigUint64Array(buffer);
+  words[0] = STARTS_MAGIC;
+  words[1] = 1n;
+  words[2] = BigInt(addresses.length);
+  for (let i = 0; i < addresses.length; i++) words[STARTS_HEADER_WORDS + i] = BigInt(addresses[i]!);
+  writeFileSync(path, new Uint8Array(buffer));
+}
+
+/** Read a trace functrace.c wrote: first-entry addresses, slide already removed. */
+function readTrace(path: string, name: string): number[] {
+  const raw = readFileSync(path);
+  if (raw.byteLength < TRACE_HEADER_WORDS * 8) throw new Error(`workload "${name}" wrote a truncated trace`);
+  const header = new BigUint64Array(raw.buffer, raw.byteOffset, TRACE_HEADER_WORDS);
+  if (header[0] !== TRACE_MAGIC || header[1] !== 1n) throw new Error(`workload "${name}" wrote an invalid trace`);
+  const count = Number(header[4]);
+  if (count === 0) throw new Error(`workload "${name}" recorded no entries — is the tracer loading?`);
+  const body = new BigUint64Array(raw.buffer, raw.byteOffset + TRACE_HEADER_WORDS * 8, count);
+  const out: number[] = new Array(count);
+  for (let i = 0; i < count; i++) out[i] = Number(body[i]);
+  return out;
+}
+
 export function generateOrderFile(options: GenerateOptions): { count: number; outPath: string } {
   const buildDir = resolve(options.buildDir);
   const outPath = resolve(options.outPath ?? join(buildDir, "linker.order"));
   const minFunctions = options.minFunctions ?? MIN_FUNCTIONS;
   const log = (message: string) => options.verbose && console.log(message);
 
-  if (process.platform !== "linux") {
-    throw new Error("the order file is an ELF linker input; generate it on linux");
+  const darwin = process.platform === "darwin";
+  if (process.platform !== "linux" && !(darwin && process.arch === "arm64")) {
+    throw new Error("the order file tracer builds on linux x86-64/arm64 or macOS arm64");
   }
 
-  // The unstripped binary: its symbol table is what maps pages back to functions.
+  // The unstripped binary: its symbol table is what maps addresses back to names.
   const bunProfile = join(buildDir, options.exeName ?? "bun-profile");
   if (!existsSync(bunProfile)) {
     throw new Error(`${bunProfile} not found — build it first (bun run build:release)`);
@@ -143,13 +198,25 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
   const scratch = mkdtempSync(join(tmpdir(), "bun-orderfile-"));
   try {
     // ── Build the tracer and the pty runner ───────────────────────────────────
-    const tracer = join(scratch, "pagetrace.so");
+    const tracer = join(scratch, darwin ? "functrace.dylib" : "functrace.so");
     const ptyrun = join(scratch, "ptyrun");
     const cc = process.env.CC || "cc";
-    const build = runCommand([cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(here, "pagetrace.c"), "-ldl"]);
+    const build = runCommand(
+      darwin
+        ? [cc, "-O2", "-dynamiclib", "-fPIC", "-o", tracer, join(here, "functrace.c")]
+        : [cc, "-O2", "-shared", "-fPIC", "-o", tracer, join(here, "functrace.c"), "-ldl", "-lpthread"],
+    );
     if (build.status !== 0) throw new Error(`failed to build the tracer with ${cc}\n${build.stderr}`);
-    const pty = runCommand([cc, "-O2", "-o", ptyrun, join(here, "ptyrun.c"), "-lutil"]);
+    const pty = runCommand([cc, "-O2", "-o", ptyrun, join(here, "ptyrun.c"), ...(darwin ? [] : ["-lutil"])]);
     if (pty.status !== 0) throw new Error(`failed to build the pty runner with ${cc}\n${pty.stderr}`);
+
+    // ── Symbol table and function starts ──────────────────────────────────────
+    const symbols = readSymbolTable(bunProfile);
+    const startsPath = join(scratch, "starts.bin");
+    writeStarts(
+      startsPath,
+      [...symbols.keys()].sort((a, b) => a - b),
+    );
 
     // ── Representative workloads ──────────────────────────────────────────────
     // Order matters: earlier workloads get the densest placement, so the plain
@@ -215,17 +282,20 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
       },
     ];
 
-    const traces: { name: string; pageSize: number; pages: BigUint64Array }[] = [];
+    // ── Trace each workload, emit every name not yet seen ─────────────────────
+    const order: string[] = [];
+    const seen = new Set<string>();
     for (const [i, workload] of workloads.entries()) {
       const out = join(scratch, `trace-${i}.bin`);
       // The tracer loads into the traced process and nowhere else. On a terminal
       // ptyrun is the parent, so it is the one that hands the preload down.
-      const preload = workload.tty ? { PTYRUN_PRELOAD: tracer } : { LD_PRELOAD: tracer };
+      const preloadVar = darwin ? "DYLD_INSERT_LIBRARIES" : "LD_PRELOAD";
+      const preload = workload.tty ? { PTYRUN_PRELOAD: tracer } : { [preloadVar]: tracer };
       const r = runCommand(workload.tty ? [ptyrun, bunProfile, ...workload.args] : [bunProfile, ...workload.args], {
         env: {
           ...preload,
-          BUN_PAGETRACE_BIN: bunProfile,
-          BUN_PAGETRACE_OUT: out,
+          BUN_FUNCTRACE_STARTS: startsPath,
+          BUN_FUNCTRACE_OUT: out,
           BUN_DEBUG_QUIET_LOGS: "1",
           ...workload.env,
         },
@@ -236,76 +306,22 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
       });
       if (r.status !== 0) throw new Error(`workload "${workload.name}" exited ${r.status}\n${r.stderr}`);
 
-      const raw = readFileSync(out);
-      const header = new BigUint64Array(raw.buffer, raw.byteOffset, HEADER_WORDS);
-      const pageSize = Number(header[0]);
-      const capacity = raw.byteLength / 8 - HEADER_WORDS;
-      // The tracer's counter keeps climbing past MAX_HITS if a run ever overflows.
-      const count = Math.min(Number(header[1]), capacity);
-      if (count === 0) throw new Error(`workload "${workload.name}" recorded no faults — is LD_PRELOAD working?`);
-      traces.push({
-        name: workload.name,
-        pageSize,
-        pages: new BigUint64Array(raw.buffer, raw.byteOffset + HEADER_WORDS * 8, count),
-      });
-    }
-
-    // ── Symbol table ──────────────────────────────────────────────────────────
-    const nm = process.env.NM || (existsSync("/usr/bin/llvm-nm") ? "llvm-nm" : "nm");
-    const symbols = runCommand([nm, "--defined-only", "-S", "--numeric-sort", bunProfile]);
-    if (symbols.status !== 0) throw new Error(`${nm} failed on ${bunProfile}\n${symbols.stderr}`);
-
-    // `t`/`T` only: ordering `.rodata.*` separates constants from the mergeable
-    // string/constant pools they sit next to, which costs more pages than it saves.
-    const starts: number[] = [];
-    const ends: number[] = [];
-    const names: string[] = [];
-    for (const line of symbols.stdout.toString().split("\n")) {
-      const m = /^([0-9a-f]+) ([0-9a-f]+) (\w) (\S+)$/.exec(line);
-      if (!m || (m[3] !== "t" && m[3] !== "T")) continue;
-      const address = parseInt(m[1]!, 16);
-      starts.push(address);
-      ends.push(address + parseInt(m[2]!, 16));
-      names.push(m[4]!);
-    }
-    if (!starts.length) throw new Error(`${nm} reported no sized functions — is ${bunProfile} stripped?`);
-
-    /** Index of the last symbol starting at or before `page`, or -1. */
-    function lowerBound(page: number): number {
-      let lo = 0;
-      let hi = starts.length - 1;
-      let ans = -1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (starts[mid]! <= page) {
-          ans = mid;
-          lo = mid + 1;
-        } else hi = mid - 1;
-      }
-      return ans;
-    }
-
-    const order: string[] = [];
-    const seen = new Set<string>();
-    for (const trace of traces) {
       const before = order.length;
-      const visited = new Set<number>();
-      for (const raw of trace.pages) {
-        const page = Number(raw);
-        if (visited.has(page)) continue;
-        visited.add(page);
-        // Symbols overlapping [page, page + pageSize). Walk back far enough to
-        // catch a function that started earlier and spans into this page.
-        let i = Math.max(0, lowerBound(page));
-        while (i > 0 && starts[i - 1]! + 0x100000 > page) i--;
-        for (; i < starts.length && starts[i]! < page + trace.pageSize; i++) {
-          const name = names[i]!;
-          if (ends[i]! <= page || seen.has(name)) continue;
+      let unresolved = 0;
+      for (const address of readTrace(out, workload.name)) {
+        const names = symbols.get(address);
+        if (!names) {
+          unresolved++;
+          continue;
+        }
+        for (const name of names) {
+          if (seen.has(name)) continue;
           seen.add(name);
           order.push(name);
         }
       }
-      log(`  ${trace.name.padEnd(21)} ${visited.size} pages touched, +${order.length - before} functions`);
+      const note = unresolved ? ` (${unresolved} unresolved)` : "";
+      log(`  ${workload.name.padEnd(21)} +${order.length - before} functions${note}`);
     }
 
     if (order.length < minFunctions) {
@@ -316,8 +332,8 @@ export function generateOrderFile(options: GenerateOptions): { count: number; ou
     }
 
     const header = [
-      "# lld --symbol-ordering-file: functions bun executes while starting up,",
-      "# in first-touch order, so they land together at the front of .text.",
+      `# ${darwin ? "ld -order_file" : "lld --symbol-ordering-file"}: functions bun executes while starting up,`,
+      "# in first-entry order, so they land together at the front of .text.",
       "# Generated by scripts/orderfile/generate.ts — not committed.",
       `# ${order.length} functions from ${workloads.length} workloads.`,
     ];

@@ -20,8 +20,8 @@ impl ListenSocket {
     pub fn close(&mut self) {
         c::uws_h3_listen_socket_close(self)
     }
-    pub fn get_local_port(&mut self) -> i32 {
-        c::uws_h3_listen_socket_port(self)
+    pub fn get_local_port(&mut self) -> Option<u16> {
+        u16::try_from(c::uws_h3_listen_socket_port(self)).ok()
     }
     pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         // SAFETY: self is a live FFI handle; buf ptr/len valid for write
@@ -46,12 +46,6 @@ impl ListenSocket {
 bun_opaque::opaque_ffi! { pub struct Request; }
 
 impl Request {
-    pub fn is_ancient(&self) -> bool {
-        false
-    }
-    pub fn get_yield(&mut self) -> bool {
-        c::uws_h3_req_get_yield(self)
-    }
     pub fn set_yield(&mut self, y: bool) {
         c::uws_h3_req_set_yield(self, y)
     }
@@ -78,51 +72,11 @@ impl Request {
             Some(unsafe { bun_core::ffi::slice(p, n) })
         }
     }
-    pub fn query(&mut self, name: &[u8]) -> &[u8] {
-        let mut p: *const u8 = ptr::null();
-        // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_query(self, name.as_ptr(), name.len(), &raw mut p) };
-        // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
-    }
     pub fn parameter(&mut self, idx: u16) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_parameter(self, idx, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
-    }
-    /// Iterate all request headers.
-    ///
-    /// `H` must be a
-    /// zero-sized type (function item or capture-less closure): the trampoline
-    /// is monomorphized over `H` and conjures the ZST inside, so the user
-    /// handler is baked in with no runtime storage.
-    pub fn for_each_header<Ctx, H>(&mut self, _cb: H, ctx: *mut Ctx)
-    where
-        H: Fn(&mut Ctx, &[u8], &[u8]) + Copy + 'static,
-    {
-        // Safe fn item: nested local, only ever coerced to the C-ABI fn-pointer
-        // type passed to C — never callable by name from safe Rust. Body wraps
-        // its raw-ptr ops explicitly.
-        extern "C" fn each<Ctx, H>(
-            n: *const u8,
-            nl: usize,
-            v: *const u8,
-            vl: usize,
-            ud: *mut c_void,
-        ) where
-            H: Fn(&mut Ctx, &[u8], &[u8]) + Copy + 'static,
-        {
-            // SAFETY: synchronous header iteration — `ud` is the unique `&mut Ctx`
-            // we registered, (ptr,len) pairs valid for this call, `H` is a ZST.
-            unsafe {
-                let Some(ctx) = thunk::user_mut::<Ctx>(ud) else {
-                    return;
-                };
-                thunk::zst::<H>()(ctx, thunk::c_slice(n, nl), thunk::c_slice(v, vl));
-            }
-        }
-        c::uws_h3_req_for_each_header(self, each::<Ctx, H>, ctx.cast())
     }
 }
 
@@ -159,6 +113,15 @@ impl Response {
             WriteResult::Backpressure(len)
         }
     }
+    pub fn try_write_body(&mut self, data: &[u8], _is_first: bool) -> usize {
+        // node:http (the only caller) never reaches HTTP/3; fall through to
+        // the copying write for AnyResponse dispatch parity.
+        let _ = self.write(data);
+        data.len()
+    }
+    pub fn spill_body(&mut self, data: &[u8]) {
+        let _ = self.write(data);
+    }
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live FFI handle; status ptr/len valid for read
         unsafe { c::uws_h3_res_write_status(self, status.as_ptr(), status.len()) }
@@ -179,6 +142,9 @@ impl Response {
     pub fn mark_wrote_content_length_header(&mut self) {
         c::uws_h3_res_mark_wrote_content_length_header(self)
     }
+    pub fn mark_wrote_date_header(&mut self) {
+        c::uws_h3_res_mark_wrote_date_header(self)
+    }
     pub fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
     }
@@ -194,18 +160,11 @@ impl Response {
     pub fn resume_(&mut self) {
         c::uws_h3_res_resume(self)
     }
-    #[inline]
-    pub fn resume(&mut self) {
-        self.resume_()
-    }
     pub fn timeout(&mut self, seconds: u8) {
         c::uws_h3_res_timeout(self, seconds)
     }
     pub fn reset_timeout(&mut self) {
         c::uws_h3_res_reset_timeout(self)
-    }
-    pub fn get_write_offset(&mut self) -> u64 {
-        c::uws_h3_res_get_write_offset(self)
     }
     pub fn override_write_offset(&mut self, off: u64) {
         c::uws_h3_res_override_write_offset(self, off)
@@ -231,9 +190,6 @@ impl Response {
     }
     pub fn prepare_for_sendfile(&mut self) {}
     pub fn mark_needs_more(&mut self) {}
-    pub fn get_socket_data(&mut self) -> *mut c_void {
-        c::uws_h3_res_get_socket_data(self)
-    }
     pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
@@ -585,8 +541,6 @@ mod c {
     pub(super) type Handler =
         Option<unsafe extern "C" fn(*mut Response, *mut Request, *mut c_void)>;
     pub(super) type ListenHandler = Option<unsafe extern "C" fn(*mut ListenSocket, *mut c_void)>;
-    pub(super) type HeaderCb =
-        unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void);
 
     // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
     // so `&T`/`&mut T` are ABI-identical to a non-null pointer. Shims whose
@@ -721,17 +675,16 @@ mod c {
             v: u64,
         );
         pub(super) safe fn uws_h3_res_mark_wrote_content_length_header(res: &mut Response);
+        pub(super) safe fn uws_h3_res_mark_wrote_date_header(res: &mut Response);
         pub(super) safe fn uws_h3_res_write_mark(res: &mut Response);
         pub(super) safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
-        pub(super) safe fn uws_h3_res_get_write_offset(res: &mut Response) -> u64;
         pub(super) safe fn uws_h3_res_override_write_offset(res: &mut Response, off: u64);
         pub(super) safe fn uws_h3_res_has_responded(res: &mut Response) -> bool;
         pub(super) safe fn uws_h3_res_get_buffered_amount(res: &mut Response) -> u64;
         pub(super) safe fn uws_h3_res_reset_timeout(res: &mut Response);
         pub(super) safe fn uws_h3_res_timeout(res: &mut Response, seconds: u8);
         pub(super) safe fn uws_h3_res_end_sendfile(res: &mut Response, off: u64, close: bool);
-        pub(super) safe fn uws_h3_res_get_socket_data(res: &mut Response) -> *mut c_void;
         // safe: `&mut Response` is ABI-identical to a non-null `*mut`;
         // `cb`/`ud` are stored opaquely (never dereferenced by the C++ shim
         // itself) — no preconditions on this call. Mirrors `uws_res_on_*`.
@@ -773,7 +726,6 @@ mod c {
             is_ipv6: &mut bool,
         ) -> usize;
 
-        pub(super) safe fn uws_h3_req_get_yield(req: &mut Request) -> bool;
         pub(super) safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
         // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
@@ -786,24 +738,10 @@ mod c {
             len: usize,
             out: *mut *const u8,
         ) -> usize;
-        pub(super) fn uws_h3_req_get_query(
-            req: *mut Request,
-            name: *const u8,
-            len: usize,
-            out: *mut *const u8,
-        ) -> usize;
         pub(super) safe fn uws_h3_req_get_parameter(
             req: &mut Request,
             idx: u16,
             out: &mut *const u8,
         ) -> usize;
-        // safe: synchronous header iteration — `ud` is forwarded opaquely to
-        // `cb` without being dereferenced by the C++ shim itself; `cb` is a
-        // by-value fn pointer. No preconditions beyond the live opaque handle.
-        pub(super) safe fn uws_h3_req_for_each_header(
-            req: &mut Request,
-            cb: HeaderCb,
-            ud: *mut c_void,
-        );
     }
 }

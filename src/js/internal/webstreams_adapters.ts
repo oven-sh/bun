@@ -210,7 +210,16 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
   }
 
   const highWaterMark = streamWritable.writableHighWaterMark;
-  const strategy = streamWritable.writableObjectMode ? new CountQueuingStrategy({ highWaterMark }) : { highWaterMark };
+  const strategy = streamWritable.writableObjectMode
+    ? new CountQueuingStrategy({ highWaterMark })
+    : {
+        highWaterMark,
+        // Size chunks in bytes so desiredSize reflects the byte-based
+        // highWaterMark and pipeTo applies backpressure.
+        size(chunk) {
+          return chunk?.byteLength ?? chunk?.length ?? 1;
+        },
+      };
 
   let controller;
   let backpressurePromise;

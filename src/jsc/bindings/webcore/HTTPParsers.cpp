@@ -169,18 +169,6 @@ bool isValidAcceptHeaderValue(const StringView& value)
     return true;
 }
 
-static bool containsCORSUnsafeRequestHeaderBytes(const String& value)
-{
-    for (unsigned i = 0; i < value.length(); ++i) {
-        char16_t c = value[i];
-        // https://fetch.spec.whatwg.org/#cors-unsafe-request-header-byte
-        if ((c < 0x20 && c != '\t') || (c == '"' || c == '(' || c == ')' || c == ':' || c == '<' || c == '>' || c == '?' || c == '@' || c == '[' || c == '\\' || c == ']' || c == 0x7B || c == '{' || c == '}' || c == 0x7F))
-            return true;
-    }
-
-    return false;
-}
-
 // See RFC 7231, Section 5.3.5 and 3.1.3.2.
 // https://fetch.spec.whatwg.org/#cors-safelisted-request-header
 bool isValidLanguageHeaderValue(const StringView& value)

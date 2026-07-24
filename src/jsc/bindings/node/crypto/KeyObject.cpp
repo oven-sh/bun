@@ -66,6 +66,79 @@ void setEncodedValue(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* 
     obj->putDirect(vm, Identifier::fromString(vm, name->value(globalObject)), encodedBn);
 }
 
+// BoringSSL represents ML-DSA / ML-KEM private keys as a seed (32 bytes for
+// ML-DSA, 64 bytes of d||z for ML-KEM), reached through a dedicated API rather
+// than the raw-private-key one.
+static ncrypto::DataPointer getPrivateSeed(const ncrypto::EVPKeyPointer& pkey)
+{
+    ncrypto::MarkPopErrorOnReturn markPopError;
+    size_t len = 0;
+    if (!EVP_PKEY_get_private_seed(pkey.get(), nullptr, &len))
+        return {};
+    auto buf = ncrypto::DataPointer::Alloc(len);
+    if (!buf)
+        return {};
+    if (!EVP_PKEY_get_private_seed(pkey.get(), static_cast<unsigned char*>(buf.get()), &len))
+        return {};
+    return buf;
+}
+
+static ncrypto::EVPKeyPointer newFromPrivateSeed(int nid, std::span<const uint8_t> seed)
+{
+    const EVP_PKEY_ALG* alg = pqcNidToAlg(nid);
+    if (!alg)
+        return {};
+    return ncrypto::EVPKeyPointer(EVP_PKEY_from_private_seed(alg, seed.data(), seed.size()));
+}
+
+static ncrypto::EVPKeyPointer newFromRawPublic(int nid, std::span<const uint8_t> pub)
+{
+    const EVP_PKEY_ALG* alg = pqcNidToAlg(nid);
+    if (!alg)
+        return {};
+    return ncrypto::EVPKeyPointer(EVP_PKEY_from_raw_public_key(alg, pub.data(), pub.size()));
+}
+
+// ML-DSA and ML-KEM keys use the "AKP" key type, whose members are the
+// algorithm name plus base64url "pub" and (for private keys) "priv" seed.
+JSC::JSValue KeyObject::exportJwkAkpKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
+{
+    ncrypto::MarkPopErrorOnReturn markPopError;
+    VM& vm = lexicalGlobalObject->vm();
+
+    const auto& pkey = m_data->asymmetricKey;
+    ASCIILiteral name = pqcNidToKeyTypeName(pkey.id());
+    ASSERT(!name.isNull());
+
+    JSObject* jwk = JSC::constructEmptyObject(lexicalGlobalObject);
+
+    jwk->putDirect(vm, Identifier::fromString(vm, "kty"_s), jsNontrivialString(vm, "AKP"_s));
+    jwk->putDirect(vm, Identifier::fromString(vm, "alg"_s),
+        jsNontrivialString(vm, WTF::String(name).convertToASCIIUppercase()));
+
+    ncrypto::DataPointer publicData = pkey.rawPublicKey();
+    if (!publicData) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get raw public key"_s);
+        return {};
+    }
+    JSValue encodedPub = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, publicData.span(), BufferEncodingType::base64url));
+    RETURN_IF_EXCEPTION(scope, {});
+    jwk->putDirect(vm, Identifier::fromString(vm, "pub"_s), encodedPub);
+
+    if (exportType == CryptoKeyType::Private) {
+        auto seed = getPrivateSeed(pkey);
+        if (!seed) {
+            ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get private seed"_s);
+            return {};
+        }
+        JSValue encodedPriv = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, seed.span(), BufferEncodingType::base64url));
+        RETURN_IF_EXCEPTION(scope, {});
+        jwk->putDirect(vm, Identifier::fromString(vm, "priv"_s), encodedPriv);
+    }
+
+    return jwk;
+}
+
 JSC::JSValue KeyObject::exportJwkEdKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -281,6 +354,11 @@ JSC::JSValue KeyObject::exportJwkAsymmetricKey(JSC::JSGlobalObject* globalObject
     case EVP_PKEY_X25519:
     case EVP_PKEY_X448:
         return exportJwkEdKey(globalObject, scope, exportType);
+
+    default:
+        if (isMlDsaNid(m_data->asymmetricKey.id()) || isMlKemNid(m_data->asymmetricKey.id()))
+            return exportJwkAkpKey(globalObject, scope, exportType);
+        break;
     }
 
     ERR::CRYPTO_JWK_UNSUPPORTED_KEY_TYPE(scope, globalObject);
@@ -344,7 +422,8 @@ JSC::JSValue KeyObject::exportRaw(JSC::JSGlobalObject* globalObject, JSC::ThrowS
             return dataPointerToBuffer(globalObject, scope, WTF::move(buf));
         }
 
-        if (id == EVP_PKEY_ED25519 || id == EVP_PKEY_ED448 || id == EVP_PKEY_X25519 || id == EVP_PKEY_X448) {
+        if (id == EVP_PKEY_ED25519 || id == EVP_PKEY_ED448 || id == EVP_PKEY_X25519 || id == EVP_PKEY_X448
+            || isMlDsaNid(id) || isMlKemNid(id)) {
             auto raw = pkey.rawPublicKey();
             if (!raw) {
                 ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to get raw public key"_s);
@@ -397,9 +476,18 @@ JSC::JSValue KeyObject::exportRaw(JSC::JSGlobalObject* globalObject, JSC::ThrowS
     }
 
     ASSERT(format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed);
-    // raw-seed is only supported for PQC key types, which BoringSSL does not provide.
-    ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
-    return {};
+
+    if (type() != CryptoKeyType::Private || !(isMlDsaNid(id) || isMlKemNid(id))) {
+        ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+        return {};
+    }
+
+    auto seed = getPrivateSeed(pkey);
+    if (!seed) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to get private seed"_s);
+        return {};
+    }
+    return dataPointerToBuffer(globalObject, scope, WTF::move(seed));
 }
 
 JSValue toJS(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, const ncrypto::BIOPointer& bio, const ncrypto::EVPKeyPointer::AsymmetricKeyEncodingConfig& encodingConfig)
@@ -517,7 +605,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
                     }
                 }
 
-                return exportJwk(globalObject, scope, exportType, false);
+                RELEASE_AND_RETURN(scope, exportJwk(globalObject, scope, exportType, false));
             }
 
             if (formatView == "raw-public"_s || formatView == "raw-private"_s || formatView == "raw-seed"_s) {
@@ -565,7 +653,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
                     }
                 }
 
-                return exportRaw(globalObject, scope, rawFormat, form);
+                RELEASE_AND_RETURN(scope, exportRaw(globalObject, scope, rawFormat, form));
             }
         }
 
@@ -663,6 +751,8 @@ JSValue KeyObject::asymmetricKeyType(JSGlobalObject* globalObject)
     case EVP_PKEY_X448:
         return jsNontrivialString(vm, "x448"_s);
     default:
+        if (ASCIILiteral pqcName = pqcNidToKeyTypeName(m_data->asymmetricKey.id()))
+            return jsNontrivialString(vm, WTF::String(pqcName));
         return jsUndefined();
     }
 }
@@ -968,6 +1058,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
         Rsa,
         Ec,
         Okp,
+        Akp,
     };
 
     Kty kty;
@@ -977,9 +1068,11 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
         kty = Kty::Ec;
     } else if (ktyView == "OKP"_s) {
         kty = Kty::Okp;
+    } else if (ktyView == "AKP"_s) {
+        kty = Kty::Akp;
     } else {
         // validateOneOf
-        ERR::INVALID_ARG_VALUE(scope, globalObject, "key.kty"_s, ktyView.owner, "must be one of: 'RSA', 'EC', 'OKP'"_s);
+        ERR::INVALID_ARG_VALUE(scope, globalObject, "key.kty"_s, ktyView.owner, "must be one of: 'RSA', 'EC', 'OKP', 'AKP'"_s);
         return {};
     }
 
@@ -988,6 +1081,84 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
         : CryptoKeyType::Private;
 
     switch (kty) {
+    case Kty::Akp: {
+        // "AKP" covers the ML-DSA and ML-KEM parameter sets. The parameter set
+        // is named by "alg" (matched case-sensitively, e.g. "ML-DSA-44"), the
+        // public key lives in "pub", and the private key is the seed in "priv".
+        VM& vm = globalObject->vm();
+        JSValue algValue = jwk->get(globalObject, Identifier::fromString(vm, "alg"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue pubValue = jwk->get(globalObject, Identifier::fromString(vm, "pub"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue privValue = jwk->get(globalObject, Identifier::fromString(vm, "priv"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        int nid = 0;
+        if (algValue.isString()) {
+            WTF::String algString = algValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            int candidate = pqcKeyTypeToNid(algString.convertToASCIILowercase());
+            // Only the canonical upper-case spelling is accepted.
+            if (candidate && WTF::String(pqcNidToKeyTypeName(candidate)).convertToASCIIUppercase() == algString)
+                nid = candidate;
+        }
+        if (!nid) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Unsupported JWK AKP \"alg\""_s);
+            return {};
+        }
+
+        if (!pubValue.isString() || (!privValue.isUndefined() && !privValue.isString())) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+            return {};
+        }
+
+        // The JWK itself decides whether private key material is present.
+        CryptoKeyType jwkType = privValue.isString() ? CryptoKeyType::Private : CryptoKeyType::Public;
+        if (keyType == CryptoKeyType::Private && jwkType == CryptoKeyType::Public) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "JWK does not contain private key material"_s);
+            return {};
+        }
+
+        // pubValue / privValue were already read and type-checked above; decode
+        // them directly so each JWK property is observed exactly once.
+        auto pubView = asString(pubValue)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* pubBuf = decodeJwkString(globalObject, scope, pubView, "key.pub"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSArrayBufferView* privBuf = nullptr;
+        if (jwkType == CryptoKeyType::Private) {
+            auto privView = asString(privValue)->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            privBuf = decodeJwkString(globalObject, scope, privView, "key.priv"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        MarkPopErrorOnReturn markPopError;
+
+        ncrypto::EVPKeyPointer key = jwkType == CryptoKeyType::Private
+            ? newFromPrivateSeed(nid, privBuf->span())
+            : newFromRawPublic(nid, pubBuf->span());
+
+        if (!key) {
+            ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+            return {};
+        }
+
+        // "pub" must agree with the public key derived from the seed.
+        if (jwkType == CryptoKeyType::Private) {
+            auto derivedPub = key.rawPublicKey();
+            auto expected = pubBuf->span();
+            if (!derivedPub || derivedPub.size() != expected.size()
+                || CRYPTO_memcmp(derivedPub.get(), expected.data(), expected.size()) != 0) {
+                ERR::CRYPTO_INVALID_JWK(scope, globalObject, "Invalid JWK AKP key"_s);
+                return {};
+            }
+        }
+
+        JSC::ensureStillAliveHere(pubBuf);
+        return create(keyType, WTF::move(key));
+    }
     case Kty::Okp: {
         auto crvView = getJwkStringView(globalObject, scope, jwk, "crv"_s, "key.crv"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1215,7 +1386,10 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
             ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
             return {};
         }
+    } else if (int pqcNid = pqcKeyTypeToNid(asymmetricKeyType, /* ignoreCase */ true)) {
+        nid = pqcNid;
     } else if (isUnavailablePqcKeyType(asymmetricKeyType)) {
+        // SLH-DSA and ML-KEM-512 have no EVP_PKEY support in vendored BoringSSL.
         ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, jsUndefined(), "Unsupported key type"_s);
         return {};
     } else if (isUnsupportedRawKeyType(asymmetricKeyType)) {
@@ -1289,6 +1463,22 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
         }
         eckey.release();
         return create(targetType, WTF::move(pkey));
+    }
+
+    if (isMlDsaNid(nid) || isMlKemNid(nid)) {
+        // These private keys exist only as a seed; there is no raw-private form.
+        if (targetType == CryptoKeyType::Private && format != ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
+            ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+            return {};
+        }
+        auto pqcKey = targetType == CryptoKeyType::Private
+            ? newFromPrivateSeed(nid, keyData)
+            : newFromRawPublic(nid, keyData);
+        if (!pqcKey) {
+            throwInvalid();
+            return {};
+        }
+        return create(targetType, WTF::move(pqcKey));
     }
 
     ncrypto::Buffer<const unsigned char> buffer { .data = keyData.data(), .len = keyData.size() };
@@ -1368,6 +1558,10 @@ KeyObject KeyObject::getPublicOrPrivateKey(
         .data = reinterpret_cast<const uint8_t*>(keyData.data()),
         .len = keyData.size(),
     };
+
+    // Isolate this parse from errors left on the queue by earlier operations;
+    // the error we report below must come from this parse alone.
+    ClearErrorOnReturn clearErrorOnReturn;
 
     if (keyType == CryptoKeyType::Private) {
         auto config = getPrivateKeyEncoding(

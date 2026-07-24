@@ -47,8 +47,20 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHKDF::identifier() const
 
 void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    if (!length || *length % 8) {
-        exceptionCallback(OperationError, ""_s);
+    if (!length) {
+        exceptionCallback(OperationError, "length cannot be null"_s);
+        return;
+    }
+    if (*length % 8) {
+        exceptionCallback(OperationError, "length must be a multiple of 8"_s);
+        return;
+    }
+
+    // Node caps info at 1024 bytes (OpenSSL 3.x EVP_PKEY_CTX_add1_hkdf_info);
+    // BoringSSL imposes no such limit, so match Node explicitly.
+    constexpr size_t maximumInfoLength = 1024;
+    if (downcast<CryptoAlgorithmHkdfParams>(parameters).info.length() > maximumInfoLength) {
+        exceptionCallback(OperationError, "algorithm.info must be at most 1024 bytes"_s);
         return;
     }
 

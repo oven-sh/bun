@@ -85,7 +85,7 @@ pub struct Listener {
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
     /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
     /// stopped listener safely.
-    pub secure_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+    pub secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
     pub reject_unauthorized: bool,
@@ -129,10 +129,6 @@ pub enum UnixOrHost {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
     Fd(Fd),
-}
-
-impl UnixOrHost {
-    // Note: deinit() deleted — Box<[u8]> fields auto-drop.
 }
 
 impl Listener {
@@ -232,7 +228,7 @@ impl Listener {
                     ),
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
-                    secure_ctx: None,
+                    secure_ctx: Cell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                 }));
@@ -261,14 +257,51 @@ impl Listener {
                                 .expect("listen returns a non-null heap pointer"),
                         ));
                     }
-                    Err(_) => {
+                    Err(e) => {
                         this_ref.strong_data.with_mut(|s| s.deinit());
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and the handlers `Rc`.
                         drop(unsafe { bun_core::heap::take(this) });
+                        // Surface coded syscall failures the way node:net
+                        // does (EADDRINUSE vs EACCES need different caller
+                        // handling) rather than an invalid-arguments TypeError.
+                        if let ListenPipeError::Sys(sys_err) = &e {
+                            // get_error_code_tag_name does not reject EUNKNOWN /
+                            // UV_EAI_* (>=3000); neither is a node-style code, so
+                            // route those through the generic error below.
+                            if let Some((name, se)) = sys_err.get_error_code_tag_name() {
+                                if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
+                                    let err = jsc::SystemError {
+                                        // Negated errno per fill_system_error_common.
+                                        errno: -(se as c_int),
+                                        code: bun_core::String::static_(name),
+                                        message: bun_core::String::clone_utf8(
+                                            format!(
+                                                "listen {}: {}",
+                                                name,
+                                                bstr::BStr::new(&pipe_buf[..pipe_len])
+                                            )
+                                            .as_bytes(),
+                                        ),
+                                        syscall: bun_core::String::static_("listen"),
+                                        fd: -1,
+                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
+                                        hostname: bun_core::String::empty(),
+                                        dest: bun_core::String::empty(),
+                                    };
+                                    return Err(global.throw_value(err.to_error_instance(global)));
+                                }
+                            }
+                        }
+                        let detail = match &e {
+                            ListenPipeError::Other(err) => err.name(),
+                            // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
+                            ListenPipeError::Sys(_) => "UNKNOWN",
+                        };
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "Failed to listen at {}",
-                            bstr::BStr::new(&pipe_buf[..pipe_len])
+                            "Failed to listen at {}: {}",
+                            bstr::BStr::new(&pipe_buf[..pipe_len]),
+                            detail
                         )));
                     }
                 }
@@ -317,7 +350,7 @@ impl Listener {
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
-            secure_ctx: None,
+            secure_ctx: Cell::new(None),
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
         }));
@@ -340,7 +373,7 @@ impl Listener {
         let cleanup = scopeguard::guard(this, |this| {
             // SAFETY: this is still the sole owner on the error path
             let this_ref = unsafe { &mut *this };
-            if let Some(c) = this_ref.secure_ctx {
+            if let Some(c) = this_ref.secure_ctx.take() {
                 // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
                 unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
             }
@@ -358,7 +391,9 @@ impl Listener {
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
             match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
-                Some(ctx) => this_ref.secure_ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                Some(ctx) => this_ref
+                    .secure_ctx
+                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
                 None => {
                     return Err(global.throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
@@ -387,6 +422,7 @@ impl Listener {
 
         let secure_ctx_ptr: Option<*mut uws::SslCtx> = this_ref
             .secure_ctx
+            .get()
             .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
@@ -407,8 +443,9 @@ impl Listener {
                 });
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
-                        .expect("int cast");
+                    if let Some(p) = bun_opaque::opaque_deref_mut(ls).get_local_port() {
+                        *port = p;
+                    }
                 }
                 ls
             }
@@ -493,7 +530,7 @@ impl Listener {
 
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
             // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref.secure_ctx.expect("unreachable");
+            let secure = this_ref.secure_ctx.get().expect("unreachable");
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
@@ -574,6 +611,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // See `on_create`: each accepted named-pipe connection holds the loop
+        // on its own so `conn.unref()` is meaningful.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -617,6 +657,11 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted socket holds the event loop on its own (same as a
+        // client socket after `connect_finish`), so `conn.unref()` works and
+        // `server.unref()`/`server.close()` don't tear out live connections'
+        // hold. on_close/mark_inactive already unref this.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
@@ -766,8 +811,12 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
+        // The listener's poll_ref tracks the listening socket only; accepted
+        // sockets each have their own (see `on_create`). Drop it now so a
+        // closed server whose connections the caller unref'd lets the process
+        // exit like Node does.
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
@@ -789,6 +838,11 @@ impl Listener {
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
+        }
+
+        if let Some(ctx) = this.secure_ctx.take() {
+            // SAFETY: FFI — releases the one ref `listen()` took from the cache.
+            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
     }
 
@@ -854,19 +908,15 @@ impl Listener {
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
         unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-        if let Some(ctx) = this_ref.secure_ctx {
-            // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
+        if let Some(ctx) = this_ref.secure_ctx.take() {
+            // SAFETY: FFI — a Listener torn down without do_stop() still owns
+            // its ref; do_stop() already took it when it ran.
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
 
         // connection / protos / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.active_connections.get() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1388,7 +1438,10 @@ impl Listener {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let address_js = ZigString::init(formatted).to_js(global);
-        let port_js = JSValue::js_number(socket_ref.get_local_port() as f64);
+        let port_js = match socket_ref.get_local_port() {
+            Some(p) => JSValue::js_number(p as f64),
+            None => JSValue::UNDEFINED,
+        };
 
         out.put(global, b"family", family_js);
         out.put(global, b"address", address_js);
@@ -1607,6 +1660,15 @@ pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
+/// `Sys` keeps the structured uv error so the JS error carries its real
+/// code/errno; `Other` covers the non-syscall setup failures, whose payload
+/// names the failure in the caller's generic invalid-arguments message.
+#[cfg(windows)]
+pub(crate) enum ListenPipeError {
+    Sys(bun_sys::Error),
+    Other(crate::Error),
+}
+
 #[cfg(windows)]
 impl WindowsNamedPipeListeningContext {
     fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
@@ -1653,7 +1715,7 @@ impl WindowsNamedPipeListeningContext {
     /// Only ever invoked by libuv (coerces to the `uv_connection_cb` fn-pointer
     /// type at the `Pipe::listen_named_pipe` call site); body wraps its derefs
     /// explicitly — matches the `extern "C" fn` callback convention used in
-    /// `udp_socket.rs` / `bun_io::PipeReader`.
+    /// `udp_socket.rs` / `bun_io::BufferedReader`.
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
         let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
@@ -1687,7 +1749,7 @@ impl WindowsNamedPipeListeningContext {
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
         listener: *mut Listener,
-    ) -> crate::Result<*mut WindowsNamedPipeListeningContext> {
+    ) -> Result<*mut WindowsNamedPipeListeningContext, ListenPipeError> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
@@ -1721,13 +1783,13 @@ impl WindowsNamedPipeListeningContext {
             // Create SSL context using uSockets to match behavior of node.js
             match ctx_opts.create_ssl_context(&mut err) {
                 Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
-                None => return Err(crate::Error::InvalidOptions),
+                None => return Err(ListenPipeError::Other(crate::Error::InvalidOptions)),
             }
         }
 
         let init_result = this_ref.uv_pipe.init(this_ref.vm.uv_loop().cast(), false);
         if init_result.is_err() {
-            return Err(crate::Error::FailedToInitPipe);
+            return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }
         cleanup.1 = true;
 
@@ -1753,7 +1815,15 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
-            return Err(crate::Error::FailedToBindPipe);
+            // Surface the real error code: EADDRINUSE (name taken) vs
+            // EACCES (pipe namespace denied) need different caller
+            // handling, and a generic bind failure hides that.
+            use bun_sys::ReturnCodeExt as _;
+            return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
+                Some(err) => ListenPipeError::Sys(err),
+                // Unreachable in practice: the uv→errno mapping is total.
+                None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
+            });
         }
         //TODO: add readableAll and writableAll support if someone needs it
         // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {

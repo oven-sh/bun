@@ -181,6 +181,11 @@ void resolveStreamClosedPromise(JSC::VM&, JSWritableStream*); // userJS: no — 
 void rejectStreamClosedPromise(JSC::VM&, JSReadableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
 void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp
 
+// `$webStreamControllerError` — node:stream's addAbortSignal() erroring a WHATWG stream, i.e.
+// what `controller.error(e)` does, including its no-op once the stream left readable/writable.
+void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
+void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
+
 // THE ONE SANCTIONED CATCH of the subsystem. Returns the thrown value after
 // clearExceptionExceptTermination(); returns the EMPTY JSValue if the exception is a VM
 // termination (which the caller must propagate, never consume). Never call bare
@@ -499,6 +504,9 @@ void materializeNativeSource(JSC::JSGlobalObject*, JSReadableStream*); // userJS
 JSC::JSValue nativeSourceStart(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: no (native handle.start; enqueues the drain value) — BunStreamSource.cpp
 JSC::JSPromise* nativeSourcePull(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: no (native handle.pull; its promise's reactions are onNativePull*) — BunStreamSource.cpp
 JSC::JSPromise* nativeSourceCancel(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: no (native handle.cancel + teardown) — BunStreamSource.cpp
+// readableStreamCancel's ControllerKind::None arm for a still-NativePending stream: calls
+// handle.updateRef(false) + handle.cancel(reason) on m_nativePtr directly, no materialize.
+JSC::JSPromise* cancelPendingNativeSource(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: no — BunStreamSource.cpp
 // The JSSink entry point (GlobalObject::assignToStream's body). Returns undefined or
 // a JSPromise (the Signal protocol's value).
 JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue jsSinkController); // userJS: yes — BunStreamSource.cpp

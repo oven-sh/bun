@@ -215,8 +215,6 @@ pub mod add_completions;
 pub mod colon_list_type;
 #[path = "discord_command.rs"]
 pub mod discord_command;
-#[path = "list-of-yarn-commands.rs"]
-pub mod list_of_yarn_commands;
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
 #[path = "which_npm_client.rs"]
@@ -275,19 +273,16 @@ pub mod test_command;
 pub mod test {
     #[path = "Scanner.rs"]
     pub mod scanner;
-    pub use scanner::Scanner;
 
     /// `bun test --changed`: git-diff → bundler module graph → reverse-import
     /// walk to filter test files.
     #[path = "ChangedFilesFilter.rs"]
     pub mod changed_files_filter;
-    pub use changed_files_filter as ChangedFilesFilter;
 
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
     pub mod parallel_runner;
-    pub use parallel_runner as ParallelRunner;
 
     /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
     /// inline). `ParallelRunner.rs`
@@ -313,10 +308,6 @@ pub mod test {
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;
-// bunfig.toml without a tier-6 dependency. Re-export under the original path so
-// existing `crate::cli::bunfig` / `crate::cli::Bunfig` callers are unaffected.
-pub use bun_bunfig::Bunfig;
-pub use bun_bunfig::bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
@@ -349,6 +340,8 @@ pub mod filter_arg;
 pub mod filter_run;
 #[path = "link_command.rs"]
 pub mod link_command;
+#[path = "multi_run.rs"]
+pub mod multi_run;
 #[path = "outdated_command.rs"]
 pub mod outdated_command;
 #[path = "pack_command.rs"]
@@ -382,10 +375,6 @@ pub mod update_command;
 pub mod update_interactive_command;
 #[path = "why_command.rs"]
 pub mod why_command;
-pub use filter_run as FilterRun;
-#[path = "multi_run.rs"]
-pub mod multi_run;
-pub use multi_run as MultiRun;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
 // `bun_clap::parse_param!` is a real proc-macro (const `Param<Help>` literal),
@@ -810,12 +799,8 @@ pub mod command {
     }
 
     pub use bun_options_types::command_tag::Tag;
-    pub use bun_options_types::command_tag::{
-        ALWAYS_LOADS_CONFIG, LOADS_CONFIG, USES_GLOBAL_OPTIONS,
-    };
-    pub use bun_options_types::context::{
-        Context, ContextData, DebugOptions, HotReload, RuntimeOptions, TestOptions,
-    };
+    pub use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
+    pub use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
 
     // Process-lifetime
     // storage, written exactly once in `create_context_data` during
@@ -1138,8 +1123,12 @@ pub mod command {
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
         // SAFETY: single-threaded CLI startup — no other thread exists yet.
-        // `CMD` is read by crash-reporter / debug logging only.
+        // `CMD` is read by debug logging and `run_command` (feedback dispatch).
         unsafe { CMD.write(Some(cmd)) };
+        // The crash handler can't read `CMD` (lower-tier crate); mirror the
+        // one-byte command tag into its `cli_state` so crash-report trace
+        // strings encode the running subcommand (Zig: `Cli.cmd = command`).
+        bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
         let ctx = write_context_no_parse(log);
 
@@ -1948,19 +1937,6 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
 
         super::pm_view_command::view(pm, package_name, property_path, json_output)
-    }
-
-    /// Per-tag clap param table. Runtime dispatch (`Tag` lacks `ConstParamTy`
-    /// here, so `cmd` is a value param).
-    pub fn tag_params(cmd: Tag) -> &'static [arguments::ParamType] {
-        match cmd {
-            Tag::AutoCommand => arguments::AUTO_PARAMS,
-            Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_PARAMS,
-            Tag::BuildCommand => arguments::BUILD_PARAMS,
-            Tag::TestCommand => arguments::TEST_PARAMS,
-            Tag::BunxCommand => arguments::RUN_PARAMS,
-            _ => arguments::BASE_RUNTIME_TRANSPILER_PARAMS,
-        }
     }
 
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {

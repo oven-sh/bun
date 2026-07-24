@@ -47,6 +47,31 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   expect(wasi.FD_MAP.get(0).rights).toEqual({ base: WASI_RIGHT_FD_READ, inheriting: BigInt(0) });
 });
 
+it("random_get fills only the requested window", () => {
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const WASI_ESUCCESS = 0;
+  const bufPtr = 1024;
+  const bufLen = 16;
+
+  const before = new Uint8Array(wasi.memory.buffer.slice(0));
+  expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+  const after = new Uint8Array(wasi.memory.buffer);
+
+  // Every byte outside [bufPtr, bufPtr + bufLen) must be untouched: passing the
+  // whole ArrayBuffer randomized all of linear memory.
+  let changedOutside = 0;
+  for (let i = 0; i < after.length; i++) {
+    if (i >= bufPtr && i < bufPtr + bufLen) continue;
+    if (after[i] !== before[i]) changedOutside++;
+  }
+  expect(changedOutside).toBe(0);
+
+  // ...and the window itself is filled (all-zero is a 1-in-2^128 false failure).
+  expect(after.subarray(bufPtr, bufPtr + bufLen).some(b => b !== 0)).toBe(true);
+});
+
 it("path_open reports the host errno to the guest when the open fails", () => {
   using dir = tempDir("wasi-path-open-errno", {
     "exists.txt": "x",

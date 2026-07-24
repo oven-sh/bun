@@ -11,7 +11,7 @@ use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::{Expansion, ExpansionOpts};
+use crate::shell::states::expansion::Expansion;
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
@@ -207,7 +207,7 @@ impl Cmd {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Cmd(Cmd {
-            base: Base::new(StateKind::Cmd, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: CmdState::Idle,
@@ -256,17 +256,7 @@ impl Cmd {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
                             let atom: *const ast::Atom = atom;
                             let io = interp.as_cmd(this).io.clone();
-                            let child = Expansion::init(
-                                interp,
-                                shell,
-                                atom,
-                                this,
-                                io,
-                                ExpansionOpts {
-                                    for_spawn: false,
-                                    single: true,
-                                },
-                            );
+                            let child = Expansion::init(interp, shell, atom, this, io);
                             return Expansion::start(interp, child);
                         }
                         // JsBuf redirects don't need expansion; nor does the
@@ -284,17 +274,7 @@ impl Cmd {
                     }
                     let atom: *const ast::Atom = &raw const args[idx as usize];
                     let io = interp.as_cmd(this).io.clone();
-                    let child = Expansion::init(
-                        interp,
-                        shell,
-                        atom,
-                        this,
-                        io,
-                        ExpansionOpts {
-                            for_spawn: true,
-                            single: false,
-                        },
-                    );
+                    let child = Expansion::init(interp, shell, atom, this, io);
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
@@ -412,11 +392,14 @@ impl Cmd {
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
-                    // NUL-terminate a
-                    // non-empty result; leave an empty expansion empty so the
-                    // ambiguous-redirect check in `Builtin::init_redirections`
-                    // still fires.
-                    let mut buf = out.buf;
+                    // Zero words or >1 word (glob/brace split) leave the buffer
+                    // empty so the ambiguous-redirect check in
+                    // `Builtin::init_redirections` / `init_subproc_redirections` fires.
+                    let mut buf = if out.bounds.is_empty() {
+                        out.buf
+                    } else {
+                        Vec::new()
+                    };
                     if !buf.is_empty() && buf.last() != Some(&0) {
                         buf.push(0);
                     }
@@ -740,9 +723,14 @@ impl Cmd {
                         })
                     };
                     if flags.stdin() {
-                        stdio[STDIN_NO] = Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(
-                            buf.byte_slice().to_vec(),
-                        ));
+                        let bytes = buf.byte_slice();
+                        // An empty buffer delivers EOF immediately; `Stdio::Ignore`
+                        // matches what `Stdio::extract`/`extract_blob` already do.
+                        stdio[STDIN_NO] = if bytes.is_empty() {
+                            Stdio::Ignore
+                        } else {
+                            Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
+                        };
                     }
                     if flags.duplicate_out() {
                         stdio[STDOUT_NO] = mk_out();

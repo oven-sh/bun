@@ -13,7 +13,7 @@ import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
-import { machoPostlinkCommand } from "./shims.ts";
+import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   n.rule("link", {
     command: cfg.windows
       ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${machoPostlinkCommand(cfg)}`,
+      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

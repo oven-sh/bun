@@ -611,3 +611,34 @@ devTest("hot update frames are not delivered to application websocket topics", {
     }
   },
 });
+
+devTest("dev.write resolves only after the new module body has run", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      globalThis.marker = "initial";
+      console.log("ready");
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("ready");
+    expect(await c.js`globalThis.marker`).toBe("initial");
+
+    await dev.write(
+      "index.ts",
+      `
+        await new Promise(r => setTimeout(r, 500));
+        globalThis.marker = "updated";
+        import.meta.hot.accept();
+      `,
+      // errors: null skips the post-write expectErrorOverlay poll (5 * 200ms),
+      // which would otherwise mask a premature ack.
+      { errors: null },
+    );
+    // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
+    // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
+    expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});

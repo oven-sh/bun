@@ -103,7 +103,6 @@ impl Event {
     // + read_unaligned.
 
     pub fn name(&self) -> &ZStr {
-        #[cfg(debug_assertions)]
         debug_assert!(
             self.name_len > 0,
             "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function."
@@ -409,10 +408,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut events_processed: usize = 0;
 
     if events_processed < events.len() {
-        let mut name_off: u8 = 0;
         let mut temp_name_list: [Option<&ZStr>; 128] = [None; 128];
         let mut temp_name_off: u8 = 0;
-        let _ = name_off; // declared but only reset, never read here
 
         // Process events one by one, batching when we hit limits
         while events_processed < events.len() {
@@ -428,7 +425,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     &temp_name_list[..temp_name_off as usize],
                 )?;
                 event_id = 0;
-                name_off = 0;
                 temp_name_off = 0;
             }
 
@@ -442,7 +438,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                         &temp_name_list[..temp_name_off as usize],
                     )?;
                     event_id = 0;
-                    name_off = 0;
                     temp_name_off = 0;
                 }
             }
@@ -478,7 +473,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         if event_id > 0 {
             process_inotify_event_batch(this, event_id, &temp_name_list[..temp_name_off as usize])?;
         }
-        let _ = name_off;
     }
 
     Ok(())

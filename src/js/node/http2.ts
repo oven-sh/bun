@@ -125,39 +125,16 @@ const kDefaultSettings = {
   enableConnectProtocol: false,
 };
 
-const kLocalSettingsKeys = [
-  "headerTableSize",
-  "enablePush",
-  "maxConcurrentStreams",
-  "initialWindowSize",
-  "maxFrameSize",
-  "maxHeaderListSize",
-  "maxHeaderSize",
-  "enableConnectProtocol",
-];
-
-// node's session.localSettings reflects the settings this side submitted (including
-// customSettings) from the moment they go out with the connection preface — it does not wait for
-// the peer's SETTINGS ACK. Overlay the user-submitted values on top of the pre-ACK defaults; the
-// native localSettings dispatch replaces the object with the engine's confirmed view once the ACK
-// arrives.
-function applySubmittedLocalSettings(target: Record<string, any>, submitted: any) {
-  if (submitted == null || typeof submitted !== "object") return target;
-  for (let i = 0; i < kLocalSettingsKeys.length; i++) {
-    const key = kLocalSettingsKeys[i];
-    const value = submitted[key];
-    if (value !== undefined) target[key] = value;
+// Pre-ACK localSettings view: node's getSettings() reads nghttp2's effective local settings
+// (protocol defaults until the first ACK) but carries submitted customSettings forward from
+// the SETTINGS frame buffer, so only customSettings is visible pre-ACK.
+function initialLocalSettings(submitted: any) {
+  const settings: any = { ...kDefaultSettings };
+  const custom = submitted?.customSettings;
+  if (custom != null && typeof custom === "object") {
+    settings.customSettings = { ...custom };
   }
-  // maxHeaderListSize and maxHeaderSize alias the same SETTINGS entry.
-  if (submitted.maxHeaderListSize !== undefined && submitted.maxHeaderSize === undefined) {
-    target.maxHeaderSize = submitted.maxHeaderListSize;
-  } else if (submitted.maxHeaderSize !== undefined && submitted.maxHeaderListSize === undefined) {
-    target.maxHeaderListSize = submitted.maxHeaderSize;
-  }
-  if (submitted.customSettings != null && typeof submitted.customSettings === "object") {
-    target.customSettings = { ...submitted.customSettings };
-  }
-  return target;
+  return settings;
 }
 
 function throwSettingRangeError(name: string, value: any) {
@@ -379,12 +356,17 @@ const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2OriginSet = Symbol("::bunhttp2originset::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
 const bunHTTP2WaitForTrailers = Symbol("::bunhttp2waitfortrailers::");
-const bunHTTP2StreamAsyncContext = Symbol("::bunhttp2streamasynccontext::");
 
 const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
+const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
+const bunHTTP2SessionTeardownFrame = Symbol("::bunhttp2sessionteardownframe::");
+// Sentinel for bunHTTP2SessionTeardownFrame: a captured frame can itself be
+// undefined (the root context), so "no teardown in progress" needs its own value.
+const kNoSessionTeardown = Symbol("::bunhttp2noteardown::");
+const runInFrame = require("internal/async_context_frame").run;
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
@@ -468,6 +450,14 @@ function utcDate() {
 function emitEventNT(self: any, event: string, ...args: any[]) {
   if (self.listenerCount(event) > 0) {
     self.emit(event, ...args);
+  }
+}
+// The frame is passed in: destroy() clears it off the session before emitting
+// 'error', so a throwing listener on either event cannot leave a retained
+// session pinning the store.
+function emitSessionCloseNT(self: Http2Session, frame) {
+  if (self.listenerCount("close") > 0) {
+    runInFrame(frame, self.emit, self, "close");
   }
 }
 function emitErrorNT(self: any, error: any, destroy: boolean) {
@@ -2088,8 +2078,12 @@ type Settings = {
 };
 
 class Http2Session extends EventEmitter {
+  [bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
+  // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
+  // run inside it so 'close' doesn't inherit the last stream's frame.
+  [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [kDeferWriteCallback] = setImmediate;
   [EventEmitter.captureRejectionSymbol](err, event, ...args) {
     switch (event) {
@@ -2359,32 +2353,18 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
   stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
 }
-// node's Http2Stream is an async resource: events the native session dispatches on a client
-// stream ('response', 'data', 'end') run in the async context that was active when request() was
-// called, not in the context of the socket read that delivered the frames. The snapshot is taken
-// in the ClientHttp2Stream constructor; these two helpers swap it in around a native dispatch and
-// restore the dispatch's own context afterwards.
-const kNoAsyncContextSwap = Symbol("noAsyncContextSwap");
-function enterStreamAsyncContext(stream: Http2Stream) {
-  const snapshot = stream[bunHTTP2StreamAsyncContext];
-  // kNoAsyncContextSwap = never captured (server streams); a captured EMPTY
-  // context (undefined) must still be swapped to, like Node's AsyncResource.
-  if (snapshot === kNoAsyncContextSwap) return kNoAsyncContextSwap;
-  const previous = $getInternalField($asyncContext, 0);
-  if (previous === snapshot) return kNoAsyncContextSwap;
-  $putInternalField($asyncContext, 0, snapshot);
-  return previous;
-}
-function exitStreamAsyncContext(previous) {
-  if (previous !== kNoAsyncContextSwap) {
-    $putInternalField($asyncContext, 0, previous);
-  }
-}
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamFinal]: VoidFunction | null = null;
   [bunHTTP2StreamStatus]: number = 0;
+  // Async-context frame captured at construction so native-driven callbacks
+  // (response/data/end/…) on client streams observe the AsyncLocalStorage
+  // context that request() ran in, matching Node's Http2Stream AsyncWrap.
+  // Read only by withStreamFrame; user-initiated emit() is untouched. The raw
+  // frame is snapshotted directly so session.request() does not flip on
+  // async-context tracking when no AsyncLocalStorage is in use.
+  [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number | undefined = undefined;
   [bunHTTP2Headers]: any;
@@ -2393,9 +2373,6 @@ class Http2Stream extends Duplex {
   [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
-  // Async-context snapshot for native dispatches (see enterStreamAsyncContext); only client
-  // streams capture one (possibly an empty context, i.e. undefined).
-  [bunHTTP2StreamAsyncContext] = kNoAsyncContextSwap;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -2663,6 +2640,10 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
+    // Cleared first: everything below can reach user code ('aborted', end(),
+    // push(null)) and a throwing listener would otherwise skip the clear and
+    // leave a retained stream pinning the store.
+    this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2972,13 +2953,23 @@ class Http2Stream extends Duplex {
     }
   }
 }
-class ClientHttp2Stream extends Http2Stream {
-  constructor(streamId, session, headers) {
-    super(streamId, session, headers);
-    // Capture the async context active at request() time so the native dispatches for this stream
-    // ('response', 'data', 'end') run in it, like node's Http2Stream async resource.
-    this[bunHTTP2StreamAsyncContext] = $getInternalField($asyncContext, 0);
-  }
+class ClientHttp2Stream extends Http2Stream {}
+
+// Wrap a native→JS #Handlers callback so its body runs inside the target
+// stream's captured async-context frame — the JS-side equivalent of Node's
+// AsyncWrap MakeCallback re-entering the resource scope. Applied only at the
+// native seam, not to public emit(), so user-driven emit()/destroy() observe
+// the caller's ALS context (matching Node).
+function withStreamFrame(handler) {
+  return function (self, stream, a, b, c) {
+    if (typeof stream !== "object" || stream === null) return handler(self, stream, a, b, c);
+    // A session mid-destroy() fans onStreamError out via emitErrorToAllStreams
+    // under the destroy() caller's captured frame (Node's teardown context),
+    // scoped to that session so a coincident dispatch elsewhere is unaffected.
+    const teardownFrame = self != null ? self[bunHTTP2SessionTeardownFrame] : kNoSessionTeardown;
+    const frame = teardownFrame !== kNoSessionTeardown ? teardownFrame : stream[bunHTTP2AsyncContextFrame];
+    return runInFrame(frame, handler, undefined, self, stream, a, b, c);
+  };
 }
 function tryClose(fd) {
   try {
@@ -3991,19 +3982,7 @@ class ServerHttp2Session extends Http2Session {
   #url: URL;
   #isServer: boolean = false;
   #alpnProtocol: string | undefined = undefined;
-  #localSettings: Settings | null = {
-    headerTableSize: 4096,
-    // RFC 9113 §6.5.2: servers MUST NOT advertise ENABLE_PUSH != 0. The
-    // initial SETTINGS frame forces this to 0 in the constructor — keep the
-    // default here in sync so `session.localSettings.enablePush` agrees with
-    // the wire before the peer's SETTINGS ACK arrives.
-    enablePush: false,
-    maxConcurrentStreams: 100,
-    initialWindowSize: 65535,
-    maxFrameSize: 16384,
-    maxHeaderListSize: 65535,
-    maxHeaderSize: 65535,
-  };
+  #localSettings: Settings | null = null;
   #encrypted: boolean = false;
   #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
@@ -4042,6 +4021,9 @@ class ServerHttp2Session extends Http2Session {
       // setStreamContext host call needed.
       return stream;
     },
+    // Server handlers are NOT withStreamFrame-wrapped: streamStart runs in
+    // the native handler_pair! wrap's parser-construction context, so a
+    // peer-initiated stream's captured frame equals what every handler sees.
     frameError(self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) {
       if (!self || typeof stream !== "object") return;
       // Emit the frameError event with the frame type and error code
@@ -4447,8 +4429,7 @@ class ServerHttp2Session extends Http2Session {
       validateSettings(options.settings);
     }
     const nativeSettings = serverNativeSettings(options);
-    // localSettings reads the submitted values (incl. customSettings) before the peer ACKs.
-    this.#localSettings = applySubmittedLocalSettings({ ...this.#localSettings }, nativeSettings);
+    this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
@@ -4501,11 +4482,13 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get remoteSettings() {
-    return this.#remoteSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    return this.#localSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#localSettings ??= getDefaultSettings());
   }
 
   get pendingSettingsAck() {
@@ -4745,12 +4728,16 @@ class ServerHttp2Session extends Http2Session {
     }
     this[bunHTTP2Socket] = null;
 
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
+    const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    this[bunHTTP2AsyncContextFrame] = undefined;
     if (error) {
-      this.emit("error", error);
+      runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitEventNT, this, "close");
+    process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -4898,15 +4885,7 @@ class ClientHttp2Session extends Http2Session {
   #url: URL;
   #authority: string;
   #alpnProtocol: string | undefined = undefined;
-  #localSettings: Settings | null = {
-    headerTableSize: 4096,
-    enablePush: true,
-    maxConcurrentStreams: 100,
-    initialWindowSize: 65535,
-    maxFrameSize: 16384,
-    maxHeaderListSize: 65535,
-    maxHeaderSize: 65535,
-  };
+  #localSettings: Settings | null = null;
   #encrypted: boolean = false;
   #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
@@ -4983,12 +4962,14 @@ class ClientHttp2Session extends Http2Session {
       }
       self.emit("stream", pushedStream, headers, flags, rawheaders);
     },
-    frameError(self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) {
-      if (!self || typeof stream !== "object") return;
-      // Emit the frameError event with the frame type and error code
-      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
-    },
-    aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
+    frameError: withStreamFrame(
+      (self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) => {
+        if (!self || typeof stream !== "object") return;
+        // Emit the frameError event with the frame type and error code
+        process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+      },
+    ),
+    aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
@@ -4998,14 +4979,14 @@ class ClientHttp2Session extends Http2Session {
       }
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
+    }),
+    streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
+    }),
+    streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;
       if (state === 7 && stream[kSendingTrailers]) {
         // The trailer frame submitted by an in-flight sendTrailers() fully closed the stream:
@@ -5014,85 +4995,74 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(ClientHttp2Session.#Handlers.streamEnd, self, stream, state);
         return;
       }
-      const previousAsyncContext = enterStreamAsyncContext(stream);
-      try {
-        if (state == 6 || state == 7) {
-          if (stream.readable) {
-            if (!stream.rstCode) {
-              stream.rstCode = 0;
-            }
-            // Push a null so the stream can end whenever the client consumes
-            // it completely.
-            pushToStream(stream, null);
-            stream.read(0);
+      if (state == 6 || state == 7) {
+        if (stream.readable) {
+          if (!stream.rstCode) {
+            stream.rstCode = 0;
           }
+          // Push a null so the stream can end whenever the client consumes
+          // it completely.
+          pushToStream(stream, null);
+          stream.read(0);
         }
+      }
 
-        // 7 = closed, in this case we already send everything and received everything
-        if (state === 7) {
-          stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
-          markStreamClosed(stream);
-          self.#connections--;
-          if (stream.readable && !stream.rstCode) {
-            // Clean close while data is still buffered on the readable side: node defers the
-            // destroy until the consumer drains it ('end'), so a late-attaching reader does not
-            // lose data.
-            stream.once("end", destroySelfOnEnd);
-          } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
-            // The writable side is mid-finish (an in-flight _final settled the native stream
-            // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
-            // for the writable side to finish before destroying a cleanly closed stream.
-            stream.once("finish", destroySelfOnEnd);
-          } else {
-            stream.destroy();
-          }
-          if (self.#connections === 0 && self.#closed) {
-            // Deferred like close()'s own destroy: this runs inside a native dispatch
-            // batch, and frames the engine already received but has not dispatched yet
-            // must still reach JS. An outstanding settings() ACK gets a bounded grace
-            // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
-            if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
-            else setImmediate(destroyIfNotDestroyedNT, self);
-          }
-        } else if (state === 5) {
-          // 5 = local closed aka write is closed
-          markWritableDone(stream);
+      // 7 = closed, in this case we already send everything and received everything
+      if (state === 7) {
+        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+        markStreamClosed(stream);
+        self.#connections--;
+        if (stream.readable && !stream.rstCode) {
+          // Clean close while data is still buffered on the readable side: node defers the
+          // destroy until the consumer drains it ('end'), so a late-attaching reader does not
+          // lose data.
+          stream.once("end", destroySelfOnEnd);
+        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
+          // The writable side is mid-finish (an in-flight _final settled the native stream
+          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
+          // for the writable side to finish before destroying a cleanly closed stream.
+          stream.once("finish", destroySelfOnEnd);
+        } else {
+          stream.destroy();
         }
-      } finally {
-        exitStreamAsyncContext(previousAsyncContext);
+        if (self.#connections === 0 && self.#closed) {
+          // Deferred like close()'s own destroy: this runs inside a native dispatch
+          // batch, and frames the engine already received but has not dispatched yet
+          // must still reach JS. An outstanding settings() ACK gets a bounded grace
+          // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+          if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
+          else setImmediate(destroyIfNotDestroyedNT, self);
+        }
+      } else if (state === 5) {
+        // 5 = local closed aka write is closed
+        markWritableDone(stream);
       }
-    },
-    streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
+    }),
+    streamData: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) => {
       if (!self || typeof stream !== "object" || !data) return;
-      const previousAsyncContext = enterStreamAsyncContext(stream);
-      try {
-        pushToStream(stream, data);
-      } finally {
-        exitStreamAsyncContext(previousAsyncContext);
-      }
-    },
-    streamHeaders(
-      self: ClientHttp2Session,
-      stream: ClientHttp2Stream,
-      headersTuple: [string[], Record<string, any>, string[] | undefined],
-      flags: number,
-    ) {
-      if (!self || typeof stream !== "object" || stream.rstCode) return;
-      let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
-      if (self.#strictFieldWhitespaceValidation) {
-        // stripInvalidWhitespaceFields returns its input by identity when nothing was
-        // stripped (the common case) — only then can the native-built object be reused.
-        const filtered = stripInvalidWhitespaceFields(rawheaders);
-        if (filtered !== rawheaders) {
-          rawheaders = filtered;
-          headers = toHeaderObject(filtered, headersTuple[2] || []);
+      pushToStream(stream, data);
+    }),
+    streamHeaders: withStreamFrame(
+      (
+        self: ClientHttp2Session,
+        stream: ClientHttp2Stream,
+        headersTuple: [string[], Record<string, any>, string[] | undefined],
+        flags: number,
+      ) => {
+        if (!self || typeof stream !== "object" || stream.rstCode) return;
+        let rawheaders = headersTuple[0];
+        let headers = headersTuple[1];
+        if (self.#strictFieldWhitespaceValidation) {
+          // stripInvalidWhitespaceFields returns its input by identity when nothing was
+          // stripped (the common case) — only then can the native-built object be reused.
+          const filtered = stripInvalidWhitespaceFields(rawheaders);
+          if (filtered !== rawheaders) {
+            rawheaders = filtered;
+            headers = toHeaderObject(filtered, headersTuple[2] || []);
+          }
         }
-      }
-      const status = stream[bunHTTP2StreamStatus];
-      const header_status = headers[HTTP2_HEADER_STATUS];
-      const previousAsyncContext = enterStreamAsyncContext(stream);
-      try {
+        const status = stream[bunHTTP2StreamStatus];
+        const header_status = headers[HTTP2_HEADER_STATUS];
         if (header_status === HTTP_STATUS_CONTINUE) {
           stream.emit("continue");
         }
@@ -5126,10 +5096,8 @@ class ClientHttp2Session extends Http2Session {
             }
           }
         }
-      } finally {
-        exitStreamAsyncContext(previousAsyncContext);
-      }
-    },
+      },
+    ),
     localSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
       self.#localSettings = settings;
@@ -5188,7 +5156,7 @@ class ClientHttp2Session extends Http2Session {
       self.destroy(error_instance);
     },
 
-    wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {
+    wantTrailers: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream) => {
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
@@ -5198,7 +5166,7 @@ class ClientHttp2Session extends Http2Session {
       } else {
         stream.emit("wantTrailers");
       }
-    },
+    }),
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       if (self.destroyed) return;
@@ -5405,11 +5373,13 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get remoteSettings() {
-    return this.#remoteSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    return this.#localSettings;
+    if (this.destroyed || this.connecting) return {};
+    return (this.#localSettings ??= getDefaultSettings());
   }
 
   get pendingSettingsAck() {
@@ -5632,8 +5602,7 @@ class ClientHttp2Session extends Http2Session {
       validateSettings(options.settings);
     }
     const nativeSettings = { ...options, ...options?.settings };
-    // localSettings reads the submitted values (incl. customSettings) before the peer ACKs.
-    this.#localSettings = applySubmittedLocalSettings({ ...this.#localSettings }, nativeSettings);
+    this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
@@ -5769,7 +5738,12 @@ class ClientHttp2Session extends Http2Session {
         }
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
-        parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+        this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
+        try {
+          parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+        } finally {
+          this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
+        }
         parser.detach();
       }
     } catch (e) {
@@ -5782,12 +5756,16 @@ class ClientHttp2Session extends Http2Session {
     this.#parser = null;
     this[bunHTTP2Socket] = null;
 
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
+    const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    this[bunHTTP2AsyncContextFrame] = undefined;
     if (error) {
-      this.emit("error", error);
+      runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitEventNT, this, "close");
+    process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 
   request(headers: any, options?: any) {
@@ -6011,17 +5989,23 @@ class ClientHttp2Session extends Http2Session {
 
       let rejectContentLengthOnNoPayload = false;
       if (NoPayloadMethods.has(method.toUpperCase())) {
+        // Like Node, a payload-meaningless method only defaults endStream to
+        // true when the caller expressed no preference; an explicit endStream
+        // (validated above) is honored, so { endStream: false } stays open.
         if (!options || !$isObject(options)) {
           options = { endStream: true };
-        } else {
+        } else if (options.endStream === undefined) {
           options = { ...options, endStream: true };
         }
-        // nghttp2 refuses content-length on a request that cannot carry a payload: the stream is
-        // reset with PROTOCOL_ERROR after creation (an async stream error, not a throw).
-        for (const key of Object.keys(headers)) {
-          if (key.toLowerCase() === "content-length") {
-            rejectContentLengthOnNoPayload = true;
-            break;
+        // nghttp2 refuses content-length on a request whose HEADERS carry END_STREAM (no payload
+        // can follow): reset with PROTOCOL_ERROR after creation (an async stream error, not a
+        // throw). An explicit endStream:false keeps the body legal, so only the ended case rejects.
+        if (options.endStream) {
+          for (const key of Object.keys(headers)) {
+            if (key.toLowerCase() === "content-length") {
+              rejectContentLengthOnNoPayload = true;
+              break;
+            }
           }
         }
       }

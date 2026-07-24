@@ -82,12 +82,12 @@ impl<'a> CommandTag<'a> {
         let number: u64 = 'brk: {
             match cmd {
                 KnownCommand::Insert => {
-                    let mut remaining = &tag[(first_space_index + 1).min(tag.len())..];
+                    let mut remaining = &tag[first_space_index + 1..];
                     let Some(second_space) = strings::index_of_char(remaining, b' ') else {
                         return CommandTag::Other(tag);
                     };
                     let second_space = second_space as usize;
-                    remaining = &remaining[(second_space + 1).min(remaining.len())..];
+                    remaining = &remaining[second_space + 1..];
                     // Postgres wire is pure base-10 ASCII so radix-0/`_`/sign
                     // widening is unreachable.
                     match bun_core::fmt::parse_int::<u64>(remaining, 0) {
@@ -103,7 +103,7 @@ impl<'a> CommandTag<'a> {
                     }
                 }
                 _ => {
-                    let after_tag = &tag[(first_space_index + 1).min(tag.len())..];
+                    let after_tag = &tag[first_space_index + 1..];
                     match bun_core::fmt::parse_int::<u64>(after_tag, 0) {
                         Ok(n) => break 'brk n,
                         Err(err) => {

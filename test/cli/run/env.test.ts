@@ -12,6 +12,7 @@ import {
   isWindows,
   tempDirWithFiles,
 } from "harness";
+import { parseEnv } from "node:util";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -372,6 +373,24 @@ test(".env space edgecase (issue #411)", () => {
   expect(stdout).toBe("[A B]");
 });
 
+test(".env does not byte-trim 0xA0 out of UTF-8 values", () => {
+  // U+0920 DEVANAGARI LETTER TTHA encodes as E0 A4 A0 (trailing 0xA0)
+  // U+00A0 NO-BREAK SPACE encodes as C2 A0; Node.js preserves it verbatim.
+  expect(parseEnv("A=x\u0920\nB=\u00A0x\u00A0\nC=\u00A0\nD=  x  \n")).toEqual({
+    A: "x\u0920",
+    B: "\u00A0x\u00A0",
+    C: "\u00A0",
+    D: "x",
+  });
+
+  const dir = tempDirWithFiles("dotenv-utf8-nbsp", {
+    ".env": "A=x\u0920\nB=\u00A0x\u00A0\n",
+    "index.ts": "console.log(JSON.stringify({ A: process.env.A, B: process.env.B }));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({ A: "x\u0920", B: "\u00A0x\u00A0" });
+});
+
 test(".env special characters 1 (issue #2823)", () => {
   const dir = tempDirWithFiles("dotenv-issue-2823", {
     ".env": 'A="a$t"\nC=`c\\$v`',
@@ -437,6 +456,43 @@ test("#3911", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("a\nb");
+});
+
+describe(".env quoted value with trailing junk does not swallow following lines", () => {
+  describe.each([
+    ["double", `"`],
+    ["single", `'`],
+    ["backtick", "`"],
+  ])("%s quotes", (_, q) => {
+    test("util.parseEnv", () => {
+      expect(parseEnv(`A=${q}hello${q} junk\nB=${q}x${q}\nC=3\n`)).toEqual({
+        A: "hello",
+        B: "x",
+        C: "3",
+      });
+      expect(parseEnv(`A=${q}hello${q} junk\r\nB=${q}x${q}\r\nC=3\r\n`)).toEqual({
+        A: "hello",
+        B: "x",
+        C: "3",
+      });
+      expect(parseEnv(`A=${q}${q} junk\nB=2\n`)).toEqual({ A: "", B: "2" });
+      expect(parseEnv(`A=${q}hello\nworld${q} junk\nB=2\n`)).toEqual({
+        A: "hello\nworld",
+        B: "2",
+      });
+      expect(parseEnv(`A=${q}hello${q} # comment\nB=2\n`)).toEqual({ A: "hello", B: "2" });
+      expect(parseEnv(`A=${q}hello${q}junk\nB=2\n`)).toEqual({ A: "hello", B: "2" });
+    });
+
+    test(".env file", () => {
+      const dir = tempDirWithFiles("dotenv-trailing-junk", {
+        ".env": `A=${q}hello${q} junk\nB=${q}x${q}\nC=3\n`,
+        "index.ts": "console.log(JSON.stringify({A: process.env.A, B: process.env.B, C: process.env.C}));",
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(JSON.parse(stdout)).toEqual({ A: "hello", B: "x", C: "3" });
+    });
+  });
 });
 
 describe("boundary tests", () => {
@@ -592,6 +648,40 @@ describe("--env-file", () => {
   test("should ignore a file that doesn't exist", () => {
     const res = bunRun(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+});
+
+describe(".env with a UTF-8 BOM", () => {
+  // Notepad and some PowerShell redirects write EF BB BF before the first byte.
+  // Previously the BOM failed the key grammar and skip_line() silently dropped line 1.
+  const bom = "\uFEFF";
+
+  test("automatic .env load keeps the first variable", () => {
+    const dir = tempDirWithFiles("dotenv-bom", {
+      ".env": `${bom}BUNTEST_BOM_A=1\r\nBUNTEST_BOM_B=2\r\n`,
+      "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe(JSON.stringify({ A: "1", B: "2" }));
+  });
+
+  test("--env-file keeps the first variable", () => {
+    const dir = tempDirWithFiles("dotenv-bom-envfile", {
+      "with-bom.env": `${bom}BUNTEST_BOM_A=1\nBUNTEST_BOM_B=2\n`,
+      "index.ts": "console.log(JSON.stringify({A: process.env.BUNTEST_BOM_A, B: process.env.BUNTEST_BOM_B}));",
+    });
+    const result = Bun.spawnSync([bunExe(), "--env-file", "with-bom.env", "index.ts"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    if (!result.success) throw new Error(result.stderr.toString("utf8"));
+    expect(result.stdout.toString("utf8").trim()).toBe(JSON.stringify({ A: "1", B: "2" }));
+  });
+
+  test("util.parseEnv strips the BOM", () => {
+    expect(parseEnv(`${bom}A=1\nB=2\n`)).toEqual({ A: "1", B: "2" });
+    expect(parseEnv(`${bom}export FOO=bar\n`)).toEqual({ FOO: "bar" });
+    expect(parseEnv(bom)).toEqual({});
   });
 });
 

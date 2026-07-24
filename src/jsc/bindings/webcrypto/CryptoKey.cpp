@@ -50,24 +50,24 @@ CryptoKey::~CryptoKey() = default;
 
 auto CryptoKey::usages() const -> Vector<CryptoKeyUsage>
 {
-    // The result is ordered alphabetically.
+    // Ordered to match the KeyUsage enum declaration order in the WebCrypto spec.
     Vector<CryptoKeyUsage> result;
-    if (m_usages & CryptoKeyUsageDecrypt)
-        result.append(CryptoKeyUsage::Decrypt);
-    if (m_usages & CryptoKeyUsageDeriveBits)
-        result.append(CryptoKeyUsage::DeriveBits);
-    if (m_usages & CryptoKeyUsageDeriveKey)
-        result.append(CryptoKeyUsage::DeriveKey);
     if (m_usages & CryptoKeyUsageEncrypt)
         result.append(CryptoKeyUsage::Encrypt);
+    if (m_usages & CryptoKeyUsageDecrypt)
+        result.append(CryptoKeyUsage::Decrypt);
     if (m_usages & CryptoKeyUsageSign)
         result.append(CryptoKeyUsage::Sign);
-    if (m_usages & CryptoKeyUsageUnwrapKey)
-        result.append(CryptoKeyUsage::UnwrapKey);
     if (m_usages & CryptoKeyUsageVerify)
         result.append(CryptoKeyUsage::Verify);
+    if (m_usages & CryptoKeyUsageDeriveKey)
+        result.append(CryptoKeyUsage::DeriveKey);
+    if (m_usages & CryptoKeyUsageDeriveBits)
+        result.append(CryptoKeyUsage::DeriveBits);
     if (m_usages & CryptoKeyUsageWrapKey)
         result.append(CryptoKeyUsage::WrapKey);
+    if (m_usages & CryptoKeyUsageUnwrapKey)
+        result.append(CryptoKeyUsage::UnwrapKey);
     return result;
 }
 

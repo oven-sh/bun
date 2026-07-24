@@ -255,7 +255,7 @@ use crate::const_str_eq;
 /// callers routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
 #[inline(always)]
 const fn type_id_of<F: ?Sized>() -> TypeId {
-    core::intrinsics::type_id::<F>()
+    const { core::intrinsics::type_id::<F>() }
 }
 
 /// Reflected fields of `T` (struct only). Panics at const-eval for non-structs.
@@ -295,7 +295,7 @@ const fn align_sort_key(size: usize, struct_align: usize) -> usize {
         return 1;
     }
     // Largest power of two dividing `size`.
-    let pow2 = size & size.wrapping_neg();
+    let pow2 = size.isolate_lowest_one();
     if pow2 < struct_align {
         pow2
     } else {
@@ -344,7 +344,7 @@ impl<T> Reflected<T> {
         let mut i = 0;
         while i < n {
             let f = &fields[i];
-            let size = match f.ty.info().size {
+            let size = match f.ty.size() {
                 Some(s) => s,
                 None => panic!("MultiArrayList: field type must be Sized"),
             };
@@ -1081,14 +1081,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.len -= 1;
     }
 
-    /// Adjust the list's length to `new_len`.
-    /// Does not initialize added items, if any.
-    pub fn resize(&mut self, new_len: usize) -> Result<(), AllocError> {
-        self.ensure_total_capacity(new_len)?;
-        self.len = new_len;
-        Ok(())
-    }
-
     /// Attempt to reduce allocated capacity to `new_len`.
     pub fn shrink_and_free(&mut self, new_len: usize) {
         if new_len == 0 {
@@ -1206,21 +1198,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Stable sort by index-based context.
     pub fn sort<C: SortContext>(&mut self, ctx: &C) {
         self.sort_internal::<C, true>(0, self.len, ctx);
-    }
-
-    /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, true>(a, b, ctx);
-    }
-
-    /// Unstable sort by index-based context.
-    pub fn sort_unstable<C: SortContext>(&mut self, ctx: &C) {
-        self.sort_internal::<C, false>(0, self.len, ctx);
-    }
-
-    /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, false>(a, b, ctx);
     }
 
     pub fn capacity_in_bytes(capacity: usize) -> usize {

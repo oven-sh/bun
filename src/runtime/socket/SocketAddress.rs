@@ -549,9 +549,7 @@ impl SocketAddress {
         port_: u16,
         is_ipv6: bool,
     ) -> JsResult<JSValue> {
-        if cfg!(debug_assertions) {
-            debug_assert!(!addr_.is_empty());
-        }
+        debug_assert!(!addr_.is_empty());
 
         Ok(JSSocketAddressDTO__create(
             global_object,
@@ -670,13 +668,6 @@ impl SocketAddress {
     /// - [RFC 6437](https://tools.ietf.org/html/rfc6437)
     pub fn flow_label(&self) -> Option<u32> {
         self._addr.as_sin6().map(|s| s.flowinfo)
-    }
-
-    pub fn socklen(&self) -> inet::socklen_t {
-        match self._addr.family() {
-            AF::INET => mem::size_of::<inet::sockaddr_in>() as inet::socklen_t,
-            AF::INET6 => mem::size_of::<inet::sockaddr_in6>() as inet::socklen_t,
-        }
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -976,9 +967,7 @@ impl sockaddr {
                 .len();
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above
         let formatted = ZStr::from_buf(&buf[..], len);
-        if cfg!(debug_assertions) {
-            debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
-        }
+        debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
         formatted
     }
 
@@ -1037,7 +1026,6 @@ pub mod inet {
     pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
 #[cfg(not(windows))]

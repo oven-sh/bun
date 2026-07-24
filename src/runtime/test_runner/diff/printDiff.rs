@@ -10,13 +10,6 @@ use bun_core::strings;
 type Dmp = diff_match_patch::DiffMatchPatch<u8>;
 type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    BgDiffOnly,
-    Fg,
-}
-const MODE: Mode = Mode::BgDiffOnly;
-
 pub struct DiffConfig {
     pub min_bytes_before_chunking: usize,
     pub chunk_context_lines: usize,
@@ -499,10 +492,6 @@ fn print_modified_segment(
         true => prefix_styles::SINGLE_LINE_INSERTED,
         false => prefix_styles::INSERTED,
     };
-
-    if MODE == Mode::Fg {
-        return print_modified_segment_without_diffdiff(writer, config, segment, modified_style);
-    }
 
     // Fast-path the post-diff "diff too significant" check below: the maximum
     // possible Equal length in the char-level diff is `min(removed, inserted)`,

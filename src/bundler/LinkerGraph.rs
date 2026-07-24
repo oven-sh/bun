@@ -25,7 +25,6 @@ pub mod entry_point {
     pub struct EntryPoint {
         pub output_path: RawSlice<u8>,
         pub source_index: crate::IndexInt,
-        pub output_path_was_auto_generated: bool,
     }
 
     pub type List = MultiArrayList<EntryPoint>;
@@ -34,7 +33,6 @@ pub mod entry_point {
         pub trait EntryPointColumns for EntryPoint {
             output_path: RawSlice<u8>,
             source_index: crate::IndexInt,
-            output_path_was_auto_generated: bool,
         }
     }
 
@@ -55,14 +53,6 @@ pub mod entry_point {
         #[inline]
         pub fn is_entry_point(self) -> bool {
             self != Self::None
-        }
-        #[inline]
-        pub fn is_user_specified_entry_point(self) -> bool {
-            self == Self::UserSpecified
-        }
-        #[inline]
-        pub fn is_server_entry_point(self) -> bool {
-            self == Self::UserSpecified
         }
         #[inline]
         pub fn output_kind(self) -> crate::options::OutputKind {
@@ -172,11 +162,6 @@ pub mod js_meta {
             entry_point_part_index: Index,
             flags: Flags,
         }
-    }
-
-    impl JSMeta {
-        pub type Flags = Flags;
-        pub type Wrap = crate::WrapKind;
     }
 }
 
@@ -677,10 +662,9 @@ impl<'a> LinkerGraph<'a> {
             // SAFETY: capacity reserved; columns initialized below.
             unsafe { self.entry_points.set_len(entry_points.len()) };
 
-            // Note: `source_indices` / `path_strings` /
-            // `output_path_was_auto_generated` are disjoint columns of the
-            // same `MultiArrayList`. `split_mut()`
-            // hands out all three at once; `self.entry_points` is not
+            // Note: `source_indices` / `path_strings` are disjoint columns of
+            // the same `MultiArrayList`. `split_mut()` hands out both at once;
+            // `self.entry_points` is not
             // reallocated until after `path_strings`/`source_indices` are done
             // with (the next `append_assume_capacity` is within the
             // pre-reserved capacity, so no realloc).
@@ -688,7 +672,6 @@ impl<'a> LinkerGraph<'a> {
             let ep_cols = ep_slice.split_mut();
             let source_indices: &mut [index::Int] = ep_cols.source_index;
             let path_strings: &mut [RawSlice<u8>] = ep_cols.output_path;
-            ep_cols.output_path_was_auto_generated.fill(false);
 
             debug_assert_eq!(entry_points.len(), path_strings.len());
             debug_assert_eq!(entry_points.len(), source_indices.len());
@@ -698,9 +681,7 @@ impl<'a> LinkerGraph<'a> {
                 .zip(source_indices.iter_mut())
             {
                 let source = &sources[i.get() as usize];
-                if cfg!(debug_assertions) {
-                    debug_assert!(source.index.0 == i.get());
-                }
+                debug_assert!(source.index.0 == i.get());
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)
@@ -727,7 +708,6 @@ impl<'a> LinkerGraph<'a> {
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,
                     output_path: RawSlice::new(source.path.text),
-                    output_path_was_auto_generated: true,
                 });
             }
 
@@ -917,75 +897,86 @@ impl<'a> LinkerGraph<'a> {
     }
 
     pub fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
-        struct State<'a> {
-            visited: AutoBitSet,
-            import_records: &'a [import_record::List<'a>],
-            flags: &'a mut [js_meta::Flags],
+        // Explicit-stack postorder DFS (was per-edge recursive). A parent's
+        // flag is read from each child after that child's subtree is fully
+        // processed; `AfterChild` is the resumption point for that read.
+        #[derive(Copy, Clone)]
+        enum Frame {
+            Enter(usize),
+            AfterChild { parent: usize, child: usize },
         }
 
-        impl<'a> State<'a> {
-            pub(crate) fn visit_all(&mut self) {
-                for i in 0..self.import_records.len() {
-                    self.visit(i);
-                }
+        let import_records = self.ast.items_import_records();
+        let flags = self.meta.items_flags_mut();
+        let len = import_records.len();
+        let mut visited = AutoBitSet::init_empty(self.ast.len())?;
+        let mut stack: Vec<Frame> = Vec::new();
+
+        for root in 0..len {
+            if visited.is_set(root) {
+                continue;
             }
+            stack.push(Frame::Enter(root));
 
-            fn visit(&mut self, index: usize) {
-                if self.visited.is_set(index) {
-                    return;
-                }
-                self.visited.set(index);
-                if self.flags[index].is_async_or_has_async_dependency {
-                    return;
-                }
-
-                for import_record in self.import_records[index].as_slice().iter() {
-                    match import_record.kind {
-                        ImportKind::Stmt => {}
-
-                        // Any use of `import()` that makes the parent async will necessarily use
-                        // top-level await, so this will have already been detected by `validateTLA`,
-                        // and `is_async_or_has_async_dependency` will already be true.
-                        //
-                        // We don't want to process these imports here because `import()` can appear in
-                        // non-top-level contexts (like inside an async function) or in contexts that
-                        // don't use `await`, which don't necessarily make the parent module async.
-                        ImportKind::Dynamic => continue,
-
-                        // `require()` cannot import async modules.
-                        ImportKind::Require | ImportKind::RequireResolve => continue,
-
-                        // Entry points; not imports from JS
-                        ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
-                        // CSS imports
-                        ImportKind::At
-                        | ImportKind::AtConditional
-                        | ImportKind::Url
-                        | ImportKind::Composes => continue,
-                        // Other non-JS imports
-                        ImportKind::HtmlManifest | ImportKind::Internal => continue,
+            while let Some(frame) = stack.pop() {
+                match frame {
+                    Frame::AfterChild { parent, child } => {
+                        if flags[child].is_async_or_has_async_dependency {
+                            flags[parent].is_async_or_has_async_dependency = true;
+                        }
                     }
+                    Frame::Enter(index) => {
+                        if visited.is_set(index) {
+                            continue;
+                        }
+                        visited.set(index);
+                        if flags[index].is_async_or_has_async_dependency {
+                            continue;
+                        }
 
-                    let import_index: usize = import_record.source_index.get() as usize;
-                    if import_index >= self.import_records.len() {
-                        continue;
-                    }
-                    self.visit(import_index);
+                        let mark = stack.len();
+                        for import_record in import_records[index].as_slice().iter() {
+                            match import_record.kind {
+                                ImportKind::Stmt => {}
 
-                    if self.flags[import_index].is_async_or_has_async_dependency {
-                        self.flags[index].is_async_or_has_async_dependency = true;
-                        break;
+                                // Any use of `import()` that makes the parent async will necessarily use
+                                // top-level await, so this will have already been detected by `validateTLA`,
+                                // and `is_async_or_has_async_dependency` will already be true.
+                                //
+                                // We don't want to process these imports here because `import()` can appear in
+                                // non-top-level contexts (like inside an async function) or in contexts that
+                                // don't use `await`, which don't necessarily make the parent module async.
+                                ImportKind::Dynamic => continue,
+
+                                // `require()` cannot import async modules.
+                                ImportKind::Require | ImportKind::RequireResolve => continue,
+
+                                // Entry points; not imports from JS
+                                ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
+                                // CSS imports
+                                ImportKind::At
+                                | ImportKind::AtConditional
+                                | ImportKind::Url
+                                | ImportKind::Composes => continue,
+                                // Other non-JS imports
+                                ImportKind::HtmlManifest | ImportKind::Internal => continue,
+                            }
+
+                            let import_index: usize = import_record.source_index.get() as usize;
+                            if import_index >= len {
+                                continue;
+                            }
+                            stack.push(Frame::Enter(import_index));
+                            stack.push(Frame::AfterChild {
+                                parent: index,
+                                child: import_index,
+                            });
+                        }
+                        stack[mark..].reverse();
                     }
                 }
             }
         }
-
-        let mut state = State {
-            visited: AutoBitSet::init_empty(self.ast.len())?,
-            import_records: self.ast.items_import_records(),
-            flags: self.meta.items_flags_mut(),
-        };
-        state.visit_all();
         Ok(())
     }
 }
@@ -1015,16 +1006,6 @@ pub struct File {
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
     pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
-}
-
-impl File {
-    pub fn is_entry_point(&self) -> bool {
-        self.entry_point_kind.is_entry_point()
-    }
-
-    pub fn is_user_specified_entry_point(&self) -> bool {
-        self.entry_point_kind.is_user_specified_entry_point()
-    }
 }
 
 impl Default for File {

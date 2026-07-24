@@ -38,17 +38,8 @@ const txtAnswer = Buffer.from([
   0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f, // <5>"hello"
 ]);
 
-const udp = dgram.createSocket("udp4");
-udp.on("message", (msg, rinfo) => {
-  // QR=1 Opcode=0 AA=0 TC=1 RD=1 | RA=1 Z=0 RCODE=0
-  udp.send(buildResponse(msg, 0x83, 0x80), rinfo.port, rinfo.address);
-});
-udp.bind(0, "127.0.0.1");
-await once(udp, "listening");
-const port = (udp.address() as dgram.AddressInfo).port;
-
 // DNS-over-TCP frames are prefixed with a 2-byte big-endian length.
-const tcp = net.createServer(socket => {
+function onTcpConnection(socket: net.Socket) {
   let buf = Buffer.alloc(0);
   socket.on("data", chunk => {
     buf = Buffer.concat([buf, chunk]);
@@ -66,10 +57,42 @@ const tcp = net.createServer(socket => {
     }
   });
   socket.on("error", () => {});
-});
-await new Promise<void>((resolve, reject) => {
-  tcp.on("error", reject);
-  tcp.listen(port, "127.0.0.1", resolve);
+}
+
+// c-ares talks to one server address on both UDP and TCP, so both listeners
+// must share a port. Bind UDP on an ephemeral port and then try TCP on the
+// same number; the kernel only guarantees that port was free for UDP, so if
+// TCP is already taken (EADDRINUSE) drop both and pick another.
+async function bindPair(): Promise<{ udp: dgram.Socket; tcp: net.Server; port: number }> {
+  let lastErr: unknown;
+  for (let i = 0; i < 32; i++) {
+    const udp = dgram.createSocket("udp4");
+    udp.bind(0, "127.0.0.1");
+    await once(udp, "listening");
+    const port = (udp.address() as dgram.AddressInfo).port;
+
+    const tcp = net.createServer(onTcpConnection);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        tcp.once("error", reject);
+        tcp.listen(port, "127.0.0.1", resolve);
+      });
+    } catch (e) {
+      lastErr = e;
+      udp.close();
+      tcp.close();
+      if ((e as NodeJS.ErrnoException).code === "EADDRINUSE") continue;
+      throw e;
+    }
+    return { udp, tcp, port };
+  }
+  throw lastErr;
+}
+
+const { udp, tcp, port } = await bindPair();
+udp.on("message", (msg, rinfo) => {
+  // QR=1 Opcode=0 AA=0 TC=1 RD=1 | RA=1 Z=0 RCODE=0
+  udp.send(buildResponse(msg, 0x83, 0x80), rinfo.port, rinfo.address);
 });
 
 const r = new Resolver({ timeout: 1000, tries: 1 });

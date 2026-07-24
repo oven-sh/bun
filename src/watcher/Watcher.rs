@@ -228,7 +228,22 @@ impl Watcher {
                 .spawn(move || unsafe {
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
-                .expect("spawn FileWatcher thread"),
+                .map_err(|e| {
+                    // Windows: raw_os_error() is a Win32 GetLastError() code, so
+                    // route it through the u32 (Win32Error) mapper rather than
+                    // from_errno's i64 discriminant-cast path.
+                    #[cfg(windows)]
+                    let errno = e
+                        .raw_os_error()
+                        .and_then(|c| bun_errno::SystemErrno::init(c as u32))
+                        .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                    #[cfg(not(windows))]
+                    let errno = e
+                        .raw_os_error()
+                        .map(bun_errno::from_errno)
+                        .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                    crate::Error::Sys(errno)
+                })?,
         );
         Ok(())
     }

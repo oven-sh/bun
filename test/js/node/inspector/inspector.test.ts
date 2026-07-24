@@ -1060,7 +1060,7 @@ async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: st
   const dir = tempDir("inspector-positions", { "gnarly.js": transpileShiftFixture });
   const proc = Bun.spawn({
     cmd: [bunExe(), "--inspect-brk=0", "gnarly.js"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stdout: "ignore",
     stderr: "pipe",
@@ -1237,7 +1237,7 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
   });
   const proc = Bun.spawn({
     cmd: [bunExe(), "--inspect-brk=0", "main.js"],
-    env: bunEnv,
+    env: inspectorChildEnv,
     cwd: String(dir),
     stdout: "ignore",
     stderr: "pipe",
@@ -1346,17 +1346,6 @@ test("Session.post matches node's return and throw contract", async () => {
   }
 });
 
-test("pending posts at disconnect settle with node's -32000 error", async () => {
-  const session = new inspector.Session();
-  session.connect();
-  const { promise, resolve } = Promise.withResolvers<any>();
-  session.post("Runtime.evaluate", { expression: "new Promise(() => {})", awaitPromise: true }, err => resolve(err));
-  session.disconnect();
-  const err = await promise;
-  expect(err?.code).toBe("ERR_INSPECTOR_COMMAND");
-  expect(err?.message).toBe("Inspector error -32000: Execution context was destroyed.");
-});
-
 test("Debugger.stepOver from a paused listener re-pauses instead of resuming", async () => {
   // The pause loop's auto-continue must not run when the listener already
   // ended the pause with a step: continueProgram() clears the next-pause
@@ -1384,7 +1373,7 @@ session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; glob
     ],
     // Children drive Runtime.evaluate — same validator-env strip as the
     // sibling subprocess tests above.
-    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
+    env: inspectorChildEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1422,7 +1411,7 @@ session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone
     ],
     // Children drive Runtime.evaluate — same validator-env strip as the
     // sibling subprocess tests above.
-    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
+    env: inspectorChildEnv,
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

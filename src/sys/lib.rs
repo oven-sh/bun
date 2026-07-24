@@ -66,6 +66,15 @@ impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
     #[inline]
     pub fn get_errno(&self) -> E {
+        // On Windows `self.errno` is a libuv code (e.g. UV_EBUSY = -4082);
+        // canonicalize to the small `E` discriminant so Rust-side callers that
+        // compare against `E::BUSY`/`E::BADF` keep matching.
+        #[cfg(windows)]
+        if let Some(d) = crate::windows::libuv::uv_err_to_e_discriminant(self.errno) {
+            if let Some(e) = E::try_from_raw(d) {
+                return e;
+            }
+        }
         e_from_negated(self.errno)
     }
     pub fn deref(&self) {
@@ -1226,12 +1235,14 @@ pub mod O {
     pub const NOFOLLOW: i32 = 0o400000;
     #[cfg(unix)]
     pub const SYNC: i32 = libc::O_SYNC;
+    // Windows has no O_SYNC/O_DSYNC; node's stringToFlags() ORs in `undefined`
+    // (→ 0) there, so the 's' flag-string modifier is a no-op. Match that.
     #[cfg(windows)]
-    pub const SYNC: i32 = 0o4010000;
+    pub const SYNC: i32 = 0;
     #[cfg(unix)]
     pub const DSYNC: i32 = libc::O_DSYNC;
     #[cfg(windows)]
-    pub const DSYNC: i32 = 0o10000;
+    pub const DSYNC: i32 = 0;
     #[cfg(unix)]
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]

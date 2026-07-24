@@ -466,8 +466,3 @@ test/js/bun/typescript/type-export.test.ts
 # Worker termination exception in PropertyCallback
 test/js/node/test/parallel/test-worker-message-port-transfer-terminate.js
 test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts
-
-# Pre-existing leak in NAPI env teardown under BUN_DESTRUCT_VM_ON_EXIT: NapiEnv::addCleanupHook
-# (napi.h) leaks its cleanup-hook set bucket array when a NAPI module registers a hook;
-# vitest loads @rollup/rollup-linux-x64-gnu, which does.
-test/js/third_party/vitest/vitest.test.ts

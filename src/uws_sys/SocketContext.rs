@@ -118,6 +118,11 @@ pub struct BunSocketContextOptions {
     pub request_cert: i32,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub session_timeout: i32,
+    pub crl: *const *const c_char,
+    pub crl_count: u32,
+    pub allow_partial_trust_chain: i32,
+    pub sigalgs: *const c_char,
 }
 
 impl Default for BunSocketContextOptions {
@@ -143,6 +148,11 @@ impl Default for BunSocketContextOptions {
             request_cert: 0,
             client_renegotiation_limit: 3,
             client_renegotiation_window: 600,
+            session_timeout: 0,
+            crl: ptr::null(),
+            crl_count: 0,
+            allow_partial_trust_chain: 0,
+            sigalgs: ptr::null(),
         }
     }
 }
@@ -243,6 +253,10 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.request_cert));
         h.update(bun_core::bytes_of(&self.client_renegotiation_limit));
         h.update(bun_core::bytes_of(&self.client_renegotiation_window));
+        h.update(bun_core::bytes_of(&self.session_timeout));
+        feed_arr(&mut h, self.crl, self.crl_count);
+        h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
+        feed_z(&mut h, self.sigalgs);
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -268,6 +282,7 @@ impl BunSocketContextOptions {
         sum(self.key, self.key_count, &mut n);
         sum(self.cert, self.cert_count, &mut n);
         sum(self.ca, self.ca_count, &mut n);
+        sum(self.crl, self.crl_count, &mut n);
         n
     }
 }

@@ -720,6 +720,7 @@ class InspectorCDPAdapter {
       this.#replyErrorToClient(parsed?.id ?? 0, -32601, "'' wasn't found");
       return;
     }
+    if (parsed === null || typeof parsed !== "object") return;
     const { id, method, params } = parsed;
     try {
       this.#dispatchClientCommand(id, method, params || {});

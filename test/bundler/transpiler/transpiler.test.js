@@ -2034,7 +2034,7 @@ export default <>hi</>
   describe("tsconfig jsxImportSource uses the automatic runtime for any package", () => {
     const cases = [];
     for (const pkg of ["solid-js", "preact", "@emotion/react"]) {
-      for (const jsx of ["react-jsx", "unset"]) {
+      for (const jsx of ["react-jsx", "preserve", "unset"]) {
         for (const form of ["object", "string"]) {
           cases.push([pkg, jsx, form]);
         }

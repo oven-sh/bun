@@ -17,6 +17,7 @@ const VENDORED = new Set([
   'internal/assert',
   'internal/fs/sync_write_stream',
   'internal/net',
+  'internal/event_target',
 ]);
 
 // ---------------- primordials emulator ----------------

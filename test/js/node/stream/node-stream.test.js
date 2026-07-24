@@ -1461,6 +1461,56 @@ describe("node v26 stream semantics", () => {
     expect(received).toBe(65536 * 2 + 40000);
   });
 
+  // The fd-slicer narrowing above has no rationale once the stream is errored:
+  // delivering buffered 'data' ahead of a scheduled 'error' is an ordering
+  // contract break Node never exhibits. resume() on a destroyed+errored stream
+  // must match Node's no-op, leaving the buffer and readableFlowing untouched.
+  it("resume() / on('data') on a destroyed errored stream is a no-op", async () => {
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    const boom = () => Object.assign(new Error("boom"), { code: "EBOOM" });
+    const snapshot = s => ({ len: s.readableLength, flowing: s.readableFlowing, paused: s.isPaused() });
+
+    const resumed = new Readable({ read() {} });
+    resumed.push("buffered-payload");
+    resumed.on("error", () => {});
+    resumed.destroy(boom());
+    await settle();
+    expect(resumed.resume()).toBe(resumed);
+    await settle();
+    expect(snapshot(resumed)).toEqual({ len: 16, flowing: null, paused: false });
+
+    const listened = new Readable({ read() {} });
+    const delivered = [];
+    listened.push("buffered-payload");
+    listened.on("error", () => {});
+    listened.destroy(boom());
+    await settle();
+    listened.on("data", c => delivered.push(String(c)));
+    await settle();
+    expect({ ...snapshot(listened), delivered }).toEqual({ len: 16, flowing: null, paused: false, delivered: [] });
+  });
+
+  it("a resume scheduled by removeListener('readable') after destroy(err) does not flow the buffered tail", async () => {
+    const r = new Readable({ read() {}, highWaterMark: 4 });
+    const ev = [];
+    const onReadable = () => {};
+    r.on("readable", onReadable);
+    r.on("data", c => ev.push("data:" + c));
+    r.on("error", e => ev.push("error:" + e.code));
+    r.on("close", () => ev.push("close"));
+    // Schedules updateReadableListening on nextTick, which calls resume() now
+    // that only a 'data' listener remains.
+    r.removeListener("readable", onReadable);
+    r.push("0123456789");
+    r.read(3);
+    r.destroy(Object.assign(new Error("boom"), { code: "EBOOM" }));
+    await new Promise(resolve => r.on("close", resolve));
+    // Node: the scheduled resume() sees kDestroyed and no-ops, so the 7-byte
+    // buffered tail is never flowed and 'error' follows the one read() emit.
+    expect(ev).toEqual(["data:012", "error:EBOOM", "close"]);
+    expect(r.readableLength).toBe(7);
+  });
+
   // Upstream: nodejs/node#60907 (test-stream-compose-operator.js).
   it("compose returns the composed Duplex directly", () => {
     expect(Object.hasOwn(Readable.prototype, "compose")).toBe(true);

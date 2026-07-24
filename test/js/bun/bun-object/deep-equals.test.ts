@@ -224,10 +224,10 @@ describe("Bun.deepEquals fast-path coverage", () => {
       if (!Bun.deepEquals(a, b)) throw new Error("expected equal");
     }
     const elapsed = (Bun.nanoseconds() - t0) / 1e6;
-    // With the Int32Shape memcmp path this runs in ~2.5ms under debug+ASAN.
+    // With the Int32Shape memcmp path this runs in ~1.8ms release / ~2.5ms debug+ASAN.
     // Without it (pre-#35387 per-element recursion) the same 50 iterations cost
-    // ~60ms release / ~3000ms debug+ASAN, so the bound below is the regression guard.
-    expect(elapsed).toBeLessThan(500);
+    // ~62ms release / ~3000ms debug+ASAN, so the bound below is the regression guard.
+    expect(elapsed).toBeLessThan(40);
   });
 });
 

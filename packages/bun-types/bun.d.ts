@@ -9748,10 +9748,11 @@ declare module "bun" {
      *
      * @param init - Optional initial data for the cookie map:
      *   - string: A cookie header string (e.g., "name=value; foo=bar")
-     *   - string[][]: An array of name/value pairs (e.g., [["name", "value"], ["foo", "bar"]])
+     *   - Iterable<[string, string]>: Any iterable of name/value pairs, including `Map`, `Headers`,
+     *     `URLSearchParams`, another `CookieMap`, an array of pairs, or a generator
      *   - Record<string, string>: An object with cookie names as keys (e.g., { name: "value", foo: "bar" })
      */
-    constructor(init?: string[][] | Record<string, string> | string);
+    constructor(init?: Iterable<readonly [string, string]> | Record<string, string> | string);
 
     /**
      * Gets the value of a cookie with the specified name.

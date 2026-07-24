@@ -22,11 +22,18 @@ const cookies2 = new Bun.CookieMap({
   theme: "dark",
 });
 
-// From an array of name/value pairs
+// From any iterable of name/value pairs (Map, Headers, URLSearchParams,
+// another CookieMap, an array of pairs, a generator, ...)
 const cookies3 = new Bun.CookieMap([
   ["session", "abc123"],
   ["theme", "dark"],
 ]);
+const cookies4 = new Bun.CookieMap(
+  new Map([
+    ["session", "abc123"],
+    ["theme", "dark"],
+  ]),
+);
 ```
 
 ### In HTTP servers
@@ -433,7 +440,7 @@ class Cookie {
 }
 
 class CookieMap implements Iterable<[string, string]> {
-  constructor(init?: string[][] | Record<string, string> | string);
+  constructor(init?: Iterable<readonly [string, string]> | Record<string, string> | string);
 
   get(name: string): string | null;
 

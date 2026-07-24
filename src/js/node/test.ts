@@ -428,8 +428,9 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onInterrupt);
     signal?.addEventListener("abort", onInterrupt, { once: true });
+    let i = 0;
     try {
-      for (let i = 0; i < files.length; i++) {
+      for (; i < files.length; i++) {
         if (state.interrupted) break;
         await runOneFile(files[i], opts, reporter, counts, state, i + 1);
       }
@@ -437,6 +438,11 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onInterrupt);
       signal?.removeEventListener("abort", onInterrupt);
+    }
+    // Node cancels each not-yet-started FileTest with cancelledByParent rather
+    // than silently dropping it; an aborted run must not report success:true.
+    for (; i < files.length; i++) {
+      reportCancelledFile(files[i], opts, reporter, counts, state);
     }
 
     if (state.interrupted) {
@@ -464,6 +470,45 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     return;
   }
   reporter.endStream();
+}
+
+function reportCancelledFile(
+  file: string,
+  opts: ReturnType<typeof validateRunOptions>,
+  reporter: TestsStream,
+  counts: Record<string, number>,
+  state: RunInterruptState,
+) {
+  const path = require("node:path");
+  const absolute = path.resolve(opts.cwd as string, file);
+  const fileNode = {
+    nesting: 0,
+    name: file,
+    type: "test",
+    testId: 1,
+    parentId: 0,
+    tags: [],
+    line: 1,
+    column: 1,
+    file: absolute,
+  };
+  const error = makeCancelledByParentError();
+  const testNumber = ++state.verdictNumber;
+  const details = { __proto__: null, duration_ms: 0, type: "test", error };
+  reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
+  reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
+  reporter.emitMessage("test:complete", {
+    __proto__: null,
+    ...fileNode,
+    type: undefined,
+    testNumber,
+    details: { ...details, passed: false },
+  });
+  reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
+  reporter.emitMessage("test:fail", { __proto__: null, ...fileNode, type: undefined, testNumber, details });
+  counts.tests++;
+  counts.cancelled++;
+  counts.topLevel++;
 }
 
 async function runOneFile(

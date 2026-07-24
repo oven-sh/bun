@@ -24,8 +24,7 @@ pub(crate) fn to_be_type_of(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeTypeOf", "")?;
-    let _arguments = frame.arguments_old::<1>();
-    let arguments = _arguments.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires 1 argument")));

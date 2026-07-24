@@ -348,6 +348,22 @@ if (Performance) {
       writable: true,
       value: eventLoopUtilization,
     },
+    // WebCore's toJSON only serializes timeOrigin; node's carries the two
+    // node-only members alongside it.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/performance.js#L159
+    toJSON: {
+      __proto__: null,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: function toJSON() {
+        return {
+          nodeTiming: this.nodeTiming,
+          timeOrigin: this.timeOrigin,
+          eventLoopUtilization: this.eventLoopUtilization(),
+        };
+      },
+    },
   });
 }
 

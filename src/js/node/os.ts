@@ -152,6 +152,9 @@ function bound(binding) {
   };
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/os.js#L334
+Object.freeze($processBindingConstants.os.signals);
+
 const out = bound($rust("node_os.rs", "createNodeOsBinding"));
 
 symbolToStringify(out, "arch");

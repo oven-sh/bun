@@ -11,12 +11,13 @@ use bun_install::lockfile::{
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
     tree,
 };
+use bun_install::package_manager::Options::NodeLinker;
 use bun_install::package_manager_real::{
     PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    PackageID, PackageManager, Resolution, ResolutionTag,
 };
 use bun_paths::AutoAbsPath;
 
@@ -24,6 +25,176 @@ use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
+
+/// Under the isolated linker, packages live at
+/// `node_modules/.bun/<name>@<version>[+<peerhash>]/node_modules/<name>` instead
+/// of the hoisted `node_modules/<name>` path [`tree::Iterator`] assumes. This
+/// walks the `.bun` store, probes each untrusted package where it actually
+/// lives, and invokes `f` for each one that has lifecycle scripts. Returns
+/// `Ok(false)` when `node_modules/.bun` does not exist (hoisted layout; caller
+/// falls back to the tree walk).
+///
+/// Peer-hash suffixes are discovered by readdir rather than recomputing the
+/// Store: a package's entries are every directory name equal to
+/// `<name>@<res>` or `<name>@<res>+<16 lowercase hex>`.
+///
+/// `f` receives `in_global_store = true` when the `.bun/<entry>` is a symlink
+/// (global virtual store); running a script there would mutate the shared
+/// content-addressed cache, mirroring the guard in the isolated installer's
+/// `Step::RunPreinstall`.
+fn collect_isolated_untrusted_scripts(
+    node_linker: NodeLinker,
+    log: &mut bun_ast::Log,
+    lockfile: &Lockfile,
+    scripts: &[Scripts],
+    resolutions: &[Resolution],
+    untrusted_dep_ids: &DepIdSet,
+    mut f: impl FnMut(DependencyID, PackageID, ScriptsList, bool) -> crate::Result<()>,
+) -> crate::Result<bool> {
+    // A stale `.bun` from a prior isolated install can coexist with a hoisted
+    // layout after a linker switch without `rm -rf node_modules`; honor the
+    // configured linker rather than blindly trusting the directory's presence.
+    if node_linker == NodeLinker::Hoisted {
+        return Ok(false);
+    }
+
+    let mut store_path = AutoAbsPath::init_top_level_dir();
+    let _ = store_path.append(b"node_modules");
+    let _ = store_path.append(b".bun");
+
+    let store_fd = match bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), store_path.slice()) {
+        Ok(fd) => fd,
+        Err(e) if e.get_errno() == bun_sys::E::ENOENT => return Ok(false),
+        Err(e) => return Err(crate::Error::from(e)),
+    };
+    let _close = scopeguard::guard(store_fd, |fd| {
+        let _ = bun_sys::close(fd);
+    });
+
+    let mut entries: Vec<(Box<[u8]>, bool)> = Vec::new();
+    let mut iter = bun_sys::iterate_dir(store_fd);
+    loop {
+        match iter.next() {
+            Ok(Some(ent)) => {
+                let name = ent.name.slice_u8();
+                if name == b"node_modules" || name.first() == Some(&b'.') {
+                    continue;
+                }
+                // Fail closed: `DT_UNKNOWN` (NFS, FUSE, some overlayfs) must
+                // not let a symlinked global-store entry through. Resolve via
+                // lstat; treat an unresolvable kind as a symlink so the script
+                // is withheld rather than run inside the shared cache.
+                let in_global_store = match ent.kind {
+                    bun_sys::EntryKind::SymLink => true,
+                    bun_sys::EntryKind::Directory => false,
+                    #[cfg(not(windows))]
+                    bun_sys::EntryKind::Unknown => {
+                        match bun_sys::lstatat(store_fd, ent.name.as_zstr()) {
+                            Ok(st) => {
+                                bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                                    != bun_sys::EntryKind::Directory
+                            }
+                            Err(_) => true,
+                        }
+                    }
+                    _ => true,
+                };
+                entries.push((Box::from(name), in_global_store));
+            }
+            Ok(None) => break,
+            Err(e) => return Err(crate::Error::from(e)),
+        }
+    }
+
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let packages = lockfile.packages.slice();
+    let pkg_names = packages.items_name();
+
+    let mut seen_pkg_ids: ArrayHashMap<PackageID, (), ArrayIdentityContext> = ArrayHashMap::new();
+
+    for &dep_id in untrusted_dep_ids.keys() {
+        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+        if package_id == install::INVALID_PACKAGE_ID
+            || package_id as usize >= resolutions.len()
+            || seen_pkg_ids.contains(&package_id)
+        {
+            continue;
+        }
+        let resolution = &resolutions[package_id as usize];
+        match resolution.tag {
+            ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Symlink => continue,
+            _ => {}
+        }
+        seen_pkg_ids.put(package_id, ())?;
+
+        let pkg_name = pkg_names[package_id as usize];
+        let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
+        let alias = dep.name.slice(buf);
+
+        // Matches `isolated_install::store::entry::StorePathFormatter` for the
+        // non-Root/Workspace tags (minus the trailing peer-hash suffix, which
+        // is matched by the `+`-prefix check below).
+        let prefix = match resolution.tag {
+            ResolutionTag::Folder => format!(
+                "{}@file+{}",
+                pkg_name.fmt_store_path(buf),
+                resolution.folder().fmt_store_path(buf),
+            ),
+            _ => format!(
+                "{}@{}",
+                pkg_name.fmt_store_path(buf),
+                resolution.fmt_store_path(buf),
+            ),
+        }
+        .into_bytes();
+
+        for (entry, in_global_store) in &entries {
+            // Peer-hash suffix is `format!("+{:016x}", hash)` (Store.rs); constrain
+            // to that exact shape so semver build metadata (`foo@1.0.0+sha`) or
+            // `/`→`+` encoded tarball/folder paths don't over-match a shorter
+            // same-name prefix.
+            const PEER_HASH_SUFFIX_LEN: usize = 1 + 16;
+            let matches = entry[..] == prefix[..]
+                || (entry.len() == prefix.len() + PEER_HASH_SUFFIX_LEN
+                    && entry[..prefix.len()] == prefix[..]
+                    && entry[prefix.len()] == b'+'
+                    && entry[prefix.len() + 1..]
+                        .iter()
+                        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+            if !matches {
+                continue;
+            }
+
+            let mut folder_path = AutoAbsPath::init_top_level_dir();
+            let _ = folder_path.append(b"node_modules");
+            let _ = folder_path.append(b".bun");
+            let _ = folder_path.append(&entry[..]);
+            let _ = folder_path.append(b"node_modules");
+            let _ = folder_path.append(pkg_name.slice(buf));
+
+            let mut package_scripts = scripts[package_id as usize];
+            let maybe_list = match package_scripts.get_list(
+                log,
+                lockfile,
+                &mut folder_path,
+                alias,
+                resolution,
+            ) {
+                Ok(v) => v,
+                Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                Err(e) => return Err(e.into()),
+            };
+
+            if let Some(list) = maybe_list {
+                if list.total > 0 && !list.items.is_empty() {
+                    f(dep_id, package_id, list, *in_global_store)?;
+                }
+            }
+        }
+    }
+
+    Ok(true)
+}
 
 pub(crate) struct DefaultTrustedCommand;
 
@@ -62,6 +233,7 @@ impl UntrustedCommand {
         // as `package_manager_command.rs::print_hash`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
+        let node_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         // SAFETY: `pm_raw` derived from `pm` above; `update_lockfile_if_needed`
@@ -110,62 +282,77 @@ impl UntrustedCommand {
         let mut untrusted_deps: ArrayHashMap<DependencyID, ScriptsList, ArrayIdentityContext> =
             ArrayHashMap::new();
 
-        let mut tree_iterator =
-            tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
+        let found_isolated = collect_isolated_untrusted_scripts(
+            node_linker,
+            log,
+            lockfile,
+            scripts,
+            resolutions,
+            &untrusted_dep_ids,
+            |dep_id, _package_id, list, _in_global_store| {
+                untrusted_deps.put(dep_id, list)?;
+                Ok(())
+            },
+        )?;
 
-        let mut node_modules_path = AutoAbsPath::init_top_level_dir();
+        if !found_isolated {
+            let mut tree_iterator =
+                tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
 
-        while let Some(node_modules) = tree_iterator.next(None) {
-            // `ResetScope`
-            // exclusively borrows the path, so save/restore the length
-            // explicitly. Restored at end of each iteration; the inner-loop
-            // `continue`/`return` paths only need the inner `folder_saved`
-            // restore (done immediately after `get_list`).
-            let nm_saved = node_modules_path.len();
-            let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
+            let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
-            for &dep_id in node_modules.dependencies {
-                if !untrusted_dep_ids.contains(&dep_id) {
-                    continue;
-                }
-                let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
-                let alias = dep.name.slice(buf);
-                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+            while let Some(node_modules) = tree_iterator.next(None) {
+                // `ResetScope`
+                // exclusively borrows the path, so save/restore the length
+                // explicitly. Restored at end of each iteration; the inner-loop
+                // `continue`/`return` paths only need the inner `folder_saved`
+                // restore (done immediately after `get_list`).
+                let nm_saved = node_modules_path.len();
+                let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
-                if package_id as usize >= packages.len() {
-                    continue;
-                }
-
-                let resolution = &resolutions[package_id as usize];
-                let mut package_scripts = scripts[package_id as usize];
-
-                let folder_saved = node_modules_path.len();
-                let _ = node_modules_path.append(alias);
-
-                let result = package_scripts.get_list(
-                    log,
-                    lockfile,
-                    &mut node_modules_path,
-                    alias,
-                    resolution,
-                );
-                node_modules_path.set_length(folder_saved);
-
-                let maybe_scripts_list = match result {
-                    Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
-                    Err(e) => return Err(e.into()),
-                };
-
-                if let Some(scripts_list) = maybe_scripts_list {
-                    if scripts_list.total == 0 || scripts_list.items.is_empty() {
+                for &dep_id in node_modules.dependencies {
+                    if !untrusted_dep_ids.contains(&dep_id) {
                         continue;
                     }
-                    untrusted_deps.put(dep_id, scripts_list)?;
-                }
-            }
+                    let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
+                    let alias = dep.name.slice(buf);
+                    let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
 
-            node_modules_path.set_length(nm_saved);
+                    if package_id as usize >= packages.len() {
+                        continue;
+                    }
+
+                    let resolution = &resolutions[package_id as usize];
+                    let mut package_scripts = scripts[package_id as usize];
+
+                    let folder_saved = node_modules_path.len();
+                    let _ = node_modules_path.append(alias);
+
+                    let result = package_scripts.get_list(
+                        log,
+                        lockfile,
+                        &mut node_modules_path,
+                        alias,
+                        resolution,
+                    );
+                    node_modules_path.set_length(folder_saved);
+
+                    let maybe_scripts_list = match result {
+                        Ok(v) => v,
+                        Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                        Err(e) => return Err(e.into()),
+                    };
+
+                    if let Some(scripts_list) = maybe_scripts_list {
+                        if scripts_list.total == 0 || scripts_list.items.is_empty() {
+                            continue;
+                        }
+                        untrusted_deps.put(dep_id, scripts_list)?;
+                    }
+                }
+
+                node_modules_path.set_length(nm_saved);
+            }
         }
 
         if untrusted_deps.count() == 0 {
@@ -212,6 +399,11 @@ struct ScriptInfo {
     package_id: PackageID,
     scripts_list: ScriptsList,
     skip: bool,
+    /// Isolated linker only: entry is a symlink into the global virtual store.
+    /// The script is not run (mutating the shared cache would affect every
+    /// project), but the name is still written to `trustedDependencies` so the
+    /// next `bun install` detaches to a project-local copy and runs it there.
+    in_global_store: bool,
 }
 
 impl TrustCommand {
@@ -258,6 +450,7 @@ impl TrustCommand {
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
+        let node_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         // `update_lockfile_if_needed` consumes `LoadResult` but we
@@ -331,107 +524,167 @@ impl TrustCommand {
         // Instead of running them right away, we group scripts by depth in the node_modules
         // file structure, then run them starting at max depth. This ensures lifecycle scripts are run
         // in the correct order as they would during a normal install
-        let mut tree_iter =
-            tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
-
-        let mut node_modules_path = AutoAbsPath::init_top_level_dir();
-
         let mut package_names_to_add: StringArrayHashMap<()> = StringArrayHashMap::new();
         let mut scripts_at_depth: ArrayHashMap<usize, Vec<ScriptInfo>> = ArrayHashMap::new();
 
         let mut scripts_count: usize = 0;
 
-        while let Some(node_modules) = tree_iter.next(None) {
-            let nm_saved = node_modules_path.len();
-            let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
-
-            let _node_modules_dir = match bun_sys::Dir::cwd()
-                .open_at(node_modules.relative_path.as_bytes())
-                .map_err(crate::Error::from)
-            {
-                Ok(d) => d,
-                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
-                    node_modules_path.set_length(nm_saved);
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
-
-            for &dep_id in node_modules.dependencies {
-                if !untrusted_dep_ids.contains(&dep_id) {
-                    continue;
-                }
+        // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
+        let found_isolated = collect_isolated_untrusted_scripts(
+            node_linker,
+            unsafe { &mut *log },
+            lockfile,
+            scripts,
+            resolutions,
+            &untrusted_dep_ids,
+            |dep_id, package_id, scripts_list, in_global_store| {
                 let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
                 let alias = dep.name.slice(buf);
-                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-
-                if package_id as usize >= packages.len() {
-                    continue;
-                }
-
                 let resolution = &resolutions[package_id as usize];
-                let mut package_scripts = scripts[package_id as usize];
 
-                let folder_saved = node_modules_path.len();
-                let _ = node_modules_path.append(alias);
-
-                // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
-                let result = package_scripts.get_list(
-                    unsafe { &mut *log },
-                    lockfile,
-                    &mut node_modules_path,
-                    alias,
-                    resolution,
-                );
-                node_modules_path.set_length(folder_saved);
-
-                let maybe_scripts_list = match result {
-                    Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
-                    Err(e) => return Err(e.into()),
-                };
-
-                if let Some(scripts_list) = maybe_scripts_list {
-                    let skip = 'brk: {
-                        if trust_all {
+                let skip = 'brk: {
+                    if trust_all {
+                        break 'brk false;
+                    }
+                    for package_name_from_cli in &packages_to_trust {
+                        if strings::eql_long(package_name_from_cli, alias, true)
+                            && !lockfile.has_trusted_dependency(
+                                alias,
+                                packages.items_name()[package_id as usize].slice(buf),
+                                resolution,
+                            )
+                        {
                             break 'brk false;
                         }
-
-                        for package_name_from_cli in &packages_to_trust {
-                            if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
-                                    alias,
-                                    packages.items_name()[package_id as usize].slice(buf),
-                                    resolution,
-                                )
-                            {
-                                break 'brk false;
-                            }
-                        }
-
-                        true
-                    };
-
-                    let total = scripts_list.total as usize;
-                    // even if it is skipped we still add to scripts_at_depth for logging later
-                    let entry = scripts_at_depth.get_or_put(node_modules.depth)?;
-                    if !entry.found_existing {
-                        *entry.value_ptr = Vec::new();
                     }
-                    entry.value_ptr.push(ScriptInfo {
-                        package_id,
-                        scripts_list,
-                        skip,
-                    });
+                    true
+                };
 
-                    if !skip {
-                        package_names_to_add.put(alias, ())?;
+                let total = scripts_list.total as usize;
+                // The isolated store is flat; this does not reconstruct the
+                // dependency-graph ordering the installer's own `Step::Scripts`
+                // gating provides. Hoisted `pm trust` has the same gap when
+                // everything hoists to depth 0.
+                let entry = scripts_at_depth.get_or_put(0usize)?;
+                if !entry.found_existing {
+                    *entry.value_ptr = Vec::new();
+                }
+                entry.value_ptr.push(ScriptInfo {
+                    package_id,
+                    scripts_list,
+                    skip,
+                    in_global_store,
+                });
+
+                if !skip {
+                    package_names_to_add.put(alias, ())?;
+                    if !in_global_store {
                         scripts_count += total;
                     }
                 }
-            }
+                Ok(())
+            },
+        )?;
 
-            node_modules_path.set_length(nm_saved);
+        if !found_isolated {
+            let mut tree_iter =
+                tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
+
+            let mut node_modules_path = AutoAbsPath::init_top_level_dir();
+
+            while let Some(node_modules) = tree_iter.next(None) {
+                let nm_saved = node_modules_path.len();
+                let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
+
+                let _node_modules_dir = match bun_sys::Dir::cwd()
+                    .open_at(node_modules.relative_path.as_bytes())
+                    .map_err(crate::Error::from)
+                {
+                    Ok(d) => d,
+                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
+                        node_modules_path.set_length(nm_saved);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+
+                for &dep_id in node_modules.dependencies {
+                    if !untrusted_dep_ids.contains(&dep_id) {
+                        continue;
+                    }
+                    let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
+                    let alias = dep.name.slice(buf);
+                    let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+
+                    if package_id as usize >= packages.len() {
+                        continue;
+                    }
+
+                    let resolution = &resolutions[package_id as usize];
+                    let mut package_scripts = scripts[package_id as usize];
+
+                    let folder_saved = node_modules_path.len();
+                    let _ = node_modules_path.append(alias);
+
+                    // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
+                    let result = package_scripts.get_list(
+                        unsafe { &mut *log },
+                        lockfile,
+                        &mut node_modules_path,
+                        alias,
+                        resolution,
+                    );
+                    node_modules_path.set_length(folder_saved);
+
+                    let maybe_scripts_list = match result {
+                        Ok(v) => v,
+                        Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                        Err(e) => return Err(e.into()),
+                    };
+
+                    if let Some(scripts_list) = maybe_scripts_list {
+                        let skip = 'brk: {
+                            if trust_all {
+                                break 'brk false;
+                            }
+
+                            for package_name_from_cli in &packages_to_trust {
+                                if strings::eql_long(package_name_from_cli, alias, true)
+                                    && !lockfile.has_trusted_dependency(
+                                        alias,
+                                        packages.items_name()[package_id as usize].slice(buf),
+                                        resolution,
+                                    )
+                                {
+                                    break 'brk false;
+                                }
+                            }
+
+                            true
+                        };
+
+                        let total = scripts_list.total as usize;
+                        // even if it is skipped we still add to scripts_at_depth for logging later
+                        let entry = scripts_at_depth.get_or_put(node_modules.depth)?;
+                        if !entry.found_existing {
+                            *entry.value_ptr = Vec::new();
+                        }
+                        entry.value_ptr.push(ScriptInfo {
+                            package_id,
+                            scripts_list,
+                            skip,
+                            in_global_store: false,
+                        });
+
+                        if !skip {
+                            package_names_to_add.put(alias, ())?;
+                            scripts_count += total;
+                        }
+                    }
+                }
+
+                node_modules_path.set_length(nm_saved);
+            }
         }
 
         if scripts_at_depth.count() == 0 || package_names_to_add.count() == 0 {
@@ -463,7 +716,7 @@ impl TrustCommand {
         // the `List` per spawn.
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
-                if info.skip {
+                if info.skip || info.in_global_store {
                     continue;
                 }
 
@@ -587,6 +840,7 @@ impl TrustCommand {
         let mut total_scripts_ran: usize = 0;
         let mut total_packages_with_scripts: usize = 0;
         let mut total_skipped_packages: usize = 0;
+        let mut total_global_store_packages: usize = 0;
 
         Output::print(format_args!("\n"));
 
@@ -600,6 +854,10 @@ impl TrustCommand {
                     info.scripts_list
                         .print_scripts(resolution, buf, PrintFormat::Untrusted);
                     total_skipped_packages += 1;
+                } else if info.in_global_store {
+                    info.scripts_list
+                        .print_scripts(resolution, buf, PrintFormat::Info);
+                    total_global_store_packages += 1;
                 } else {
                     total_packages_with_scripts += 1;
                     total_scripts_ran += info.scripts_list.total as usize;
@@ -675,22 +933,45 @@ impl TrustCommand {
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
         let _ = root_file.close();
 
-        debug_assert!(total_scripts_ran > 0);
+        debug_assert!(total_scripts_ran > 0 || total_global_store_packages > 0);
 
-        bun_core::pretty!(
-            " <green>{}<r> script{} ran across {} package{} ",
-            total_scripts_ran,
-            if total_scripts_ran > 1 { "s" } else { "" },
-            total_packages_with_scripts,
-            if total_packages_with_scripts > 1 {
-                "s"
-            } else {
-                ""
-            },
-        );
+        if total_scripts_ran > 0 {
+            bun_core::pretty!(
+                " <green>{}<r> script{} ran across {} package{} ",
+                total_scripts_ran,
+                if total_scripts_ran > 1 { "s" } else { "" },
+                total_packages_with_scripts,
+                if total_packages_with_scripts > 1 {
+                    "s"
+                } else {
+                    ""
+                },
+            );
 
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
-        Output::print(format_args!("\n"));
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+            Output::print(format_args!("\n"));
+        }
+
+        if total_global_store_packages > 0 {
+            Output::print(format_args!("\n"));
+            bun_core::prettyln!(
+                " <yellow>{}<r> package{} linked from the global store; run <d>`<r><blue>bun install<r><d>`<r> to run {} scripts in a project-local copy",
+                total_global_store_packages,
+                if total_global_store_packages > 1 {
+                    "s are"
+                } else {
+                    " is"
+                },
+                if total_global_store_packages > 1 {
+                    "their"
+                } else {
+                    "its"
+                },
+            );
+        }
 
         if total_skipped_packages > 0 {
             Output::print(format_args!("\n"));

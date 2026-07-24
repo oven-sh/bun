@@ -1,7 +1,25 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
+
+// The native async crypto jobs invoke their callback via EventLoop::run_callback,
+// which routes a throw to the keep-alive uncaught path; wrap the callback so a
+// throw is a fatal uncaughtException like node's AfterThreadPoolWork ->
+// MakeCallback. Applied only when the trailing arg is already callable so sync
+// overloads (randomBytes(size), randomInt(max)) and native validation of a
+// non-callable callback are unchanged.
+function guardLastCallback(native) {
+  function wrapped() {
+    const last = arguments.length - 1;
+    if (last >= 0 && $isCallable(arguments[last])) arguments[last] = guardCallback(arguments[last]);
+    return native.$apply(this, arguments);
+  }
+  Object.$defineProperty(wrapped, "name", { value: native.name, configurable: true });
+  Object.$defineProperty(wrapped, "length", { value: native.length, configurable: true });
+  return wrapped;
+}
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
 
@@ -138,10 +156,11 @@ crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;
 
-crypto_exports.generateKey = generateKey;
+crypto_exports.generateKey = guardLastCallback(generateKey);
 crypto_exports.generateKeySync = generateKeySync;
-defineCustomPromisifyArgs(generateKeyPair, ["publicKey", "privateKey"]);
-crypto_exports.generateKeyPair = generateKeyPair;
+const generateKeyPairGuarded = guardLastCallback(generateKeyPair);
+defineCustomPromisifyArgs(generateKeyPairGuarded, ["publicKey", "privateKey"]);
+crypto_exports.generateKeyPair = generateKeyPairGuarded;
 crypto_exports.generateKeyPairSync = generateKeyPairSync;
 
 crypto_exports.createSecretKey = createSecretKey;
@@ -164,20 +183,27 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 
   const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
+    // Guarded so a throw inside the callback is an uncaughtException, as in node.
+    const cb = guardCallback(callback);
+    promise.then(onPbkdf2Resolved.bind(cb), onPbkdf2Rejected.bind(cb));
     return;
   }
 
   promise.then(() => {});
 }
 
+// Hoisted `.then` handlers for pbkdf2; `this` is the guarded callback.
+function onPbkdf2Resolved(result) {
+  this(null, result);
+}
+function onPbkdf2Rejected(err) {
+  this(err);
+}
+
 crypto_exports.pbkdf2 = pbkdf2;
 crypto_exports.pbkdf2Sync = pbkdf2Sync;
 
-crypto_exports.hkdf = hkdf;
+crypto_exports.hkdf = guardLastCallback(hkdf);
 crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
@@ -215,7 +241,7 @@ Object.assign(Sign.prototype, {
 });
 
 crypto_exports.Sign = Sign;
-crypto_exports.sign = sign;
+crypto_exports.sign = guardLastCallback(sign);
 
 function createSign(algorithm, options?) {
   return new Sign(algorithm, options);
@@ -246,7 +272,7 @@ Object.assign(Verify.prototype, {
 });
 
 crypto_exports.Verify = Verify;
-crypto_exports.verify = verify;
+crypto_exports.verify = guardLastCallback(verify);
 
 function createVerify(algorithm, options?) {
   return new Verify(algorithm, options);
@@ -327,10 +353,10 @@ crypto_exports.createHmac = function createHmac(hmac, key, options) {
 
 crypto_exports.getHashes = getHashes;
 
-crypto_exports.randomInt = randomInt;
-crypto_exports.randomFill = randomFill;
+crypto_exports.randomInt = guardLastCallback(randomInt);
+crypto_exports.randomFill = guardLastCallback(randomFill);
 crypto_exports.randomFillSync = randomFillSync;
-crypto_exports.randomBytes = randomBytes;
+crypto_exports.randomBytes = guardLastCallback(randomBytes);
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomUUIDv7 = randomUUIDv7;
 
@@ -344,9 +370,9 @@ crypto_exports.argon2Sync = function argon2Sync(_algorithm, _parameters) {
   throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
 };
 
-crypto_exports.checkPrime = checkPrime;
+crypto_exports.checkPrime = guardLastCallback(checkPrime);
 crypto_exports.checkPrimeSync = checkPrimeSync;
-crypto_exports.generatePrime = generatePrime;
+crypto_exports.generatePrime = guardLastCallback(generatePrime);
 crypto_exports.generatePrimeSync = generatePrimeSync;
 
 crypto_exports.secureHeapUsed = secureHeapUsed;
@@ -361,7 +387,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
+    value: deprecate(crypto_exports.randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });
@@ -375,7 +401,7 @@ crypto_exports.getDiffieHellman = crypto_exports.createDiffieHellmanGroup = Diff
 crypto_exports.createDiffieHellman = createDiffieHellman;
 crypto_exports.DiffieHellman = DiffieHellman;
 
-crypto_exports.diffieHellman = diffieHellman;
+crypto_exports.diffieHellman = guardLastCallback(diffieHellman);
 
 ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;
@@ -493,7 +519,7 @@ crypto_exports.createECDH = function createECDH(curve) {
   crypto_exports.getCiphers = getCiphers;
 }
 
-crypto_exports.scrypt = scrypt;
+crypto_exports.scrypt = guardLastCallback(scrypt);
 crypto_exports.scryptSync = scryptSync;
 
 crypto_exports.publicEncrypt = publicEncrypt;

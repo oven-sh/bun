@@ -164,4 +164,9 @@ bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler);
 
+// Routes its argument onto the uncaught-exception path. Used by the
+// process.nextTick drain and, via $newCppFunction, by the node-style
+// callback shims in src/js.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
 } // namespace Bun

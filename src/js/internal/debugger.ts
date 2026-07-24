@@ -124,17 +124,27 @@ export default function (
     if (debugUrl) {
       const { protocol, href, host, pathname } = debugUrl;
       if (!protocol.includes("unix")) {
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
-        Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
+        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+          kIgnoreWriteError,
+        );
+        Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`).catch(kIgnoreWriteError);
         if (protocol.includes("ws")) {
-          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
+          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`).catch(
+            kIgnoreWriteError,
+          );
         }
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+          kIgnoreWriteError,
+        );
       }
     } else {
-      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
-      Bun.write(Bun.stderr, `Listening on ${dim(url)}\n`);
-      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+        kIgnoreWriteError,
+      );
+      Bun.write(Bun.stderr, `Listening on ${dim(url)}\n`).catch(kIgnoreWriteError);
+      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+        kIgnoreWriteError,
+      );
     }
   }
 
@@ -681,6 +691,11 @@ function reset(): string {
   }
   return "";
 }
+
+// Bun.write returns a promise; the banner writes are best-effort and a
+// rejected stderr write (racing writers on a piped stderr, seen on Windows)
+// must not become a fatal unhandled rejection.
+function kIgnoreWriteError(): void {}
 
 function notify(options): void {
   Bun.connect({

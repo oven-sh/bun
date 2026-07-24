@@ -73,6 +73,10 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     //     exceptionSourceURL = callFrame->sourceURL();
     // }
 
+    // Remaining callers (JSPerformanceObserverCallback, JSAbortAlgorithm,
+    // JSErrorHandler, JSDOMPromiseDeferred) are Node-compat callbacks whose
+    // task is dead; take the fatal path. JSEventListener defers its listener
+    // throws to nextTick separately so the dispatch loop completes first.
     Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 
     if (exceptionDetails) {

@@ -35,6 +35,7 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
+  reportUncaughtException,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -1709,7 +1710,7 @@ function Socket(options?) {
             // The native data dispatch would otherwise route a throw to the
             // socket error handler; hand it to the uncaught-exception path
             // synchronously the way node's bare call does.
-            reportError(e);
+            reportUncaughtException(e);
           }
           if (self.destroyed) return;
           if (ret === false || self.isPaused()) {
@@ -1739,7 +1740,7 @@ function Socket(options?) {
         } catch (e) {
           // Same as above: report then fall through so the next slice is
           // delivered, matching node's per-onStreamRead behavior.
-          reportError(e);
+          reportUncaughtException(e);
         }
         if (self.destroyed) return;
         if (ret === false || self.isPaused()) {

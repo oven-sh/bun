@@ -5799,3 +5799,124 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A throw inside a node-style async callback must surface as an
+// uncaughtException, as in node, where these callbacks run off the libuv
+// request completion rather than from a promise reaction.
+describe("a throw from a node-style callback is an uncaughtException", () => {
+  const dir = tempDirWithFiles("callback-throw-uncaught", { "file.txt": "hello" });
+  const file = JSON.stringify(join(dir, "file.txt"));
+  const dirLit = JSON.stringify(dir);
+
+  async function runScript(source: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is returned (not asserted) so a failing case can show the
+    // child's stack trace; debug builds emit benign startup noise there.
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const cases: Array<[string, string]> = [
+    ["fs.exists", `require("fs").exists("/definitely/not/here", () => { throw new Error("boom"); })`],
+    ["fs.stat", `require("fs").stat("/definitely/not/here", () => { throw new Error("boom"); })`],
+    ["fs.stat (success)", `require("fs").stat(${file}, () => { throw new Error("boom"); })`],
+    ["fs.readFile", `require("fs").readFile(${file}, () => { throw new Error("boom"); })`],
+    ["fs.readdir", `require("fs").readdir(${dirLit}, () => { throw new Error("boom"); })`],
+    ["fs.open", `require("fs").open("/definitely/not/here", "r", () => { throw new Error("boom"); })`],
+    ["fs.access", `require("fs").access(${file}, () => { throw new Error("boom"); })`],
+    ["fs.realpath", `require("fs").realpath(${file}, () => { throw new Error("boom"); })`],
+    [
+      "fs.close",
+      `const fs = require("fs"); fs.open(${file}, "r", (e, fd) => fs.close(fd, () => { throw new Error("boom"); }))`,
+    ],
+    [
+      "fs.read",
+      `const fs = require("fs"); fs.open(${file}, "r", (e, fd) => fs.read(fd, Buffer.alloc(4), 0, 4, 0, () => { throw new Error("boom"); }))`,
+    ],
+    // Both symlink overloads: the 4-argument form takes a different path.
+    ["fs.symlink (3-arg)", `require("fs").symlink(${file}, ${dirLit} + "/l3", () => { throw new Error("boom"); })`],
+    [
+      "fs.symlink (4-arg)",
+      `require("fs").symlink(${file}, ${dirLit} + "/l4", "file", () => { throw new Error("boom"); })`,
+    ],
+    ["dns.lookup", `require("dns").lookup("localhost", () => { throw new Error("boom"); })`],
+    // Windows has no 127.0.0.1 PTR entry in its hosts file, so reverse()
+    // there falls through to a real query (the vendored test-c-ares.js
+    // gates the identical call the same way).
+    ...(isWindows
+      ? []
+      : [
+          ["dns.reverse", `require("dns").reverse("127.0.0.1", () => { throw new Error("boom"); })`] as [
+            string,
+            string,
+          ],
+        ]),
+    ["crypto.pbkdf2", `require("crypto").pbkdf2("pw", "salt", 10, 16, "sha256", () => { throw new Error("boom"); })`],
+    ["crypto.scrypt", `require("crypto").scrypt("pw", "salt", 16, () => { throw new Error("boom"); })`],
+    ["crypto.randomBytes", `require("crypto").randomBytes(8, () => { throw new Error("boom"); })`],
+    ["crypto.randomFill", `require("crypto").randomFill(Buffer.alloc(8), () => { throw new Error("boom"); })`],
+    ["crypto.hkdf", `require("crypto").hkdf("sha256", "key", "salt", "info", 16, () => { throw new Error("boom"); })`],
+    [
+      "crypto.sign",
+      `const { generateKeyPairSync, sign } = require("crypto"); const { privateKey } = generateKeyPairSync("ed25519"); sign(null, Buffer.from("d"), privateKey, () => { throw new Error("boom"); })`,
+    ],
+  ];
+
+  it.concurrent.each(cases)("%s", async (_name, snippet) => {
+    const { stdout, exitCode } = await runScript(`
+      process.on("uncaughtException", e => { console.log("UNCAUGHT:" + e.message); process.exit(0); });
+      process.on("unhandledRejection", e => { console.log("REJECTED:" + (e && e.message)); process.exit(0); });
+      setTimeout(() => { console.log("NOTHING"); process.exit(0); }, 5000);
+      ${snippet};
+    `);
+    expect(stdout).toBe("UNCAUGHT:boom");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("keeps a non-throwing callback in the same place in the event loop", async () => {
+    const { stdout, exitCode } = await runScript(`
+      const fs = require("fs");
+      const log = [];
+      fs.stat(${file}, (err, st) => {
+        log.push("fs-cb:" + (err === null) + ":" + st.isFile());
+        process.nextTick(() => log.push("tick-from-fs-cb"));
+        // Registered inside the fs callback so nextTick-before-setImmediate
+        // is the deterministic ordering being asserted, not a threadpool race.
+        setImmediate(() => log.push("setImmediate"));
+      });
+      process.on("exit", () => console.log(log.join(",")));
+    `);
+    expect(stdout).toBe("fs-cb:true:true,tick-from-fs-cb,setImmediate");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("is transparent to fs.Dir callbacks", async () => {
+    const odir = JSON.stringify(tempDirWithFiles("cb-throw-opendir", { "file.txt": "x" }));
+    const { stdout, exitCode } = await runScript(`
+      require("fs").opendir(${odir}, (err, dir) => {
+        if (err) throw err;
+        dir.read((e, ent) => {
+          console.log(ent && ent.name);
+          dir.close(() => console.log("closed"));
+        });
+      });
+    `);
+    expect(stdout.split("\n")).toEqual(["file.txt", "closed"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent(
+    "keeps a non-callable symlink callback as an ignored handler (Bun divergence: node throws)",
+    async () => {
+      const { stdout, exitCode } = await runScript(`
+      require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
+      // Negative assertion with no observable signal: the ignored handler
+      // staying silent has nothing to await, so hold the process open past
+      // the symlink settlement before printing the sentinel.
+      setTimeout(() => console.log("quiet"), 50);
+    `);
+      expect(stdout).toBe("quiet");
+      expect(exitCode).toBe(0);
+    },
+  );
+});

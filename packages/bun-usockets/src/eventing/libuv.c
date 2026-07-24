@@ -37,7 +37,10 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
   if (send(fd, "", 0, 0) != SOCKET_ERROR) {
     return 0;
   }
-  return WSAGetLastError() != WSAEWOULDBLOCK;
+  int err = WSAGetLastError();
+  /* WSAESHUTDOWN means our own shutdown(SD_SEND) ran; that is not a peer
+   * reset. The fin_deferred sweep probes sockets after local shutdown. */
+  return err != WSAEWOULDBLOCK && err != WSAESHUTDOWN;
 }
 
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
@@ -127,9 +130,24 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
           sock->group->loop->data.fin_deferred_count++;
         }
       }
+    } else if (kind == POLL_TYPE_SOCKET &&
+               !(us_poll_events(wp) & LIBUS_SOCKET_READABLE)) {
+      /* A half-open data socket whose end was already delivered: the EOF path
+       * moved its poll to WRITABLE-only (loop.c), and us_poll_change re-adds
+       * UV_DISCONNECT unconditionally, so AFD keeps reporting it. Re-adding
+       * READABLE here made recv() rediscover the same EOF, which re-armed
+       * WRITABLE+DISCONNECT again - on_end busy-looped once per iteration per
+       * half-open socket, and every subsequent event-loop turn paid that cost.
+       * The re-arm at the top of this branch (uv_poll_start(p, us_poll_events))
+       * already dropped DISCONNECT, so a socket at 0-event polling quiesces.
+       * Non-SOCKET kinds keep the unconditional READABLE below: SEMI_SOCKET
+       * checks error/eof (set from status) and listen polls READABLE only. */
     } else {
       events |= UV_READABLE;
     }
+  }
+  if (!error && !eof && !(events & (UV_READABLE | UV_WRITABLE))) {
+    return;
   }
   us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, error, eof, events);
 }
@@ -292,7 +310,16 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
 void us_loop_pump(struct us_loop_t *loop) {
+  /* POSIX parity: us_loop_run_bun_tick polls epoll/kqueue and dispatches
+   * regardless of ref state (it only early-outs on num_polls == 0). libuv's
+   * uv_run() skips its body when uv__loop_alive() is 0, so IOCP completions
+   * for unref'd handles (subprocess exit packets, socket events) and due
+   * timers are never processed. Bun's outer drive loops (wait_for_promise,
+   * bun:test) supply their own keep-going predicate, so force exactly one
+   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
+  loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  loop->uv_loop->active_handles--;
 }
 
 struct us_loop_t *us_create_loop(void *hint,

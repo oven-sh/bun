@@ -6,9 +6,11 @@
 // oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), every x64 at the nehalem floor (no separate -baseline variant),
-// typed-array constructor ClassInfo kept address-unique under LTO, and the
-// Windows ICU data table filtered + per-item zstd compressed.
-export const WEBKIT_VERSION = "c9296e353e365ecf0de82f273bb0a88a3df465be";
+// typed-array constructor ClassInfo kept address-unique under LTO, the
+// Windows ICU data table filtered + per-item zstd compressed, and Windows
+// unwind info (RtlAddGrowableFunctionTable) registered for the fixed JIT
+// pool (LLInt pending offlineasm .seh_* emission).
+export const WEBKIT_VERSION = "a40d462206e1caf8388062120acde61e37a4ae7d";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

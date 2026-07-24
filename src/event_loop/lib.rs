@@ -9,9 +9,8 @@ pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
-// `InternalLoopData::set_parent_event_loop`
-// is reached via the lower-tier `set_parent_raw(tag, ptr)` +
-// `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
+// The parent event loop is wired via the lower-tier `set_parent_raw(tag, ptr)`
+// + `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
 // lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
 // gate-free.
 // ────────────────────────────────────────────────────────────────────────────
@@ -62,7 +61,7 @@ bun_dispatch::link_interface! {
         fn exit();
         fn enqueue_task(task: Task);
         fn enqueue_task_concurrent(task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>);
-        fn env() -> *mut bun_dotenv::Loader<'static>;
+        fn env() -> *mut bun_dotenv::Loader;
         fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;
     }

@@ -20,47 +20,53 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-// Flags: --expose-gc
-
 const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
-const { onGC } = require('../common/gc');
+// This test tries to confirm that a TLS Socket will work as expected even if it
+// is created after the original socket has received some data.
+//
+// Ref: https://github.com/nodejs/node-v0.x-archive/issues/6940
+// Ref: https://github.com/nodejs/node-v0.x-archive/pull/6950
+
+const fixtures = require('../common/fixtures');
 const assert = require('assert');
 const tls = require('tls');
-const fixtures = require('../common/fixtures');
+const net = require('net');
 
-// Test that the implicit listener for an 'connect' event on tls.Sockets is
-// added using `once()`, i.e. can be gc'ed once that event has occurred.
+const sent = 'hello world';
+let received = '';
 
-const server = tls.createServer({
-  cert: fixtures.readKey('rsa_cert.crt'),
-  key: fixtures.readKey('rsa_private.pem')
-}).listen(0);
+const options = {
+  key: fixtures.readKey('agent1-key.pem'),
+  cert: fixtures.readKey('agent1-cert.pem')
+};
 
-let collected = false;
-const gcListener = { ongc() { collected = true; } };
+const server = net.createServer(common.mustCall((c) => {
+  setTimeout(common.mustCall(() => {
+    const s = new tls.TLSSocket(c, {
+      isServer: true,
+      secureContext: tls.createSecureContext(options)
+    });
 
-{
-  const gcObject = {};
-  onGC(gcObject, gcListener);
+    s.on('data', (chunk) => {
+      received += chunk;
+    });
 
-  const sock = tls.connect(
-    server.address().port,
-    { rejectUnauthorized: false },
-    common.mustCall(() => {
-      assert.strictEqual(gcObject, gcObject); // Keep reference alive
-      assert.strictEqual(collected, false);
-      setImmediate(done, sock);
+    s.on('end', common.mustCall(() => {
+      server.close();
+      s.destroy();
     }));
-}
+  }), 200);
+})).listen(0, common.mustCall(() => {
+  const c = tls.connect(server.address().port, {
+    rejectUnauthorized: false
+  }, () => {
+    c.end(sent);
+  });
+}));
 
-function done(sock) {
-  globalThis.gc();
-  setImmediate(common.mustCall(() => {
-    assert.strictEqual(collected, true);
-    sock.end();
-    server.close();
-  }));
-}
+process.on('exit', () => {
+  assert.strictEqual(received, sent);
+});

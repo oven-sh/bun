@@ -273,6 +273,103 @@ it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte
   expect(received).toBe(size);
 });
 
+// end() called after a backpressured write() with the reader already gone:
+// end_from_js's own flush() sees EPIPE synchronously. Throwing it would leave
+// the write()'s outstanding promise orphaned (never settled here; in the spawn
+// path on_attached_process_exit rejected it a second time as an unhandled
+// rejection). Instead end() latches the error into that pending promise and
+// returns it, so write()'s promise and end()'s return are the same object and
+// the failure is reported exactly once.
+it.skipIf(!isPosix)(
+  "end() after a backpressured write() with the reader gone returns the write's promise, rejecting with EPIPE",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
+    const sink = Bun.file(writeFd).writer();
+    try {
+      const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      // end()'s flush() hits EPIPE synchronously. It must not throw and strand
+      // writePromise; it hands back the same promise with the error latched.
+      const endResult = sink.end();
+      expect(endResult).toBe(writePromise);
+
+      let caught: any;
+      try {
+        await endResult;
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("EPIPE");
+
+      // The pending slot is now settled; a follow-up end() short-circuits to
+      // the written byte count, not another promise.
+      expect(typeof sink.end()).toBe("number");
+    } finally {
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
+    }
+  },
+);
+
+// The deferred auto-flush microtask runs at the first microtask checkpoint
+// after write() backpressures. If its flush() hit EPIPE, it discarded the
+// error and then let `run_pending_later()` resolve the pending write() promise
+// with the `Owned(consumed)` result `to_result` had seeded, so `await write()`
+// + `await end()` both succeeded even though the reader was already gone and
+// nearly the whole chunk was still sitting in the sink's buffer.
+it.skipIf(!isPosix)(
+  "a backpressured write() rejects with EPIPE when the reader closes before the deferred flush",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
+    const sink = Bun.file(writeFd).writer();
+    const size = 4 * 1024 * 1024;
+
+    try {
+      const writePromise = sink.write(Buffer.alloc(size, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      // Close the reader before the first await: the deferred auto-flush fires
+      // as part of that await's microtask drain, and its flush() now sees EPIPE.
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      let caught: any;
+      try {
+        await writePromise;
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("EPIPE");
+
+      // The Err arm also moves the sink to its terminal state: further writes
+      // short-circuit to Writable::Done (=> true).
+      expect(sink.write("x")).toBe(true);
+
+      // end() after the error reports the bytes that actually reached the fd;
+      // the point is it doesn't claim the full chunk was delivered.
+      const endRes = await sink.end();
+      expect(typeof endRes).toBe("number");
+      expect(endRes).toBeLessThan(size);
+    } finally {
+      try {
+        await sink.end();
+      } catch {}
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
+    }
+  },
+);
+
 if (isWindows) {
   it("ENOENT, Windows", () => {
     expect(() => Bun.file("A:\\this-does-not-exist.txt").writer()).toThrow(

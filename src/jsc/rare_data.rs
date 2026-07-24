@@ -37,7 +37,7 @@ use super::uuid::UUID;
 //     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
 //     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
-//     `__bun_stdio_blob_store_new` (link-time extern; same fn MiniEventLoop uses).
+//     `__bun_stdio_blob_store_new` (link-time extern).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
 //   - `s3_default_client` / `default_client_ssl_ctx` / typed HotMap get/insert
 //     → bodies live in `bun_runtime` (they call high-tier ctors); RareData

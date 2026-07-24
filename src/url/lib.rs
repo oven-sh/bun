@@ -310,7 +310,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn is_file(&self) -> bool {
-        self.protocol == b"file"
+        strings::eql_case_insensitive_ascii(self.protocol, b"file", true)
     }
 
     /// host + path without the ending slash, protocol, searchParams and hash
@@ -377,17 +377,19 @@ impl<'a> URL<'a> {
         b"http"
     }
 
+    // RFC 3986 §3.1: the scheme is case-insensitive. `URL::parse` borrows
+    // `protocol` from the input without normalizing, so compare accordingly.
     #[inline]
     pub fn is_https(&self) -> bool {
-        self.protocol == b"https"
+        strings::eql_case_insensitive_ascii(self.protocol, b"https", true)
     }
     #[inline]
     pub fn is_s3(&self) -> bool {
-        self.protocol == b"s3"
+        strings::eql_case_insensitive_ascii(self.protocol, b"s3", true)
     }
     #[inline]
     pub fn is_http(&self) -> bool {
-        self.protocol == b"http"
+        strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
     pub fn display_hostname(&self) -> &[u8] {
@@ -445,7 +447,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn has_http_like_protocol(&self) -> bool {
-        self.protocol == b"http" || self.protocol == b"https"
+        self.is_http() || self.is_https()
     }
 
     pub fn get_port(&self) -> Option<u16> {

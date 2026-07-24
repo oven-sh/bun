@@ -1417,18 +1417,18 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [topic_value] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
-        if arguments.ptr[0].is_empty_or_undefined_or_null() {
+        if topic_value.is_empty_or_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "subscriberCount requires a topic name as a string"
             )));
         }
 
-        let topic = arguments.ptr[0].to_slice(global)?;
+        let topic = topic_value.to_slice(global)?;
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1449,8 +1449,7 @@ where
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
     #[bun_jsc::host_fn(method)]
     pub fn do_stop(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // ?jsc.JSValue
         let abruptly = iter.next_eat();
         Ok(self.stop_from_js(abruptly))
@@ -1473,8 +1472,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // jsc.JSValue
         let object = iter
             .next_eat()
@@ -1491,8 +1489,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         let topic_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
@@ -1516,8 +1513,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // *jsc.WebCore.Request
         let arg = iter.next_eat().ok_or_else(|| {
             global.throw_invalid_arguments(format_args!("Missing Request object"))
@@ -1575,8 +1571,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub fn timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
             return Err(global.throw_not_enough_arguments("timeout", 2, arguments.len()));
         }
@@ -2308,8 +2303,7 @@ where
             );
         }
 
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(
@@ -2514,28 +2508,26 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_port(&self, _: &JSGlobalObject) -> JSValue {
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
-            return JSValue::UNDEFINED;
-        }
+        let config_port = match &self.config.address {
+            server_config::Address::Unix(_) => return JSValue::UNDEFINED,
+            server_config::Address::Tcp { port, .. } => *port,
+        };
 
         if let Some(listener) = self.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            return JSValue::js_number(
-                bun_opaque::opaque_deref_mut(listener).get_local_port() as f64
-            );
+            if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
+                return JSValue::js_number(p as f64);
+            }
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                return JSValue::js_number(
-                    bun_opaque::opaque_deref_mut(h3l).get_local_port() as f64
-                );
+                if let Some(p) = bun_opaque::opaque_deref_mut(h3l).get_local_port() {
+                    return JSValue::js_number(p as f64);
+                }
             }
         }
-        match &self.config.address {
-            server_config::Address::Tcp { port, .. } => JSValue::js_number(*port as f64),
-            server_config::Address::Unix(_) => unreachable!(),
-        }
+        JSValue::js_number(config_port as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2569,7 +2561,7 @@ where
                 if let Some(listener) = self.listener {
                     // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
                     let listener = bun_opaque::opaque_deref_mut(listener);
-                    port = u16::try_from(listener.get_local_port()).expect("int cast");
+                    port = listener.get_local_port().unwrap_or(port);
 
                     let mut buf = [0u8; 64];
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
@@ -2588,7 +2580,7 @@ where
                     if let Some(h3l) = self.h3_listener {
                         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                         let h3l = bun_opaque::opaque_deref_mut(h3l);
-                        port = u16::try_from(h3l.get_local_port()).expect("int cast");
+                        port = h3l.get_local_port().unwrap_or(port);
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                             return Ok(JSValue::NULL);

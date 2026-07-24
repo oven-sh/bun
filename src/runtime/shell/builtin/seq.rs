@@ -210,8 +210,7 @@ impl Seq {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = e {
-            e.deref();
+        if let Some(_err) = e {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

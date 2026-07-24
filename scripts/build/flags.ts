@@ -1095,6 +1095,19 @@ export const linkerFlags: Flag[] = [
     when: c => c.darwin && c.lto,
     desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
   },
+  {
+    // Mach-O counterpart to lld's --symbol-ordering-file below:
+    // <buildDir>/linker.order lists the functions bun actually executes while
+    // starting up, and Apple's linker sorts them to the front of __text. The
+    // file is a build artifact, never committed: configure seeds an empty one
+    // so both link passes share one build.ninja — a release build regenerates
+    // it from its own pass-1 binary and reruns ninja, which relinks and
+    // nothing else. Unknown names are silently skipped, so a stale file only
+    // costs part of the win.
+    flag: c => `-Wl,-order_file,${orderFilePath(c)}`,
+    when: c => c.darwin && usesOrderFile(c),
+    desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
+  },
 
   // ─── Linux ───
   {
@@ -1293,7 +1306,7 @@ export const linkerFlags: Flag[] = [
     // A local `bun run build:release` therefore links unordered until you run
     // `bun run orderfile` and build again.
     flag: c => [`-Wl,--symbol-ordering-file=${orderFilePath(c)}`, "-Wl,--no-warn-symbol-ordering"],
-    when: c => usesOrderFile(c),
+    when: c => c.linux && usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
@@ -1384,18 +1397,30 @@ export const linkerFlags: Flag[] = [
 ];
 
 /**
- * Whether this target links with an lld symbol ordering file. ELF only, and
- * only where the startup win is worth a relink: release linux builds.
- * Not under a sanitizer — the tracer mprotects `.text` out from under it, and
- * nobody measures startup RSS on an ASAN build anyway.
+ * Whether this target links with a symbol ordering file (lld
+ * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
+ * ld and ld64.lld take). Only where the startup win is worth a relink: release
+ * builds, not under a sanitizer — the tracer swaps `.text` out for a private
+ * copy, and nobody measures startup RSS on an ASAN build anyway.
  *
- * gnu only: musl links statically, so LD_PRELOAD cannot load the tracer, and
- * android is cross-compiled, so the build host cannot run the binary to trace
- * it. Neither can produce an order file, so link them unordered rather than
- * attempt a trace that always fails and annotate every build about it.
+ * This says where the order file is CONSUMED, not where it is produced. A
+ * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
+ * inherits an earlier build's file instead and still links ordered.
+ *
+ * linux gnu only: musl links statically, so LD_PRELOAD cannot load the tracer,
+ * and no musl test host exists to trace on either. android has no order-file
+ * linker support. Neither can produce or consume one.
+ *
+ * darwin arm64 only: the BRK-based tracer is arm64-only, so x64 has nothing to
+ * inherit and linking with an always-empty order file just adds noise.
  */
-export function usesOrderFile(cfg: Pick<Config, "linux" | "abi" | "release" | "asan" | "valgrind">): boolean {
-  return cfg.linux && cfg.abi === "gnu" && cfg.release && !cfg.asan && !cfg.valgrind;
+export function usesOrderFile(
+  cfg: Pick<Config, "linux" | "darwin" | "abi" | "arm64" | "release" | "asan" | "valgrind">,
+): boolean {
+  if (!cfg.release || cfg.asan || cfg.valgrind) return false;
+  if (cfg.linux) return cfg.abi === "gnu";
+  if (cfg.darwin) return cfg.arm64;
+  return false;
 }
 
 /** The order file lives in the build directory — it is generated, never committed. */
@@ -1411,9 +1436,14 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
 export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
-  if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script, plus the release symbol ordering
-  // file — listing it here is what makes regenerating it relink, and only relink.
+  // The release symbol ordering file: listing it here is what makes
+  // regenerating it relink, and only relink.
+  if (cfg.darwin) {
+    const darwin = [join(cfg.cwd, "src/symbols.txt")];
+    if (usesOrderFile(cfg)) darwin.push(orderFilePath(cfg));
+    return darwin;
+  }
+  // linux: ELF dynamic-list + version script.
   const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
   if (usesOrderFile(cfg)) linux.push(orderFilePath(cfg));
   return linux;

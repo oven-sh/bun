@@ -94,6 +94,12 @@
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/GregorianDateTime.h"
+#include "JavaScriptCore/IntlObject.h"
+#include "JavaScriptCore/ISO8601.h"
+#include "JavaScriptCore/JSCTimeZone.h"
+#include "JavaScriptCore/TemporalCoreTypes.h"
+#include "JavaScriptCore/TemporalEnums.h"
+#include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
@@ -1974,30 +1980,31 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
         const auto value = pair->value;
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
+        ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
 
-        if (name.is8Bit() && name.containsOnlyASCII()) {
+        if (name.is8Bit()) {
             const auto nameSpan = name.span8();
             memcpy(&buf[i], nameSpan.data(), nameSpan.size());
             *names = { i, name.length() };
             i += name.length();
         } else {
-            ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
-            WTF::CString nameCString = name.utf8();
+            WTF::CString nameCString = name.latin1();
             memcpy(&buf[i], nameCString.data(), nameCString.length());
             *names = { i, static_cast<uint32_t>(nameCString.length()) };
             i += static_cast<uint32_t>(nameCString.length());
         }
 
         if (value.length() > 0) {
-            if (value.is8Bit() && value.containsOnlyASCII()) {
+            // https://fetch.spec.whatwg.org/#concept-header-value
+            // Header values are ByteStrings: isomorphic-encode (1 code unit = 1 byte),
+            // not UTF-8. isValidHTTPHeaderValue already rejects code units > 0xFF.
+            if (value.is8Bit()) {
                 const auto valueSpan = value.span8();
                 memcpy(&buf[i], valueSpan.data(), valueSpan.size());
                 *values = { i, value.length() };
                 i += value.length();
             } else {
-                // HTTP headers can contain non-ASCII characters according to RFC 7230
-                // Non-ASCII content should be properly encoded
-                WTF::CString valueCString = value.utf8();
+                WTF::CString valueCString = value.latin1();
                 memcpy(&buf[i], valueCString.data(), valueCString.length());
                 *values = { i, static_cast<uint32_t>(valueCString.length()) };
                 i += static_cast<uint32_t>(valueCString.length());
@@ -2015,11 +2022,9 @@ void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* coun
     auto iter = headers->createIterator();
     size_t i = 0;
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        // UTF8 byteLength is not strictly necessary here
-        // They should always be ASCII.
-        // However, we can still do this out of an abundance of caution
-        i += BunString::utf8ByteLength(pair->key);
-        i += BunString::utf8ByteLength(pair->value);
+        // copyTo isomorphic-encodes: one byte per code unit.
+        i += pair->key.length();
+        i += pair->value.length();
     }
 
     *count = headers->size();
@@ -5819,6 +5824,45 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobal
     *minute = dt.minute();
     *second = dt.second();
     *weekday = dt.weekDay();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__resolveTimeZoneID(const uint8_t* name, size_t len)
+{
+    auto id = JSC::intlResolveTimeZoneID(StringView { std::span(reinterpret_cast<const Latin1Character*>(name), len) });
+    return id ? *id : std::numeric_limits<uint32_t>::max();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeInZone(JSC::JSGlobalObject* globalObject, double ms, uint32_t tzID,
+    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
+{
+    UNUSED_PARAM(globalObject);
+    auto tz = JSC::TimeZone::fromID(tzID);
+    auto exact = JSC::ISO8601::ExactTime::fromEpochMilliseconds(static_cast<int64_t>(ms));
+    auto off = JSC::TemporalCore::getOffsetNanosecondsFor(tz, exact);
+    int64_t offNs = off ? *off : 0;
+    auto dt = JSC::TemporalCore::exactTimeToLocalDateAndTime(exact, offNs);
+    *year = dt.date.year();
+    *month = dt.date.month();
+    *day = dt.date.day();
+    *hour = static_cast<int>(dt.time.hour());
+    *minute = static_cast<int>(dt.time.minute());
+    *second = static_cast<int>(dt.time.second());
+    // ISO8601::dayOfWeek: 1=Mon..7=Sun; GregorianDateTime consumers expect 0=Sun..6=Sat.
+    *weekday = JSC::ISO8601::dayOfWeek(dt.date) % 7;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::JSGlobalObject* globalObject,
+    int year, int month, int day, int hour, int minute, int second, int millisecond, uint32_t tzID)
+{
+    UNUSED_PARAM(globalObject);
+    auto tz = JSC::TimeZone::fromID(tzID);
+    JSC::ISO8601::PlainDate date { year, static_cast<unsigned>(month), static_cast<unsigned>(day) };
+    JSC::ISO8601::PlainTime time { static_cast<unsigned>(hour), static_cast<unsigned>(minute),
+        static_cast<unsigned>(second), static_cast<unsigned>(millisecond), 0, 0 };
+    auto r = JSC::TemporalCore::getEpochNanosecondsFor(tz, date, time, JSC::TemporalDisambiguation::Compatible);
+    if (!r)
+        return std::numeric_limits<double>::quiet_NaN();
+    return static_cast<double>(r->epochMilliseconds());
 }
 
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)

@@ -203,18 +203,18 @@ private:
          * so a client that connects and never sends anything still expires. */
         if constexpr (IsNodeHttp) {
             ((HttpResponseData<SSL, true> *) us_socket_ext(s))->lastMessageStartMs = nodeCompatMonotonicMs();
-            /* A peer FIN must not tear the connection down at the loop level:
-             * onEnd() below decides whether to close right away (idle) or to
-             * keep writing the responses that are still in flight / pipelined
-             * (Node's socketOnEnd semantics). Without this flag the loop
-             * force-closes the socket right after dispatching onEnd. TLS
-             * (openssl.c us_internal_ssl_on_end) does not consult this flag
-             * and force-closes on FIN regardless, so this half of the compat
-             * block is http-only for now. */
-            if constexpr (!SSL) {
-                s->flags.allow_half_open = 1;
-            }
         }
+
+        /* A peer FIN must not tear the connection down at the loop level:
+         * onEnd() below decides whether to close right away (idle, or a
+         * response the application is still producing) or to keep writing
+         * response bytes already handed to uWS. Without this flag the loop
+         * (and openssl.c us_internal_ssl_on_end for TLS) force-closes the
+         * socket right after dispatching onEnd, discarding those bytes.
+         * onEnd's defer and onWritable's close gate use hasFullyDrained(),
+         * which accounts for the TLS ciphertext spill, so they are accurate
+         * for both transports. */
+        s->flags.allow_half_open = 1;
 
         if(!SSL) {
             /* Call filter */
@@ -612,7 +612,7 @@ private:
             /* We need to check if we should close this socket here now */
             if (httpResponseData->shouldCloseConnection()) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) s)->getBufferedAmount() == 0) {
+                    if (((AsyncSocket<SSL> *) s)->hasFullyDrained()) {
                         ((AsyncSocket<SSL> *) s)->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                          * clients from keeping to send their huge data */
@@ -666,14 +666,12 @@ private:
             size_t flushed = asyncSocket->flush();
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
-                if constexpr (IsNodeHttp) {
-                    /* onEnd deferred close for these bytes; a writable event that
-                     * moves nothing (EPIPE) means the peer is gone and this would
-                     * otherwise spin onWritable/onEnd until idle timeout. */
-                    if (flushed == 0
-                        && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
-                        return asyncSocket->close();
-                    }
+                /* onEnd deferred close for these bytes; a writable event that
+                 * moves nothing (EPIPE) means the peer is gone and this would
+                 * otherwise spin the writable dispatch until idle timeout. */
+                if (flushed == 0
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
+                    return asyncSocket->close();
                 }
                 /* Socket buffer is not completely empty yet
                 * - Reset the timeout to prevent premature connection closure
@@ -699,9 +697,23 @@ private:
             /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
             us_socket_timeout(s, 0);
 
+            [[maybe_unused]] uint64_t offsetBefore = httpResponseData->offset;
+
             /* We expect the developer to return whether or not write was successful (true).
              * If write was never called, the developer should still return true so that we may drain. */
             bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
+
+            if constexpr (!IsNodeHttp) {
+                /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
+                 * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
+                 * after the peer's FIN is EPIPE; close instead of spinning. */
+                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+                    && httpResponseData->offset == offsetBefore
+                    && asyncSocket->hasFullyDrained()) {
+                    return asyncSocket->close();
+                }
+            }
 
             /* The developer indicated that their onWritable failed. */
             if (!success) {
@@ -742,7 +754,7 @@ private:
                     responseDone = true;
                 }
             }
-            if (responseDone && asyncSocket->getBufferedAmount() == 0) {
+            if (responseDone && asyncSocket->hasFullyDrained()) {
                 asyncSocket->shutdown();
                 /* We need to force close after sending FIN since we want to hinder
                  * clients from keeping to send their huge data */
@@ -800,11 +812,31 @@ private:
              * callback is still draining) must not be discarded by the close()
              * below; the connection shuts down from the shouldCloseConnection()
              * gates once they have flushed. */
-            bool hasQueuedOutgoing = asyncSocket->getBufferedAmount() > 0
+            bool hasQueuedOutgoing = !asyncSocket->hasFullyDrained()
                 || httpResponseData->onWritable != nullptr;
             bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
                 || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
             if (hasQueuedOutgoing || (httpContextData->flags.httpAllowHalfOpen && responseInFlight)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
+                return s;
+            }
+        } else {
+            /* Bun.serve: response bytes already handed to uWS must drain before
+             * the connection shuts down (from the existing shouldCloseConnection()
+             * gates), not be discarded by the close() below. Only a response that
+             * is fully determined qualifies: a tryEnd tail (content-length path
+             * sets HTTP_END_CALLED while offset < total keeps HTTP_RESPONSE_PENDING)
+             * or a completed response that has not fully drained. A streaming body
+             * the application is still producing (HTTP_END_CALLED clear,
+             * HTTP_RESPONSE_PENDING set) closes here so onAborted / request.signal
+             * fires on client disconnect. */
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+            uint32_t state = httpResponseData->state;
+            bool tryEndTail = (state & HttpResponseData<SSL>::HTTP_END_CALLED)
+                && (state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+            bool doneButBuffered = !(state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+                && !asyncSocket->hasFullyDrained();
+            if (tryEndTail || doneButBuffered) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
                 return s;
             }

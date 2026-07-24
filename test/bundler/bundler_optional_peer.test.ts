@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 // When a package declares an optional peer dependency via `peerDependenciesMeta`

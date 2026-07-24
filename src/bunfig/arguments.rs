@@ -17,22 +17,38 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let paths: [&[u8]; 1] = [b".bunfig.toml"];
+/// Resolve `$XDG_CONFIG_HOME/<name>` when it exists, otherwise
+/// `$HOME/<name>` (`$USERPROFILE` on Windows). Used for both the user-level
+/// `.bunfig.toml` and `.npmrc`; `None` when neither env var is set.
+pub fn home_config_path<'a>(buf: &'a mut PathBuffer, name: &[u8]) -> Option<&'a ZStr> {
+    let parts: [&[u8]; 1] = [name];
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
+    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get_not_empty() {
+        let len = {
+            let path =
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut **buf, &parts);
+            if bun_sys::exists_z(path) {
+                path.len()
+            } else {
+                0
+            }
+        };
+        if len > 0 {
+            return Some(ZStr::from_buf(&buf[..], len));
+        }
     }
 
-    if let Some(home_dir) = env_var::HOME.get() {
+    if let Some(home_dir) = env_var::HOME.get_not_empty() {
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
+            home_dir, &mut **buf, &parts,
         ));
     }
 
     None
+}
+
+fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
+    home_config_path(buf, b".bunfig.toml")
 }
 
 fn load_bunfig(
@@ -76,7 +92,6 @@ fn load_bunfig(
         // SAFETY: same as above; runs on the same thread.
         unsafe { (*log_ptr).level = lvl };
     });
-    ctx.debug.loaded_bunfig = true;
     Bunfig::parse(cmd, &source, ctx)
 }
 
@@ -85,6 +100,13 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
         return Ok(());
     }
     ctx.has_loaded_global_config = true;
+
+    // A compiled standalone executable never reads the end user's
+    // `~/.bunfig.toml`; the `autoloadBunfig` compile flag only opts into
+    // the cwd-local `bunfig.toml`.
+    if StandaloneModuleGraph::get().is_some() {
+        return Ok(());
+    }
 
     let mut config_buf = PathBuffer::uninit();
     if let Some(path) = get_home_config_path(&mut config_buf) {
@@ -105,19 +127,15 @@ pub fn load_config_path(
     // lookup so the dead arm is still a single branch.
     if cmd.read_global_config() {
         if let Err(err) = load_global_bunfig(cmd, ctx) {
-            if auto_loaded {
-                return Ok(());
-            }
-
-            bun_core::pretty_errorln!(
-                "{}\nreading global config \"{}\"",
-                err,
-                BStr::new(config_path.as_bytes()),
-            );
-            Global::exit(1);
+            // A malformed global config is reported the same way `load_config`
+            // would; swallowing it here would also skip the local load below.
+            report_bunfig_load_failure(ctx.log, err);
         }
     }
 
+    // `loaded_bunfig` tracks whether the local-config load has been attempted
+    // so the `run_command.rs`/`repl_command.rs` fallbacks don't repeat it.
+    ctx.debug.loaded_bunfig = true;
     load_bunfig(cmd, auto_loaded, config_path, ctx)
 }
 
@@ -153,14 +171,8 @@ pub fn load_config(
 
     let mut config_buf = PathBuffer::uninit();
     if cmd.read_global_config() {
-        if !ctx.has_loaded_global_config {
-            ctx.has_loaded_global_config = true;
-
-            if let Some(path) = get_home_config_path(&mut config_buf) {
-                if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
-                }
-            }
+        if let Err(err) = load_global_bunfig(cmd, ctx) {
+            report_bunfig_load_failure(ctx.log, err);
         }
     }
 

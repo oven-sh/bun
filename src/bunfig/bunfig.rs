@@ -380,7 +380,10 @@ impl<'a> Parser<'a> {
             self.load_env_config(&env_expr)?;
         }
 
-        if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
+        if matches!(
+            cmd,
+            CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::RunAsNodeCommand
+        ) {
             if let Some(expr) = json.get(b"serve") {
                 if let Some(port) = expr.get(b"port") {
                     self.expect(&port, ExprTag::ENumber)?;
@@ -401,9 +404,7 @@ impl<'a> Parser<'a> {
                     bun_analytics::TriState::No
                 });
             }
-        }
 
-        if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
             if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
                 self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
@@ -564,20 +565,22 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test_.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.retry != 0 {
+                    if test_.get(b"retry").is_some() {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
                         return Ok(());
                     }
+                    self.ctx.test_options.retry = 0;
                     self.ctx.test_options.repeat_count =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
                 if let Some(expr) = test_.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.repeat_count != 0 {
+                    if test_.get(b"rerunEach").is_some() {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
                         return Ok(());
                     }
+                    self.ctx.test_options.repeat_count = 0;
                     self.ctx.test_options.retry =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
@@ -715,6 +718,7 @@ impl<'a> Parser<'a> {
         if cmd.is_npm_related()
             || cmd == CommandTag::RunCommand
             || cmd == CommandTag::AutoCommand
+            || cmd == CommandTag::RunAsNodeCommand
             || cmd == CommandTag::TestCommand
         {
             if let Some(install_obj) = json.get_object(b"install") {
@@ -987,6 +991,7 @@ impl<'a> Parser<'a> {
                 jsx_factory = Box::<[u8]>::from(value);
             }
         }
+        let jsx_present = json.get(b"jsx").is_some();
         {
             if let Some(jsx) = self.ctx.args.jsx.as_mut() {
                 if !jsx_factory.is_empty() {
@@ -998,8 +1003,10 @@ impl<'a> Parser<'a> {
                 if !jsx_import_source.is_empty() {
                     jsx.import_source = jsx_import_source;
                 }
-                jsx.runtime = jsx_runtime;
-                jsx.development = jsx_dev;
+                if jsx_present {
+                    jsx.runtime = jsx_runtime;
+                    jsx.development = jsx_dev;
+                }
             } else {
                 self.ctx.args.jsx = Some(api::Jsx {
                     factory: jsx_factory,
@@ -1583,6 +1590,7 @@ impl<'a> Parser<'a> {
             };
             // TODO: accept entire config object.
             self.ctx.args.serve_plugins = plugins;
+            self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
         }
 
         if let Some(hmr) = serve_obj.get(b"hmr") {
@@ -1616,7 +1624,6 @@ impl<'a> Parser<'a> {
         if let Some(expr) = serve_obj.get(b"define") {
             self.ctx.args.serve_define = Some(self.parse_define_map(&expr)?);
         }
-        self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
 
         if let Some(public_path) = serve_obj.get(b"publicPath") {
             if let Some(v) = public_path.as_string(self.bump) {

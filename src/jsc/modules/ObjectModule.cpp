@@ -21,7 +21,11 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(throwScope, void());
         gcUnprotectNullTolerant(object);
 
+        bool hasDefault = false;
         for (auto& entry : properties.releaseData()->propertyNameVector()) {
+            if (entry == vm.propertyNames->defaultKeyword)
+                hasDefault = true;
+
             exportNames.append(entry);
 
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -31,6 +35,11 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                 value = jsUndefined();
             }
             exportValues.append(value);
+        }
+
+        if (!hasDefault) {
+            exportNames.append(vm.propertyNames->defaultKeyword);
+            exportValues.append(object);
         }
     };
 }

@@ -2120,12 +2120,7 @@ impl TestCommand {
 
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
-        // `Loader::init` borrows the map; erase to `'static` via raw pointer round-trip
-        // (the map is never freed — process-lifetime singleton).
-        let env_map: *mut DotEnv::Map = bun_core::heap::into_raw(Box::new(DotEnv::Map::init()));
-        // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
-        let mut env_loader: Box<DotEnv::Loader> =
-            Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
+        let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         jsc::initialize(false);
         bun_http::http_thread::init(&Default::default());
 
@@ -2292,9 +2287,7 @@ impl TestCommand {
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
-                env_loader: core::ptr::NonNull::new(
-                    (&raw mut *env_loader).cast::<DotEnv::Loader<'static>>(),
-                ),
+                env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
                 // we must store file descriptors because we reuse them for
                 // iterating through the directory tree recursively
                 //

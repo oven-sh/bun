@@ -415,6 +415,18 @@ pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.end_without_body(!R::IS_H3);
 }
 
+/// RFC 6455 §4.1: |Sec-WebSocket-Key| is the base64 encoding of a 16-byte
+/// value, i.e. 22 base64 characters followed by `==`.
+#[inline]
+fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
+    key.len() == 24
+        && key[22] == b'='
+        && key[23] == b'='
+        && key[..22]
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
+}
+
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
@@ -1417,18 +1429,18 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [topic_value] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
-        if arguments.ptr[0].is_empty_or_undefined_or_null() {
+        if topic_value.is_empty_or_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "subscriberCount requires a topic name as a string"
             )));
         }
 
-        let topic = arguments.ptr[0].to_slice(global)?;
+        let topic = topic_value.to_slice(global)?;
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1449,8 +1461,7 @@ where
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
     #[bun_jsc::host_fn(method)]
     pub fn do_stop(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // ?jsc.JSValue
         let abruptly = iter.next_eat();
         Ok(self.stop_from_js(abruptly))
@@ -1473,8 +1484,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // jsc.JSValue
         let object = iter
             .next_eat()
@@ -1491,8 +1501,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         let topic_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
@@ -1516,8 +1525,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // *jsc.WebCore.Request
         let arg = iter.next_eat().ok_or_else(|| {
             global.throw_invalid_arguments(format_args!("Missing Request object"))
@@ -1575,8 +1583,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub fn timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
             return Err(global.throw_not_enough_arguments("timeout", 2, arguments.len()));
         }
@@ -1900,12 +1907,16 @@ where
         let mut sec_websocket_key_str = ZigString::EMPTY;
         let mut sec_websocket_protocol = ZigString::EMPTY;
         let mut sec_websocket_extensions = ZigString::EMPTY;
+        let mut sec_websocket_version = ZigString::EMPTY;
+        let mut upgrade_header = ZigString::EMPTY;
 
         // Owned backing storage for sec_websocket_*.
         // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
         let mut _sec_websocket_key_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
+        let mut _sec_websocket_version_owned = bun_core::ZigStringSlice::empty();
+        let mut _upgrade_header_owned = bun_core::ZigStringSlice::empty();
 
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -1927,6 +1938,14 @@ where
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                 _sec_websocket_extensions_owned = ext.to_slice_clone();
                 sec_websocket_extensions = ZigString::init(_sec_websocket_extensions_owned.slice());
+            }
+            if let Some(ver) = head.fast_get(HTTPHeaderName::SecWebSocketVersion) {
+                _sec_websocket_version_owned = ver.to_slice_clone();
+                sec_websocket_version = ZigString::init(_sec_websocket_version_owned.slice());
+            }
+            if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
+                _upgrade_header_owned = up.to_slice_clone();
+                upgrade_header = ZigString::init(_upgrade_header_owned.slice());
             }
         }
 
@@ -1953,9 +1972,37 @@ where
                 sec_websocket_extensions =
                     ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
             }
+            if sec_websocket_version.len == 0 {
+                sec_websocket_version =
+                    ZigString::init(r.header(b"sec-websocket-version").unwrap_or(b""));
+            }
+            if upgrade_header.len == 0 {
+                upgrade_header = ZigString::init(r.header(b"upgrade").unwrap_or(b""));
+            }
         }
 
-        if sec_websocket_key_str.len != 24 {
+        // RFC 6455 §4.2.1: validate the client's opening handshake.
+        // A request that does not name "websocket" in its |Upgrade| token list,
+        // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
+        // WebSocket handshake; fall through so the caller's fetch() can respond.
+        if !upgrade_header.slice().split(|&c| c == b',').any(|t| {
+            strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true)
+        }) {
+            return Ok(JSValue::FALSE);
+        }
+        if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {
+            return Ok(JSValue::FALSE);
+        }
+        // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
+        // answered with an HTTP error and a |Sec-WebSocket-Version| header
+        // listing the versions the server understands.
+        if sec_websocket_version.slice() != b"13" {
+            resp.write_status(b"426 Upgrade Required");
+            resp.write_header(b"Sec-WebSocket-Version", b"13");
+            // SAFETY: upgrader_ptr is live (ref_() above)
+            let upgrader = unsafe { &mut *upgrader_ptr };
+            upgrader.flags.set_has_written_status(true);
+            upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }
         if sec_websocket_protocol.len > 0 {
@@ -2308,8 +2355,7 @@ where
             );
         }
 
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(

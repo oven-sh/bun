@@ -140,7 +140,7 @@ pub struct Transpiler<'a> {
     // by `configure_linker` below; `set_log` keeps `linker.log` in sync.
     pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
-    pub env: *mut dot_env::Loader<'a>,
+    pub env: *mut dot_env::Loader,
 
     pub macro_context: Option<js_ast::Macro::MacroContext>,
 }
@@ -262,7 +262,7 @@ impl<'a> Transpiler<'a> {
     /// [`Self::env_mut`] when only inspecting env vars (e.g. `.get()`), so
     /// call sites can overlap with other `&` borrows of the same loader.
     #[inline]
-    pub fn env(&self) -> &'a dot_env::Loader<'a> {
+    pub fn env(&self) -> &'a dot_env::Loader {
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. Shared access cannot conflict with the
@@ -277,7 +277,7 @@ impl<'a> Transpiler<'a> {
     /// borrows.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn env_mut(&self) -> &'a mut dot_env::Loader<'a> {
+    pub fn env_mut(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `self.env` is non-null after `init` — set to either the
         // caller-provided loader or the `dot_env::INSTANCE` singleton, both of
         // which live for at least `'a`. No other live `&mut Loader` exists at
@@ -354,9 +354,7 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 from.fs,
             ),
-            // SAFETY: lifetime-widen the `Loader<'from>` raw pointer to `'a`
-            // (process-lifetime singleton; see fn doc).
-            env: from.env.cast(),
+            env: from.env,
             // `MacroContext::init(transpiler)` takes the
             // transpiler's *address*; deferred to `wire_after_move`.
             macro_context: None,
@@ -719,7 +717,7 @@ impl<'a> Transpiler<'a> {
         use bun_options_types::schema::api::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call.
-        let env: &mut dot_env::Loader<'_> = self.env_mut();
+        let env: &mut dot_env::Loader = self.env_mut();
 
         match self.options.env.behavior {
             DotEnvBehavior::prefix
@@ -1150,7 +1148,7 @@ impl<'a> Transpiler<'a> {
         arena: &'a Arena,
         log: *mut bun_ast::Log,
         opts: api::TransformOptions,
-        env_loader_: Option<*mut dot_env::Loader<'static>>,
+        env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
         let mut slot = core::mem::MaybeUninit::<Transpiler<'a>>::uninit();
         Self::init_in_place(&mut slot, arena, log, opts, env_loader_)?;
@@ -1173,7 +1171,7 @@ impl<'a> Transpiler<'a> {
         arena: &'a Arena,
         log: *mut bun_ast::Log,
         opts: api::TransformOptions,
-        env_loader_: Option<*mut dot_env::Loader<'static>>,
+        env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<()> {
         // Caller contract: `log` is the freshly-boxed per-VM `Log` from
         // `VirtualMachine::init` and is never null. Validate up front so the
@@ -1215,25 +1213,16 @@ impl<'a> Transpiler<'a> {
         };
         let fs: *mut Fs::FileSystem = init_file_system(cwd)?;
 
-        let env_loader: *mut dot_env::Loader<'static> = match env_loader_ {
+        let env_loader: *mut dot_env::Loader = match env_loader_ {
             Some(l) => l,
             None => match dot_env::instance() {
                 Some(l) => l,
                 None => {
                     // PORTING.md §Forbidden bars `Box::leak` even for
-                    // process-lifetime singletons. `bun_dotenv::INSTANCE` is an
-                    // `AtomicPtr<Loader<'static>>` and `Loader` borrows
-                    // an unbounded `&mut Map`, so a `OnceLock<Loader>` here can't
-                    // be expressed without changing `bun_dotenv`'s API.
-                    // Transfer ownership of both allocations into the global
-                    // singleton via `heap::alloc` (the AtomicPtr becomes the
-                    // owner; matches `MiniEventLoop::init_global`).
-                    let map: *mut dot_env::Map =
-                        bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
-                    // SAFETY: `map` is a fresh heap allocation with no other
-                    // alias; `Loader` stores it for process lifetime and is
-                    // itself installed into `dot_env::INSTANCE` below.
-                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
+                    // process-lifetime singletons. Transfer ownership into the
+                    // global singleton via `heap::alloc` (the AtomicPtr becomes
+                    // the owner; matches `MiniEventLoop::init_global`).
+                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init()))
                 }
             },
         };
@@ -1286,10 +1275,7 @@ impl<'a> Transpiler<'a> {
         let p = dst.as_mut_ptr();
         // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
         // `MaybeUninit<Transpiler>`; each `write` initialises a distinct field
-        // and no field is read before it is written. `env_loader.cast()` matches
-        // the field's `*mut Loader<'a>` (raw-pointer lifetime reinterpretation —
-        // the pointee is the process-lifetime singleton or caller-supplied
-        // loader, as in the original struct literal).
+        // and no field is read before it is written.
         unsafe {
             core::ptr::addr_of_mut!((*p).options).write(bundle_options);
             core::ptr::addr_of_mut!((*p).log).write(log_nn.as_ptr());
@@ -1317,7 +1303,7 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 fs,
             ));
-            core::ptr::addr_of_mut!((*p).env).write(env_loader.cast());
+            core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
         }
         Ok(())

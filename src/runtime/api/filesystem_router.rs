@@ -440,12 +440,12 @@ impl FileSystemRouter {
     }
 
     pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
+        // Copy out: `bust_dir_cache_recursive` races the bundler thread on the
+        // process-global entry cache (see the `reload() while Bun.build()` test),
+        // so keep this slice independent of any JsCell borrow across that call.
         let dir =
-            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
-        // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
-        // recursive walk re-derives the path from the resolver per-iteration so a one-time
-        // copy is sufficient.
-        let dir = dir.to_vec();
+            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir)
+                .to_vec();
         self.bust_dir_cache_recursive(global_this, &dir);
     }
 

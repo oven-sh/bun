@@ -2090,18 +2090,14 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                 }
                 Key::ArrowUp | Key::CtrlP => {
-                    // Note: reshaped for borrowck — copy line before mutating history
-                    let cur = self.line_editor.get_line().to_vec();
-                    if let Some(prev_line) = self.history.prev(&cur) {
-                        let prev_line = prev_line.to_vec();
-                        let _ = self.line_editor.set(&prev_line);
+                    if let Some(prev_line) = self.history.prev(self.line_editor.get_line()) {
+                        let _ = self.line_editor.set(prev_line);
                         self.refresh_line();
                     }
                 }
                 Key::ArrowDown | Key::CtrlN => {
                     if let Some(next_line) = self.history.next() {
-                        let next_line = next_line.to_vec();
-                        let _ = self.line_editor.set(&next_line);
+                        let _ = self.line_editor.set(next_line);
                     } else {
                         self.line_editor.clear();
                     }
@@ -2136,8 +2132,8 @@ impl<'a> Repl<'a> {
     fn handle_enter(&mut self) -> Result<(), crate::Error> {
         self.print(format_args!("\n"));
 
-        // Note: reshaped for borrowck — copy line out so we can call &mut self methods
-        let line: Vec<u8> = self.line_editor.get_line().to_vec();
+        let line = std::mem::take(&mut self.line_editor.buffer);
+        self.line_editor.cursor = 0;
 
         if self.editor_mode {
             if strings::trim(&line, b" \t").is_empty() {
@@ -2272,15 +2268,14 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_tab(&mut self) {
-        // Note: reshaped for borrowck — copy line out
-        let line: Vec<u8> = self.line_editor.get_line().to_vec();
+        let line = self.line_editor.get_line();
 
         // Complete REPL commands
         if !line.is_empty() && line[0] == b'.' {
             let mut matches: Vec<&'static [u8]> = Vec::new();
 
             for cmd in &ReplCommand::ALL {
-                if cmd.name.starts_with(&line[..]) {
+                if cmd.name.starts_with(line) {
                     matches.push(cmd.name);
                 }
             }

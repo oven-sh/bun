@@ -824,8 +824,6 @@ impl<'a> TablePrinter<'a> {
                     // find or create the column for the property
                     let col_idx: usize = 'brk: {
                         let col_str = BunString::init(col_key);
-
-                        // reshaped for borrowck — split find/append.
                         if let Some(idx) =
                             columns[1..].iter().position(|col| col.name.eql(&col_str))
                         {

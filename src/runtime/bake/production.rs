@@ -91,9 +91,6 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
             Global::crash();
         }
     };
-    // Note: reshaped for borrowck — clone the cwd slice so the PathBuffer
-    // borrow doesn't span the rest of the function (the buffer is never reused).
-    let cwd: Box<[u8]> = Box::from(cwd);
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
@@ -219,7 +216,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Note: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
     // the raw VM pointer and re-borrow inside.
-    match build_with_vm(ctx, &cwd, vm_ptr, &mut pt) {
+    match build_with_vm(ctx, cwd, vm_ptr, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
             // SAFETY: vm.global is live for VM lifetime.
@@ -540,8 +537,6 @@ pub(super) fn build_with_vm(
     let mut root_dir_buf = PathBuffer::uninit();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
-    // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
-    let root_dir_path: Box<[u8]> = Box::from(root_dir_path);
 
     // Note: borrowck — `framework` is `&mut options.framework`; reborrow
     // through it instead of `options.framework` to avoid stacking borrows.
@@ -1193,7 +1188,7 @@ pub(super) fn build_with_vm(
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            BunString::init(&*root_dir_path),
+            BunString::init(root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,

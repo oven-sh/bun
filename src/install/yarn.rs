@@ -1378,14 +1378,12 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 )
                 .expect("unreachable");
 
-                // reshaped for borrowck — find_entry_by_spec via index search
-                // instead of returning &mut to avoid overlapping borrow with the loop below.
-                let dep_entry_specs: Option<Vec<&[u8]>> = {
-                    let mut found: Option<Vec<&[u8]>> = None;
-                    for e in yarn_lock.entries.iter() {
+                let found_idx: Option<usize> = {
+                    let mut found: Option<usize> = None;
+                    for (i, e) in yarn_lock.entries.iter().enumerate() {
                         for entry_spec in e.specs.iter() {
                             if *entry_spec == dep_spec.as_slice() {
-                                found = Some(e.specs.clone());
+                                found = Some(i);
                                 break;
                             }
                         }
@@ -1396,7 +1394,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     found
                 };
 
-                if let Some(dep_entry_specs) = dep_entry_specs {
+                if let Some(found_idx) = found_idx {
+                    let dep_entry_specs = &yarn_lock.entries[found_idx].specs;
                     for (idx, e) in yarn_lock.entries.iter().enumerate() {
                         let mut found = false;
                         for spec in e.specs.iter() {

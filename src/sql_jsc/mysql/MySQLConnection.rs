@@ -1697,15 +1697,16 @@ impl ReaderContext for Reader {
     }
 
     fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
-        let remaining = self.read_buffer().remaining();
-        if remaining.len() < count {
+        let rb = self.read_buffer();
+        if rb.remaining().len() < count {
             return Err(AnyMySQLError::ShortRead);
         }
 
-        // reshaped for borrowck — capture detached slice before skip().
-        let slice = bun_ptr::RawSlice::new(&remaining[0..count]);
-        self.skip(isize::try_from(count).expect("int cast"));
-        Ok(Data::Temporary(slice))
+        let head = rb.head as usize;
+        rb.head += u32::try_from(count).expect("int cast");
+        Ok(Data::Temporary(bun_ptr::RawSlice::new(
+            &rb.byte_list[head..head + count],
+        )))
     }
 
     fn read_z(self) -> Result<Data, AnyMySQLError> {

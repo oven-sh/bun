@@ -605,25 +605,14 @@ impl BlobExt for Blob {
             });
             t.poll.ref_(bun_io::js_vm_ctx());
             let proxy = http_proxy_href(global);
-            // reshaped for borrowck — `heap::alloc(t)` moves `t`,
-            // so clone the `Rc<S3Credentials>` out (cheap ref bump)
-            // and stash `path` as a raw `*const [u8]` whose backing store is
-            // kept alive by the same `t.blob` now owned by the heap task.
-            let (cred, path, payer);
-            {
-                let s3 = t
-                    .blob
-                    .store()
-                    .expect("infallible: store present")
-                    .data
-                    .as_s3();
-                cred = std::rc::Rc::clone(s3.get_credentials());
-                path = std::ptr::from_ref::<[u8]>(s3.path());
-                payer = s3.request_payer;
-            }
-            // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
-            // it stays valid until `Task::done` deinits the blob in the callback.
-            let path = unsafe { &*path };
+            let s3 = self
+                .store()
+                .expect("infallible: store present")
+                .data
+                .as_s3();
+            let cred = s3.get_credentials();
+            let path = s3.path();
+            let payer = s3.request_payer;
             let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {
@@ -632,7 +621,7 @@ impl BlobExt for Blob {
                     None
                 };
                 crate::webcore::__s3_client::download_slice(
-                    &cred,
+                    cred,
                     path,
                     self.offset.get() as usize,
                     len,
@@ -643,7 +632,7 @@ impl BlobExt for Blob {
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
-                    &cred,
+                    cred,
                     path,
                     Task::<H>::cb,
                     t_ptr,

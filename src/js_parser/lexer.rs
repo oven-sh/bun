@@ -1069,10 +1069,6 @@ lexer_impl_header! {
         Ok(())
     }
 
-    fn remaining(&self) -> &[u8] {
-        &self.contents[self.current..]
-    }
-
     /// Note: split into an `#[inline(always)]` ASCII/EOF fast path plus
     /// an outlined multibyte tail. `step()` is called from ~50 sites inside
     /// the giant `next()` switch and inlines into it; with the multibyte
@@ -2400,13 +2396,10 @@ lexer_impl_header! {
                     0x23 | 0x40 => {
                         if !IS_JSON {
                             let pragma_trigger_pos = self.end; // Position OF #/@
-                            // Use remaining() which starts *after* the consumed #/@
-                            // Note: reshaped for borrowck — `remaining()` borrows
-                            // `self.contents`; `scan_pragma` needs `&mut self`.
-                            // Detach via `StoreStr` (arena-owned, lives for parse).
-                            let chunk = js_ast::StoreStr::new(self.remaining());
+                            // `chunk` starts *after* the consumed #/@
+                            let chunk = &contents[self.current..];
                             let offset =
-                                self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
+                                self.scan_pragma(pragma_trigger_pos, chunk, true);
 
                             if offset > 0 {
                                 // Pragma found (e.g., __PURE__).

@@ -157,12 +157,12 @@ impl<'a> Snapshots<'a> {
         name_with_counter.extend_from_slice(counter_string);
 
         let name_hash: u64 = hash(&name_with_counter);
-        // reshaped for borrowck — `get` then early-return borrows `*self.values`
-        // immutably for the whole fn body (NLL limitation with returned borrows), preventing
-        // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
-        if self.values.contains_key(&name_hash) {
-            return Ok(Some(&**self.values.get(&name_hash).unwrap()));
-        }
+        let slot = match self.values.entry(name_hash) {
+            bun_collections::zig_hash_map::MapEntry::Occupied(e) => {
+                return Ok(Some(&**e.into_mut()));
+            }
+            bun_collections::zig_hash_map::MapEntry::Vacant(v) => v,
+        };
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
@@ -201,8 +201,7 @@ impl<'a> Snapshots<'a> {
         .map_err(|_| crate::Error::WriteError)?;
 
         self.added += 1;
-        self.values
-            .insert(name_hash, Box::<[u8]>::from(target_value));
+        slot.insert(Box::<[u8]>::from(target_value));
         Ok(None)
     }
 
@@ -368,14 +367,10 @@ impl<'a> Snapshots<'a> {
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
 
-        // reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
-        let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().to_vec();
-        for file_id in file_ids {
+        for entry in self.inline_snapshots_to_write.iterator() {
             arena.reset();
-            let ils_info = self
-                .inline_snapshots_to_write
-                .get_mut(&file_id)
-                .expect("unreachable");
+            let file_id = *entry.key_ptr;
+            let ils_info = entry.value_ptr;
 
             // The guard runs on every exit of the loop body (continue,
             // fall-through, AND `?` early-return).

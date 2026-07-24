@@ -314,6 +314,19 @@ export const globalFlags: Flag[] = [
     when: c => c.asan,
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
   },
+  // Windows: the MSVC STL adds AddressSanitizer container annotations to
+  // std::string/std::vector when it detects ASAN, and lld-link refuses to
+  // mix annotated and unannotated objects (/failifmismatch annotate_string
+  // / annotate_vector). ICU is intentionally built uninstrumented (its COFF
+  // globals produce false ASAN reports at startup), so annotations are
+  // disabled for the whole graph to keep every object in agreement.
+  // This gives up std::string/vector overflow checks only; WTF containers
+  // and the intercepted heap are unaffected.
+  {
+    flag: ["-D_DISABLE_STRING_ANNOTATION", "-D_DISABLE_VECTOR_ANNOTATION"],
+    when: c => c.windows && c.asan,
+    desc: "Disable MSVC STL ASAN container annotations (link consistency)",
+  },
 
   // ─── C++ language behavior ───
   {

@@ -83,11 +83,16 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
     //
     // Windows: LeakSanitizer does not exist in the Windows runtime, so any
-    // `detect_leaks` option is rejected as unknown; and Rust's system
-    // allocator is HeapAlloc, which the runtime only intercepts when
-    // `windows_hook_rtl_allocators` is on.
+    // `detect_leaks` option is rejected as unknown.
+    // detect_odr_violation=0: on COFF the same string literal in two
+    // (unified) translation units registers as two differently-sized globals
+    // and trips a false ODR report at startup; other Windows ASAN
+    // deployments disable this check for the same reason.
+    // (windows_hook_rtl_allocators is deliberately NOT set: hooking the RTL
+    // heap functions mid-DLL-init makes process startup fail with
+    // STATUS_DLL_INIT_FAILED before main.)
     #[cfg(windows)]
-    return c"detect_stack_use_after_return=0:windows_hook_rtl_allocators=true".as_ptr();
+    return c"detect_stack_use_after_return=0:detect_odr_violation=0".as_ptr();
     #[cfg(not(windows))]
     return c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr();
 }

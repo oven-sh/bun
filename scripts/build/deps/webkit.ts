@@ -385,11 +385,13 @@ export const webkit: Dependency = {
           cfg.debug ? "Debug" : "Release",
           "-OutputDir",
           icu,
-          // ICU must be built with the same AddressSanitizer setting as the
-          // rest of the graph: the MSVC STL fails the link (/failifmismatch
-          // annotate_string) when instrumented and uninstrumented objects
-          // disagree on std::string container annotations.
-          ...(cfg.asan ? ["-Sanitizer", "address"] : []),
+          // ICU is deliberately built UNinstrumented even under ASAN: it is
+          // mature third-party code, and instrumenting its globals on COFF
+          // yields false global-buffer-overflow/ODR reports at startup
+          // (linker-folded empty string literals). The std::string
+          // annotation mismatch that would otherwise fail the link is
+          // resolved by disabling MSVC STL container annotations for the
+          // whole graph (see the _DISABLE_STRING_ANNOTATION defines).
         ],
         cwd: srcDir,
         outputs: localIcuLibs(cfg),

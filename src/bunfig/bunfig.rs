@@ -452,7 +452,9 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    if let Some(dots_expr) = expr.get(alloc, b"dots").or_else(|| expr.get(alloc, b"dot")) {
+                    if let Some(dots_expr) =
+                        expr.get(alloc, b"dots").or_else(|| expr.get(alloc, b"dot"))
+                    {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
                         self.ctx.test_options.reporters.dots =
                             dots_expr.as_bool().expect("infallible: type checked");
@@ -1336,10 +1338,16 @@ impl<'a> Parser<'a> {
         if let Some(v) = install_obj.get(alloc, b"dryRun").and_then(|e| e.as_bool()) {
             install.dry_run = Some(v);
         }
-        if let Some(v) = install_obj.get(alloc, b"production").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj
+            .get(alloc, b"production")
+            .and_then(|e| e.as_bool())
+        {
             install.production = Some(v);
         }
-        if let Some(v) = install_obj.get(alloc, b"frozenLockfile").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj
+            .get(alloc, b"frozenLockfile")
+            .and_then(|e| e.as_bool())
+        {
             install.frozen_lockfile = Some(v);
         }
         if let Some(v) = install_obj
@@ -1354,7 +1362,10 @@ impl<'a> Parser<'a> {
                 install.concurrent_scripts = if n == 0 { None } else { Some(n) };
             }
         }
-        if let Some(v) = install_obj.get(alloc, b"ignoreScripts").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj
+            .get(alloc, b"ignoreScripts")
+            .and_then(|e| e.as_bool())
+        {
             install.ignore_scripts = Some(v);
         }
         if let Some(node_linker_expr) = install_obj.get(alloc, b"linker") {
@@ -1369,7 +1380,10 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(v) = install_obj.get(alloc, b"globalStore").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj
+            .get(alloc, b"globalStore")
+            .and_then(|e| e.as_bool())
+        {
             install.global_store = Some(v);
         }
 
@@ -1405,7 +1419,10 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(v) = install_obj.get(alloc, b"optional").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj
+            .get(alloc, b"optional")
+            .and_then(|e| e.as_bool())
+        {
             install.save_optional = Some(v);
         }
         if let Some(v) = install_obj.get(alloc, b"peer").and_then(|e| e.as_bool()) {
@@ -1444,10 +1461,16 @@ impl<'a> Parser<'a> {
                     if let Some(v) = cache.get(alloc, b"disable").and_then(|e| e.as_bool()) {
                         install.disable_cache = Some(v);
                     }
-                    if let Some(v) = cache.get(alloc, b"disableManifest").and_then(|e| e.as_bool()) {
+                    if let Some(v) = cache
+                        .get(alloc, b"disableManifest")
+                        .and_then(|e| e.as_bool())
+                    {
                         install.disable_manifest_cache = Some(v);
                     }
-                    if let Some(v) = cache.get(alloc, b"dir").and_then(|e| e.as_string(self.bump)) {
+                    if let Some(v) = cache
+                        .get(alloc, b"dir")
+                        .and_then(|e| e.as_string(self.bump))
+                    {
                         install.cache_directory = Some(v.into());
                     }
                 }

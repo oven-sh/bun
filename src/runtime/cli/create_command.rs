@@ -860,7 +860,9 @@ impl CreateCommand {
                 }
 
                 mod injection_prefill {
-                    pub(crate) fn npx_react_scripts_build(alloc: bun_alloc::AstAlloc) -> bun_ast::Expr {
+                    pub(crate) fn npx_react_scripts_build(
+                        alloc: bun_alloc::AstAlloc,
+                    ) -> bun_ast::Expr {
                         bun_ast::Expr::init(
                             alloc,
                             bun_ast::E::EString::init(b"npx react-scripts build"),

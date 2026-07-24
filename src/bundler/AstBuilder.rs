@@ -181,13 +181,15 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             let import_id: &[u8] = *import_id; // must be given '[N][]const u8'
             let ref_ = self.new_symbol(SymbolKind::Import, import_id)?;
             if self.hot_reloading {
-                self.get_symbol(ref_).namespace_alias =
-                    Some(bun_alloc::ast_box(self.alloc, G::NamespaceAlias {
+                self.get_symbol(ref_).namespace_alias = Some(bun_alloc::ast_box(
+                    self.alloc,
+                    G::NamespaceAlias {
                         namespace_ref,
                         alias: bun_ast::StoreStr::new(import_id),
                         import_record_index: record,
                         ..Default::default()
-                    }));
+                    },
+                ));
             }
             out_ref.write(self.new_expr(E::ImportIdentifier {
                 ref_,

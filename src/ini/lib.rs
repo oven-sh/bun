@@ -1008,7 +1008,11 @@ mod draft {
             Ok(None)
         }
 
-        fn single_str_rope(alloc: AstAlloc, ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope> {
+        fn single_str_rope(
+            alloc: AstAlloc,
+            ropealloc: &'a Arena,
+            str_: &[u8],
+        ) -> OOM<&'a mut Rope> {
             let rope = ropealloc.alloc(Rope {
                 head: Expr::init(alloc, E::EString::init(str_), Loc::EMPTY),
                 next: ptr::null_mut(),

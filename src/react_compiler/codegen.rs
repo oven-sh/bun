@@ -1872,8 +1872,7 @@ fn codegen_instruction_value(
             // expression (an error is recorded alongside). The literal text
             // matches upstream; split via `concat!` so the diff-hygiene lint
             // does not flag a task marker that is part of the emitted output.
-            const UNHANDLED_DECLARATION_PLACEHOLDER: &str =
-                concat!("TO", "DO handle declaration");
+            const UNHANDLED_DECLARATION_PLACEHOLDER: &str = concat!("TO", "DO handle declaration");
             const UNHANDLED_STATEMENT_PLACEHOLDER: &str = concat!("TO", "DO handle statement");
             for stmt in body {
                 match stmt.data {
@@ -1888,8 +1887,11 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions
-                            .push(string_expr(alloc, UNHANDLED_DECLARATION_PLACEHOLDER, Loc::EMPTY));
+                        expressions.push(string_expr(
+                            alloc,
+                            UNHANDLED_DECLARATION_PLACEHOLDER,
+                            Loc::EMPTY,
+                        ));
                     }
                     _ => {
                         cx.record_error(CompilerErrorDetail {
@@ -1899,8 +1901,11 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions
-                            .push(string_expr(alloc, UNHANDLED_STATEMENT_PLACEHOLDER, Loc::EMPTY));
+                        expressions.push(string_expr(
+                            alloc,
+                            UNHANDLED_STATEMENT_PLACEHOLDER,
+                            Loc::EMPTY,
+                        ));
                     }
                 }
             }

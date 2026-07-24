@@ -561,9 +561,10 @@ impl InitCommand {
         }
 
         if !did_load_package_json {
-            fields.object = bun_ast::Expr::init(bump, bun_ast::E::Object::empty(bump), bun_ast::Loc::EMPTY)
-                .data
-                .e_object();
+            fields.object =
+                bun_ast::Expr::init(bump, bun_ast::E::Object::empty(bump), bun_ast::Loc::EMPTY)
+                    .data
+                    .e_object();
         }
 
         if !auto_yes {
@@ -672,7 +673,11 @@ impl InitCommand {
                 object.put(
                     bump,
                     b"private",
-                    bun_ast::Expr::init(bump, bun_ast::E::Boolean { value: true }, bun_ast::Loc::EMPTY),
+                    bun_ast::Expr::init(
+                        bump,
+                        bun_ast::E::Boolean { value: true },
+                        bun_ast::Loc::EMPTY,
+                    ),
                 )?;
             }
         }
@@ -1401,7 +1406,11 @@ impl Template {
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(bump, bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
+            head: bun_ast::Expr::init(
+                bump,
+                bun_ast::E::String::init(b"scripts"),
+                bun_ast::Loc::EMPTY,
+            ),
             next: core::ptr::null_mut(),
         });
         // SAFETY: object is arena-allocated and live for the command duration.

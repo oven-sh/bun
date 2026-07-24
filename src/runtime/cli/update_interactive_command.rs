@@ -481,7 +481,11 @@ impl UpdateInteractiveCommand {
 
             // Use the PackageJSONEditor to update catalogs
             let alloc = package_json.json_arena.alloc();
-            edit_catalog_definitions(alloc, &mut updates_for_workspace[..], &mut package_json.root)?;
+            edit_catalog_definitions(
+                alloc,
+                &mut updates_for_workspace[..],
+                &mut package_json.root,
+            )?;
 
             // Save the updated package.json
             Self::save_package_json(package_json, package_json_path)?;
@@ -2351,7 +2355,11 @@ fn update_default_catalog(
     // Check if we need to update under workspaces.catalog or root-level catalog
     if let Some(workspaces_query) = package_json.as_property(alloc, b"workspaces") {
         if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
-            if workspaces_query.expr.as_property(alloc, b"catalog").is_some() {
+            if workspaces_query
+                .expr
+                .as_property(alloc, b"catalog")
+                .is_some()
+            {
                 // Update under workspaces.catalog
                 if source == CatalogSource::Workspaces {
                     // Mutated in place; placement matches lookup.

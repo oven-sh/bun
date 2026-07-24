@@ -505,7 +505,9 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(crate::Error::NotFound);
                     }
-                    current = current.get(dummy_bump(), prop_name).ok_or(crate::Error::NotFound)?;
+                    current = current
+                        .get(dummy_bump(), prop_name)
+                        .ok_or(crate::Error::NotFound)?;
                     remaining_part = &part[first_bracket..];
                 }
 
@@ -533,7 +535,9 @@ impl PmPkgCommand {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(crate::Error::NotFound);
                         }
-                        current = current.get(dummy_bump(), index_str).ok_or(crate::Error::NotFound)?;
+                        current = current
+                            .get(dummy_bump(), index_str)
+                            .ok_or(crate::Error::NotFound)?;
                     }
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];
@@ -551,7 +555,9 @@ impl PmPkgCommand {
                             current = arr.items.slice()[index];
                         }
                         ExprData::EObject(_) => {
-                            current = current.get(dummy_bump(), part).ok_or(crate::Error::NotFound)?;
+                            current = current
+                                .get(dummy_bump(), part)
+                                .ok_or(crate::Error::NotFound)?;
                         }
                         _ => return Err(crate::Error::NotFound),
                     }
@@ -559,7 +565,9 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(crate::Error::NotFound);
                     }
-                    current = current.get(dummy_bump(), part).ok_or(crate::Error::NotFound)?;
+                    current = current
+                        .get(dummy_bump(), part)
+                        .ok_or(crate::Error::NotFound)?;
                 }
             }
         }
@@ -697,7 +705,11 @@ impl PmPkgCommand {
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(alloc, E::Number::new(int_val as f64), Loc::EMPTY));
+                return Ok(Expr::init(
+                    alloc,
+                    E::Number::new(int_val as f64),
+                    Loc::EMPTY,
+                ));
             }
 
             if let Some(float_val) = parse_f64(value) {
@@ -706,8 +718,7 @@ impl PmPkgCommand {
 
             let temp_source = Source::init_path_string(b"package.json", value);
             let mut temp_log = Log::init();
-            if let Ok(json_expr) =
-                json::parse_package_json_utf8(&temp_source, &mut temp_log, alloc)
+            if let Ok(json_expr) = json::parse_package_json_utf8(&temp_source, &mut temp_log, alloc)
             {
                 return Ok(json_expr);
             } else {

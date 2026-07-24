@@ -931,14 +931,16 @@ pub fn generate_entry_point_tail_js<'a>(
         options::OutputFormat::Esm => {
             match flags.wrap {
                 crate::WrapKind::Cjs => {
-                    stmts.push(Stmt::alloc(ast_alloc, 
+                    stmts.push(Stmt::alloc(
+                        ast_alloc,
                         // "export default require_foo();"
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 loc: bun_ast::Loc::EMPTY,
                                 ref_: ast.wrapper_ref,
                             },
-                            value: StmtOrExpr::Expr(Expr::init(ast_alloc, 
+                            value: StmtOrExpr::Expr(Expr::init(
+                                ast_alloc,
                                 E::Call {
                                     target: Expr::init_identifier(
                                         ast.wrapper_ref,
@@ -956,11 +958,14 @@ pub fn generate_entry_point_tail_js<'a>(
                     if flags.wrap == crate::WrapKind::Esm && ast.wrapper_ref.is_valid() {
                         if flags.is_async_or_has_async_dependency {
                             // "await init_foo();"
-                            stmts.push(Stmt::alloc(ast_alloc, 
+                            stmts.push(Stmt::alloc(
+                                ast_alloc,
                                 S::SExpr {
-                                    value: Expr::init(ast_alloc, 
+                                    value: Expr::init(
+                                        ast_alloc,
                                         E::Await {
-                                            value: Expr::init(ast_alloc, 
+                                            value: Expr::init(
+                                                ast_alloc,
                                                 E::Call {
                                                     target: Expr::init_identifier(
                                                         ast.wrapper_ref,
@@ -979,9 +984,11 @@ pub fn generate_entry_point_tail_js<'a>(
                             ));
                         } else {
                             // "init_foo();"
-                            stmts.push(Stmt::alloc(ast_alloc, 
+                            stmts.push(Stmt::alloc(
+                                ast_alloc,
                                 S::SExpr {
-                                    value: Expr::init(ast_alloc, 
+                                    value: Expr::init(
+                                        ast_alloc,
                                         E::Call {
                                             target: Expr::init_identifier(
                                                 ast.wrapper_ref,
@@ -1087,7 +1094,8 @@ pub fn generate_entry_point_tail_js<'a>(
                                 //     export_foo as foo
                                 //   };
                                 //
-                                stmts.push(Stmt::alloc(ast_alloc, 
+                                stmts.push(Stmt::alloc(
+                                    ast_alloc,
                                     S::Local {
                                         decls: ast_alloc.vec_from_slice(&[G::Decl {
                                             binding: Binding::alloc(
@@ -1095,7 +1103,8 @@ pub fn generate_entry_point_tail_js<'a>(
                                                 B::Identifier { r#ref: temp_ref },
                                                 bun_ast::Loc::EMPTY,
                                             ),
-                                            value: Some(Expr::init(ast_alloc, 
+                                            value: Some(Expr::init(
+                                                ast_alloc,
                                                 E::ImportIdentifier {
                                                     ref_: resolved_export_data.import_ref,
                                                     ..Default::default()
@@ -1157,7 +1166,8 @@ pub fn generate_entry_point_tail_js<'a>(
                         // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
-                        stmts.push(Stmt::alloc(ast_alloc, 
+                        stmts.push(Stmt::alloc(
+                            ast_alloc,
                             S::ExportClause {
                                 items: bun_ast::StoreSlice::new_mut(items),
                                 is_single_line: false,
@@ -1173,9 +1183,11 @@ pub fn generate_entry_point_tail_js<'a>(
                             for export_item in items.iter() {
                                 let (fn_body, rest) = remain_getter_fn_body.split_at_mut(1);
                                 remain_getter_fn_body = rest;
-                                fn_body[0] = Stmt::alloc(ast_alloc, 
+                                fn_body[0] = Stmt::alloc(
+                                    ast_alloc,
                                     S::Return {
-                                        value: Some(Expr::init(ast_alloc, 
+                                        value: Some(Expr::init(
+                                            ast_alloc,
                                             E::Identifier {
                                                 ref_: export_item.name.ref_,
                                                 ..Default::default()
@@ -1188,7 +1200,8 @@ pub fn generate_entry_point_tail_js<'a>(
                                 VecExt::append(
                                     &mut properties,
                                     G::Property {
-                                        key: Some(Expr::init(ast_alloc, 
+                                        key: Some(Expr::init(
+                                            ast_alloc,
                                             E::String {
                                                 // SAFETY: alias is an arena `*const [u8]`; never null.
                                                 data: export_item.alias.slice().into(),
@@ -1197,7 +1210,8 @@ pub fn generate_entry_point_tail_js<'a>(
                                             },
                                             export_item.alias_loc,
                                         )),
-                                        value: Some(Expr::init(ast_alloc, 
+                                        value: Some(Expr::init(
+                                            ast_alloc,
                                             E::Function {
                                                 func: G::Fn {
                                                     body: G::FnBody {
@@ -1217,13 +1231,15 @@ pub fn generate_entry_point_tail_js<'a>(
                                     },
                                 );
                             }
-                            stmts.push(Stmt::alloc(ast_alloc, 
+                            stmts.push(Stmt::alloc(
+                                ast_alloc,
                                 S::ExportDefault {
                                     default_name: bun_ast::LocRef {
                                         ref_: Ref::NONE,
                                         loc: bun_ast::Loc::EMPTY,
                                     },
-                                    value: StmtOrExpr::Expr(Expr::init(ast_alloc, 
+                                    value: StmtOrExpr::Expr(Expr::init(
+                                        ast_alloc,
                                         E::Object {
                                             properties,
                                             ..E::Object::empty(ast_alloc)
@@ -1251,8 +1267,10 @@ pub fn generate_entry_point_tail_js<'a>(
             match flags.wrap {
                 crate::WrapKind::Cjs => {
                     // "module.exports = require_foo();"
-                    stmts.push(Stmt::assign(ast_alloc, 
-                        Expr::init(ast_alloc, 
+                    stmts.push(Stmt::assign(
+                        ast_alloc,
+                        Expr::init(
+                            ast_alloc,
                             E::Dot {
                                 target: Expr::init_identifier(
                                     c.unbound_module_ref,
@@ -1264,7 +1282,8 @@ pub fn generate_entry_point_tail_js<'a>(
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        Expr::init(ast_alloc, 
+                        Expr::init(
+                            ast_alloc,
                             E::Call {
                                 target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
                                 ..E::Call::empty(ast_alloc)
@@ -1275,9 +1294,11 @@ pub fn generate_entry_point_tail_js<'a>(
                 }
                 crate::WrapKind::Esm => {
                     // "init_foo();"
-                    stmts.push(Stmt::alloc(ast_alloc, 
+                    stmts.push(Stmt::alloc(
+                        ast_alloc,
                         S::SExpr {
-                            value: Expr::init(ast_alloc, 
+                            value: Expr::init(
+                                ast_alloc,
                                 E::Call {
                                     target: Expr::init_identifier(
                                         ast.wrapper_ref,

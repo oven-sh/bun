@@ -1477,7 +1477,12 @@ impl SourceMapDataTask {
         // handed (it allocates via the default allocator internally), so we
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (§Dispatch).
-        SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), worker.alloc(), task.source_index);
+        SourceMapData::compute_quoted_source_contents(
+            ctx,
+            worker.arena(),
+            worker.alloc(),
+            task.source_index,
+        );
         worker.unget();
     }
 }
@@ -3204,20 +3209,23 @@ impl<'a> LinkerContext<'a> {
                         source_index,
                         Part {
                             symbol_uses,
-                            declared_symbols: DeclaredSymbolList::from_slice(ast_alloc, &[
-                                DeclaredSymbol {
-                                    ref_: exports_ref,
-                                    is_top_level: true,
-                                },
-                                DeclaredSymbol {
-                                    ref_: module_ref,
-                                    is_top_level: true,
-                                },
-                                DeclaredSymbol {
-                                    ref_: wrap_ref,
-                                    is_top_level: true,
-                                },
-                            ])
+                            declared_symbols: DeclaredSymbolList::from_slice(
+                                ast_alloc,
+                                &[
+                                    DeclaredSymbol {
+                                        ref_: exports_ref,
+                                        is_top_level: true,
+                                    },
+                                    DeclaredSymbol {
+                                        ref_: module_ref,
+                                        is_top_level: true,
+                                    },
+                                    DeclaredSymbol {
+                                        ref_: wrap_ref,
+                                        is_top_level: true,
+                                    },
+                                ],
+                            )
                             .expect("unreachable"),
                             dependencies,
                             ..Part::empty(ast_alloc)
@@ -3965,11 +3973,14 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
                     // (graph.ast SoA) and `result` (stack local).
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(bun_alloc::ast_box(ast_alloc, G::NamespaceAlias {
-                            namespace_ref: result.namespace_ref,
-                            alias: result.alias,
-                            ..Default::default()
-                        }));
+                        Some(bun_alloc::ast_box(
+                            ast_alloc,
+                            G::NamespaceAlias {
+                                namespace_ref: result.namespace_ref,
+                                alias: result.alias,
+                                ..Default::default()
+                            },
+                        ));
                 }
                 MatchImportKind::NormalAndNamespace => {
                     imports_to_bind
@@ -3989,11 +4000,14 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(bun_alloc::ast_box(ast_alloc, G::NamespaceAlias {
-                            namespace_ref: result.namespace_ref,
-                            alias: result.alias,
-                            ..Default::default()
-                        }));
+                        Some(bun_alloc::ast_box(
+                            ast_alloc,
+                            G::NamespaceAlias {
+                                namespace_ref: result.namespace_ref,
+                                alias: result.alias,
+                                ..Default::default()
+                            },
+                        ));
                 }
                 MatchImportKind::Cycle => {
                     let source = self.get_source(source_index);
@@ -4090,10 +4104,13 @@ impl<'a> LinkerContext<'a> {
         let part_index = self.graph.add_part_to_file(
             source_index,
             Part {
-                declared_symbols: DeclaredSymbolList::from_slice(ast_alloc, &[DeclaredSymbol {
-                    ref_: r#ref,
-                    is_top_level: true,
-                }])?,
+                declared_symbols: DeclaredSymbolList::from_slice(
+                    ast_alloc,
+                    &[DeclaredSymbol {
+                        ref_: r#ref,
+                        is_top_level: true,
+                    }],
+                )?,
                 can_be_removed_if_unused: true,
                 ..Part::empty(ast_alloc)
             },

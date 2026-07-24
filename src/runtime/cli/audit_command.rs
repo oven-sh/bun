@@ -142,7 +142,11 @@ impl AuditCommand {
                 let mut log = bun_ast::Log::init();
 
                 let ast_arena = bun_alloc::AstArena::new();
-                let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log, ast_arena.alloc()) {
+                let parsed = match bun_json::ParsedJson::parse_json(
+                    &source,
+                    &mut log,
+                    ast_arena.alloc(),
+                ) {
                     Ok(e) => e,
                     Err(_) => {
                         bun_core::pretty_errorln!(

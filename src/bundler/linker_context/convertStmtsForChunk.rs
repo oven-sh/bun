@@ -127,7 +127,8 @@ pub fn convert_stmts_for_chunk(
 
                         if should_strip_exports {
                             // Turn this statement into "import * as ns from 'path'"
-                            stmt = Stmt::alloc(ast_alloc, 
+                            stmt = Stmt::alloc(
+                                ast_alloc,
                                 S::Import {
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
@@ -168,7 +169,8 @@ pub fn convert_stmts_for_chunk(
                             .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
                         {
                             // Turn this statement into "import * as ns from 'path'"
-                            stmt = Stmt::alloc(ast_alloc, 
+                            stmt = Stmt::alloc(
+                                ast_alloc,
                                 S::Import {
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
@@ -182,14 +184,16 @@ pub fn convert_stmts_for_chunk(
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
-                            args.push(Expr::init(ast_alloc, 
+                            args.push(Expr::init(
+                                ast_alloc,
                                 E::Identifier {
                                     ref_: ast.exports_ref,
                                     ..Default::default()
                                 },
                                 stmt.loc,
                             ));
-                            args.push(Expr::init(ast_alloc, 
+                            args.push(Expr::init(
+                                ast_alloc,
                                 E::Identifier {
                                     ref_: s.namespace_ref,
                                     ..Default::default()
@@ -206,7 +210,8 @@ pub fn convert_stmts_for_chunk(
 
                             stmts
                                 .inside_wrapper_prefix
-                                .append_non_dependency(Stmt::alloc(ast_alloc, 
+                                .append_non_dependency(Stmt::alloc(
+                                    ast_alloc,
                                     S::SExpr {
                                         value: Expr::allocate(
                                             bump,
@@ -219,9 +224,7 @@ pub fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: ast_alloc.vec_from_iter(
-                                                    args,
-                                                ),
+                                                args: ast_alloc.vec_from_iter(args),
                                                 ..E::Call::empty(ast_alloc)
                                             },
                                             stmt.loc,
@@ -246,11 +249,14 @@ pub fn convert_stmts_for_chunk(
                             if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
                                 stmts
                                     .inside_wrapper_prefix
-                                    .append_non_dependency(Stmt::alloc(ast_alloc, 
+                                    .append_non_dependency(Stmt::alloc(
+                                        ast_alloc,
                                         S::SExpr {
-                                            value: Expr::init(ast_alloc, 
+                                            value: Expr::init(
+                                                ast_alloc,
                                                 E::Call {
-                                                    target: Expr::init(ast_alloc, 
+                                                    target: Expr::init(
+                                                        ast_alloc,
                                                         E::Identifier {
                                                             ref_: wrapper_ref,
                                                             ..Default::default()
@@ -286,7 +292,8 @@ pub fn convert_stmts_for_chunk(
                                     );
                                 }
 
-                                break 'brk Expr::init(ast_alloc, 
+                                break 'brk Expr::init(
+                                    ast_alloc,
                                     E::RequireString {
                                         import_record_index: s.import_record_index,
                                         ..Default::default()
@@ -299,7 +306,8 @@ pub fn convert_stmts_for_chunk(
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
-                            args.push(Expr::init(ast_alloc, 
+                            args.push(Expr::init(
+                                ast_alloc,
                                 E::Identifier {
                                     ref_: ast.exports_ref,
                                     ..Default::default()
@@ -314,20 +322,21 @@ pub fn convert_stmts_for_chunk(
 
                             stmts
                                 .inside_wrapper_prefix
-                                .append_non_dependency(Stmt::alloc(ast_alloc, 
+                                .append_non_dependency(Stmt::alloc(
+                                    ast_alloc,
                                     S::SExpr {
-                                        value: Expr::init(ast_alloc, 
+                                        value: Expr::init(
+                                            ast_alloc,
                                             E::Call {
-                                                target: Expr::init(ast_alloc, 
+                                                target: Expr::init(
+                                                    ast_alloc,
                                                     E::Identifier {
                                                         ref_: export_star_ref,
                                                         ..Default::default()
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: ast_alloc.vec_from_iter(
-                                                    args,
-                                                ),
+                                                args: ast_alloc.vec_from_iter(args),
                                                 ..E::Call::empty(ast_alloc)
                                             },
                                             stmt.loc,
@@ -372,7 +381,8 @@ pub fn convert_stmts_for_chunk(
                             };
                         }
 
-                        stmt = Stmt::alloc(ast_alloc, 
+                        stmt = Stmt::alloc(
+                            ast_alloc,
                             S::Import {
                                 items: items.into(),
                                 import_record_index: s.import_record_index,
@@ -410,7 +420,8 @@ pub fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.func.flags.contains(G::FnFlags::IsExport) {
                         // Be c areful to not modify the original statement
-                        stmt = Stmt::alloc(ast_alloc, 
+                        stmt = Stmt::alloc(
+                            ast_alloc,
                             S::Function {
                                 // SAFETY: shallow bitwise copy of arena-backed G::Fn.
                                 func: unsafe { core::ptr::read(&raw const s.func) },
@@ -430,7 +441,8 @@ pub fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
-                        stmt = Stmt::alloc(ast_alloc, 
+                        stmt = Stmt::alloc(
+                            ast_alloc,
                             S::Class {
                                 // SAFETY: shallow bitwise copy of arena-backed E::Class.
                                 class: unsafe { core::ptr::read(&raw const s.class) },
@@ -460,12 +472,15 @@ pub fn convert_stmts_for_chunk(
                                 B::B::BIdentifier(id) => id.r#ref,
                                 _ => unreachable!(),
                             };
-                            stmt = Stmt::alloc(ast_alloc, 
+                            stmt = Stmt::alloc(
+                                ast_alloc,
                                 S::SExpr {
-                                    value: Expr::init(ast_alloc, 
+                                    value: Expr::init(
+                                        ast_alloc,
                                         E::Binary {
                                             op: js_ast::OpCode::BinAssign,
-                                            left: Expr::init(ast_alloc, 
+                                            left: Expr::init(
+                                                ast_alloc,
                                                 E::CommonJSExportIdentifier {
                                                     ref_: ident_ref,
                                                     ..Default::default()
@@ -495,7 +510,8 @@ pub fn convert_stmts_for_chunk(
                                 match stmt2.data {
                                     bun_ast::StmtData::SExpr(s2) => {
                                         // "export default foo;" => "var default = foo;"
-                                        stmt = Stmt::alloc(ast_alloc, 
+                                        stmt = Stmt::alloc(
+                                            ast_alloc,
                                             S::Local {
                                                 decls: ast_alloc.vec_from_slice(&[G::Decl {
                                                     binding: Binding::alloc(
@@ -517,7 +533,8 @@ pub fn convert_stmts_for_chunk(
                                         // "export default function foo() {}" => "function foo() {}"
 
                                         // Be careful to not modify the original statement
-                                        stmt = Stmt::alloc(ast_alloc, 
+                                        stmt = Stmt::alloc(
+                                            ast_alloc,
                                             S::Function {
                                                 // SAFETY: shallow bitwise copy of arena-backed G::Fn.
                                                 func: unsafe {
@@ -535,7 +552,8 @@ pub fn convert_stmts_for_chunk(
                                         // "export default class foo {}" => "class foo {}"
 
                                         // Be careful to not modify the original statement
-                                        stmt = Stmt::alloc(ast_alloc, 
+                                        stmt = Stmt::alloc(
+                                            ast_alloc,
                                             S::Class {
                                                 // SAFETY: shallow bitwise copy of arena-backed E::Class.
                                                 class: unsafe {
@@ -570,7 +588,8 @@ pub fn convert_stmts_for_chunk(
                                 }
                             }
                             bun_ast::StmtOrExpr::Expr(e) => {
-                                stmt = Stmt::alloc(ast_alloc, 
+                                stmt = Stmt::alloc(
+                                    ast_alloc,
                                     S::Local {
                                         decls: ast_alloc.vec_from_slice(&[G::Decl {
                                             binding: Binding::alloc(

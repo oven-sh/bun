@@ -81,9 +81,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
-                if let Err(err) =
-                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast, ast_alloc)
-                {
+                if let Err(err) = convert_stmts_for_chunk_for_dev_server(
+                    c, stmts, part_stmts, arena, &mut ast, ast_alloc,
+                ) {
                     return PrintResult::Err(err.into());
                 }
             }
@@ -158,7 +158,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             stmts.all_stmts.push(Stmt::allocate_expr(
                 temp_arena,
-                Expr::init(ast_alloc, 
+                Expr::init(
+                    ast_alloc,
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new_mut(dup_args),
@@ -265,7 +266,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     {
         stmts
             .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(ast_alloc, 
+            .append_non_dependency(Stmt::alloc(
+                ast_alloc,
                 S::Directive {
                     value: bun_ast::StoreStr::new(b"use strict"),
                 },
@@ -581,7 +583,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
-                let cjs_args = ast_alloc.vec_from_slice(&[Expr::init(ast_alloc,
+                let cjs_args = ast_alloc.vec_from_slice(&[Expr::init(
+                    ast_alloc,
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new(args.into_bump_slice()),
@@ -595,9 +598,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     bun_ast::Loc::EMPTY,
                 )]);
 
-                let commonjs_wrapper_definition = Expr::init(ast_alloc, 
+                let commonjs_wrapper_definition = Expr::init(
+                    ast_alloc,
                     E::Call {
-                        target: Expr::init(ast_alloc, 
+                        target: Expr::init(
+                            ast_alloc,
                             E::Identifier {
                                 ref_: c.cjs_runtime_ref,
                                 ..Default::default()
@@ -625,7 +630,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(ast_alloc, 
+                        Stmt::alloc(
+                            ast_alloc,
                             S::Local {
                                 decls,
                                 ..S::Local::empty(ast_alloc)
@@ -718,18 +724,20 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                         } else {
                                             // if the value cannot be moved, add every destructuring key separately
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
-                                            let binding = Binding::to_expr(ast_alloc, 
+                                            let binding = Binding::to_expr(
+                                                ast_alloc,
                                                 &decl.binding,
                                                 (&raw mut hoist).cast::<core::ffi::c_void>(),
                                                 hoist_wrapper,
                                             );
-                                            value = value.join_with_comma(ast_alloc, Expr::assign(ast_alloc, 
-                                                binding,
-                                                initializer,
-                                            ));
+                                            value = value.join_with_comma(
+                                                ast_alloc,
+                                                Expr::assign(ast_alloc, binding, initializer),
+                                            );
                                         }
                                     } else {
-                                        let _ = Binding::to_expr(ast_alloc, 
+                                        let _ = Binding::to_expr(
+                                            ast_alloc,
                                             &decl.binding,
                                             (&raw mut hoist).cast::<core::ffi::c_void>(),
                                             hoist_wrapper,
@@ -763,7 +771,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     StoreRef::from_bump(&mut class.class);
                                 break 'stmt Stmt::allocate_expr(
                                     temp_arena,
-                                    Expr::assign(ast_alloc, 
+                                    Expr::assign(
+                                        ast_alloc,
                                         lhs,
                                         Expr {
                                             data: ExprData::EClass(class_ref),
@@ -786,11 +795,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 if !hoist.decls.is_empty() {
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(ast_alloc, 
+                        Stmt::alloc(
+                            ast_alloc,
                             S::Local {
-                                decls: ast_alloc.vec_from_iter(core::mem::take(
-                                    &mut hoist.decls,
-                                )),
+                                decls: ast_alloc.vec_from_iter(core::mem::take(&mut hoist.decls)),
                                 ..S::Local::empty(ast_alloc)
                             },
                             bun_ast::Loc::EMPTY,
@@ -806,7 +814,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = ast_alloc.vec_from_slice(&[Expr::init(ast_alloc,
+                    let esm_args = ast_alloc.vec_from_slice(&[Expr::init(
+                        ast_alloc,
                         E::Arrow {
                             is_async,
                             body: G::FnBody {
@@ -819,7 +828,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     )]);
 
                     // "var init_foo = __esm(...);"
-                    let value = Expr::init(ast_alloc, 
+                    let value = Expr::init(
+                        ast_alloc,
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
                             args: esm_args,
@@ -841,7 +851,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(ast_alloc, 
+                        Stmt::alloc(
+                            ast_alloc,
                             S::Local {
                                 decls,
                                 ..S::Local::empty(ast_alloc)
@@ -868,7 +879,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // via a count of external modules, decremented during
                     // linking.
                     if !ast.wrapper_ref.is_empty() {
-                        let value = Expr::init(ast_alloc, 
+                        let value = Expr::init(
+                            ast_alloc,
                             E::Arrow {
                                 is_async,
                                 body: G::FnBody {
@@ -882,7 +894,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                         stmts.append(
                             StmtListWhich::OutsideWrapperPrefix,
-                            Stmt::alloc(ast_alloc, 
+                            Stmt::alloc(
+                                ast_alloc,
                                 S::Local {
                                     decls: ast_alloc.vec_from_slice(&[G::Decl {
                                         binding: Binding::alloc(
@@ -1055,7 +1068,11 @@ impl DeclCollector {
     }
 }
 
-fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump, ast_alloc: bun_alloc::AstAlloc) {
+fn merge_adjacent_local_stmts(
+    stmts: &mut Vec<Stmt>,
+    _arena: &Bump,
+    ast_alloc: bun_alloc::AstAlloc,
+) {
     if stmts.is_empty() {
         return;
     }
@@ -1080,8 +1097,8 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump, ast_alloc: b
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
-                        let mut clone =
-                            ast_alloc.vec_with_capacity::<G::Decl>(before.decls.len() + after.decls.len());
+                        let mut clone = ast_alloc
+                            .vec_with_capacity::<G::Decl>(before.decls.len() + after.decls.len());
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads

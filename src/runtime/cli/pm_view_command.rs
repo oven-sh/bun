@@ -56,7 +56,11 @@ pub(crate) fn view(
                 let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, alloc) else {
                     break 'from_package_json;
                 };
-                if let Some(name) = pkg_json.get_string_cloned(alloc, bump, b"name").ok().flatten() {
+                if let Some(name) = pkg_json
+                    .get_string_cloned(alloc, bump, b"name")
+                    .ok()
+                    .flatten()
+                {
                     if !name.is_empty() {
                         break 'brk name;
                     }
@@ -500,7 +504,11 @@ pub(crate) fn view(
         {
             prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
         }
-        if let Some(s) = dist.get_string_cloned(alloc, bump, b"shasum").ok().flatten() {
+        if let Some(s) = dist
+            .get_string_cloned(alloc, bump, b"shasum")
+            .ok()
+            .flatten()
+        {
             prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));
         }
         if let Some(i) = dist

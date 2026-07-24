@@ -12,8 +12,8 @@ use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
-use bun_ast::{LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
+use bun_ast::{LocRef, StmtOrExpr, UseDirective};
 
 use crate::AstBuilder::AstBuilder;
 use crate::JSAst;

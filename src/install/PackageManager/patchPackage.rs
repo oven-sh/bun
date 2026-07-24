@@ -166,18 +166,19 @@ pub fn do_patch_commit(
                 let log = manager.log_mut();
                 let ast_arena = bun_alloc::AstArena::new();
                 let alloc = ast_arena.alloc();
-                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log, alloc) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        bun_core::pretty_errorln!(
-                            "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                            err.name(),
-                            bstr::BStr::new(package_json_source.path.pretty_dir()),
-                        );
-                        Global::crash();
-                    }
-                };
+                let parsed =
+                    match JSON::ParsedJson::parse_package_json(&package_json_source, log, alloc) {
+                        Ok(p) => p,
+                        Err(err) => {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                                err.name(),
+                                bstr::BStr::new(package_json_source.path.pretty_dir()),
+                            );
+                            Global::crash();
+                        }
+                    };
                 let json = parsed.root;
 
                 let version: &[u8] = 'version: {
@@ -779,18 +780,19 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let log = manager.log_mut();
                 let ast_arena = bun_alloc::AstArena::new();
                 let alloc = ast_arena.alloc();
-                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log, alloc) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        bun_core::pretty_errorln!(
-                            "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                            err.name(),
-                            bstr::BStr::new(package_json_source.path.pretty_dir()),
-                        );
-                        Global::crash();
-                    }
-                };
+                let parsed =
+                    match JSON::ParsedJson::parse_package_json(&package_json_source, log, alloc) {
+                        Ok(p) => p,
+                        Err(err) => {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                                err.name(),
+                                bstr::BStr::new(package_json_source.path.pretty_dir()),
+                            );
+                            Global::crash();
+                        }
+                    };
                 let json = parsed.root;
 
                 let version: &[u8] = 'version: {

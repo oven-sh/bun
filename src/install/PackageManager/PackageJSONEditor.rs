@@ -72,7 +72,10 @@ pub(crate) fn edit_patched_dependencies(
             patched_dependencies.is_parenthesized = obj.is_parenthesized;
             patched_dependencies.was_originally_macro = obj.was_originally_macro;
             for p in obj.properties.slice() {
-                VecExt::append(&mut patched_dependencies.properties, copy_property(alloc, p));
+                VecExt::append(
+                    &mut patched_dependencies.properties,
+                    copy_property(alloc, p),
+                );
             }
         }
     }
@@ -572,7 +575,9 @@ pub(crate) fn edit(
     // Try to use the existing spot in the dependencies list if possible
     {
         if options.add_trusted_dependencies {
-            if let Some(query) = current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
+            if let Some(query) =
+                current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING)
+            {
                 if let bun_ast::ExprData::EArray(arr) = query.expr.data {
                     // Iterate backwards to avoid index issues when removing items
                     let mut i: usize = manager.trusted_deps_to_add_to_package_json.len();
@@ -775,7 +780,9 @@ pub(crate) fn edit(
 
         let mut trusted_dependencies: &[Expr] = &[];
         if options.add_trusted_dependencies {
-            if let Some(query) = current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
+            if let Some(query) =
+                current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING)
+            {
                 if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                     // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
                     trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
@@ -929,7 +936,9 @@ pub(crate) fn edit(
                 needs_new_trusted_dependencies_list = false;
                 break 'brk Expr::EMPTY;
             }
-            if let Some(query) = current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING) {
+            if let Some(query) =
+                current_package_json.as_property(alloc, TRUSTED_DEPENDENCIES_STRING)
+            {
                 if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                     needs_new_trusted_dependencies_list = false;
                     break 'brk query.expr;

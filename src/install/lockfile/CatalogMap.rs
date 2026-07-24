@@ -93,7 +93,12 @@ impl CatalogMap {
 
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
-    pub fn parse_count(&mut self, alloc: bun_alloc::AstAlloc, expr: Expr, builder: &mut StringBuilder) {
+    pub fn parse_count(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        expr: Expr,
+        builder: &mut StringBuilder,
+    ) {
         if let Some(default_catalog) = expr.get(alloc, b"catalog") {
             Self::count_catalog_group(alloc, &default_catalog, builder);
         }

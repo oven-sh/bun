@@ -251,7 +251,11 @@ pub fn generate_code_for_lazy_export(
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
                                         self.parts.push(E::TemplatePart {
-                                            value: Expr::init(self.ast_alloc, E::String::init(name_v), self.loc),
+                                            value: Expr::init(
+                                                self.ast_alloc,
+                                                E::String::init(name_v),
+                                                self.loc,
+                                            ),
                                             tail: E::TemplateContents::Cooked(E::String::init(
                                                 b" ",
                                             )),
@@ -307,7 +311,8 @@ pub fn generate_code_for_lazy_export(
                 debug_assert!(ref_.inner_index() < symbols.len() as u32);
 
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();
-                let mut value = Expr::init(ast_alloc, 
+                let mut value = Expr::init(
+                    ast_alloc,
                     E::NameOfSymbol {
                         ref_: ref_.to_real_ref(source_index),
                         ..Default::default()
@@ -346,7 +351,8 @@ pub fn generate_code_for_lazy_export(
                     // (freed when the linker arena drops).
                     let parts_slice =
                         bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(template_parts));
-                    value = Expr::init(ast_alloc, 
+                    value = Expr::init(
+                        ast_alloc,
                         E::Template {
                             tag: None,
                             parts: parts_slice,
@@ -379,8 +385,10 @@ pub fn generate_code_for_lazy_export(
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
-            part.stmts.slice_mut()[0] = Stmt::assign(ast_alloc, 
-                Expr::init(ast_alloc, 
+            part.stmts.slice_mut()[0] = Stmt::assign(
+                ast_alloc,
+                Expr::init(
+                    ast_alloc,
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),
                         name: b"exports".as_slice().into(),
@@ -461,7 +469,8 @@ pub fn generate_code_for_lazy_export(
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     let new_stmts: &mut [Stmt] =
-                        alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(ast_alloc, 
+                        alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                            ast_alloc,
                             S::Local {
                                 is_export: true,
                                 decls: ast_alloc.vec_from_slice(&[G::Decl {
@@ -502,7 +511,8 @@ pub fn generate_code_for_lazy_export(
                 let generated =
                     this.generate_named_export_in_file(source_index, module_ref, name, b"default")?;
                 let new_stmts: &mut [Stmt] =
-                    alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(ast_alloc, 
+                    alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                        ast_alloc,
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 ref_: generated.0,

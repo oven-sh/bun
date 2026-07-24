@@ -1747,7 +1747,15 @@ impl<'a> Transpiler<'a> {
                 return parse_text_loader(source, loader, input_fd, source_backing, arena, alloc);
             }
             options::Loader::Md => {
-                return parse_md_loader(source, loader, input_fd, source_backing, arena, alloc, log);
+                return parse_md_loader(
+                    source,
+                    loader,
+                    input_fd,
+                    source_backing,
+                    arena,
+                    alloc,
+                    log,
+                );
             }
             options::Loader::Wasm => {
                 return parse_wasm_loader(

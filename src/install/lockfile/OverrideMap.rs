@@ -101,25 +101,34 @@ impl OverrideMap {
     // No `lockfile` param: JSON strings are already UTF-8 here, and omitting
     // it avoids the `&mut lockfile.overrides` / `&mut lockfile` alias at the
     // only call site.
-    pub(crate) fn parse_count(&mut self, alloc: bun_alloc::AstAlloc, expr: Expr, builder: &mut StringBuilder) {
+    pub(crate) fn parse_count(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        expr: Expr,
+        builder: &mut StringBuilder,
+    ) {
         if let Some(overrides) = expr.as_property(alloc, b"overrides") {
-            overrides.expr.for_each_property(alloc, |key, _key_loc, value| {
-                builder.count(key);
-                if let Some(s) = value.as_utf8_string_literal() {
-                    builder.count(s);
-                } else if let Some(dot) = value.as_property(alloc, b".") {
-                    if let Some(s) = dot.expr.as_utf8_string_literal() {
+            overrides
+                .expr
+                .for_each_property(alloc, |key, _key_loc, value| {
+                    builder.count(key);
+                    if let Some(s) = value.as_utf8_string_literal() {
                         builder.count(s);
+                    } else if let Some(dot) = value.as_property(alloc, b".") {
+                        if let Some(s) = dot.expr.as_utf8_string_literal() {
+                            builder.count(s);
+                        }
                     }
-                }
-            });
+                });
         } else if let Some(resolutions) = expr.as_property(alloc, b"resolutions") {
-            resolutions.expr.for_each_property(alloc, |key, _key_loc, value| {
-                builder.count(key);
-                if let Some(v) = value.as_utf8_string_literal() {
-                    builder.count(v);
-                }
-            });
+            resolutions
+                .expr
+                .for_each_property(alloc, |key, _key_loc, value| {
+                    builder.count(key);
+                    if let Some(v) = value.as_utf8_string_literal() {
+                        builder.count(v);
+                    }
+                });
         }
     }
 

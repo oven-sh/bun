@@ -2518,7 +2518,10 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target)
                 .put(path_slice, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
@@ -2626,7 +2629,10 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target)
                 .put(path.text, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             let side_effects = result.primary_side_effects_data;
             self.graph.input_files.append(crate::Graph::InputFile {
@@ -3145,7 +3151,10 @@ pub mod bv2_impl {
             })?;
 
             // try this.graph.entry_points.append(arena, Index.runtime);
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
@@ -3264,8 +3273,8 @@ pub mod bv2_impl {
 
                     let keys = named_exports_array[*source_id as usize].keys();
                     // `G::Property: !Clone` — build via iterator instead of `vec![v; n]`.
-                    let mut client_manifest_items: bun_ast::g::PropertyList =
-                        ast_alloc.vec_from_iter((0..keys.len()).map(|_| G::Property::empty(ast_alloc)));
+                    let mut client_manifest_items: bun_ast::g::PropertyList = ast_alloc
+                        .vec_from_iter((0..keys.len()).map(|_| G::Property::empty(ast_alloc)));
 
                     if !sc.separate_ssr_graph {
                         bun_core::todo_panic!("separate_ssr_graph=false");
@@ -3457,7 +3466,10 @@ pub mod bv2_impl {
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
@@ -3510,7 +3522,10 @@ pub mod bv2_impl {
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
@@ -3624,7 +3639,10 @@ pub mod bv2_impl {
                 side_effects: bun_ast::SideEffects::HasSideEffects,
                 ..crate::Graph::InputFile::empty(self.alloc())
             })?;
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
             // worker pool; freed via `bun.destroy` in `on_complete` after the
@@ -4615,7 +4633,10 @@ pub mod bv2_impl {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
-                            let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap, this.alloc())); // OOM/capacity: fire-and-forget
+                            let _ = this
+                                .graph
+                                .ast
+                                .append(JSAst::empty_in(this.graph.heap, this.alloc())); // OOM/capacity: fire-and-forget
                             let loader = path
                                 .loader(&this.transpiler.options.loaders)
                                 .unwrap_or(Loader::File);
@@ -5666,8 +5687,14 @@ pub mod bv2_impl {
                     == Index::BAKE_CLIENT_DATA.get()
             );
 
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc()));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc()));
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc()));
+            let _ = self
+                .graph
+                .ast
+                .append(JSAst::empty_in(self.graph.heap, self.alloc()));
             Ok(())
         }
 
@@ -6532,7 +6559,10 @@ pub mod bv2_impl {
                         .input_files
                         .append(new_input_file)
                         .expect("unreachable");
-                    let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
+                    let _ = self
+                        .graph
+                        .ast
+                        .append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
                     if is_html_entrypoint {
                         self.ensure_client_transpiler();
@@ -6908,10 +6938,9 @@ pub mod bv2_impl {
 
                     this.graph
                         .input_files
-                        .items_unique_key_for_additional_file_mut()[result_source_index] =
-                        this.alloc().vec_from_slice(
-                            result.unique_key_for_additional_file.slice(),
-                        )
+                        .items_unique_key_for_additional_file_mut()[result_source_index] = this
+                        .alloc()
+                        .vec_from_slice(result.unique_key_for_additional_file.slice())
                         .into_boxed_slice();
                     this.graph
                         .input_files

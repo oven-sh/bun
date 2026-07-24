@@ -55,11 +55,7 @@ test("BuildMessage.position.namespace owns its bytes for plugin-supplied namespa
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr.trim()).toBe("");
   expect(stdout.trim()).toBe("ok");

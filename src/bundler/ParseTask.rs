@@ -725,9 +725,14 @@ pub mod parse_worker {
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
-                return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, alloc, opts, &topts.define, log, source)?
-                {
+                return if let Some(res) = (crate::cache::JavaScript {}).parse(
+                    bump,
+                    alloc,
+                    opts,
+                    &topts.define,
+                    log,
+                    source,
+                )? {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
@@ -797,8 +802,8 @@ pub mod parse_worker {
                         bun_parsers::toml::TOML::parse(source, &mut temp_log, alloc, false)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
-                        bump,
-                        alloc,
+                            bump,
+                            alloc,
                             &mut topts.define,
                             opts,
                             &mut temp_log,
@@ -819,8 +824,8 @@ pub mod parse_worker {
                     let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, alloc)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
-                        bump,
-                        alloc,
+                            bump,
+                            alloc,
                             &mut topts.define,
                             opts,
                             &mut temp_log,
@@ -842,8 +847,8 @@ pub mod parse_worker {
                         bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, alloc)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
-                        bump,
-                        alloc,
+                            bump,
+                            alloc,
                             &mut topts.define,
                             opts,
                             &mut temp_log,
@@ -1142,8 +1147,8 @@ pub mod parse_worker {
                 let import_records_len = import_records.len();
                 let output_format = opts.output_format;
                 let mut ast = js_parser::new_lazy_export_ast(
-                        bump,
-                        alloc,
+                    bump,
+                    alloc,
                     &mut topts.define,
                     opts,
                     log,

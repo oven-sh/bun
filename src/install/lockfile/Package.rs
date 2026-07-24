@@ -1564,18 +1564,19 @@ impl Package<u64> {
     ) -> crate::Result<()> {
         initialize_store();
         let ast_arena = bun_alloc::AstArena::new();
-        let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log, ast_arena.alloc()) {
-            Ok(p) => p,
-            Err(err) => {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                bun_core::pretty_errorln!(
-                    "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                    err.name(),
-                    bstr::BStr::new(source.path.pretty_dir()),
-                );
-                Global::crash();
-            }
-        };
+        let parsed =
+            match crate::bun_json::ParsedJson::parse_package_json(source, log, ast_arena.alloc()) {
+                Ok(p) => p,
+                Err(err) => {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    bun_core::pretty_errorln!(
+                        "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                        err.name(),
+                        bstr::BStr::new(source.path.pretty_dir()),
+                    );
+                    Global::crash();
+                }
+            };
 
         self.parse_with_json::<R>(lockfile, pm, log, source, parsed.root, resolver, features)
     }
@@ -2363,7 +2364,9 @@ impl Package<u64> {
         }
 
         if FEATURES.is_main {
-            lockfile.overrides.parse_count(alloc, json, &mut string_builder);
+            lockfile
+                .overrides
+                .parse_count(alloc, json, &mut string_builder);
 
             if let Some(workspaces_expr) = json.get(alloc, b"workspaces") {
                 lockfile
@@ -2373,7 +2376,9 @@ impl Package<u64> {
 
             // Count catalog strings in top-level package.json as well, since parseAppend
             // might process them later if no catalogs were found in workspaces
-            lockfile.catalogs.parse_count(alloc, json, &mut string_builder);
+            lockfile
+                .catalogs
+                .parse_count(alloc, json, &mut string_builder);
 
             install::postinstall_optimizer::PostinstallOptimizer::from_package_json(
                 alloc,
@@ -2926,10 +2931,14 @@ impl Package<u64> {
             // allow "catalog" and "catalogs" in top-level "package.json"
             // so it's easier to guess.
             if !found_any_catalog_or_catalog_object && has_workspaces {
-                let _ =
-                    lockfile
-                        .catalogs
-                        .parse_append(alloc, pm, log, source, json, &mut string_builder)?;
+                let _ = lockfile.catalogs.parse_append(
+                    alloc,
+                    pm,
+                    log,
+                    source,
+                    json,
+                    &mut string_builder,
+                )?;
             }
         }
 

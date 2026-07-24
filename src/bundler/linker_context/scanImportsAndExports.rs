@@ -619,8 +619,7 @@ pub fn scan_imports_and_exports(
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
-                let mut copies: bun_alloc::AstVec<Ref> =
-                    ast_alloc.vec_with_capacity(aliases.len());
+                let mut copies: bun_alloc::AstVec<Ref> = ast_alloc.vec_with_capacity(aliases.len());
                 copies.resize(aliases.len(), Ref::NONE);
 
                 debug_assert_eq!(aliases.len(), copies.len());

@@ -1539,16 +1539,17 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let ast_arena = bun_alloc::AstArena::new();
         let alloc = ast_arena.alloc();
-        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log, alloc) {
-            Ok(e) => e,
-            Err(e) => {
-                Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
-                if self.ipc_data.len() < 1000 {
-                    Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
+        let parsed =
+            match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log, alloc) {
+                Ok(e) => e,
+                Err(e) => {
+                    Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
+                    if self.ipc_data.len() < 1000 {
+                        Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
+                    }
+                    return Err(crate::Error::InvalidIPCMessage);
                 }
-                return Err(crate::Error::InvalidIPCMessage);
-            }
-        };
+            };
         let json_expr = parsed.root;
 
         if !matches!(json_expr.data, ExprData::EObjectJSON(_)) {
@@ -1742,8 +1743,12 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(crate::Error::MissingAdvisoriesField);
         };
 
-        let advisories =
-            parse_security_advisories_from_expr(self.manager, alloc, advisories_expr, package_paths)?;
+        let advisories = parse_security_advisories_from_expr(
+            self.manager,
+            alloc,
+            advisories_expr,
+            package_paths,
+        )?;
 
         if !status.is_ok() {
             match &status {

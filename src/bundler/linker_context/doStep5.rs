@@ -475,7 +475,8 @@ impl LinkerContext<'_> {
             let value: Expr = 'brk: {
                 if let Some(symbol) = self.graph.symbols.get_const(exp_data.import_ref) {
                     if symbol.namespace_alias.is_some() {
-                        break 'brk Expr::init(ast_alloc, 
+                        break 'brk Expr::init(
+                            ast_alloc,
                             E::ImportIdentifier {
                                 ref_: exp_data.import_ref,
                                 ..Default::default()
@@ -485,7 +486,8 @@ impl LinkerContext<'_> {
                     }
                 }
 
-                Expr::init(ast_alloc, 
+                Expr::init(
+                    ast_alloc,
                     E::Identifier {
                         ref_: exp_data.import_ref,
                         ..Default::default()
@@ -633,7 +635,8 @@ impl LinkerContext<'_> {
         // access to the exports object and should NOT see the "__esModule" flag.
         if force_include_exports_for_entry_point {
             let to_common_js_ref = self.runtime_function(b"__toCommonJS");
-            emit_export_stmt!(Stmt::assign(ast_alloc, 
+            emit_export_stmt!(Stmt::assign(
+                ast_alloc,
                 Expr::allocate(
                     arena,
                     E::Dot {
@@ -648,10 +651,8 @@ impl LinkerContext<'_> {
                     arena,
                     E::Call {
                         target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
-                        args: ast_alloc.vec_from_slice(&[Expr::init_identifier(
-                            exports_ref,
-                            Loc::EMPTY,
-                        )]),
+                        args: ast_alloc
+                            .vec_from_slice(&[Expr::init_identifier(exports_ref, Loc::EMPTY,)]),
                         ..E::Call::empty(ast_alloc)
                     },
                     Loc::EMPTY,

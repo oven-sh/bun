@@ -1356,16 +1356,20 @@ impl PublishCommand {
                                 }
                             };
 
-                            let token =
-                                json_get_string_cloned(done_alloc, &otp_done_json, done_bump, b"token")?
-                                    .unwrap_or_else(|| {
-                                        Output::err(
-                                            "WebLogin",
-                                            "missing `token` field in reponse json",
-                                            (),
-                                        );
-                                        Global::crash();
-                                    });
+                            let token = json_get_string_cloned(
+                                done_alloc,
+                                &otp_done_json,
+                                done_bump,
+                                b"token",
+                            )?
+                            .unwrap_or_else(|| {
+                                Output::err(
+                                    "WebLogin",
+                                    "missing `token` field in reponse json",
+                                    (),
+                                );
+                                Global::crash();
+                            });
 
                             // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                             // ignore if x-local-cache exists

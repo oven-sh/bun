@@ -505,7 +505,9 @@ impl AstAlloc {
         // different `AstAlloc` cannot double-free it; `grow` either
         // `mi_expand`s the block in place (heap-agnostic) or allocates fresh
         // in `self` and abandons the old block.
-        *v = unsafe { Vec::from_raw_parts_in(old.as_ptr().cast_mut(), old.len(), old.capacity(), self) };
+        *v = unsafe {
+            Vec::from_raw_parts_in(old.as_ptr().cast_mut(), old.len(), old.capacity(), self)
+        };
     }
 
     /// See [`AstBox`] for the drop-safety contract.

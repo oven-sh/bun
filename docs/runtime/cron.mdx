@@ -219,7 +219,7 @@ job.ref(); // keep the process alive (default)
 
 ### Fake timers
 
-In-process cron honors `jest.useFakeTimers()`. `setSystemTime()`, `advanceTimersByTime()`, and `runAllTimers()` control when it fires, so you can test scheduled callbacks without waiting on the real clock.
+In-process cron honors `jest.useFakeTimers()`. `setSystemTime()`, `advanceTimersByTime()`, and `runOnlyPendingTimers()` control when it fires, so you can test scheduled callbacks without waiting on the real clock. Because a cron job re-arms itself after every fire, `jest.runAllTimers()` will hit the `timerLimit` cap (default 100000) and throw; use `advanceTimersByTime()` or `runOnlyPendingTimers()` instead.
 
 ---
 

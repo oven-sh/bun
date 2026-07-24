@@ -231,9 +231,9 @@ impl PackageManager {
     }
 
     pub fn tick_lifecycle_scripts(&mut self) {
-        // SAFETY: event_loop.tick_once holds &mut self.event_loop while task.run(ctx) reborrows
-        // the enclosing PackageManager; raw *mut c_void ctx is the correct provenance
-        // carrier.
+        // `tick_once` forwards `ctx` opaquely; no reachable task callback dereferences it
+        // (the Js arm discards it, every Mini-arm callback takes `_: *mut ()`), so this does
+        // not alias the `&mut self.event_loop` receiver.
         let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
         self.event_loop.tick_once(ctx);
     }

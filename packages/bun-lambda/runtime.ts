@@ -112,7 +112,7 @@ function formatError(error: unknown): LambdaError {
   }
   return {
     errorType: "Error",
-    errorMessage: Bun.inspect(error),
+    errorMessage: format(error),
   };
 }
 

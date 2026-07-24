@@ -202,6 +202,10 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS, "BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", {});
 
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG, "BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", {});
+    // Fall back to the TinyCC-compiled trampolines for every bun:ffi symbol/callback instead of
+    // the JavaScriptCore-native FFI machinery (which is otherwise used whenever a signature has
+    // no napi_env/napi_value and, for callbacks, is not threadsafe).
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_JSC_FFI, "BUN_FEATURE_FLAG_DISABLE_JSC_FFI", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});

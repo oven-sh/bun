@@ -812,6 +812,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 "terminal was created inline by a previous spawn and cannot be reused",
                             )));
                         }
+                        // On macOS/BSD, a previous session-leader child's exit
+                        // revoked the pts; re-open the slave and re-arm the
+                        // reader so the terminal stays reusable.
+                        #[cfg(unix)]
+                        term.ensure_slave_open();
                         #[cfg(unix)]
                         if term.get_slave_fd() == Fd::INVALID {
                             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1156,13 +1161,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         },
         argv0,
         can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
-        // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
-        // For existing terminals, the session is already set up - child just uses the fd as stdio.
+        // The child calls setsid() + ioctl(TIOCSCTTY) on this fd so the PTY becomes
+        // its controlling terminal (forkpty semantics); required for both existing
+        // Terminal objects and terminals created inline by this spawn.
         #[cfg(unix)]
-        pty_slave_fd: match terminal_info.as_ref() {
-            Some(ti) => ti.term().get_slave_fd().native(),
-            None => -1,
-        },
+        pty_slave_fd: existing_terminal
+            .as_deref()
+            .or_else(|| terminal_info.as_ref().map(TerminalCreateResult::term))
+            .map_or(-1, |t| t.get_slave_fd().native()),
         #[cfg(windows)]
         pseudoconsole: existing_terminal
             .as_deref()

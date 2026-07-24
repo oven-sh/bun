@@ -1831,7 +1831,7 @@ where
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
                 || r.get_init_headers_mut()
-                    .map(|h| h.fast_has(jsc::HTTPHeaderName::ContentRange))
+                    .map(|h| h.fast_get(jsc::HTTPHeaderName::ContentRange).is_some())
                     .unwrap_or(false)
         } else {
             false
@@ -3630,8 +3630,12 @@ where
         let mut has_content_disposition = false;
         let mut has_content_range = false;
         if let Some(mut headers_) = response.swap_init_headers() {
-            has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
-            has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
+            has_content_disposition = headers_
+                .fast_get(jsc::HTTPHeaderName::ContentDisposition)
+                .is_some();
+            has_content_range = headers_
+                .fast_get(jsc::HTTPHeaderName::ContentRange)
+                .is_some();
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
             // incoming Range: header (sendfile.total > 0) we always 206.

@@ -102,7 +102,7 @@ impl StaticRoute {
         }
 
         let cached_blob_size = blob.size();
-        let has_date = headers.get(b"date").is_some();
+        let has_date = headers.get(b"date").is_some_and(|v| !v.is_empty());
         bun_core::heap::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
             blob,
@@ -222,13 +222,20 @@ impl StaticRoute {
             // Consuming the body left a plain `Blob` behind, which no longer implies
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
+            // `fast_get` (unlike `put_default`'s `fast_has`) treats an empty value as
+            // absent, so an explicit `content-type: ""` is overwritten here — a
+            // Bun-specific choice for the `static:` route API, not at Fetch-spec
+            // construction time.
             if was_string {
-                let text_mime = bun_http_types::MimeType::TEXT;
-                response.get_or_create_headers(global_this)?.put_default(
-                    HTTPHeaderName::ContentType,
-                    &bun_core::String::ascii(text_mime.value.as_ref()),
-                    global_this,
-                )?;
+                let h = response.get_or_create_headers(global_this)?;
+                if h.fast_get(HTTPHeaderName::ContentType).is_none() {
+                    let text_mime = bun_http_types::MimeType::TEXT;
+                    h.put(
+                        HTTPHeaderName::ContentType,
+                        &bun_core::String::ascii(text_mime.value.as_ref()),
+                        global_this,
+                    )?;
+                }
             }
 
             let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
@@ -244,7 +251,7 @@ impl StaticRoute {
             }
 
             let cached_blob_size = blob.size();
-            let has_date = headers.get(b"date").is_some();
+            let has_date = headers.get(b"date").is_some_and(|v| !v.is_empty());
             return Ok(Some(bun_core::heap::into_raw(Box::new(StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
@@ -494,6 +501,9 @@ impl StaticRoute {
 
         debug_assert_eq!(names.len(), values.len());
         for (name, value) in names.iter().zip(values) {
+            if value.length == 0 {
+                continue;
+            }
             resp.write_header(
                 &buf[name.offset as usize..][..name.length as usize],
                 &buf[value.offset as usize..][..value.length as usize],

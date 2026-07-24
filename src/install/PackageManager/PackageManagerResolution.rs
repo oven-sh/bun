@@ -87,24 +87,6 @@ pub fn format_later_version_in_cache<'a>(
 }
 
 impl PackageManager {
-    pub fn format_later_version_in_cache(
-        &mut self,
-        package_name: &[u8],
-        name_hash: PackageNameHash,
-        resolution: &Resolution,
-    ) -> Option<semver::version::Formatter<'_, u64>> {
-        // The `.load_from_memory` arm never reads scope; keep the param for
-        // signature parity.
-        let _ = package_name;
-        format_later_version_in_cache(
-            &mut self.manifests,
-            &self.options,
-            &self.lockfile,
-            name_hash,
-            resolution,
-        )
-    }
-
     pub fn scope_for_package_name(&self, name: &[u8]) -> &npm::registry::Scope {
         self.options.scope_for_package_name(name)
     }

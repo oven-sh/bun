@@ -298,7 +298,6 @@ where
     let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
 
-    let _ = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
         crate::package_manager::package_manager_resolution::format_later_version_in_cache(
             manager.manifests,

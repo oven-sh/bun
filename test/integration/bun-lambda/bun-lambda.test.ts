@@ -151,6 +151,7 @@ test("console.log formats arguments like Node, not Bun.inspect per-arg", async (
     console.error("payload:", JSON.stringify({ a: 1 }, null, 2));
     console.log("obj:", { a: 1 });
     console.warn("keep %s literal");
+    console.info("crlf:", "a\\r\\nb");
     return new Response("ok");
   },
 };
@@ -216,8 +217,11 @@ test("console.log formats arguments like Node, not Bun.inspect per-arg", async (
     stdin: "ignore",
   });
 
+  const stdoutPromise = proc.stdout.text();
+  const stderrPromise = proc.stderr.text();
+  const exitedPromise = proc.exited;
   await responded;
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise, exitedPromise]);
 
   expect(stderr).toBe("");
   // Lines from inside the invocation carry the RequestId prefix; the trailing
@@ -229,5 +233,6 @@ test("console.log formats arguments like Node, not Bun.inspect per-arg", async (
     'ERROR RequestId: req-1 payload: {\r  "a": 1\r}',
     "INFO RequestId: req-1 obj: { a: 1 }",
     "WARN RequestId: req-1 keep %s literal",
+    "INFO RequestId: req-1 crlf: a\rb",
   ]);
 });

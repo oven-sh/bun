@@ -23,7 +23,7 @@ function log(level: string, ...args: any[]): void {
   if (!args.length) {
     return;
   }
-  const message = format(...args).replace(/\n/g, "\r");
+  const message = format(...args).replace(/\r?\n/g, "\r");
   if (requestId === undefined) {
     logger(`${level} ${message}`);
   } else {

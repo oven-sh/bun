@@ -25,8 +25,8 @@ const assert = require('assert');
     (type) => type === 'Immediate').length, 0);
 
   const immediate = setImmediate(common.mustCall(() => {
-    // TODO(RaisinTen): Change this test to the following when the Immediate is
-    // destroyed and unrefed after the callback gets executed.
+    // Upstream note (RaisinTen): change this test to the following when the
+    // Immediate is destroyed and unrefed after the callback gets executed.
     // assert.strictEqual(process.getActiveResourcesInfo().filter(
     //   (type) => type === 'Immediate').length, 1);
     assert.strictEqual(process.getActiveResourcesInfo().filter(

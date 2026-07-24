@@ -14,6 +14,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest

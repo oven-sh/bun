@@ -1513,6 +1513,10 @@ impl VirtualMachine {
                 // See the recursion-guard note above: drop it before
                 // process_exit emits 'exit'.
                 self.is_handling_uncaught_exception = false;
+                // Arm the wind-down flag so a throwing 'exit' listener
+                // re-enters via the block above (run_error_handler, no
+                // repeated footer) instead of this one.
+                self.exit_on_uncaught_exception = true;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");

@@ -352,14 +352,16 @@ describe.concurrent("Bun REPL", () => {
       const { stdout, stderr, exitCode } = await runRepl([
         "process.nextTick(() => { throw new Error('from-tick') })",
         "setTimeout(() => { throw new Error('from-timer') }, 0)",
-        "1 + 1",
+        "'REPL-SURVIVED:' + (7 * 6)",
         ".exit",
       ]);
       const allOutput = stripAnsi(stdout + stderr);
       expect(allOutput).toContain("from-tick");
       expect(allOutput).toContain("from-timer");
-      // The session reached `1 + 1` after both throws: it did not hard-exit.
-      expect(allOutput).toContain("2");
+      // The session reached the third line after both throws: it did not
+      // hard-exit. The marker cannot appear in a stack trace or version
+      // footer, unlike a bare digit.
+      expect(allOutput).toContain("REPL-SURVIVED:42");
       // The unhandled error was reported, so the eventual `.exit` leaves
       // with code 1 (pre-existing behavior).
       expect(exitCode).toBe(1);

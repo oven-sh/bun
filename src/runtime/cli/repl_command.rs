@@ -135,10 +135,6 @@ impl ReplCommand {
             .load_extra_env_and_source_code_printer();
 
         VirtualMachine::get().as_mut().is_main_thread = true;
-        // An async throw at the prompt (nextTick/timer drain) would otherwise
-        // take the fatal path and terminate the session; keep the REPL at
-        // print-and-continue like Node's domain-wrapped REPL.
-        VirtualMachine::get().as_mut().suppress_fatal_uncaught = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         // Store VM reference in REPL (safe - no JS allocation)
@@ -249,7 +245,12 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 vm.on_before_exit();
             }
         } else {
-            // Interactive: run the REPL loop
+            // Interactive: run the REPL loop. An async throw at the prompt
+            // (nextTick/timer drain) would otherwise take the fatal path and
+            // terminate the session; keep the interactive REPL at
+            // print-and-continue like Node's domain-wrapped REPL. `-e`/`-p`
+            // take the fatal path like `bun -e`.
+            vm.suppress_fatal_uncaught = true;
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }

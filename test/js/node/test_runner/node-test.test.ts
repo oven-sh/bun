@@ -1,7 +1,11 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+
+// Every test here spawns a bun subprocess (debug+ASAN startup is ~3s each).
+setDefaultTimeout(isDebug || isASAN ? 30_000 : 10_000);
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -520,4 +524,909 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});
+
+test.concurrent("run(): an uncaught exception during a pending body fails that test instead of hanging", async () => {
+  using dir = tempDir("node-test-uncaught-body", {
+    "fixture.test.mjs": `
+      import test from 'node:test';
+      test('pending body uncaught', async () => {
+        setTimeout(() => { throw new Error('late boom'); }, 20);
+        await new Promise(() => {});
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./fixture.test.mjs', import.meta.url))] });
+      const fails = [];
+      stream.on('test:fail', d => fails.push({ name: d.name, failureType: d.details?.error?.failureType }));
+      for await (const _ of stream);
+      console.log(JSON.stringify(fails));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // The shim must fail the test as soon as the error is attributed, not wait
+  // for a timeout rescue. Debug+ASAN pays ~3s per nested spawn, so size the
+  // hang guard to clear two spawns there while staying tight on release.
+  const hangGuard = isDebug || isASAN ? 20_000 : 4_000;
+  const exited = await Promise.race([proc.exited, Bun.sleep(hangGuard).then(() => "timeout" as const)]);
+  if (exited === "timeout") proc.kill();
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  expect({ exited, stderr }).not.toMatchObject({ exited: "timeout" });
+  const fails = JSON.parse(stdout.trim() || "[]");
+  expect(fails).toContainEqual({ name: "pending body uncaught", failureType: "uncaughtException" });
+});
+
+test.concurrent("run(): a user test writing the run-event marker cannot error the run stream", async () => {
+  using dir = tempDir("node-test-marker-inject", {
+    "fixture.test.mjs": `
+      import test from 'node:test';
+      test('writes hostile marker lines', () => {
+        process.stdout.write('\\0bun:test:run\\0null\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'x' }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'x', data: null }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'test:fail', data: { error: null } }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'test:fail', data: { error: { cause: null } } }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'test:fail', data: { error: { actual: { _bunTag: 'bi', v: 'x' } } } }) + '\\n');
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./fixture.test.mjs', import.meta.url))] });
+      const seen = { passes: [], streamError: null };
+      stream.on('test:pass', function onPass(d) { seen.passes.push(d.name); });
+      stream.on('error', function onError(err) { seen.streamError = String(err); });
+      for await (const _ of stream);
+      console.log(JSON.stringify(seen));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const seen = JSON.parse(stdout.trim() || "{}");
+  expect({ streamError: seen.streamError, passes: seen.passes, stderr, exitCode }).toEqual({
+    streamError: null,
+    passes: ["writes hostile marker lines"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("NODE_TEST_CONTEXT does not leak node:test uncaught handling into spawned grandchildren", async () => {
+  using dir = tempDir("node-test-env-leak", {
+    "inner.test.js": `
+      process.on("uncaughtException", () => {});
+      const { test } = require("bun:test");
+      test("swallow attempt", async () => {
+        setTimeout(() => { throw new Error("boom"); }, 10);
+        await new Promise(r => setTimeout(r, 50));
+      });
+    `,
+    "outer.test.mjs": `
+      import test from 'node:test';
+      import assert from 'node:assert';
+      import { spawnSync } from 'node:child_process';
+      test('grandchild records the uncaught', () => {
+        const r = spawnSync(process.execPath, ['test', process.env.INNER_FIXTURE], { env: { ...process.env } });
+        assert.strictEqual(r.status, 1);
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./outer.test.mjs', import.meta.url))] });
+      let passed = 0, failed = 0;
+      stream.on('test:pass', () => passed++);
+      stream.on('test:fail', () => failed++);
+      for await (const _ of stream);
+      console.log(JSON.stringify({ passed, failed }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: { ...bunEnv, INNER_FIXTURE: join(String(dir), "inner.test.js") },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const counts = JSON.parse(stdout.trim() || "null");
+  expect({ counts, stderr, exitCode }).toMatchObject({ counts: { failed: 0 }, exitCode: 0 });
+  expect(counts.passed).toBeGreaterThanOrEqual(1);
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)("run() with %s isolation reports suite hook failures like node", async (_label, isolationArg) => {
+  // node: a failing after() fails the suite with hookFailed; a failing
+  // before() additionally cancels the declared children (cancelledByParent).
+  using dir = tempDir("node-test-hook-failures", {
+    "afterfail.test.mjs": `
+      import { describe, it, after } from 'node:test';
+      describe('s', () => {
+        it('a', () => {});
+        after(() => { throw new Error('after boom'); });
+      });
+    `,
+    "beforefail.test.mjs": `
+      import { describe, it, before } from 'node:test';
+      describe('s', () => {
+        it('a', () => { throw new Error('a must not run'); });
+        before(() => { throw new Error('before boom'); });
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL(process.argv[2], import.meta.url))]${isolationArg} });
+      const ev = [];
+      stream.on('test:pass', t => ev.push(['pass', t.name]));
+      stream.on('test:fail', t => ev.push(['fail', t.name, t.details?.error?.failureType ?? '']));
+      for await (const _ of stream);
+      console.log(JSON.stringify(ev));
+    `,
+  });
+  async function runDriver(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs"), fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return JSON.parse(stdout.trim() || "null");
+  }
+  // Same event streams real node v26.3.0 emits for these fixtures.
+  expect(await runDriver("./afterfail.test.mjs")).toEqual([
+    ["pass", "a"],
+    ["fail", "s", "hookFailed"],
+  ]);
+  expect(await runDriver("./beforefail.test.mjs")).toEqual([
+    ["fail", "a", "cancelledByParent"],
+    ["fail", "s", "hookFailed"],
+  ]);
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)(
+  "run() with %s isolation cancels a nested suite under a failed before() like node",
+  async (_label, isolationArg) => {
+    // node's Suite#cancel recurses into declared descendants without running
+    // their hooks: the nested suite reports cancelledByParent with duration 0,
+    // its before()/after() never run, and only the failing suite's OWN after
+    // runs (for cleanup).
+    using dir = tempDir("node-test-nested-hook-cancel", {
+      "f.test.mjs": `
+      import { describe, it, before, after } from 'node:test';
+      import { writeFileSync } from 'node:fs';
+      describe('outer', () => {
+        before(() => { throw new Error('outer setup broken'); });
+        after(() => writeFileSync(new URL('./outer-after.txt', import.meta.url), '1'));
+        describe('inner', () => {
+          before(() => writeFileSync(new URL('./inner-before.txt', import.meta.url), '1'));
+          after(() => writeFileSync(new URL('./inner-after.txt', import.meta.url), '1'));
+          it('a', () => {});
+        });
+      });
+    `,
+      "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))]${isolationArg} });
+      const ev = [];
+      stream.on('test:pass', t => ev.push(['pass', t.name]));
+      stream.on('test:fail', t => ev.push(['fail', t.name, t.details?.error?.failureType ?? '', t.details?.duration_ms]));
+      for await (const _ of stream);
+      console.log(JSON.stringify(ev));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const events = JSON.parse(stdout.trim() || "null");
+    // Same event stream real node v26.3.0 emits for this fixture.
+    expect(events).toEqual([
+      ["fail", "a", "cancelledByParent", 0],
+      ["fail", "inner", "cancelledByParent", 0],
+      ["fail", "outer", "hookFailed", expect.any(Number)],
+    ]);
+    expect({
+      innerBefore: existsSync(join(String(dir), "inner-before.txt")),
+      innerAfter: existsSync(join(String(dir), "inner-after.txt")),
+      outerAfter: existsSync(join(String(dir), "outer-after.txt")),
+    }).toEqual({ innerBefore: false, innerAfter: false, outerAfter: true });
+  },
+);
+
+test.concurrent("run(): verdict numbering, file ordinals, causes, and summary keys match node", async () => {
+  // Every expected value below is the verbatim output of the same driver under
+  // real node v26.3.0: nesting-0 pass/fail verdicts renumber cumulatively
+  // across files while test:complete keeps per-file numbers, file completions
+  // carry the file's ordinal, a primitive `cause` crosses the process boundary
+  // by value, a rebuilt AssertionError keeps `name` non-enumerable, and the
+  // summary counts carry node's exact key set.
+  using dir = tempDir("node-test-run-fidelity", {
+    "one.test.mjs": `
+      import { test } from 'node:test';
+      test('one-a', () => {});
+      test('one-b', () => {});
+    `,
+    "two.test.mjs": `
+      import { test } from 'node:test';
+      import assert from 'node:assert';
+      test('two-a', () => { throw Object.assign(new Error('boom'), { cause: 42 }); });
+      test('two-b', () => { assert.strictEqual(1, 2); });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const files = ['./one.test.mjs', './two.test.mjs'].map(f => fileURLToPath(new URL(f, import.meta.url)));
+      const stream = run({ files });
+      const out = { verdicts: [], completes: [], causes: {}, summaryKeys: null };
+      stream.on('test:pass', function onPass(t) { out.verdicts.push([t.name, t.testNumber]); });
+      stream.on('test:fail', function onFail(t) {
+        out.verdicts.push([t.name.split(/[\\\\/]/).pop(), t.testNumber]);
+        const c = t.details?.error?.cause;
+        if (c !== undefined && t.name === 'two-a') out.causes.twoA = { type: typeof c?.cause, value: c?.cause };
+        if (c !== undefined && t.name === 'two-b') {
+          const d = Object.getOwnPropertyDescriptor(c, 'name');
+          out.causes.twoB = { name: c.name, nameEnumerable: d?.enumerable ?? null, actual: c.actual, expected: c.expected, operator: c.operator };
+        }
+      });
+      stream.on('test:complete', function onComplete(t) { if (t.nesting === 0) out.completes.push([t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
+      stream.on('test:summary', function onSummary(t) { if (t.file === undefined) out.summaryKeys = Object.keys(t.counts); });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+    result: {
+      verdicts: [
+        ["one-a", 1],
+        ["one-b", 2],
+        ["two-a", 3],
+        ["two-b", 4],
+      ],
+      completes: [
+        ["one-a", 1],
+        ["one-b", 2],
+        ["one.test.mjs", 1],
+        ["two-a", 1],
+        ["two-b", 2],
+        ["two.test.mjs", 2],
+      ],
+      causes: {
+        twoA: { type: "number", value: 42 },
+        twoB: { name: "AssertionError", nameEnumerable: false, actual: 1, expected: 2, operator: "strictEqual" },
+      },
+      summaryKeys: ["tests", "failed", "passed", "cancelled", "skipped", "todo", "topLevel", "suites"],
+    },
+  });
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)("run() with %s isolation reports a throwing describe body like node", async (_label, isolationArg) => {
+  // node attributes a throwing (or rejecting) describe callback to the suite
+  // as testCodeFailure and cancels the children it declared before throwing;
+  // the file itself does not fail.
+  using dir = tempDir("node-test-suite-body-throw", {
+    "sync.test.mjs": `
+      import { describe, test } from 'node:test';
+      describe('s', () => {
+        test('declared', () => {});
+        throw new Error('body boom');
+      });
+    `,
+    "async.test.mjs": `
+      import { describe, test } from 'node:test';
+      describe('s', async () => {
+        test('declared', () => {});
+        throw new Error('async body boom');
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL(process.argv[2], import.meta.url))]${isolationArg} });
+      const ev = [];
+      stream.on('test:pass', function onPass(t) { ev.push(['pass', t.name]); });
+      stream.on('test:fail', function onFail(t) { ev.push(['fail', t.name, t.details?.error?.failureType ?? '']); });
+      for await (const _ of stream);
+      console.log(JSON.stringify(ev));
+    `,
+  });
+  async function runDriver(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs"), fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return JSON.parse(stdout.trim() || "null");
+  }
+  // Same event streams real node v26.3.0 emits for these fixtures.
+  expect(await runDriver("./sync.test.mjs")).toEqual([
+    ["fail", "declared", "cancelledByParent"],
+    ["fail", "s", "testCodeFailure"],
+  ]);
+  expect(await runDriver("./async.test.mjs")).toEqual([
+    ["fail", "declared", "cancelledByParent"],
+    ["fail", "s", "testCodeFailure"],
+  ]);
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)("run() with %s isolation wraps hook failures with node's fixed message", async (_label, isolationArg) => {
+  // node's hook wrapper: ERR_TEST_FAILURE with the fixed message
+  // `failed running <kind> hook`; the thrown error stays on cause.
+  using dir = tempDir("node-test-hook-wrapper-msg", {
+    "f.test.mjs": `
+      import { describe, it, after } from 'node:test';
+      describe('s', () => {
+        it('a', () => {});
+        after(() => { throw new Error('after boom'); });
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))]${isolationArg} });
+      const fails = [];
+      stream.on('test:fail', function onFail(t) {
+        fails.push({ name: t.name, msg: t.details?.error?.message, causeMsg: t.details?.error?.cause?.message });
+      });
+      for await (const _ of stream);
+      console.log(JSON.stringify(fails));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Verbatim node v26.3.0 output for this fixture.
+  expect({ fails: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    fails: [{ name: "s", msg: "failed running after hook", causeMsg: "after boom" }],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("junit reporter escapes attribute quotes exactly like node", async () => {
+  using dir = tempDir("node-test-junit-escape", {
+    "q.test.mjs": `
+      import { test } from 'node:test';
+      test('line1\\nline2 "q" & <angle>', () => {});
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--test", "--test-reporter=junit", "q.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // node v26.3.0 escapes the quote before its & pass, so a literal quote
+  // double-escapes to &amp;quot; while \n's &#10; survives the lookahead.
+  expect(stdout).toContain('name="line1&#10;line2 &amp;quot;q&amp;quot; &amp; &lt;angle>"');
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)("run() with %s isolation stops at the first failing before() like node", async (_label, isolationArg) => {
+  // node's Suite.run bails on the first before-hook error: the suite's later
+  // before() hooks never run, but its OWN after() still does (cleanup).
+  using dir = tempDir("node-test-multi-before", {
+    "f.test.mjs": `
+      import { describe, it, before, after } from 'node:test';
+      import { writeFileSync } from 'node:fs';
+      describe('s', () => {
+        before(() => { throw new Error('first boom'); });
+        before(() => writeFileSync(new URL('./second-before.txt', import.meta.url), '1'));
+        after(() => writeFileSync(new URL('./own-after.txt', import.meta.url), '1'));
+        it('a', () => {});
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))]${isolationArg} });
+      const ev = [];
+      stream.on('test:fail', function onFail(t) { ev.push([t.name, t.details?.error?.failureType ?? '']); });
+      for await (const _ of stream);
+      console.log(JSON.stringify(ev));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Same events and side effects real node v26.3.0 produces.
+  expect({
+    events: JSON.parse(stdout.trim() || "null"),
+    secondBefore: existsSync(join(String(dir), "second-before.txt")),
+    ownAfter: existsSync(join(String(dir), "own-after.txt")),
+    stderr,
+    exitCode,
+  }).toEqual({
+    events: [
+      ["a", "cancelledByParent"],
+      ["s", "hookFailed"],
+    ],
+    secondBefore: false,
+    ownAfter: true,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.each([
+  [
+    "[bad, good]",
+    "'./bad.test.mjs', './good.test.mjs'",
+    [
+      ["fail", "bad.test.mjs", 1],
+      ["pass", "good-a", 2],
+    ],
+  ],
+  [
+    "[good, bad]",
+    "'./good.test.mjs', './bad.test.mjs'",
+    [
+      ["pass", "good-a", 1],
+      ["fail", "bad.test.mjs", 2],
+    ],
+  ],
+] as const)(
+  "run({isolation:'none'}): a failed import reports at its declaration position %s",
+  async (_label, orderLiteral, expected) => {
+    // node reports a load failure as a root subtest at its position among the
+    // other files, so [good, bad] keeps declaration order instead of emitting
+    // bad's fail first, and both share one cumulative verdict counter.
+    using dir = tempDir("node-test-inprocess-numbering", {
+      "bad.test.mjs": `throw new Error('load boom');`,
+      "good.test.mjs": `
+        import { test } from 'node:test';
+        test('good-a', () => {});
+      `,
+      "driver.mjs": `
+        import { run } from 'node:test';
+        import { fileURLToPath } from 'node:url';
+        const files = [${orderLiteral}].map(f => fileURLToPath(new URL(f, import.meta.url)));
+        const stream = run({ files, isolation: 'none' });
+        const ev = [];
+        stream.on('test:pass', t => ev.push(['pass', t.name.split(/[\\\\/]/).pop(), t.testNumber]));
+        stream.on('test:fail', t => ev.push(['fail', t.name.split(/[\\\\/]/).pop(), t.testNumber]));
+        for await (const _ of stream);
+        console.log(JSON.stringify(ev));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 output for this ordering.
+    expect({ events: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      events: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent.each([
+  [
+    "top-level",
+    `
+      import { test } from 'node:test';
+      test('first', () => { globalThis.__abort(); });
+      test('second', () => { globalThis.__secondRan = true; });
+    `,
+  ],
+  [
+    "inside a describe",
+    `
+      import { describe, test } from 'node:test';
+      describe('s', () => {
+        test('first', () => { globalThis.__abort(); });
+        test('second', () => { globalThis.__secondRan = true; });
+      });
+    `,
+  ],
+] as const)("run({isolation:'none'}): opts.signal stops between %s entries", async (_label, fixture) => {
+  // The in-process entry loop (top-level and per-suite) checks the signal
+  // between tests, so aborting from inside the first test means the second's
+  // body never runs (the eval driver's SIGINT handler routes through this
+  // signal under --test-isolation=none).
+  using dir = tempDir("node-test-inprocess-signal", {
+    "f.test.mjs": fixture,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const ac = new AbortController();
+      globalThis.__abort = () => ac.abort();
+      globalThis.__secondRan = false;
+      const stream = run({
+        files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))],
+        isolation: 'none',
+        signal: ac.signal,
+      });
+      const seen = { passes: [], interrupted: false, success: null };
+      stream.on('test:pass', t => seen.passes.push(t.name));
+      stream.on('test:interrupted', () => { seen.interrupted = true; });
+      stream.on('test:summary', t => { if (t.file === undefined) seen.success = t.success; });
+      for await (const _ of stream);
+      console.log(JSON.stringify({ ...seen, secondRan: globalThis.__secondRan }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: { passes: ["first"], interrupted: true, success: false, secondRan: false },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("run(): a zero-test file reports a file-level pass like node", async () => {
+  // node's FileTest.report(): a file that registers no tests and exits 0 is
+  // itself a passing test (tests=1/passed=1) and emits no per-file summary.
+  using dir = tempDir("node-test-zero-test-file", {
+    "empty.test.mjs": `// intentionally registers no tests`,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./empty.test.mjs', import.meta.url))] });
+      const out = { events: [], perFileSummaries: 0, runCounts: null };
+      stream.on('test:pass', function onPass(t) { out.events.push(['pass', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
+      stream.on('test:fail', function onFail(t) { out.events.push(['fail', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
+      stream.on('test:summary', function onSummary(t) {
+        if (t.file !== undefined) out.perFileSummaries++;
+        else out.runCounts = t.counts;
+      });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Verbatim node v26.3.0 output for this fixture.
+  expect(JSON.parse(stdout.trim() || "null")).toEqual({
+    events: [["pass", "empty.test.mjs", 1]],
+    perFileSummaries: 0,
+    runCounts: { tests: 1, failed: 0, passed: 1, cancelled: 0, skipped: 0, todo: 0, topLevel: 1, suites: 0 },
+  });
+});
+
+test.concurrent("run(): causes JSON cannot encode do not drop the event line", async () => {
+  // node's v8 serializer carries BigInt and cyclic causes across the process
+  // boundary; our JSON pipe re-tags BigInt (restored as a real bigint) and
+  // degrades cycles to their inspected string. Before the envelope handled
+  // these, JSON.stringify threw and the whole test:fail line vanished,
+  // leaving a file-level failure with undercounted tests.
+  using dir = tempDir("node-test-unencodable-cause", {
+    "f.test.mjs": `
+      import { test } from 'node:test';
+      test('bigint cause', () => { throw Object.assign(new Error('x'), { cause: 42n }); });
+      test('circular cause', () => { const c = {}; c.self = c; throw Object.assign(new Error('y'), { cause: c }); });
+      test('after', () => {});
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))] });
+      const out = { events: [], counts: null };
+      stream.on('test:pass', function onPass(t) { out.events.push(['pass', t.name]); });
+      stream.on('test:fail', function onFail(t) {
+        const c = t.details?.error?.cause?.cause;
+        out.events.push(['fail', t.name, typeof c, String(c).includes('Circular') || String(c)]);
+      });
+      stream.on('test:summary', function onSummary(t) {
+        if (t.file === undefined) out.counts = { tests: t.counts.tests, failed: t.counts.failed, passed: t.counts.passed };
+      });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Counts and event order match node v26.3.0; the bigint round-trips intact.
+  expect(JSON.parse(stdout.trim() || "null")).toEqual({
+    events: [
+      ["fail", "bigint cause", "bigint", "42"],
+      ["fail", "circular cause", "string", true],
+      ["pass", "after"],
+    ],
+    counts: { tests: 3, failed: 2, passed: 1 },
+  });
+});
+
+test.concurrent("run(): object actual/expected cross the pipe by value", async () => {
+  // node's v8 serializer hands the parent real objects for deepStrictEqual's
+  // actual/expected; JSON-safe objects pass by value over our pipe too.
+  using dir = tempDir("node-test-object-extras", {
+    "f.test.mjs": `
+      import { test } from 'node:test';
+      import assert from 'node:assert';
+      test('objects', () => { assert.deepStrictEqual({ a: 1, b: [1, 2] }, { a: 2, b: [1, 2] }); });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))] });
+      stream.on('test:fail', function onFail(t) {
+        const c = t.details?.error?.cause;
+        console.log(JSON.stringify({ actual: c?.actual, expected: c?.expected, operator: c?.operator }));
+      });
+      for await (const _ of stream);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Verbatim node v26.3.0 output for this fixture.
+  expect(JSON.parse(stdout.trim() || "null")).toEqual({
+    actual: { a: 1, b: [1, 2] },
+    expected: { a: 2, b: [1, 2] },
+    operator: "deepStrictEqual",
+  });
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)(
+  "run() with %s isolation keeps declaration order when a later describe body throws",
+  async (_label, isolationArg) => {
+    // node runs siblings in declaration order: the earlier test's verdict
+    // (testNumber 1) precedes the throwing suite's (testNumber 2). Settling
+    // the failed suite at collection time used to emit its events first.
+    using dir = tempDir("node-test-throw-order", {
+      "f.test.mjs": `
+      import { test, describe } from 'node:test';
+      test('a', () => {});
+      describe('b', () => { throw new Error('body boom'); });
+    `,
+      "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))]${isolationArg} });
+      const ev = [];
+      stream.on('test:pass', function onPass(t) { ev.push(['pass', t.name, t.testNumber]); });
+      stream.on('test:fail', function onFail(t) { ev.push(['fail', t.name, t.testNumber, t.details?.error?.failureType ?? '']); });
+      for await (const _ of stream);
+      console.log(JSON.stringify(ev));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 output for this fixture.
+    expect(JSON.parse(stdout.trim() || "null")).toEqual([
+      ["pass", "a", 1],
+      ["fail", "b", 2, "testCodeFailure"],
+    ]);
+  },
+);
+
+test.concurrent("run(): a child inheriting --bail emits no reporter chrome", async () => {
+  // bun test's bail notice is default-reporter output; a run() child must
+  // carry only the serialized event stream (plus genuine user stderr).
+  using dir = tempDir("node-test-bail-chrome", {
+    "f.test.mjs": `
+      import { test } from 'node:test';
+      test('one', () => { throw new Error('boom1'); });
+      test('two', () => { throw new Error('boom2'); });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], argv: ['--bail'] });
+      const out = { stderr: [], fails: 0 };
+      stream.on('test:stderr', function onStderr(t) { out.stderr.push(t.message); });
+      stream.on('test:fail', function onFail(t) { out.fails++; });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim() || "null");
+  expect({
+    bailChrome: out.stderr.filter((l: string) => l.includes("Bailed out")),
+    atLeastOneFail: out.fails >= 1,
+  }).toEqual({
+    bailChrome: [],
+    atLeastOneFail: true,
+  });
+});
+
+test.concurrent("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
+  using dir = tempDir("node-test-suite-duration", {
+    "f.test.mjs": `
+      import { describe, it } from 'node:test';
+      describe('s', () => {
+        it('a', async () => { await new Promise(r => setTimeout(r, 100)); });
+        it('b', async () => { await new Promise(r => setTimeout(r, 100)); });
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], isolation: 'none' });
+      let suiteDuration = -1;
+      stream.on('test:pass', t => { if (t.name === 's') suiteDuration = t.details.duration_ms; });
+      for await (const _ of stream);
+      console.log(JSON.stringify({ suiteDuration }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { suiteDuration } = JSON.parse(stdout.trim() || "null");
+  // node reports the full span (>=200ms for two 100ms tests); a clock started
+  // at the first child's completion sees only the second test (~100ms).
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(suiteDuration).toBeGreaterThan(180);
+});
+
+test.concurrent("run({isolation:'none'}): .only inside describe.only narrows to the inner test", async () => {
+  // node's rule: an only suite runs all its tests unless it has only-marked
+  // descendants, in which case only those run.
+  using dir = tempDir("node-test-nested-only", {
+    "f.test.mjs": `
+      import { describe, it } from 'node:test';
+      describe.only('s', () => {
+        it('a', () => { throw new Error('a should not run'); });
+        it.only('b', () => {});
+      });
+      describe('plain', () => {
+        it('c', () => { throw new Error('c should not run'); });
+      });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], isolation: 'none' });
+      const passed = [], failed = [];
+      stream.on('test:pass', t => passed.push(t.name));
+      stream.on('test:fail', t => failed.push(t.name));
+      for await (const _ of stream);
+      console.log(JSON.stringify({ passed, failed }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Same event stream real node v26.3.0 emits for this fixture.
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: { passed: ["b", "s"], failed: [] },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {
+  // exec_as_if_node's eval branch must merge positionals into passthrough so
+  // the eval driver sees the file in process.argv; without that it silently
+  // falls back to default-glob discovery in cwd.
+  using dir = tempDir("node-test-as-node", {
+    "a.test.mjs": `
+      import { test } from 'node:test';
+      test('a', () => {});
+    `,
+    // A glob-matching sibling that must NOT run when a.test.mjs is named.
+    "nested/b.test.mjs": `
+      import { test } from 'node:test';
+      test('b', () => { throw new Error('b should not run'); });
+    `,
+  });
+  const node = join(String(dir), "node");
+  symlinkSync(bunExe(), node);
+  await using proc = Bun.spawn({
+    cmd: [node, "--test", "--test-reporter=tap", "a.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("ok 1 - a");
+  expect(stdout).not.toContain("- b");
+  expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
 });

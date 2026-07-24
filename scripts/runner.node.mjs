@@ -1919,6 +1919,11 @@ function isTest(path) {
  * @returns {boolean}
  */
 function isTestStrict(path) {
+  // Vendored node fixtures keep upstream names like `two.test.js` but only
+  // work when driven by their parallel/ test (e.g. run({ isolation:'none' })).
+  if (path.replaceAll(sep, "/").includes("js/node/test/fixtures/")) {
+    return false;
+  }
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 

@@ -78,6 +78,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_stream_transform"_s,
     "readline/promises"_s,
     "inspector/promises"_s,
+    "node:test/reporters"_s,
     "_stream_passthrough"_s,
     "diagnostics_channel"_s,
 };

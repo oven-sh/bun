@@ -49,6 +49,11 @@ impl CurrentFile {
             self.has_printed_filename = true;
             return;
         }
+        if crate::cli::test_command::is_node_test_child() {
+            // node:test run() children emit only the serialized event stream.
+            self.has_printed_filename = true;
+            return;
+        }
         if reporter.reporters.dots || reporter.reporters.only_failures {
             // Assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);
@@ -526,6 +531,17 @@ pub(crate) fn js_file_generation(
     let generation =
         Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
     Ok(JSValue::from(generation))
+}
+
+/// Reached from node:test at module load in a run() child: registers this
+/// process so genuine uncaught errors route to the process listeners the shim
+/// installs (VirtualMachine::uncaught_exception / unhandled_rejection gates).
+pub(crate) fn js_node_test_register_child(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::virtual_machine::IS_NODE_TEST_RUN_CHILD.store(true, core::sync::atomic::Ordering::Relaxed);
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides

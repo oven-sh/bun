@@ -14,6 +14,8 @@ on:
     paths:
       - "src/**/*.rs"
       - "src/jsc/bindings/**"
+      - "packages/bun-uws/**"
+      - "packages/bun-usockets/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "test/harness.ts"
@@ -26,6 +28,8 @@ on:
     paths:
       - "src/**/*.rs"
       - "src/jsc/bindings/**"
+      - "packages/bun-uws/**"
+      - "packages/bun-usockets/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "test/harness.ts"

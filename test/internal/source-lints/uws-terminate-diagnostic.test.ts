@@ -5,11 +5,11 @@ import path from "node:path";
 
 // #35256 banned <iostream> from Bun's release build and stripped the
 // `std::cerr << "Error: ..."` lines ahead of each std::terminate() in bun-uws.
-// Those messages are the only post-mortem hint a user (or a CI log) gets when
-// one of these invariant guards fires; without them the process exits with a
-// bare "terminate called without an active exception". The replacement the
-// shim prescribes is fputs/fprintf to stderr, so keep every std::terminate()
-// in bun-uws paired with a preceding stderr write.
+// Bun routes std::terminate through its own crash handler (JSCInitialize calls
+// std::set_terminate), so without these writes every guard dies with the same
+// generic "panic: A C++ exception occurred" and nothing names which uWS
+// invariant fired. Keep every std::terminate() in bun-uws paired with a
+// preceding fputs/fprintf to stderr, the replacement the shim prescribes.
 test("bun-uws std::terminate() sites write a diagnostic to stderr first", async () => {
   const uwsSrc = path.resolve(import.meta.dir, "..", "..", "..", "packages", "bun-uws", "src");
 

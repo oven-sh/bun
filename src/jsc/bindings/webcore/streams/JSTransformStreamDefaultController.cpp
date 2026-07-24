@@ -30,39 +30,6 @@ namespace WebStreams {
 
 using namespace JSC;
 
-// Null-safe: Bun's native-sink pumps clear a consumed stream's controller slot in their
-// finally step, so a transform reaction (or an async transform()/flush() resuming after
-// that teardown) can see a readable with no controller. A torn-down readable is terminal.
-static JSReadableStreamDefaultController* transformReadableController(JSTransformStream* stream)
-{
-    const auto* readable = stream->m_readable.get();
-    if (readable->m_controllerKind != ControllerKind::Default)
-        return nullptr;
-    return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
-}
-
-// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
-// rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = getCallData(method);
-        ASSERT(callData.type != CallData::Type::None);
-        result = call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
-
 // The default [[transformAlgorithm]]: enqueue the chunk unchanged; the enqueue's abrupt
 // completion becomes a rejected promise (a sanctioned completion-record catch).
 static JSPromise* defaultTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)

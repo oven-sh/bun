@@ -256,6 +256,27 @@ QueuingStrategyDict convertQueuingStrategyDict(JSGlobalObject* globalObject, JSV
     return result;
 }
 
+// `QueuingStrategyInit init` — `highWaterMark` is a required `unrestricted double` member.
+double convertQueuingStrategyInit(JSC::VM& vm, JSGlobalObject* globalObject, JSValue init)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!init.isObject()) {
+        if (!init.isUndefinedOrNull()) {
+            throwTypeError(globalObject, scope, "The QueuingStrategyInit argument must be an object"_s);
+            return 0;
+        }
+        throwTypeError(globalObject, scope, "QueuingStrategyInit requires a 'highWaterMark' member"_s);
+        return 0;
+    }
+    JSValue highWaterMark = asObject(init)->get(globalObject, WebCore::builtinNames(vm).highWaterMarkPublicName());
+    RETURN_IF_EXCEPTION(scope, 0);
+    if (highWaterMark.isUndefined()) {
+        throwTypeError(globalObject, scope, "QueuingStrategyInit requires a 'highWaterMark' member"_s);
+        return 0;
+    }
+    RELEASE_AND_RETURN(scope, highWaterMark.toNumber(globalObject));
+}
+
 // Promise helpers.
 
 // Web IDL "a promise resolved with v": a NEW promise resolved with v; a promise/thenable v is
@@ -294,6 +315,41 @@ JSValue invokeOptionalMethod(JSGlobalObject* globalObject, JSObject* object, con
     if (!method.isCallable())
         return {};
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, object, args, "method is not a function"_s));
+}
+
+JSC::JSValue invokeMethod(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::Identifier& name, const JSC::MarkedArgumentBuffer& args)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue method = object->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(method);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        throwTypeError(globalObject, scope, makeString(name.string(), " is not a function"_s));
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, callData, object, args));
+}
+
+// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
+// rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
+JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result;
+    JSValue thrown;
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto callData = getCallData(method);
+        ASSERT(callData.type != CallData::Type::None);
+        result = call(globalObject, method, callData, thisValue, args);
+        if (catchScope.exception()) [[unlikely]]
+            thrown = takeAbruptCompletion(globalObject, catchScope);
+    }
+    if (!thrown.isEmpty())
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
+    if (result.isEmpty())
+        return nullptr;
+    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
 }
 
 bool errorCodeIs(JSGlobalObject* globalObject, JSValue error, ASCIILiteral code)

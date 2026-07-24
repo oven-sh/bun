@@ -383,7 +383,7 @@ impl Cat {
             } => {
                 *in_done = true;
                 if errno != 0 {
-                    if *out_done || !stdout_needs_io {
+                    if *out_done || *chunks_done >= *chunks_queued || !stdout_needs_io {
                         // Drop the reader ref.
                         *reader = None;
                         Step::Done(errno)

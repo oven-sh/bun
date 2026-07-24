@@ -223,8 +223,16 @@ impl IOReader {
             };
             if need_start {
                 let fd = self.state().fd;
-                if let Err(e) = r.start(fd, true) {
+                // Regular files (and char devices like /dev/null) can't be
+                // registered with epoll on Linux — `register_poll` would fail
+                // EPERM and surface as a read error. Probe the fd and drive a
+                // synchronous `read()` loop for non-pollable targets, same as
+                // `FileReader` / the `IOWriter` EPERM fallback.
+                let pollable = crate::shell::interpreter::is_pollable(fd);
+                if let Err(e) = r.start(fd, pollable) {
                     self.on_reader_error(&e);
+                } else if !pollable {
+                    r.read();
                 }
             }
             return Yield::suspended();

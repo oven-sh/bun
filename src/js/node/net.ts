@@ -585,6 +585,38 @@ function deferEndForOnreadTail(self) {
   return true;
 }
 
+// Node's onStreamRead destroys the stream with errnoException(nread, 'read')
+// for any read result that is not UV_EOF.
+function destroyWithReadError(self, _err) {
+  let errErrno;
+  if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
+    // A codeless close error that still carries the errno (Windows IOCP
+    // delivers some this way): derive the proper code from it. Raw WSA values
+    // (-10054, ...) that the errno table cannot name fall through to the reset
+    // shape below instead of surfacing "Unknown system error N".
+    const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
+    if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
+      self.destroy(er);
+      return;
+    }
+  }
+  if (_err.code === undefined || _err.code === "ECONNRESET") {
+    // Shape a reset (or a fully bare close error) like Node's
+    // errnoException(UV_ECONNRESET, 'read').
+    const er = new ConnResetException("read ECONNRESET") as Error & {
+      code: string;
+      errno?: number;
+      syscall?: string;
+    };
+    er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
+    er.syscall = "read";
+    self.destroy(er);
+  } else {
+    // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
+    self.destroy(_err);
+  }
+}
+
 function SocketEmitEndNT(self, _err?) {
   // A read error delivered with the close (e.g. a received RST surfacing as
   // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
@@ -618,37 +650,8 @@ function SocketEmitEndNT(self, _err?) {
     // that race from surfacing as an uncaught exception - the no-listener
     // case is already a documented silent close.
     self.once("error", () => {});
-    let errErrno;
-    if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
-      // A codeless close error that still carries the errno (Windows IOCP
-      // delivers some this way): derive the proper code from it, like Node's
-      // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
-      // errno table cannot name fall through to the reset shape below instead
-      // of surfacing "Unknown system error N".
-      const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
-      if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
-        self.destroy(er);
-        return;
-      }
-    }
-    if (_err.code === undefined || _err.code === "ECONNRESET") {
-      // Shape a reset (or a fully bare close error) like Node's
-      // errnoException(UV_ECONNRESET, 'read').
-      const er = new ConnResetException("read ECONNRESET") as Error & {
-        code: string;
-        errno?: number;
-        syscall?: string;
-      };
-      er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
-      er.syscall = "read";
-      self.destroy(er);
-    } else {
-      // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
-      self.destroy(_err);
-    }
-    return;
-  }
-  if (!self[kended]) {
+    destroyWithReadError(self, _err);
+  } else if (!self[kended]) {
     finishSocketEnd(self);
     if (!self.allowHalfOpen && self[kReaderInterest] === false) {
       setImmediate(destroyAbandonedNT, self);
@@ -1357,9 +1360,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }
-      return;
+    } else if (!deferEndForOnreadTail(self)) {
+      finishSocketEnd(self);
     }
-    if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).

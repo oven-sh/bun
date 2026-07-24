@@ -1423,6 +1423,27 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    if url_type == URLType::Remote
+        && !crate::permission::is_granted(crate::permission::Scope::Net, None)
+    {
+        // Node surfaces a permission denial the same way it surfaces any other
+        // connection failure from fetch: `TypeError: fetch failed` whose
+        // `cause` is the ERR_ACCESS_DENIED error.
+        let cause = crate::permission::access_denied_error(
+            global_this,
+            crate::permission::Scope::Net,
+            url.href,
+        );
+        let err = global_this.create_type_error_instance(format_args!("fetch failed"));
+        err.put(global_this, b"cause", cause);
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
+
     // This is not 100% correct.
     // We don't pass along headers, we ignore method, we ignore status code...
     // But it's better than status quo.

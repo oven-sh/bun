@@ -285,6 +285,20 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
+    // Node's permission model. Hidden from `--help` (empty description) until
+    // every scope is enforced: today only `net` is, so advertising
+    // `--allow-fs-read` as a filesystem guard would promise a sandbox that
+    // does not exist. The flags are still parsed so `process.permission`
+    // reports what was granted.
+    parse_param!("--permission"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
+    parse_param!("--allow-child-process"),
+    parse_param!("--allow-worker"),
+    parse_param!("--allow-addons"),
+    parse_param!("--allow-net"),
+    parse_param!("--allow-wasi"),
+    parse_param!("--allow-inspector"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -1077,6 +1091,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // used for disabling process.dlopen and
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
+        }
+
+        if args.flag(b"--permission") {
+            crate::permission::init_from_cli(&crate::permission::CliGrants {
+                fs_read: args.options(b"--allow-fs-read"),
+                fs_write: args.options(b"--allow-fs-write"),
+                child: args.flag(b"--allow-child-process"),
+                worker: args.flag(b"--allow-worker"),
+                inspector: args.flag(b"--allow-inspector"),
+                wasi: args.flag(b"--allow-wasi"),
+                net: args.flag(b"--allow-net"),
+                addon: args.flag(b"--allow-addons"),
+            });
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {

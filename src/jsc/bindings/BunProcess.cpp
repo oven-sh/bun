@@ -3348,6 +3348,28 @@ JSValue createCryptoX509Object(JSGlobalObject* globalObject)
     return cryptoX509;
 }
 
+// Bun's own builtins call process.binding() where node's internals would call
+// internalBinding(), so neither the DEP0111 warning nor the permission-model
+// denial applies to them.
+static bool processBindingCallerIsInternal(JSC::VM& vm, CallFrame* callFrame)
+{
+    String callerURL;
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        if (Zig::isImplementationVisibilityPrivate(visitor))
+            return WTF::IterationStatus::Continue;
+        if (visitor->hasLineAndColumnInfo()) {
+            callerURL = Zig::sourceURL(visitor);
+            return WTF::IterationStatus::Done;
+        }
+        return WTF::IterationStatus::Continue;
+    });
+    return callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
+}
+
+extern "C" bool Bun__Permission__isEnabled();
+extern "C" void Bun__Permission__throwProcessBindingDenied(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__Permission__createObject(JSC::JSGlobalObject*);
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(jsGlobalObject);
@@ -3355,23 +3377,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
     auto process = globalObject->processObject();
 
+    if (Bun__Permission__isEnabled() && !processBindingCallerIsInternal(vm, callFrame)) [[unlikely]] {
+        Bun__Permission__throwProcessBindingDenied(jsGlobalObject);
+        return {};
+    }
+
     if (Bun__Node__ProcessPendingDeprecation && !process->m_warnedProcessBinding) {
         // Node latches DEP0111 through its deprecate() wrapper, once per
-        // Environment (each worker warns once). Bun's own builtins call
-        // process.binding() too (node's internals use internalBinding), so
-        // internal callers neither warn nor latch.
-        String callerURL;
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (Zig::isImplementationVisibilityPrivate(visitor))
-                return WTF::IterationStatus::Continue;
-            if (visitor->hasLineAndColumnInfo()) {
-                callerURL = Zig::sourceURL(visitor);
-                return WTF::IterationStatus::Done;
-            }
-            return WTF::IterationStatus::Continue;
-        });
-        bool isInternalCaller = callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
-        if (!isInternalCaller) {
+        // Environment (each worker warns once).
+        if (!processBindingCallerIsInternal(vm, callFrame)) {
             process->m_warnedProcessBinding = true;
             Process::emitWarning(globalObject,
                 jsString(vm, String("process.binding() is deprecated. Please use public APIs instead."_s)),
@@ -4647,6 +4661,13 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+
+    // Node only defines process.permission when the permission model is on.
+    if (Bun__Permission__isEnabled()) [[unlikely]] {
+        putDirect(vm, Identifier::fromString(vm, "permission"_s),
+            JSValue::decode(Bun__Permission__createObject(globalObject())),
+            PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    }
 }
 
 } // namespace Bun

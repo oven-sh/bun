@@ -1390,6 +1390,10 @@ impl Run {
 
         self.add_conditional_globals();
 
+        // `initializePermission` in Node's pre_execution.js: warn about the
+        // bypass flags once the global object exists and before user code runs.
+        crate::permission::emit_startup_warnings(vm.global());
+
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {

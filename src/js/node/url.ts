@@ -66,14 +66,6 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   unwise = ["{", "}", "|", "\\", "^", "`"].concat(delims),
   // Allowed by RFCs, but cause of XSS attacks.  Always escape these.
   autoEscape = ["'"].concat(unwise),
-  /*
-   * Characters that are never ever allowed in a hostname.
-   * Note that any invalid chars are also handled, but these
-   * are the ones that are *expected* to be seen, so we fast-path
-   * them.
-   */
-  nonHostChars = ["%", "/", "?", ";", "#"].concat(autoEscape),
-  hostEndingChars = ["/", "?", "#"],
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
@@ -254,61 +246,62 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
      * http://a@b?@c => user:a host:c path:/?@c
      */
 
-    /*
-     * v0.12 TODO(isaacs): This is not quite how Chrome does things.
-     * Review our test case against browsers more comprehensively.
-     */
-
-    // find the first instance of any hostEndingChars
-    var hostEnd = -1;
-    for (var i = 0; i < hostEndingChars.length; i++) {
-      var hec = rest.indexOf(hostEndingChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) {
-        hostEnd = hec;
+    let hostEnd = -1;
+    let atSign = -1;
+    let nonHost = -1;
+    for (let i = 0; i < rest.length; ++i) {
+      switch (rest.$charCodeAt(i)) {
+        case Char.TAB:
+        case Char.LINE_FEED:
+        case Char.CARRIAGE_RETURN:
+          // WHATWG URL removes tabs, newlines, and carriage returns. Let's do that too.
+          rest = rest.slice(0, i) + rest.slice(i + 1);
+          i -= 1;
+          break;
+        case Char.SPACE:
+        case Char.DOUBLE_QUOTE:
+        case Char.PERCENT:
+        case Char.SINGLE_QUOTE:
+        case Char.SEMICOLON:
+        case Char.LEFT_ANGLE_BRACKET:
+        case Char.RIGHT_ANGLE_BRACKET:
+        case Char.BACKWARD_SLASH:
+        case Char.CIRCUMFLEX_ACCENT:
+        case Char.GRAVE_ACCENT:
+        case Char.LEFT_CURLY_BRACKET:
+        case Char.VERTICAL_LINE:
+        case Char.RIGHT_CURLY_BRACKET:
+          // Characters that are never ever allowed in a hostname from RFC 2396
+          if (nonHost === -1) nonHost = i;
+          break;
+        case Char.HASH:
+        case Char.FORWARD_SLASH:
+        case Char.QUESTION_MARK:
+          // Find the first instance of any host-ending characters
+          if (nonHost === -1) nonHost = i;
+          hostEnd = i;
+          break;
+        case Char.AT:
+          // At this point, either we have an explicit point where the
+          // auth portion cannot go past, or the last @ char is the decider.
+          atSign = i;
+          nonHost = -1;
+          break;
       }
+      if (hostEnd !== -1) break;
     }
-
-    /*
-     * at this point, either we have an explicit point where the
-     * auth portion cannot go past, or the last @ char is the decider.
-     */
-    var auth: string | undefined, atSign: number;
-    if (hostEnd === -1) {
-      // atSign can be anywhere.
-      atSign = rest.lastIndexOf("@");
-    } else {
-      /*
-       * atSign must be in auth portion.
-       * http://a@b/c@d => host:b auth:a path:/c@d
-       */
-      atSign = rest.lastIndexOf("@", hostEnd);
-    }
-
-    /*
-     * Now we have a portion which is definitely the auth.
-     * Pull that off.
-     */
+    start = 0;
     if (atSign !== -1) {
-      auth = rest.slice(0, atSign);
-      rest = rest.slice(atSign + 1);
-      this.auth = decodeURIComponent(auth);
+      this.auth = decodeURIComponent(rest.slice(0, atSign));
+      start = atSign + 1;
     }
-
-    // the host is the remaining to the left of the first non-host char
-    hostEnd = -1;
-    for (var i = 0; i < nonHostChars.length; i++) {
-      var hec = rest.indexOf(nonHostChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) {
-        hostEnd = hec;
-      }
+    if (nonHost === -1) {
+      this.host = rest.slice(start);
+      rest = "";
+    } else {
+      this.host = rest.slice(start, nonHost);
+      rest = rest.slice(nonHost);
     }
-    // if we still have not hit it, then the entire thing is a host.
-    if (hostEnd === -1) {
-      hostEnd = rest.length;
-    }
-
-    this.host = rest.slice(0, hostEnd);
-    rest = rest.slice(hostEnd);
 
     // pull out port.
     this.parseHost();
@@ -927,17 +920,31 @@ Url.prototype.parseHost = function parseHost() {
 // prettier-ignore
 const enum Char {
   // non-alphabetic characters
-  AT = 64,                   // @
-  COLON = 58,                // :
-  BACKWARD_SLASH = 92,       // \
-  FORWARD_SLASH = 47,        // /
+  DOUBLE_QUOTE = 34,         // "
   HASH = 35,                 // #
-  QUESTION_MARK = 63,        // ?
   PERCENT = 37,              // %
+  SINGLE_QUOTE = 39,         // '
+  FORWARD_SLASH = 47,        // /
+  COLON = 58,                // :
+  SEMICOLON = 59,            // ;
+  LEFT_ANGLE_BRACKET = 60,   // <
+  RIGHT_ANGLE_BRACKET = 62,  // >
+  QUESTION_MARK = 63,        // ?
+  AT = 64,                   // @
   LEFT_SQUARE_BRACKET = 91,  // [
+  BACKWARD_SLASH = 92,       // \
   RIGHT_SQUARE_BRACKET = 93, // ]
+  CIRCUMFLEX_ACCENT = 94,    // ^
+  GRAVE_ACCENT = 96,         // `
+  LEFT_CURLY_BRACKET = 123,  // {
+  VERTICAL_LINE = 124,       // |
+  RIGHT_CURLY_BRACKET = 125, // }
 
   // whitespace
+  TAB = 9,                          // \t
+  LINE_FEED = 10,                   // \n
+  CARRIAGE_RETURN = 13,             // \r
+  SPACE = 32,                       // " "
   NO_BREAK_SPACE = 160,             // \u00A0
   ZERO_WIDTH_NOBREAK_SPACE = 65279, // \uFEFF
 }

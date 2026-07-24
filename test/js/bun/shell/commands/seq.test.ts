@@ -140,9 +140,9 @@ describe("seq without stdout", async () => {
 // Regression guard: the fd-output path used to build the full output into a
 // local Vec, store it into state, then clone the stored Vec to hand to
 // BuiltinIO::enqueue (which itself copies into IOWriter's buffer). That is a
-// full-output-sized clone on top of the two copies that must exist, so peak
-// RSS was ~3x the output instead of ~2x. ASAN-gated because release mimalloc
-// does not retain freed pages the way ASAN's allocator does.
+// full-output-sized clone on top of the copy that must exist, so peak RSS was
+// ~3x the output instead of ~2x. ASAN-gated because release mimalloc does not
+// retain freed pages the way ASAN's allocator does.
 test.skipIf(!isASAN)("seq piped to an fd does not clone its output buffer before enqueue", async () => {
   // 100-byte separator keeps the output large (~32 MB) with only 300k
   // iterations, so the child finishes in ~1s under ASAN.
@@ -162,9 +162,9 @@ test.skipIf(!isASAN)("seq piped to an fd does not clone its output buffer before
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const deltaBytes = parseInt(stdout.trim(), 10);
-  // Output is 31_888_894 bytes. With the fix the child's RSS grows by ~134 MB
-  // (rendered Vec capacity + IOWriter's copy + ASAN shadow); without it the
-  // extra clone pushes it to ~170 MB.
+  // Output is 31_688_895 bytes. With the fix the child's RSS grows by
+  // ~128-134 MB (rendered Vec capacity + IOWriter's copy + ASAN shadow);
+  // without it the extra clone pushes it to ~170 MB.
   expect(deltaBytes).toBeLessThan(152 * 1024 * 1024);
   expect(exitCode).toBe(0);
 });

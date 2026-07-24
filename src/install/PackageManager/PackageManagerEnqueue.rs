@@ -107,20 +107,22 @@ pub fn enqueue_dependency_list(
     // if dependency is peer and is going to be installed
     // through "dependencies", skip it
     if end - begin > 1 && lockfile.buffers.dependencies[0].behavior.is_peer() {
-        let dependencies = &mut lockfile.buffers.dependencies;
         let mut peer_i: usize = 0;
-        while dependencies[peer_i].behavior.is_peer() {
-            let peer_name_hash = dependencies[peer_i].name_hash;
+        // reshaped for borrowck — index into the slice instead of holding &mut across loop
+        while lockfile.buffers.dependencies[peer_i].behavior.is_peer() {
             let mut dep_i: usize = (end - 1) as usize;
-            while !dependencies[dep_i].behavior.is_peer() {
-                if !dependencies[dep_i].behavior.is_dev()
-                    && dependencies[dep_i].name_hash == peer_name_hash
-                {
-                    dependencies[peer_i] = dependencies[begin as usize].clone();
-                    begin += 1;
-                    break;
+            let mut dep = lockfile.buffers.dependencies[dep_i].clone();
+            while !dep.behavior.is_peer() {
+                if !dep.behavior.is_dev() {
+                    if lockfile.buffers.dependencies[peer_i].name_hash == dep.name_hash {
+                        lockfile.buffers.dependencies[peer_i] =
+                            lockfile.buffers.dependencies[begin as usize].clone();
+                        begin += 1;
+                        break;
+                    }
                 }
                 dep_i -= 1;
+                dep = lockfile.buffers.dependencies[dep_i].clone();
             }
             peer_i += 1;
             if peer_i == end as usize {

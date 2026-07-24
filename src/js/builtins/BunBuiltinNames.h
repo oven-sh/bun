@@ -61,7 +61,6 @@ using namespace JSC;
     macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
-    macro(checkBufferRead) \
     macro(checks) \
     macro(cloneArrayBuffer) \
     macro(close) \

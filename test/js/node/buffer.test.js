@@ -4645,3 +4645,136 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
+// bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
+// keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate
+// (bad offsets, out-of-range values, other receivers) must keep throwing exactly as before.
+describe("read*/write* after JIT tier-up", () => {
+  const buf = Buffer.alloc(64);
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  for (let i = 0; i < buf.length; i++) buf[i] = (i * 37 + 11) & 0xff;
+
+  const readers = [
+    ["readInt8", 1, o => dv.getInt8(o)],
+    ["readUInt8", 1, o => dv.getUint8(o)],
+    ["readInt16LE", 2, o => dv.getInt16(o, true)],
+    ["readInt16BE", 2, o => dv.getInt16(o, false)],
+    ["readUInt16LE", 2, o => dv.getUint16(o, true)],
+    ["readUInt16BE", 2, o => dv.getUint16(o, false)],
+    ["readInt32LE", 4, o => dv.getInt32(o, true)],
+    ["readInt32BE", 4, o => dv.getInt32(o, false)],
+    ["readUInt32LE", 4, o => dv.getUint32(o, true)],
+    ["readUInt32BE", 4, o => dv.getUint32(o, false)],
+    ["readFloatLE", 4, o => dv.getFloat32(o, true)],
+    ["readFloatBE", 4, o => dv.getFloat32(o, false)],
+    ["readDoubleLE", 8, o => dv.getFloat64(o, true)],
+    ["readDoubleBE", 8, o => dv.getFloat64(o, false)],
+    ["readBigInt64LE", 8, o => dv.getBigInt64(o, true)],
+    ["readBigInt64BE", 8, o => dv.getBigInt64(o, false)],
+    ["readBigUInt64LE", 8, o => dv.getBigUint64(o, true)],
+    ["readBigUInt64BE", 8, o => dv.getBigUint64(o, false)],
+  ];
+
+  it("reads match a DataView across many iterations, and out-of-bounds keeps throwing", () => {
+    for (const [name, byteSize, reference] of readers) {
+      const read = new Function("b", "o", `return b.${name}(o);`);
+      for (let i = 0; i < 5000; i++) {
+        const o = i & 31;
+        expect(read(buf, o)).toBe(reference(o));
+      }
+      expect(read(buf, 64 - byteSize)).toBe(reference(64 - byteSize));
+      for (let i = 0; i < 100; i++) {
+        expect(() => read(buf, 64 - byteSize + 1)).toThrow(RangeError);
+        expect(() => read(buf, -1)).toThrow(RangeError);
+        expect(() => read(buf, 1.5)).toThrow(RangeError);
+        expect(() => read(buf, "0")).toThrow(TypeError);
+      }
+    }
+  });
+
+  it("writes match a DataView across many iterations, and range checks keep throwing", () => {
+    const cases = [
+      ["writeInt8", 1, o => dv.getInt8(o), i => (i & 0xff) - 128],
+      ["writeUInt8", 1, o => dv.getUint8(o), i => i & 0xff],
+      ["writeInt16LE", 2, o => dv.getInt16(o, true), i => (i & 0xffff) - 0x8000],
+      ["writeUInt16BE", 2, o => dv.getUint16(o, false), i => i & 0xffff],
+      ["writeInt32LE", 4, o => dv.getInt32(o, true), i => (-i * 1000) | 0],
+      ["writeUInt32BE", 4, o => dv.getUint32(o, false), i => 2147483648 + i],
+      ["writeFloatLE", 4, o => dv.getFloat32(o, true), i => Math.fround(i / 3)],
+      ["writeDoubleBE", 8, o => dv.getFloat64(o, false), i => -i - 0.5],
+    ];
+    for (const [name, byteSize, reference, value] of cases) {
+      const write = new Function("b", "v", "o", `return b.${name}(v, o);`);
+      for (let i = 0; i < 5000; i++) {
+        const o = i & 31;
+        const v = value(i);
+        expect(write(buf, v, o)).toBe(o + byteSize);
+        expect(reference(o)).toBe(v);
+      }
+      for (let i = 0; i < 100; i++) {
+        expect(() => write(buf, value(i), 64)).toThrow(RangeError);
+      }
+    }
+    for (let i = 0; i < 5000; i++) {
+      expect(() => buf.writeInt8(128, 0)).toThrow(RangeError);
+      expect(() => buf.writeUInt16LE(65536, 0)).toThrow(RangeError);
+      expect(() => buf.writeUInt32BE(-1, 0)).toThrow(RangeError);
+    }
+  });
+
+  it("BigInt writes match a DataView across many iterations, and 64-bit range checks keep throwing", () => {
+    const values = [0n, 1n, -1n, 2n ** 32n + 7n, 2n ** 63n - 1n, -(2n ** 63n)];
+    for (let i = 0; i < 5000; i++) {
+      const o = (i & 7) * 8;
+      const v = values[i % values.length];
+      expect(buf.writeBigInt64LE(v, o)).toBe(o + 8);
+      expect(dv.getBigInt64(o, true)).toBe(v);
+      expect(buf.writeBigInt64BE(v, o)).toBe(o + 8);
+      expect(dv.getBigInt64(o, false)).toBe(v);
+      if (v >= 0n) {
+        expect(buf.writeBigUInt64LE(v, o)).toBe(o + 8);
+        expect(dv.getBigUint64(o, true)).toBe(v);
+        expect(buf.writeBigUInt64BE(v, o)).toBe(o + 8);
+        expect(dv.getBigUint64(o, false)).toBe(v);
+      }
+    }
+    for (let i = 0; i < 3000; i++) {
+      expect(buf.writeBigUInt64LE(2n ** 64n - 1n, 0)).toBe(8);
+      expect(dv.getBigUint64(0, true)).toBe(2n ** 64n - 1n);
+      expect(() => buf.writeBigUInt64LE(-1n, 0)).toThrow(RangeError);
+      expect(() => buf.writeBigInt64LE(2n ** 63n, 0)).toThrow(RangeError);
+      expect(() => buf.writeBigInt64LE(-(2n ** 63n) - 1n, 0)).toThrow(RangeError);
+      expect(() => buf.writeBigInt64LE(5, 0)).toThrow(TypeError);
+      expect(() => buf.writeBigInt64LE(0n, 57)).toThrow(RangeError);
+    }
+  });
+
+  it("works on many distinct buffers (no hidden per-buffer state)", () => {
+    const bufs = Array.from({ length: 512 }, (_, i) => {
+      const b = Buffer.alloc(16);
+      b.writeInt32LE(i * 7, 4);
+      return b;
+    });
+    let sum = 0;
+    for (let round = 0; round < 50; round++) {
+      for (let i = 0; i < bufs.length; i++) sum += bufs[i].readInt32LE(4);
+    }
+    expect(sum).toBe(50 * 7 * ((511 * 512) / 2));
+    // Reading/writing added no non-index own properties to the buffers.
+    expect(Object.getOwnPropertyNames(bufs[0]).filter(k => !/^\d+$/.test(k))).toEqual([]);
+    expect(Object.getOwnPropertySymbols(bufs[0])).toEqual([]);
+  });
+
+  it("keeps working with other ArrayBufferView receivers via .call", () => {
+    const u8 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const dv8 = new DataView(u8.buffer);
+    for (let i = 0; i < 5000; i++) {
+      expect(Buffer.prototype.readInt32LE.call(u8, 0)).toBe(dv8.getInt32(0, true));
+      expect(Buffer.prototype.readUInt16BE.call(u8, 6)).toBe(dv8.getUint16(6, false));
+      expect(Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7)).toBe(8);
+      expect(u8[7]).toBe(i & 0xff);
+      expect(() => Buffer.prototype.readInt32LE.call({}, 0)).toThrow(TypeError);
+    }
+  });
+});

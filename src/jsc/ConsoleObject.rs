@@ -578,6 +578,15 @@ fn message_with_type_and_level_(
         }
     }
 
+    if message_type == MessageType::Assert && print_length > 0 {
+        let prefix = if enable_colors {
+            pfmt!("<r><red>Assertion failed: <r>", true)
+        } else {
+            "Assertion failed: "
+        };
+        let _ = writer.write_all(prefix.as_bytes());
+    }
+
     if print_length > 0 {
         format2(
             level,
@@ -2424,7 +2433,7 @@ pub mod formatter {
                 T::GetterSetter => TagPayload::GetterSetter,
                 T::CustomGetterSetter => TagPayload::CustomGetterSetter,
 
-                T::JSAsJSONType => TagPayload::ToJSON,
+                T::JSAsJSONType => TagPayload::Object,
 
                 _ => TagPayload::JSON,
             };

@@ -107,12 +107,15 @@ void SigintWatcher::uninstall()
 #if OS(WINDOWS)
         SetConsoleCtrlHandler(WindowsCtrlHandler, false);
 #else
-        // Leave SIGINT alone if someone else claimed it while we were watching:
-        // a process.on("SIGINT") listener registered mid-run owns it now.
+        // Restore the disposition install() replaced, unless someone else
+        // claimed SIGINT while we were watching: a process.on("SIGINT")
+        // listener registered mid-run owns it now. Swap before comparing so a
+        // handler installed between a separate read and write could not be
+        // clobbered, mirroring the signal() swap in onDidChangeListeners.
         struct sigaction current;
         memset(&current, 0, sizeof(struct sigaction));
-        if (sigaction(SIGINT, nullptr, &current) == 0 && current.sa_handler == handleSigint) {
-            sigaction(SIGINT, &m_previousAction, nullptr);
+        if (sigaction(SIGINT, &m_previousAction, &current) == 0 && current.sa_handler != handleSigint) {
+            sigaction(SIGINT, &current, nullptr);
         }
 #endif
 

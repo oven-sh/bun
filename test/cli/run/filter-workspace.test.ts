@@ -561,6 +561,110 @@ describe("bun", () => {
     });
   });
 
+  // Regression test for https://github.com/oven-sh/bun/issues/31479
+  // `bun run --filter` must honor `[run] elide-lines` from an auto-discovered
+  // `bunfig.toml` (no `--config`, no `--elide-lines` flag), the same way plain
+  // `bun run` and `--config=` already do. Before the fix, the filter runner was
+  // dispatched before the bunfig auto-discovery fallback and ignored the config.
+  test("honors auto-discovered bunfig [run] elide-lines with --filter", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      // elide-lines = 0 disables elision; only auto-discovered (no --config).
+      "bunfig.toml": "[run]\nelide-lines = 0\n",
+    });
+
+    // No --elide-lines on the CLI: the value must come from bunfig alone.
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // On Windows piped stdout is not a terminal, so elision never runs; the
+    // 20-line match still validates the script output was produced.
+    if (process.platform !== "win32") {
+      expect(stdoutval).not.toMatch(/lines elided/);
+    }
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(exitCode).toBe(0);
+  });
+
+  // A CLI `--elide-lines` must still win over `[run] elide-lines` in bunfig,
+  // matching the `--config=` precedence. Here bunfig says 0 (no elision) but the
+  // flag says 10, so elision must still happen.
+  test("--elide-lines flag overrides auto-discovered bunfig [run] elide-lines", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "bunfig.toml": "[run]\nelide-lines = 0\n",
+    });
+
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "10", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // On Windows piped stdout is not a terminal so elision never runs; skip the
+    // TTY-only assertion there (see the sibling tests above).
+    if (process.platform !== "win32") {
+      expect(stdoutval).toMatch(/\[10 lines elided\]/);
+    }
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){10}/);
+    expect(exitCode).toBe(0);
+  });
+
+  // The auto-discovered bunfig also sets `ctx.debug.run_in_bun` from `[run] bun`,
+  // which the --filter path reads to install the node->bun PATH shim. A CLI `--bun`
+  // must still win over `[run] bun = false` (same precedence as --elide-lines above).
+  // When the shim is active, a script's `node` resolves to bun, so
+  // `process.versions.bun` is set.
+  test("--bun flag overrides auto-discovered bunfig [run] bun = false", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: { whichnode: `node -e "console.log('bunver=' + (process.versions.bun || 'none'))"` },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "bunfig.toml": "[run]\nbun = false\n",
+    });
+
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "--bun", "run", "--filter", "./packages/dep0", "whichnode"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // `--bun` won over `[run] bun = false`: the node shim ran bun.
+    expect(stdoutval).toContain(`bunver=${Bun.version}`);
+    expect(stdoutval).not.toContain("bunver=none");
+    expect(exitCode).toBe(0);
+  });
+
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {

@@ -681,6 +681,37 @@ pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> crate::Result<core::convert::Infallible> {
     // Never returns normally; Result<Infallible, _> keeps `?` support.
+    // `bun run` dispatches to the filter runner before `RunCommand::exec_with_cfg`,
+    // so the auto-discovery fallback there never runs for `--filter`. Mirror it here
+    // so `[run]` settings (e.g. `elide-lines`) from a bunfig found by auto-discovery
+    // are honored, matching plain `bun run` and `--config=`.
+    if !ctx.debug.loaded_bunfig {
+        // CLI flags must win over the matching `[run]` settings. For `--config=`,
+        // `Arguments::parse` re-applies the flags after the config load (the
+        // `"run.silent" in bunfig.toml` block in Arguments.rs); this fallback runs
+        // after `parse` returns, so snapshot the CLI-applied values and restore
+        // them afterward, preserving that precedence.
+        // Only the fields this path actually consumes need it:
+        // `--elide-lines` (read below) and `--bun` (read at the PATH-shim call).
+        // A CLI flag can only raise these from their defaults — `--elide-lines`
+        // sets `Some`, `--bun` sets `true` — so "restore when the snapshot differs
+        // from the unset default" keeps `[run]` winning when no flag was passed.
+        let cli_elide_lines = ctx.bundler_options.elide_lines;
+        let cli_run_in_bun = ctx.debug.run_in_bun;
+        let _ = crate::cli::arguments::load_config_path(
+            crate::cli::command::Tag::RunCommand,
+            true,
+            bun_core::zstr!("bunfig.toml"),
+            &mut *ctx,
+        );
+        if cli_elide_lines.is_some() {
+            ctx.bundler_options.elide_lines = cli_elide_lines;
+        }
+        if cli_run_in_bun {
+            ctx.debug.run_in_bun = true;
+        }
+    }
+
     // Own the slice — `ctx` is reborrowed `&mut` for
     // `configure_env_for_run` below while `script_name` is still live.
     let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {

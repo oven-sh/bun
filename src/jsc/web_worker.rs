@@ -1503,14 +1503,49 @@ fn on_unhandled_rejection(
         .unwrap_or(error_instance_or_exception);
 
     // A parse failure rejects with a BuildMessage, which doesn't survive structured
-    // clone. Node reports a SyntaxError; build a real one from the formatted parse
-    // error so the subtype reaches the parent intact.
+    // clone. Node reports a SyntaxError; build a real one carrying the file/line/
+    // column/code-frame from the parser's `Location` so both the subtype and the
+    // location reach the parent intact.
     if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
+        use crate::ZigStringJsc as _;
         // SAFETY: as_ returned a live BuildMessage cell, read-only on the
         // worker (JS) thread that owns it.
-        let text = unsafe { (*bm).msg.data.text.clone() };
-        error_instance =
-            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
+        let msg = unsafe { (*bm).msg.clone() };
+        error_instance = global_object
+            .create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&msg.data.text)));
+        // No JS frames are on the stack here, so the synthesized error's own
+        // lazy materialization produces nothing; attach the parser location as
+        // own properties the structured-clone serializer reads.
+        let mut stack = std::string::String::new();
+        let _ = msg.write_format::<false>(&mut stack);
+        error_instance.put(
+            global_object,
+            b"stack",
+            bun_core::ZigString::from_bytes(stack.as_bytes()).to_js(global_object),
+        );
+        if let Some(location) = &msg.data.location {
+            if !location.file.is_empty() {
+                error_instance.put(
+                    global_object,
+                    b"sourceURL",
+                    bun_core::ZigString::from_bytes(&location.file).to_js(global_object),
+                );
+            }
+            if location.line > 0 {
+                error_instance.put(
+                    global_object,
+                    b"line",
+                    JSValue::js_number(location.line as f64),
+                );
+            }
+            if location.column > -1 {
+                error_instance.put(
+                    global_object,
+                    b"column",
+                    JSValue::js_number(location.column as f64),
+                );
+            }
+        }
     }
 
     let mut array: Vec<u8> = Vec::new();

@@ -101,20 +101,20 @@ impl OverrideMap {
     // No `lockfile` param: JSON strings are already UTF-8 here, and omitting
     // it avoids the `&mut lockfile.overrides` / `&mut lockfile` alias at the
     // only call site.
-    pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
-        if let Some(overrides) = expr.as_property(b"overrides") {
-            overrides.expr.for_each_property(|key, _key_loc, value| {
+    pub(crate) fn parse_count(&mut self, alloc: bun_alloc::AstAlloc, expr: Expr, builder: &mut StringBuilder) {
+        if let Some(overrides) = expr.as_property(alloc, b"overrides") {
+            overrides.expr.for_each_property(alloc, |key, _key_loc, value| {
                 builder.count(key);
                 if let Some(s) = value.as_utf8_string_literal() {
                     builder.count(s);
-                } else if let Some(dot) = value.as_property(b".") {
+                } else if let Some(dot) = value.as_property(alloc, b".") {
                     if let Some(s) = dot.expr.as_utf8_string_literal() {
                         builder.count(s);
                     }
                 }
             });
-        } else if let Some(resolutions) = expr.as_property(b"resolutions") {
-            resolutions.expr.for_each_property(|key, _key_loc, value| {
+        } else if let Some(resolutions) = expr.as_property(alloc, b"resolutions") {
+            resolutions.expr.for_each_property(alloc, |key, _key_loc, value| {
                 builder.count(key);
                 if let Some(v) = value.as_utf8_string_literal() {
                     builder.count(v);
@@ -127,6 +127,7 @@ impl OverrideMap {
     /// It is assumed the input map is uninitialized (zero entries)
     pub(crate) fn parse_append(
         &mut self,
+        alloc: bun_alloc::AstAlloc,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
@@ -136,8 +137,9 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0); // only call parse once
-        if let Some(overrides) = expr.as_property(b"overrides") {
+        if let Some(overrides) = expr.as_property(alloc, b"overrides") {
             self.parse_from_overrides(
+                alloc,
                 pm,
                 lockfile_dependencies,
                 root_package,
@@ -146,8 +148,9 @@ impl OverrideMap {
                 overrides.expr,
                 builder,
             )?;
-        } else if let Some(resolutions) = expr.as_property(b"resolutions") {
+        } else if let Some(resolutions) = expr.as_property(alloc, b"resolutions") {
             self.parse_from_resolutions(
+                alloc,
                 pm,
                 lockfile_dependencies,
                 root_package,
@@ -164,6 +167,7 @@ impl OverrideMap {
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
     pub(crate) fn parse_from_overrides(
         &mut self,
+        alloc: bun_alloc::AstAlloc,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
@@ -183,7 +187,7 @@ impl OverrideMap {
 
         self.map.ensure_unused_capacity(expr.property_count())?;
 
-        expr.try_for_each_property(|k, key_loc, value_expr| {
+        expr.try_for_each_property(alloc, |k, key_loc, value_expr| {
             if k.is_empty() {
                 log.add_warning_fmt(
                     Some(source),
@@ -202,7 +206,7 @@ impl OverrideMap {
                 if value_expr.data.is_e_string() {
                     break 'value (value_expr, value_expr_loc);
                 } else if value_expr.is_object() {
-                    if let Some(dot) = value_expr.as_property(b".") {
+                    if let Some(dot) = value_expr.as_property(alloc, b".") {
                         if dot.expr.data.is_e_string() {
                             if value_expr.property_count() > 1 {
                                 log.add_warning_fmt(
@@ -284,6 +288,7 @@ impl OverrideMap {
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
     pub(crate) fn parse_from_resolutions(
         &mut self,
+        alloc: bun_alloc::AstAlloc,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
@@ -301,7 +306,7 @@ impl OverrideMap {
             return Ok(());
         }
         self.map.ensure_unused_capacity(expr.property_count())?;
-        expr.try_for_each_property(|key, key_loc, value| {
+        expr.try_for_each_property(alloc, |key, key_loc, value| {
             let mut k = key;
             if k.starts_with(b"**/") {
                 k = &k[3..];

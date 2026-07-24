@@ -169,6 +169,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
+    let alloc = current_package_json.json_arena.alloc();
 
     // If there originally was a newline at the end of their package.json, preserve it
     // so that we don't cause unnecessary diffs in their git history.
@@ -196,16 +197,16 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
             Global::crash();
         } else if current_package_json_root
-            .as_property(b"devDependencies")
+            .as_property(alloc, b"devDependencies")
             .is_none()
             && current_package_json_root
-                .as_property(b"dependencies")
+                .as_property(alloc, b"dependencies")
                 .is_none()
             && current_package_json_root
-                .as_property(b"optionalDependencies")
+                .as_property(alloc, b"optionalDependencies")
                 .is_none()
             && current_package_json_root
-                .as_property(b"peerDependencies")
+                .as_property(alloc, b"peerDependencies")
                 .is_none()
         {
             bun_core::pretty_errorln!(
@@ -240,7 +241,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     b"peerDependencies",
                 ];
                 for list in LISTS {
-                    if let Some(query) = current_package_json_root.as_property(list) {
+                    if let Some(query) = current_package_json_root.as_property(alloc, list) {
                         if query.expr.data.is_e_object() {
                             // reshaped for borrowck —
                             // `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
@@ -374,6 +375,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let mut written = match js_printer::print_json(
         &mut package_json_writer,
+        alloc,
         current_package_json_root,
         &current_package_json.source,
         js_printer::PrintJsonOptions {
@@ -489,6 +491,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
             let _ = match js_printer::print_json(
                 &mut package_json_writer2,
+                root_package_json.json_arena.alloc(),
                 root_package_json_root,
                 &root_package_json.source,
                 js_printer::PrintJsonOptions {
@@ -543,9 +546,10 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // Now, we _re_ parse our in-memory edited package.json
         // so we can commit the version we changed from the lockfile
-        let json_arena = bun_alloc::Arena::new();
+        let json_arena = bun_alloc::AstArena::new();
+        let alloc = json_arena.alloc();
         let mut new_package_json: bun_ast::Expr =
-            match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
+            match json::parse_package_json_utf8(&source, manager.log_mut(), alloc) {
                 Ok(v) => v,
                 Err(err) => {
                     bun_core::pretty_errorln!(
@@ -591,6 +595,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         written = match js_printer::print_json(
             &mut package_json_writer_two,
+            alloc,
             new_package_json,
             &source,
             js_printer::PrintJsonOptions {

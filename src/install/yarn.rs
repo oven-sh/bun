@@ -681,7 +681,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        let json_bump = bun_alloc::Arena::new();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let json_bump = alloc.arena();
         let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
             bun_json::JSONOptions {
                 json_warn_duplicate_keys: false,
@@ -690,7 +692,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             },
             &package_json_source,
             log,
-            &json_bump,
+            alloc,
         ) else {
             return Err(crate::Error::InvalidPackageJSON);
         };
@@ -698,9 +700,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let package_json = package_json_expr.root;
 
         let package_name: Option<Vec<u8>> = 'blk: {
-            if let Some(name_prop) = package_json.as_property(b"name") {
+            if let Some(name_prop) = package_json.as_property(alloc, b"name") {
                 if let bun_ast::ExprData::EString(e_string) = &name_prop.expr.data {
-                    let name_slice = e_string.string(&json_bump).unwrap_or(b"");
+                    let name_slice = e_string.string(json_bump).unwrap_or(b"");
                     if !name_slice.is_empty() {
                         break 'blk Some(name_slice.to_vec());
                     }
@@ -722,7 +724,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             (DependencyGroup::OPTIONAL, DependencyType::Optional),
             (DependencyGroup::PEER, DependencyType::Peer),
         ] {
-            let Some(prop) = package_json.as_property(group.prop) else {
+            let Some(prop) = package_json.as_property(alloc, group.prop) else {
                 continue;
             };
             let bun_ast::ExprData::EObject(e_object) = &prop.expr.data else {
@@ -817,7 +819,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             scripts: Default::default(),
         })?;
 
-        if let Some(resolutions) = package_json.as_property(b"resolutions") {
+        if let Some(resolutions) = package_json.as_property(alloc, b"resolutions") {
             let root_package = *this.packages.get(0);
             let (mut string_builder, lf) = this.string_builder_split();
 
@@ -828,6 +830,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 string_builder.allocate()?;
             }
             lf.overrides.parse_append(
+                alloc,
                 manager,
                 lf.dependencies.as_slice(),
                 &root_package,

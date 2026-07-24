@@ -93,21 +93,21 @@ impl CatalogMap {
 
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
-    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
-        if let Some(default_catalog) = expr.get(b"catalog") {
-            Self::count_catalog_group(&default_catalog, builder);
+    pub fn parse_count(&mut self, alloc: bun_alloc::AstAlloc, expr: Expr, builder: &mut StringBuilder) {
+        if let Some(default_catalog) = expr.get(alloc, b"catalog") {
+            Self::count_catalog_group(alloc, &default_catalog, builder);
         }
 
-        if let Some(catalogs) = expr.get(b"catalogs") {
-            catalogs.for_each_property(|catalog_name, _, catalog_value| {
+        if let Some(catalogs) = expr.get(alloc, b"catalogs") {
+            catalogs.for_each_property(alloc, |catalog_name, _, catalog_value| {
                 builder.count(catalog_name);
-                Self::count_catalog_group(&catalog_value, builder);
+                Self::count_catalog_group(alloc, &catalog_value, builder);
             });
         }
     }
 
-    fn count_catalog_group(group: &Expr, builder: &mut StringBuilder) {
-        group.for_each_property(|dep_name, _, version| {
+    fn count_catalog_group(alloc: bun_alloc::AstAlloc, group: &Expr, builder: &mut StringBuilder) {
+        group.for_each_property(alloc, |dep_name, _, version| {
             builder.count(dep_name);
             if let Some(version_str) = version.as_utf8_string_literal() {
                 builder.count(version_str);
@@ -120,6 +120,7 @@ impl CatalogMap {
     /// sites would alias `&mut lockfile.catalogs` against `&mut lockfile`.
     pub fn parse_append(
         &mut self,
+        alloc: bun_alloc::AstAlloc,
         pm: &mut PackageManager,
         log: &mut Log,
         source: &Source,
@@ -127,18 +128,18 @@ impl CatalogMap {
         builder: &mut StringBuilder,
     ) -> Result<bool, AllocError> {
         let mut found_any = false;
-        if let Some(default_catalog) = expr.get(b"catalog") {
+        if let Some(default_catalog) = expr.get(alloc, b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
-            Self::parse_append_group(group, pm, log, source, &default_catalog, builder)?;
+            Self::parse_append_group(alloc, group, pm, log, source, &default_catalog, builder)?;
         }
 
-        if let Some(catalogs) = expr.get(b"catalogs") {
+        if let Some(catalogs) = expr.get(alloc, b"catalogs") {
             found_any = true;
-            catalogs.try_for_each_property(|catalog_name_str, _, catalog_value| {
+            catalogs.try_for_each_property(alloc, |catalog_name_str, _, catalog_value| {
                 let catalog_name = builder.append::<String>(catalog_name_str);
                 let group = self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
-                Self::parse_append_group(group, pm, log, source, &catalog_value, builder)
+                Self::parse_append_group(alloc, group, pm, log, source, &catalog_value, builder)
             })?;
         }
 
@@ -146,6 +147,7 @@ impl CatalogMap {
     }
 
     fn parse_append_group(
+        alloc: bun_alloc::AstAlloc,
         group: &mut Map,
         pm: &mut PackageManager,
         log: &mut Log,
@@ -153,7 +155,7 @@ impl CatalogMap {
         catalog: &Expr,
         builder: &mut StringBuilder,
     ) -> Result<(), AllocError> {
-        catalog.try_for_each_property(|dep_name_str, key_loc, value| {
+        catalog.try_for_each_property(alloc, |dep_name_str, key_loc, value| {
             let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
             let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
 
@@ -206,6 +208,7 @@ impl CatalogMap {
     // borrows, so narrow to `&mut CatalogMap` and let the caller split the
     // disjoint fields.
     pub fn from_pnpm_lockfile(
+        alloc: bun_alloc::AstAlloc,
         catalogs: &mut CatalogMap,
         log: &mut Log,
         catalogs_obj: &mut E::Object,
@@ -224,6 +227,7 @@ impl CatalogMap {
 
             if group_name_str == b"default" {
                 put_entries_from_pnpm_lockfile(
+                    alloc,
                     &mut catalogs.default,
                     log,
                     entries_obj,
@@ -232,7 +236,7 @@ impl CatalogMap {
             } else {
                 let group_name = string_buf.append(group_name_str)?;
                 let group = catalogs.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
-                put_entries_from_pnpm_lockfile(group, log, entries_obj, string_buf)?;
+                put_entries_from_pnpm_lockfile(alloc, group, log, entries_obj, string_buf)?;
             }
         }
         Ok(())
@@ -364,6 +368,7 @@ pub enum FromPnpmLockfileError {
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
 fn put_entries_from_pnpm_lockfile(
+    alloc: bun_alloc::AstAlloc,
     catalog_map: &mut Map,
     log: &mut Log,
     entries_obj: &E::Object,
@@ -378,7 +383,7 @@ fn put_entries_from_pnpm_lockfile(
         let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
         let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
 
-        let Some(specifier) = value.get(b"specifier") else {
+        let Some(specifier) = value.get(alloc, b"specifier") else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
         let Some(version_str) = specifier.as_utf8_string_literal() else {

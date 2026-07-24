@@ -164,7 +164,9 @@ pub fn do_patch_commit(
 
                 initialize_store();
                 let log = manager.log_mut();
-                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+                let ast_arena = bun_alloc::AstArena::new();
+                let alloc = ast_arena.alloc();
+                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log, alloc) {
                     Ok(p) => p,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -179,7 +181,7 @@ pub fn do_patch_commit(
                 let json = parsed.root;
 
                 let version: &[u8] = 'version: {
-                    if let Some(v) = json.get(b"version") {
+                    if let Some(v) = json.get(alloc, b"version") {
                         if let bun_ast::ExprData::EString(s) = &v.data {
                             let s = s.data.slice();
                             break 'version s;
@@ -775,7 +777,9 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
                 initialize_store();
                 let log = manager.log_mut();
-                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+                let ast_arena = bun_alloc::AstArena::new();
+                let alloc = ast_arena.alloc();
+                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log, alloc) {
                     Ok(p) => p,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -790,7 +794,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let json = parsed.root;
 
                 let version: &[u8] = 'version: {
-                    if let Some(v) = json.get(b"version") {
+                    if let Some(v) = json.get(alloc, b"version") {
                         if let bun_ast::ExprData::EString(s) = &v.data {
                             let s = s.data.slice();
                             break 'version s;

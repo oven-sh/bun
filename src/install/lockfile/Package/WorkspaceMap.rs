@@ -136,9 +136,10 @@ fn process_workspace_name(
     // results are immediately boxed so the bump can drop at scope exit.
     let scratch = Arena::new();
 
+    let alloc = workspace_json.json_arena.alloc();
     let name_expr = workspace_json
         .root
-        .get(b"name")
+        .get(alloc, b"name")
         .ok_or(crate::Error::MissingPackageName)?;
     let name = name_expr
         .as_string_cloned(&scratch)?
@@ -148,7 +149,7 @@ fn process_workspace_name(
         name: Box::<[u8]>::from(name),
         name_loc: name_expr.loc,
         version: 'brk: {
-            if let Some(version_expr) = workspace_json.root.get(b"version") {
+            if let Some(version_expr) = workspace_json.root.get(alloc, b"version") {
                 if let Some(version) = version_expr.as_string_cloned(&scratch)? {
                     break 'brk Some(Box::<[u8]>::from(version));
                 }

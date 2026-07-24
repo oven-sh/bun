@@ -391,6 +391,17 @@ static const WTF::String toStringStatic(ZigString str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
+// JSC::createError and friends assert that the message is non-empty, but these
+// conversions accept arbitrary user-provided strings (e.g. `expect.unreachable("")`).
+// Construct the ErrorInstance directly for an empty message, matching what the
+// JSC helpers do in release builds (same as `new Error("")`).
+static JSC::JSObject* createErrorAllowEmptyMessage(JSC::JSGlobalObject* globalObject, JSC::ErrorType errorType, const WTF::String& message)
+{
+    if (message.isEmpty()) [[unlikely]]
+        return JSC::ErrorInstance::create(globalObject->vm(), globalObject->errorStructure(errorType), message, JSC::JSValue(), nullptr, JSC::TypeNothing, errorType);
+    return JSC::createError(globalObject, errorType, message);
+}
+
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
     WTF::String message = toString(*str);
@@ -399,7 +410,7 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* 
         return {};
     }
 
-    JSC::JSObject* result = JSC::createError(globalObject, message);
+    JSC::JSObject* result = createErrorAllowEmptyMessage(globalObject, JSC::ErrorType::Error, message);
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
@@ -407,7 +418,7 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* 
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
+    JSC::JSObject* result = createErrorAllowEmptyMessage(globalObject, JSC::ErrorType::TypeError, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
@@ -415,7 +426,7 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObje
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
+    JSC::JSObject* result = createErrorAllowEmptyMessage(globalObject, JSC::ErrorType::SyntaxError, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
@@ -423,7 +434,7 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalOb
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
+    JSC::JSObject* result = createErrorAllowEmptyMessage(globalObject, JSC::ErrorType::RangeError, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;

@@ -415,11 +415,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(decl, false, was_const && !is_after, false);
-                        } else {
                             continue 'outer;
                         }
+                        // Replace/Inject gave the decl a value; `visit_decl` requires one.
+                        let is_after = self.vis_scope().is_after_const_local_prefix;
+                        self.visit_decl(decl, false, was_const && !is_after, false);
                     }
                 }
             }

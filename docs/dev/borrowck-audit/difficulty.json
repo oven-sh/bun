@@ -1,0 +1,992 @@
+{
+  "regressed": [
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2440,
+      "difficulty": "simple",
+      "fix": "delete key_text boxing and pass path.text directly to both .put() calls (path is a local Fs::Path<'static>, path.text does not borrow self; line 2421 already does this)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/bundler/linker_context/computeCrossChunkDependencies.rs",
+      "line": 338,
+      "difficulty": "simple",
+      "fix": "take by &mut, use mem::take on chunk_metas[chunk_index].imports, iterate its keys, restore it after the loop (body only mutates chunk_metas[other].exports where other != chunk_index)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/css/properties/flex.rs",
+      "line": 879,
+      "difficulty": "simple",
+      "fix": "KEEP: alloc is required for correctness",
+      "correctness_note": "basis value is emitted twice: once in the Flex shorthand here and again in the FlexBasis longhand via single_property!(FlexBasis, basis.take(), ...) when prefix bits remain after intersection removal"
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 719,
+      "difficulty": "involved",
+      "fix": "change spawn_package_lifecycle_scripts to return the ScriptsList (or package_name) back on Err so the error path borrows instead of pre-cloning; requires signature change touching other callers",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 111,
+      "difficulty": "simple",
+      "fix": "iterate by index + re-borrow per iteration: read dependencies[dep_i].behavior/.name_hash directly instead of cloning into `dep`; replace the clone-assign with dependencies.swap(peer_i, begin as usize)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 995,
+      "difficulty": "simple",
+      "fix": "KEEP: alloc is required for correctness",
+      "correctness_note": "get_or_put_resolved_package_with_find_result appends to lockfile.buffers.string_bytes and may reallocate it while name_str is still read afterward on the fall-through path"
+    },
+    {
+      "file": "src/install/yarn.rs",
+      "line": 1381,
+      "difficulty": "simple",
+      "fix": "iterate by index + re-borrow per iteration: store the matching entry index (Option<usize>) instead of cloning e.specs, then borrow &yarn_lock.entries[found_idx].specs in the second loop (all borrows are shared)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/js_parser/visit/visit_stmt.rs",
+      "line": 186,
+      "difficulty": "simple",
+      "fix": "wrap the entry in bun_ptr::BackRef::new(r) to detach the &self.options lifetime across the &mut self call, matching the existing pattern at visit/mod.rs:284",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/shell_parser/braces.rs",
+      "line": 626,
+      "difficulty": "simple",
+      "fix": "split_at_mut per iteration: out[out_key][..length] is only appended to by the j==0 recursion, so for j>0 split out at new_key (new_key > out_key invariant) and extend_from_slice(&lo[out_key][..length]) without cloning",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/shell_parser/braces.rs",
+      "line": 676,
+      "difficulty": "simple",
+      "fix": "split_at_mut per iteration: same as line 626 — re-borrow out[out_key][..length] and &mut out[new_key] disjointly each j>0 instead of snapshotting to Vec",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/shell_parser/braces.rs",
+      "line": 745,
+      "difficulty": "simple",
+      "fix": "split_at_mut per iteration: for i>0 split out at new_key and extend_from_slice(&lo[out_key][..starting_len]); expand_flat only appends so the prefix bytes are stable",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/watcher/INotifyWatcher.rs",
+      "line": 388,
+      "difficulty": "involved",
+      "fix": "hoist to scratch buffer field on self (Vec<EventListIndex> on Watcher/Platform), clear()+extend_from_slice under the mutex each cycle to amortize the alloc",
+      "correctness_note": "snapshot is required: process_inotify_event_batch -> on_file_update evicts watchlist entries and the JS thread may concurrently realloc the MultiArrayList backing, so a borrowed &[EventListIndex] would dangle"
+    },
+    {
+      "file": "src/watcher/KEventWatcher.rs",
+      "line": 130,
+      "difficulty": "simple",
+      "fix": "drop the watchevents &mut borrow, then borrow disjoint fields in place: let deduped=&mut this.watch_events[..out_len]; call watcher_trace::write_events(&this.watchlist,deduped,changed) free fn instead of the &self method (mirror INotifyWatcher.rs:532-535)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/watcher/WindowsWatcher.rs",
+      "line": 525,
+      "difficulty": "simple",
+      "fix": "drop the all_events &mut borrow, re-slice let deduped=&mut this.watch_events[..=last_event_index] and call watcher_trace::write_events(&this.watchlist,..) free fn so all borrows are disjoint struct fields (mirror INotifyWatcher.rs:532-535)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 2479,
+      "difficulty": "simple",
+      "fix": "iterate by index + re-borrow per iteration: let n=chunks[index].cross_chunk_imports.len(); for i in 0..n { let ci=chunks[index].cross_chunk_imports[i].chunk_index; recurse } — the recursion never mutates chunks (alt: change param to &[Chunk])",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 2499,
+      "difficulty": "simple",
+      "fix": "iterate by index + re-borrow per iteration: compute pieces.len() up front, then each iter re-match &chunks[index].intermediate_output to read (kind,idx) in a short scope before the recursive &mut chunks call — recursion never mutates chunks (alt: change param to &[Chunk])",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/bundler/defines.rs",
+      "line": 209,
+      "difficulty": "simple",
+      "fix": "restructure: in the `get_mut` Some arm just `existing.push(DotDefine { parts, data: value_define.clone() })` instead of building a new Vec + extend_from_slice + assign-back",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/bundler/linker_context/computeChunks.rs",
+      "line": 88,
+      "difficulty": "simple",
+      "fix": "iterate by index + re-borrow per iteration: set the bit in a scoped `&mut` block with no return, then at each use (lines 117/153) re-borrow `this.graph.files.items_entry_bits()[source_index as usize].bytes(...)` instead of holding a cloned `AutoBitSet`",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/dotenv/env_loader.rs",
+      "line": 1238,
+      "difficulty": "simple",
+      "fix": "restructure: compute result first, mutate second — drop `value_owned` and write `*entry.value_ptr = HashTableValue { value: Box::from(value) }` directly at line 1251; `map` is disjoint from `self` so the borrow survives `get_or_put`",
+      "correctness_note": "map stores `Box<[u8]>` so one allocation per stored value is required regardless; only the eager placement before the `continue` branch is the extra borrowck-driven cost"
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 1325,
+      "difficulty": "simple",
+      "fix": "pass &[u8] instead of cloning: drop `.to_vec()` and keep `let path = manager.lockfile.str(&realname);` — `log_mut()` takes `&self` (raw-ptr deref), so it does not conflict with the immutable `manager.lockfile` borrow",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/install/PackageManager/patchPackage.rs",
+      "line": 143,
+      "difficulty": "simple",
+      "fix": "pass &[u8] instead of cloning: drop `.to_vec()` on the name slices (lines 244, 281) — `lockfile` here is a local `Box<Lockfile>` disjoint from `&mut manager`, so the slice can be passed directly to `compute_cache_dir_and_subpath`",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/install/PackageManager/patchPackage.rs",
+      "line": 1205,
+      "difficulty": "involved",
+      "fix": "pass &[u8] with explicit lifetime: add a `relative_path(&self) -> &[u8]` accessor on `tree::Iterator`, restructure the loop to drop `IteratorNext` (continue on no-match) then `return Some(iterator.relative_path())` after the scope, change return type to `Option<&[u8]>` and propagate through the 4 callers and `pkg_info_for_name_and_version`",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/js_parser/lib.rs",
+      "line": 539,
+      "difficulty": "simple",
+      "fix": "restructure: in the `get_mut` Some arm, after the merge-loop just `existing.push(DotDefine { data: value, parts }); return Ok(())` — only call `put_assume_capacity(vec![...])` in the None arm; drop `initial_values` and the extend_from_slice Vec",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 2288,
+      "difficulty": "simple",
+      "fix": "use SmallVec<[(u32, u64); 8]> for `updates` — collecting before dispatch must stay, but inline storage covers the common stream count",
+      "correctness_note": "KEEP the two-phase collect: `send_window_update` → `self.write` can re-enter JS (see line 3468 note) which may mutate `self.streams`, invalidating the map iterator mid-loop; snapshotting IDs first is required for correctness"
+    },
+    {
+      "file": "src/runtime/api/filesystem_router.rs",
+      "line": 445,
+      "difficulty": "simple",
+      "fix": "delete the .to_vec(); JsCell::get() returns &T from &self so `dir` is a shared borrow and bust_dir_cache_recursive(&self, ...) is also shared — they coexist, and the recursive walk never touches self.router",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/bake/production.rs",
+      "line": 95,
+      "difficulty": "simple",
+      "fix": "pass &[u8] with explicit lifetime instead of cloning: delete the Box::from() and keep cwd: &[u8] borrowing cwd_buf for the function — cwd_buf is never reused (adjust `&cwd` → `cwd` at the build_with_vm call)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/bake/production.rs",
+      "line": 551,
+      "difficulty": "simple",
+      "fix": "pass &[u8] with explicit lifetime instead of cloning: delete the Box::from() and keep root_dir_path: &[u8] borrowing root_dir_buf — root_dir_buf is never reused and &*root_dir_path at line 1204 works unchanged",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/cli/pm_view_command.rs",
+      "line": 32,
+      "difficulty": "involved",
+      "fix": "change PackageManager::http_proxy/tls_reject_unauthorized to take &self (they only call env_mut() which already takes &self), then `break 'brk &manager.root_package_json_name_at_time_of_init` with no bump copy",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/cli/pm_view_command.rs",
+      "line": 75,
+      "difficulty": "involved",
+      "fix": "change PackageManager::http_proxy/tls_reject_unauthorized to take &self (env_mut already takes &self), then drop .clone() and hold `scope: &Scope` across lines 122/134 (scope is used through line 164)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 2093,
+      "difficulty": "simple",
+      "fix": "drop both .to_vec() and use disjoint-field borrows: `if let Some(prev) = self.history.prev(self.line_editor.get_line()) { self.line_editor.set(prev); }` — history and line_editor are separate fields",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 2139,
+      "difficulty": "simple",
+      "fix": "take by &mut, use mem::take on the field: `let line = mem::take(&mut self.line_editor.buffer); self.line_editor.cursor = 0;` — every path calls line_editor.clear() anyway, so taking upfront yields an owned Vec with zero alloc and unblocks `(cmd.handler)(self, args)`",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 2275,
+      "difficulty": "simple",
+      "fix": "delete .to_vec() and keep `let line = self.line_editor.get_line();` — print()/refresh_line() take &self, and on every path NLL ends the line borrow before any &mut self.line_editor call (set/insert/backspace)",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/server/server_body.rs",
+      "line": 993,
+      "difficulty": "simple",
+      "fix": "take by &mut, use mem::take on the field: `let ServePluginsState::Unqueued(plugin_list) = mem::replace(&mut self.state, ServePluginsState::Err) else { unreachable!() };` to own the Box<[Box<[u8]>]>, iterate it directly, then overwrite self.state with Pending as before",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/shell/IOReader.rs",
+      "line": 318,
+      "difficulty": "simple",
+      "fix": "take by &mut, use mem::take on the field: `let readers = std::mem::take(&mut s.readers);` — moves the Vec out (no alloc) and preserves snapshot semantics against re-entrant add_reader/remove_reader; this is a terminal error path so leaving s.readers empty is correct",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/shell/IOWriter.rs",
+      "line": 833,
+      "difficulty": "simple",
+      "fix": "use SmallVec<[ChildPtr; 4]> for `targets` — the dedup'd snapshot must exist because run_yield/cancel_chunks re-derive state() and mutate s.writers, but typical unique-writer count per IOWriter is tiny so it stays on-stack",
+      "correctness_note": "run_yield and cancel_chunks re-enter self.state() and mutate s.writers, so a snapshot collection is required for correctness; SmallVec keeps it off the heap"
+    },
+    {
+      "file": "src/runtime/shell/builtin/seq.rs",
+      "line": 196,
+      "difficulty": "simple",
+      "fix": "restructure: compute result first, mutate second — call `Builtin::of_mut(...).stdout.enqueue(child, &out, safeguard)` with the local `out` directly (enqueue copies into IOWriter's buffer), then `Self::state_mut(...).buf = out;` afterward; drop the intermediate store+clone",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/test_runner/diff/diff_match_patch.rs",
+      "line": 985,
+      "difficulty": "simple",
+      "fix": "restructure: track only the length — change to `last_equality_len: Option<usize>`, store `diffs[p].text.len()` instead of `dupe(...)`, and at the insert site use `dupe(&diffs[eq_idx].text)` (eq_idx already indexes the same equality) before mutating diffs",
+      "correctness_note": ""
+    },
+    {
+      "file": "src/runtime/test_runner/snapshot.rs",
+      "line": 371,
+      "difficulty": "simple",
+      "fix": "use `for (&file_id, ils_info) in self.inline_snapshots_to_write.iter_mut()` — the loop body touches no other `self` field and never inserts/removes map keys, so iter_mut yields (&FileId, &mut Vec) directly with no key Vec needed",
+      "correctness_note": ""
+    }
+  ],
+  "rawptr": [
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 1060,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change rename_symbols_in_chunk to take &Chunk (or just the fields it reads) since caller already assigns chunk.renamer from the return value; drop the separate files *const [u32]"
+    },
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 2230,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "make print_code_for_file_in_chunk_js an associated fn receiving &ts_enums/&line_offset_table/&mangled_props and the RequireOrImportMeta callback ctx as disjoint params from the caller instead of &mut self"
+    },
+    {
+      "file": "src/bundler/ParseTask.rs",
+      "line": 2224,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "restructure run_with_source_code/get_ast to thread &mut Transpiler and &mut Resolver as explicit disjoint params per target, eliminating the worker_raw/transpiler/resolver raw-ptr chain"
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1132,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: self_ptr is the *mut c_void context handed to JSBundlerPlugin__matchOnResolve; the JS completion callback mutates/consumes self, so *mut Self provenance is required"
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1265,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: self_ptr is the *mut c_void context handed to JSBundlerPlugin__matchOnLoad; the JS completion callback mutates/consumes self, so *mut Self provenance is required"
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1999,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "move drain_deferred_tasks onto BundleV2 (or make it a free fn taking &mut BundleV2) so it accesses self.graph.deferred_* and the rest of self via normal disjoint field borrows"
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2115,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "split run_resolver into an associated fn taking (&mut Transpiler, &mut Graph, file_map, arena, ...) as disjoint params so transpiler.resolver/options and graph are borrowed independently"
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2135,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "replace get_or_put slot-hold with a two-step contains-check then insert(key, idx) after enqueue_parse_task returns, avoiding the *mut u32 across &mut self calls"
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2249,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "hoist the self.graph.* record/source reads and self.transpiler.options flags into locals first, then call log_for_resolution_failures last so &mut Log does not overlap other self borrows"
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 6457,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: self_ptr is a ParentRef<BundleV2> stored into ParseTask.ctx and scheduled on the thread pool; the task calls back into BundleV2, so *mut Self write provenance is required"
+    },
+    {
+      "file": "src/exe_format/macho.rs",
+      "line": 93,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "ptr-as-usize subslice offset math (already no `unsafe`); have `LoadCommandIterator` yield each entry's byte offset into `data` so callers don't need `entry.data.as_ptr() as usize - base_addr`"
+    },
+    {
+      "file": "src/glob/GlobWalker.rs",
+      "line": 473,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change `handle_sys_err_with_path` to take only the disjoint fields it mutates (or read the path from `self.path_buf` internally) so the ZStr arg doesn't overlap `&mut self.walker`"
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 1579,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "build `HTTPClientResult` directly from the caller-owned `NonNull<MutableString>` (lifetime independent of `&mut self`) and split `state.reset()` so it doesn't write `body_out_str` while `result.body` is live"
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 3663,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "track `(is_buffered: bool, consumed: usize)` and re-derive the read slice from `incoming_data` / `self.state.response_message_buffer` at each use instead of caching a `RawSlice` across `&mut self` mutations"
+    },
+    {
+      "file": "src/http_jsc/websocket_client.rs",
+      "line": 1619,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change `RareData::ws_client_group` to take the concrete loop/event-loop handle instead of `&VirtualMachine`, then call `let h = vm.uws_loop(); vm.rare_data().ws_client_group::<SSL>(h)` with disjoint borrows"
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 1164,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "since `self.lockfile` is `*mut Lockfile`, make `lockfile()`/a `string_buf()` helper return `&'a [u8]` tied to the struct lifetime (not `&self`) so the slice can be held across `&mut self` calls without a RawSlice"
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 1288,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "stop storing `&NodeModulesFolder`/`&Lockfile`/progress inside `PackageInstall`; pass them to its methods at call time (or split `PackageInstaller` so the borrowed fields are disjoint from later `&mut self` access)"
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 2119,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "this branch never reads `destination_dir` (only no-op `close()`); delete the variable (and its close) or use a borrowless placeholder variant so `self.node_modules` isn't aliased"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 216,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change generate_network_task_for_tarball to return Option<NonNull<NetworkTask>> (matching the pool's *mut API) so it doesn't borrow *this"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 237,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "pass the SemverString handle (Copy) into enqueue_local_tarball and resolve against string_bytes inside the callee (or .to_vec() for a simple allocating fix)"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 284,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "pass Repository/SemverString handles into enqueue_git_clone/checkout and slice string_bytes inside the callee instead of pre-slicing"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 425,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "same as line 216: make generate_network_task_for_tarball return Option<NonNull<NetworkTask>>"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1102,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change get_or_put_resolved_package_with_find_result to take disjoint &mut Lockfile + needed PM fields instead of &mut PackageManager so a stack-owned manifest borrow can coexist"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1211,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "pass SemverString handles for alias/url into enqueue_git_clone/checkout and resolve inside, avoiding the pre-sliced &[u8] that locks string_bytes"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1378,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "same as line 216: return NonNull<NetworkTask> from generate_network_task_for_tarball so enqueue_network_task(this, nt) doesn't alias"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1510,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "pass the tarball Uri's SemverString into the enqueue callees and resolve there, or .to_vec() the url before the mut reborrow"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2001,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change Lockfile::is_root_dependency to take only the disjoint PM fields it reads (root_dependency_list, workspace_package_json_cache) instead of &mut PackageManager"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2061,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change Package::from_npm to accept the disjoint PM fields it reads (options, updating_packages, log) instead of both &mut PackageManager and &mut Lockfile"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2368,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "introduce an associated fn taking (&mut manifests, &options, &lockfile) so disjoint field borrows replace the this_ptr projections"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2532,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "same as line 1102: split get_or_put_resolved_package_with_find_result signature so &manifest (from this.manifests) coexists with the other mut borrows"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2558,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "pass the folder SemverString into FolderResolution::get_or_put and resolve against string_bytes inside (or .to_vec() the path)"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2670,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "pass workspace_path_raw: SemverString into FolderResolution::get_or_put and resolve inside, avoiding the detached &[u8]"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2715,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "make global_link_dir_path return &'static [u8] (set-once Box never freed) and pass symlink SemverString into get_or_put to resolve internally"
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerLifecycle.rs",
+      "line": 234,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: event_loop.tick_once holds &mut self.event_loop while task.run(ctx) reborrows the enclosing PackageManager; raw *mut c_void ctx is the correct provenance carrier — replace comment with SAFETY note"
+    },
+    {
+      "file": "src/install/PackageManager/PopulateManifestCache.rs",
+      "line": 66,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "restructure get_network_task/for_manifest/enqueue_network_task to take &mut preallocated_network_tasks + the disjoint manager fields they need, so the pool slot borrow does not overlap &mut manager"
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 67,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change Lockfile::load_from_cwd to accept the specific manager sub-fields it reads (options, allocator) instead of Option<&mut PackageManager>, so &mut manager.lockfile / &mut manager.log are disjoint"
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 1107,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change Tree::print to take only the mutable fields it touches (track_installed_bin, updating_packages, workspace_name_hash) instead of &mut PackageManager, letting Printer hold safe &lockfile/&options/&update_requests"
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 347,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "copy name.slice() into a local SmallVec/Vec<u8> before the match-arm body (names are short) instead of detach_lifetime, so later &mut task / task_ptr uses are safe"
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 618,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "convert NetworkTask::reset_streaming_for_retry / discard_unused_streaming_state into associated fns taking the disjoint task fields (not &mut self), so the &mut task.callback (extract) borrow from the match arm can coexist"
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 125,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "refactor PackageJSONEditor::edit / do_patch_commit to take disjoint manager fields (log, options, etc.) so the &mut MapEntry borrow from workspace_package_json_cache can be held safely across them"
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 437,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "same refactor as line 125: callers after get_with_path should take disjoint manager fields instead of &mut manager, letting the cache entry stay a safe &mut MapEntry"
+    },
+    {
+      "file": "src/io/PipeWriter.rs",
+      "line": 509,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: *mut Self is stored as the poll Owner backref for later on_poll/on_close dispatch (may free self); required provenance — replace 'reshaped for borrowck' with a SAFETY comment"
+    },
+    {
+      "file": "src/io/PipeWriter.rs",
+      "line": 759,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: identical to line 509 — *mut Self stored as poll Owner backref for reentrant callback dispatch; replace comment with SAFETY note"
+    },
+    {
+      "file": "src/js_parser/lexer.rs",
+      "line": 2404,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "use the already-Copy'd local `contents` (line 2378): `let chunk = &contents[self.current..];` — it does not borrow `self`, so `scan_pragma(&mut self, ..)` compiles and the StoreStr arena alloc goes away"
+    },
+    {
+      "file": "src/js_parser_jsc/Macro.rs",
+      "line": 222,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: closure is run through JSC__VM__holdAPILock and executes the JS macro, which may re-enter MacroContext::call and mutate self.macros/self.bump; holding &-refs across that would alias"
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 3942,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "thread the arena lifetime `'a` through `symbols()`/Renamer so the returned `&'a Symbol` does not borrow `&self` (the table is arena-backed — see existing note at line 2378), or copy the few fields used (import_item_status, namespace_alias, original_name) before the `&mut self` print calls"
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 5288,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "same as 3942: make `symbols()` return an arena-lifetime `&'a Symbol` not tied to `&self`, or copy `original_name`/`namespace_alias` out before calling `self.print_*`"
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 5359,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "same as 3942: make `symbols()` return an arena-lifetime `&'a Symbol` not tied to `&self`, or copy `namespace_alias` out before the `self.print_*` calls"
+    },
+    {
+      "file": "src/jsc/AsyncModule.rs",
+      "line": 342,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "the name is loop-invariant — compute it once before `retain_mut` as an owned `Vec<u8>` (`lockfile.str(&dependency.name).to_vec()`) and pass `&name[..]`; drops the RawSlice and the per-iteration `&vm` vs `&mut vm` conflict"
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 1563,
+      "kind": "reentrant-callback",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "close_all_socket_groups already does `let _ = self` and only needs `vm.uws_loop()`; change its signature to take `loop_: *mut uws::Loop` (Copy) and drop both the `&mut self` and `&VirtualMachine` params so no VM borrow is held across the JS on_close callbacks"
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 3781,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: the `*mut VirtualMachine` is stored as `RefString.ctx` for the WTF external-string finalizer (`clear_ref_string`) invoked later from C; a `&self`-derived pointer would carry SharedReadOnly provenance"
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 4313,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "redundant re-derive — just reuse the `jsc_vm` binding from line 4225; NLL ends that borrow after `_resolve` returns (line 4324), well before `RestoreLog`'s Drop runs, so no overlap with the guard"
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 5527,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "Holder's fields are pub and disjoint: call `exception_holder.zig_exception();` once for the lazy-init side-effect, then pass `unsafe { exception_holder.zig_exception.assume_init_mut() }` and `&mut exception_holder.need_to_clear_parser_arena_on_deinit` as inline disjoint field borrows at each call site"
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 6377,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "`spawn_ipc_group`/`lazy_group` only read `vm.uws_loop()` (returns Copy `*mut uws::Loop`); change those to take `loop_: *mut uws::Loop` and have the caller snapshot `let loop_ = self.uws_loop();` before `self.rare_data()` — removes the `&mut self.rare_data` + `&self` overlap"
+    },
+    {
+      "file": "src/jsc/hot_reloader.rs",
+      "line": 863,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "Copy the BackRef (self.ctx) before Task::init_empty(self) and deref it directly in the scopeguards instead of going through &mut self.get_context(); preserves the documented drop order without the *mut Watcher launder"
+    },
+    {
+      "file": "src/jsc/web_worker.rs",
+      "line": 1279,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "Change RareData::close_all_socket_groups to take the disjoint VM fields it actually needs (e.g. global/event_loop) instead of &VirtualMachine so it no longer conflicts with the &mut vm.rare_data borrow"
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 1435,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "Capture buf.as_ptr() as usize (address, not *mut) for the offset math; after the inner borrow ends, index buf[start_offset+len]=0 and build ZStr from buf[start_offset..].as_ptr() — no raw-ptr launder needed"
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 1511,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "Same as line 1435: compute start_offset via usize address diff, then re-index buf after the join_string_buf_t borrow ends; derive the ZStr pointer from the live buf slice"
+    },
+    {
+      "file": "src/runtime/api/BunObject.rs",
+      "line": 1899,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "Reorder: call (*vm.transpiler.env).get_s3_credentials() before let rare = vm.rare_data(); the env deref is a separate process-lifetime-ptr unsafe unrelated to the borrowck reshape"
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4014,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: handler calls self.adjust_window_size/self.dispatch_* which run JS that can re-enter the parser and touch self.streams; *mut Stream + dispatch_depth guard is the designed-for pattern (see enter_stream_dispatch)"
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4399,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: dispatch_with_extra(onStreamEnd/onStreamError) runs JS that may re-enter and mutate self.streams; raw *mut Stream avoids holding a map borrow across re-entry"
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4561,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: self.send_go_away/self.handle_incomming_payload dispatch JS that can re-enter the parser; *mut Stream from self.streams is required to avoid aliased &mut across re-entry"
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4610,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: decode_header_block dispatches onStreamHeaders → JS re-entry into parser; stream ptr is re-derived after dispatch and frees are deferred by dispatch_depth, a safe &mut would be UB/panic here"
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4734,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: handle_headers_frame calls decode_header_block/dispatch which fire JS that can re-enter and touch self.streams; *mut Stream is the intentional escape for the dispatch_depth-guarded re-entry model"
+    },
+    {
+      "file": "src/runtime/api/bun/js_bun_spawn_bindings.rs",
+      "line": 1094,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "defer! non-move closure place-capture: use scopeguard::guard(jsc_vm_ptr, |p| ...) so the pointer is the guard payload, eliminating the jsc_vm_ptr_cleanup copy"
+    },
+    {
+      "file": "src/runtime/api/bun/js_bun_spawn_bindings.rs",
+      "line": 1707,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "defer! non-move closure place-capture: use scopeguard::guard(subprocess_ptr, |p| ...) so the pointer is the guard payload, eliminating the subprocess_ptr_exit copy"
+    },
+    {
+      "file": "src/runtime/bake/dev_server/incremental_graph.rs",
+      "line": 526,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "pass &mut DirectoryWatchStore as a parameter to disconnect_and_delete_file so it doesn't reach through owner(); the key borrow then coexists with the sibling &mut"
+    },
+    {
+      "file": "src/runtime/bake/production.rs",
+      "line": 221,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "drop the separate vm_ptr param from build_with_vm and derive vm from pt.vm (BackRef) inside, so there is one access path to the VM"
+    },
+    {
+      "file": "src/runtime/cli/pack_command.rs",
+      "line": 1907,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change run_lifecycle_script/iterate_bundled_deps to take disjoint ctx fields (manager, command_ctx, bundled_deps, stats) instead of &mut ctx whole"
+    },
+    {
+      "file": "src/runtime/cli/publish_command.rs",
+      "line": 718,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "hoist use_system_shell and log_level into locals first, then reborrow &mut *context.command_ctx directly; remaining context.* reads are disjoint fields"
+    },
+    {
+      "file": "src/runtime/cli/test/Scanner.rs",
+      "line": 134,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "make read_dir_with_name/is_test_file associated fns taking only the disjoint fields they touch (open_dir_buf, test_files, fs) so scan_dir_buf's borrow survives"
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 670,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: wait_for_promise/event_loop().tick() re-enter JS which may mutate VM fields; holding &mut VM across that would alias"
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 903,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: tick_immediate_tasks/uws loop dispatch JS callbacks that re-enter the VM and its EventLoop; no stable &mut can span the tick"
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 1066,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: same as auto_tick — event-loop tick re-enters JS which mutates VM/EventLoop; raw per-field deref is required"
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 2372,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "move should_close/input_file_fd INTO the scopeguard payload and access via DerefMut (guard.0/guard.1); drop closure receives them by value — no raw ptrs needed"
+    },
+    {
+      "file": "src/runtime/server/RequestContext.rs",
+      "line": 2036,
+      "kind": "reentrant-callback",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: sink field is Option<NonNull> by design (JS GC-owned); assign_to_stream may synchronously fire on_first_write→handle_first_stream_write(&mut *this) while the outer frame still holds &mut *response_stream, so Box-in-self + safe borrow would be aliasing UB"
+    },
+    {
+      "file": "src/runtime/server/mod.rs",
+      "line": 884,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "match on `&mut req` instead of `&req` so the Stack arm binds `r: &mut &mut uws::Request` and pass `&mut **r` directly to prepare_js_request_context — no from_ref().cast_mut() launder needed"
+    },
+    {
+      "file": "src/runtime/server/mod.rs",
+      "line": 2099,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "destructure at top of set_routes: `let Self { dev_server, config, user_routes, app, h3_app, global_this, .. } = self;` so dev_server/config/user_routes are disjoint borrows instead of snapshotting *mut DevServer"
+    },
+    {
+      "file": "src/runtime/server/mod.rs",
+      "line": 2163,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "same destructure as line 2099 — with `config` and `user_routes` bound as disjoint fields, `config.websocket.as_ref()` coexists with `user_routes.iter_mut()` without the BackRef snapshot"
+    },
+    {
+      "file": "src/runtime/shell/interpreter.rs",
+      "line": 1921,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "already safe Rust (no `unsafe` at this site; EnvStr erases lifetime by design) — just delete the 'reshaped for borrowck' comment, the two-statement hoist is the idiomatic form"
+    },
+    {
+      "file": "src/runtime/webcore/Blob.rs",
+      "line": 607,
+      "kind": "other",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "borrow cred/path/payer from `self.store().unwrap().data.as_s3()` instead of `t.blob` — `self` is live through the download() call and shares the same Rc-backed store as the duped `t.blob`, eliminating the *const [u8] round-trip"
+    },
+    {
+      "file": "src/runtime/webcore/FileSink.rs",
+      "line": 1446,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: JSSink::assign_to_stream FFI takes both `*mut self` and a `void**` into self.signal.ptr that C++ writes the controller JSValue back through; cannot express as two safe &mut without changing the generated FFI signature"
+    },
+    {
+      "file": "src/runtime/webcore/blob/read_file.rs",
+      "line": 289,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: `ctx` is the async io-close callback's *mut Self (on_done re-enters/mutates self); the hoist before `&mut this.io_poll` is already the minimal safe ordering — replace comment with a SAFETY note on callback provenance"
+    },
+    {
+      "file": "src/runtime/webcore/blob/read_file.rs",
+      "line": 808,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change do_read to an associated fn taking the disjoint fields it actually touches (opened_fd, file_store, could_block, &mut read_eof/errno/system_error) plus a safe `&mut [u8]`, so the spare-capacity slice never coexists with `&mut self`"
+    },
+    {
+      "file": "src/runtime/webcore/blob/write_file.rs",
+      "line": 194,
+      "kind": "ffi-provenance",
+      "fixable": false,
+      "difficulty": "keep",
+      "fix": "keep: identical to read_file.rs:289 — `ctx` is the async io-close callback's *mut Self; hoisting before `&mut this.io_poll` is the correct ordering, replace comment with SAFETY note"
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLConnection.rs",
+      "line": 232,
+      "kind": "reentrant-callback",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "change MySQLRequestQueue::advance to take &JSMySQLConnection (all queue/conn state is Cell/JsCell so &self suffices) and have the wrapper call self.js_connection_ref() instead of the raw get_js_connection() ptr"
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLConnection.rs",
+      "line": 531,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "involved",
+      "fix": "mirror the Postgres Reader: wrap read_buffer/last_message_start in JsCell/Cell and make Reader hold BackRef<MySQLConnection> instead of *mut, so buffered_reader() and process_packets(&mut self) no longer alias"
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLConnection.rs",
+      "line": 1705,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "take rb = self.read_buffer() once, save head, bump rb.head += count, then build the slice from rb.byte_list[head..head+count] via disjoint field borrows (RawSlice remains only because Data::Temporary's API requires it)"
+    },
+    {
+      "file": "src/sql_jsc/postgres/PostgresSQLConnection.rs",
+      "line": 1743,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "save head index, call self.skip(count) first (dropping the JsCell borrow), then re-borrow read_buffer().byte_list[head..head+count] for the returned slice (RawSlice stays only for the Data::Temporary API)"
+    },
+    {
+      "file": "src/sql_jsc/postgres/PostgresSQLConnection.rs",
+      "line": 2407,
+      "kind": "self-field-alias",
+      "fixable": true,
+      "difficulty": "simple",
+      "fix": "call statement.structure(..) for its side effect and drop the return, then bind Some(&statement.cached_structure) and &statement.fields as ordinary disjoint shared borrows; pass the Option<&_> straight to to_js (no ParentRef needed)"
+    }
+  ]
+}

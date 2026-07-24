@@ -1,0 +1,3370 @@
+{
+  "total": 371,
+  "counts": {
+    "neutral": 333,
+    "regressed": 38,
+    "improved": 0,
+    "unclear": 0
+  },
+  "pattern_counts": {
+    "scalar-copy": 73,
+    "clone-small": 10,
+    "raw-ptr-launder": 90,
+    "collect-to-vec": 10,
+    "take-replace": 21,
+    "split-borrow": 22,
+    "reborrow": 83,
+    "clone-heap": 26,
+    "entry-split": 8,
+    "index-loop": 21,
+    "own-transfer": 3,
+    "buffer-stash": 4
+  },
+  "hot_regressed": [
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2440,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "copies path.text (&[u8]) into a Box<[u8]> before calling path_to_source_index_map(..).put() twice; Zig passed the borrowed slice directly",
+      "mem_delta": "+Box<[u8]> len=path.text.len() (~path bytes) per newly-discovered non-JS file in server_components mode",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/linker_context/computeCrossChunkDependencies.rs",
+      "line": 338,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "collects chunk_metas[i].imports.keys() into a Vec<Ref> so chunk_metas[other] can be mutated while iterating",
+      "mem_delta": "+Vec<Ref> heap alloc per JS chunk, len=imports.count(), Ref=8 bytes each",
+      "hot": true
+    },
+    {
+      "file": "src/css/properties/flex.rs",
+      "line": 879,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "splits (value, prefix) tuples into a value copy + &mut prefix; g/s are f32 (Copy, neutral) but b_val.0.clone() clones LengthPercentageOrAuto = DimensionPercentage<LengthValue> whose Calc variant is Box<Calc<..>> (deep_clone allocates)",
+      "mem_delta": "+Box<Calc<..>> deep clone only when flex-basis is a calc() expression; Auto/Dimension/Percentage variants are stack-sized (no heap)",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 719,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones entry.list.package_name (Box<[u8]>) before spawn consumes entry.list, so the name is still available for the error message",
+      "mem_delta": "+Box<[u8]> heap alloc ~package-name len per runnable lifecycle script (cloned unconditionally, only read on error path)",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 111,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "index-loop over dependencies but clones full Dependency into `dep` each inner iteration (only behavior/name_hash scalars are read); Dependency::clone deep-clones the semver Group Box<List> chain for Npm-tagged versions",
+      "mem_delta": "+Dependency deep clone per inner-loop step (heap Box<List>/Box<Query> nodes when npm range has OR/AND terms; 0 alloc for simple ranges)",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 995,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "routes through *mut PackageManager (neutral) + snapshots DiskCacheCtx scalars (neutral) + copies package name into owned Vec<u8> via to_vec() so it survives string_bytes realloc and &mut this reborrows",
+      "mem_delta": "+Vec<u8> len=package-name per npm dep hitting manifest-fetch path (comment notes also needed for realloc correctness)",
+      "hot": true
+    },
+    {
+      "file": "src/install/yarn.rs",
+      "line": 1381,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones matched entry's `specs: Vec<&[u8]>` into a fresh `Option<Vec<&[u8]>>` to drop the borrow before the second entries loop",
+      "mem_delta": "+Vec<&[u8]> heap alloc, len=entry.specs.len() (typically 1-few), once per dependency edge in nested per-entry/per-dep loop",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/visit/visit_stmt.rs",
+      "line": 186,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones ReplaceableExport enum (Delete | Replace(Expr) | Inject{name: Box<[u8]>, value: Expr}) out of options map so &mut self method can run",
+      "mem_delta": "+Box<[u8]> heap clone (~name len) when variant is Inject; Delete/Replace variants are bitwise ~24B copies with no alloc",
+      "hot": true
+    },
+    {
+      "file": "src/shell_parser/braces.rs",
+      "line": 626,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "snapshots out[out_key][..length] into a fresh Vec<u8> so the recursive expand_nested(&mut out) call doesn't alias the prefix slice",
+      "mem_delta": "+Vec<u8> heap alloc, len = current output prefix bytes, once per Single-expansion group",
+      "hot": true
+    },
+    {
+      "file": "src/shell_parser/braces.rs",
+      "line": 676,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "snapshots out[out_key][..length] into a fresh Vec<u8> before iterating variants and recursing with &mut out",
+      "mem_delta": "+Vec<u8> heap alloc, len = current output prefix bytes, once per Many-atom expansion encountered",
+      "hot": true
+    },
+    {
+      "file": "src/shell_parser/braces.rs",
+      "line": 745,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "snapshots out[out_key][..starting_len] into a fresh Vec<u8> so expand_flat can pass &mut out into recursion while reusing the prefix",
+      "mem_delta": "+Vec<u8> heap alloc, len = current output prefix bytes, once per Open token (brace group) in flat expansion",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/INotifyWatcher.rs",
+      "line": 388,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "clones watchlist.items_eventlist_index() (&[c_int]) into a Vec to drop the borrow of this.watchlist before mutating other this fields (also doubles as a locked snapshot for thread safety)",
+      "mem_delta": "+Vec<i32> len=watchlist.len() (4B * watched-file-count) per watch cycle",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/KEventWatcher.rs",
+      "line": 130,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "copies this.watch_events[0..out_len] into a local Vec<WatchEvent> so &mut this is free for write_trace_events/on_file_update",
+      "mem_delta": "+Vec<WatchEvent> len<=128 (~6B each, <=~768B) per watch cycle",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/WindowsWatcher.rs",
+      "line": 525,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "copies all_events[..last_event_index+1] into a local Vec<WatchEvent> so &mut this is free for write_trace_events/on_file_update",
+      "mem_delta": "+Vec<WatchEvent> len<=128 (~6B each, <=~768B) per event batch",
+      "hot": true
+    }
+  ],
+  "cold_regressed": [
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 2479,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "collects chunks[index].cross_chunk_imports chunk_index fields into Vec<u32> before recursing with &mut chunks",
+      "mem_delta": "+Vec<u32> len=cross_chunk_imports.len() per chunk visit (recursive, bounded by total chunk count)",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 2499,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "collects chunk.intermediate_output pieces' (QueryKind, u32) pairs into Vec before recursing with &mut chunks",
+      "mem_delta": "+Vec<(QueryKind /*u8*/, u32)> len=pieces.len() per chunk visit (else-branch allocates empty Vec)",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/defines.rs",
+      "line": 209,
+      "category": "regressed",
+      "pattern": "entry-split",
+      "what": "split getOrPut into get_mut/put, but found-existing branch allocates a fresh Vec<DotDefine> and extend_from_slice-copies the old list instead of pushing in place",
+      "mem_delta": "+Vec<DotDefine> alloc (len=existing.len()+1) and full copy of existing entries per found-existing insert",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/linker_context/computeChunks.rs",
+      "line": 88,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones the per-file AutoBitSet out of this.graph.files so the borrow does not span later &mut LinkerContext calls",
+      "mem_delta": "+AutoBitSet clone per entry point (Dynamic arm heap-allocs ceil(entry_points/8) bytes when entry_points > ~127; Static arm is ~16B stack copy)",
+      "hot": false
+    },
+    {
+      "file": "src/dotenv/env_loader.rs",
+      "line": 1238,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "eagerly copies the parsed value slice into Box<[u8]> before map.get_or_put so the borrow of self.value_buffer is dropped; the Box is the final stored form, but it is now allocated even on the !OVERRIDE continue path where Zig would skip the dupe",
+      "mem_delta": "+Box<[u8]> len=value.len() allocated eagerly per env var (wasted on duplicate-key skip path; neutral on the common insert path where storage requires the Box anyway)",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 1325,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "calls .to_vec() on lockfile.str(&realname) (&[u8]) to drop &lockfile borrow before manager.log_mut()",
+      "mem_delta": "+Vec<u8> heap alloc, len = dependency realname bytes (~package name length), per error; #[cold] error path",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/patchPackage.rs",
+      "line": 143,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones package name slice into owned Vec<u8> (lockfile.str(&package.name).to_vec() / pkg.name.slice(..).to_vec()) and copies the Copy `Resolution` struct before calling compute_cache_dir_and_subpath(&mut manager, ..) because the name slice borrows lockfile which aliases manager.lockfile",
+      "mem_delta": "+Vec<u8> heap alloc ~package-name len (typically <64 bytes), once per patch CLI invocation; Resolution copy is stack-only (Copy struct)",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/patchPackage.rs",
+      "line": 1205,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "node_modules_folder_for_dependency_id(s) return Vec<u8> via relative_path.as_bytes().to_vec() instead of a &ZStr into the tree iterator's internal path_buf, because borrowck rejects returning the IteratorNext borrow out of the loop",
+      "mem_delta": "+Vec<u8> heap alloc ~node_modules relative path len (tens to a few hundred bytes), one allocation per call (early-returns on match); callers are one-shot patch CLI paths",
+      "hot": false
+    },
+    {
+      "file": "src/js_parser/lib.rs",
+      "line": 539,
+      "category": "regressed",
+      "pattern": "entry-split",
+      "what": "getOrPut on dots map split into get_mut then build fresh Vec<DotDefine> via extend_from_slice (deep-clones existing entries) then put, instead of appending in place",
+      "mem_delta": "+Vec<DotDefine> alloc (len=existing+1) + Clone of each existing DotDefine (Vec<Box<[u8]>> parts + DefineData Option<Box<[u8]>>) per insert with existing tail; old Vec dropped",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 2288,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "collects (stream_id: u32, consumed: u64) pairs into a Vec while iterating self.streams, then replays them to call send_window_update after the borrow ends",
+      "mem_delta": "+Vec<(u32,u64)> heap alloc, len = number of active streams whose used_window_size >= window_size/2 (bounded by streams.len())",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/filesystem_router.rs",
+      "line": 445,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "`.to_vec()` on config.dir path slice (&[u8]) so recursive bust_dir_cache can &mut self without aliasing the borrowed dir",
+      "mem_delta": "+Vec<u8> len=dir path bytes, once per reload",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/bake/production.rs",
+      "line": 95,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones cwd byte slice out of stack PathBuffer into a heap Box<[u8]> so the PathBuffer borrow doesn't span the function",
+      "mem_delta": "+Box<[u8]> ~cwd path len (one-shot, <= PATH_MAX bytes)",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/bake/production.rs",
+      "line": 551,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "copies root_dir_path slice (joined into stack PathBuffer) into a heap Box<[u8]> so root_dir_buf can drop",
+      "mem_delta": "+Box<[u8]> ~len(cwd + \"/dist\") (one-shot, <= PATH_MAX bytes)",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/pm_view_command.rs",
+      "line": 32,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "copies manager.root_package_json_name_at_time_of_init (Box<[u8]>) into the function-scope bump arena so `name` doesn't keep `manager` borrowed across later &mut self calls",
+      "mem_delta": "+1 arena alloc of package-name bytes (npm names <=214 bytes); only when spec is '.' or ''",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/pm_view_command.rs",
+      "line": 75,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones the npm::registry::Scope returned by scope_for_package_name so `manager` isn't borrowed across http_proxy/tls_reject_unauthorized (&mut self)",
+      "mem_delta": "+5 Box<[u8]> heap clones (Scope.name/auth/token/user + OwnedURL.href) once per `bun pm view` invocation",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 2093,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "copies line_editor.get_line() (&[u8]) into Vec<u8> via .to_vec(), plus second .to_vec() of history entry, before mutating line_editor",
+      "mem_delta": "+2 Vec<u8> heap allocs per ArrowUp keypress, len = REPL line length (interactive, typically small)",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 2139,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "copies line_editor.get_line() (&[u8]) into owned Vec<u8> via .to_vec() so &mut self methods can be called",
+      "mem_delta": "+1 Vec<u8> heap alloc per Enter keypress, len = REPL line length",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 2275,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "copies line_editor.get_line() (&[u8]) into owned Vec<u8> via .to_vec() before tab-completion mutates self",
+      "mem_delta": "+1 Vec<u8> heap alloc per Tab keypress, len = REPL line length",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/server/server_body.rs",
+      "line": 993,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "collects plugin_list.iter() (over Box<[Box<[u8]>]>) into Vec<&Box<[u8]>> so self.state can be overwritten below while still iterating the plugin names",
+      "mem_delta": "+Vec<&Box<[u8]>> heap alloc, len = number of bunfig serve plugins (one-shot at server startup)",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/shell/IOReader.rs",
+      "line": 318,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones s.readers (Vec<ChildPtr> where ChildPtr = {u32,u8}, Copy) into a new Vec before dispatching error callbacks that may re-enter state()",
+      "mem_delta": "+Vec<ChildPtr> heap alloc, ~8 bytes * readers.len() (typically tiny; error path only)",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/shell/IOWriter.rs",
+      "line": 833,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "collects deduped ChildPtr targets into a Vec<ChildPtr> before invoking run_yield/cancel_chunks, instead of iterating writers in place",
+      "mem_delta": "+Vec<ChildPtr> (~24B/elem) len = distinct pending writers at EPIPE time",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/shell/builtin/seq.rs",
+      "line": 196,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "clones state.buf (Vec<u8> holding the entire formatted seq output) so stdout.enqueue(&mut self) doesn't alias the borrow of buf",
+      "mem_delta": "+Vec<u8> clone, len = full seq output bytes (unbounded, e.g. `seq 1 1e7`)",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/diff/diff_match_patch.rs",
+      "line": 985,
+      "category": "regressed",
+      "pattern": "clone-heap",
+      "what": "stores last_equality as owned Box<[Unit]> via dupe() instead of borrowing a slice into diffs[p].text",
+      "mem_delta": "+Box<[Unit]> heap alloc (len = equal-segment text) per Equal diff entry encountered",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/snapshot.rs",
+      "line": 371,
+      "category": "regressed",
+      "pattern": "collect-to-vec",
+      "what": "collects inline_snapshots_to_write.keys() into Vec<FileId> (FileId=u32) so loop body can take &mut on map values",
+      "mem_delta": "+Vec<u32> len=inline_snapshots_to_write.len() (one alloc, once at end of test run)",
+      "hot": false
+    }
+  ],
+  "improved": [],
+  "unclear": [],
+  "neutral": [
+    {
+      "file": "src/bundler/Chunk.rs",
+      "line": 306,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "scans chunks immutably, copies css-chunk index (usize) into local Option<usize>, drops borrow, then re-indexes &mut chunks[idx]",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 560,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "snapshots self.graph.ast.slice() (Slice<T> = Copy struct of column pointers) into a local so split_mut() can coexist with graph.meta borrow",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 1060,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures &raw const *js.files_in_chunk_order as *const [u32] so &mut chunk (for chunk.renamer) and the files slice can be passed together",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/LinkerContext.rs",
+      "line": 2230,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "detach_lifetime_ref on &self.graph.ts_enums / line_offset_table / &self.mangled_props so printer Options can hold them while RequireOrImportMetaCallback::init takes &mut self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/ParseTask.rs",
+      "line": 2224,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "derives *mut Worker / *mut Transpiler / *mut Resolver once and reborrows per use so transpiler_for_target can be called again without invalidating earlier field projections",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/ParseTask.rs",
+      "line": 2731,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::replace this.stage with unit variant ParseTaskStage::NeedsSourceCode, parse with &mut entry alongside &mut this, then write entry back into this.stage",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/ThreadPool.rs",
+      "line": 694,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "initialize_transpiler made an associated fn (log/from/arena passed explicitly) instead of &mut self method so callers can borrow self.data.log disjointly",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1132,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut c_void of self before borrowing &self.import_record.* fields for FFI match_on_resolve call",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1265,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut c_void of self before borrowing &self.path/&self.namespace for FFI match_on_load call",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1892,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "hoists server_component_boundaries.slice() into a local Slice (stack struct: [NonNull;32]+2 usize+&Map) before building visitor",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1901,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "takes Copy multi_array_list::Slice snapshot of graph.ast then split_mut() to get &mut import_records alongside shared columns",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1963,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "destructures ReachableFileVisitor to move `reachable` Vec out and drop its &mut borrows on bitsets/columns before cleanup loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1968,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "takes Copy multi_array_list::Slice snapshot of input_files then split_mut() for three disjoint &mut SoA columns",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 1999,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut Self so drain_deferred_tasks can receive both &mut self.graph and &mut self without overlapping borrows",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2070,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "Copy multi_array_list::Slice snapshot of graph.ast + split_mut() for &mut import_records; reads other columns via disjoint field paths",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2115,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "stores *mut Transpiler returned from transpiler_for_target so later self.* accesses type-check while transpiler is reborrowed on demand",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2135,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures get_or_put result as (bool, *mut u32) so the &mut PathToSourceIndexMap borrow on self.graph ends before subsequent self.* calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 2249,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "detach_lifetime_mut on the &mut Log returned from log_for_resolution_failures so self.graph/self.transpiler reads type-check",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/bundle_v2.rs",
+      "line": 6457,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures ParentRef<BundleV2> raw ptr + hoists dev_server.is_none() bool + scopes map get_or_put to (bool,*mut IndexInt) so self.graph writes don't overlap",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/entry_points.rs",
+      "line": 158,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "scoped the &mut Cursor borrow, captured cursor.position() as usize into a local, then re-borrowed buf immutably",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/entry_points.rs",
+      "line": 195,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captured label_len (usize) and code_len (usize) via scoped &mut blocks so code_buffer can be re-borrowed immutably afterward",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/linker_context/computeChunks.rs",
+      "line": 281,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-fetches &mut [AutoBitSet] slice from this.graph.files after the prior loop's borrows ended",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/linker_context/generateCodeForLazyExport.rs",
+      "line": 295,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "constructs the Visitor (struct of &/&mut references + scalars) fresh inside the per-value loop instead of once outside",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/bundler/options.rs",
+      "line": 1580,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "hoisted node_env computation (Option<Cow<[u8]>>, static-borrowed in the common arms) above the call so self.log_mut() does not overlap other &self reads",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/transpiler.rs",
+      "line": 468,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "each branch of the labelled block calls bust_dir_cache directly and breaks with a bool instead of breaking with a &[u8] that would alias two disjoint buffers",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/bundler/transpiler.rs",
+      "line": 1945,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "iterates 0..n by index instead of zipping 4 slices so the body can random-access decls[prev] while also writing decls[count]",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/collections/linear_fifo.rs",
+      "line": 361,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures readable_slice_mut(0).len() as a usize local, then re-borrows the slice for poison() calls",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/collections/linear_fifo.rs",
+      "line": 451,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "calls writable_slice(0) once to check .len(), drops the borrow so realign() can take &mut self, then re-borrows writable_slice(0) for the return",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/collections/linear_fifo.rs",
+      "line": 477,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "scoped block holds writable_slice(0) &mut borrow, computes/copies n bytes, yields n:usize so self.update(n) can re-borrow &mut self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/collections/linear_fifo.rs",
+      "line": 547,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "scoped block borrows readable_slice_mut(0), copies first chunk, yields slice_len:usize, then re-borrows readable_slice_mut(slice_len) for the wrapped chunk",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/css/css_parser.rs",
+      "line": 584,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "saves parser.stop_before (Delimiters = u8 bitflags, Copy) to a local and swaps fields in-place instead of constructing a second Parser over &'a mut ParserInput<'a>",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/css/properties/animation.rs",
+      "line": 342,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies dest.arena (&'a Bump, pointer-sized Copy) and dest.loc.source_index (u32) into locals before taking &mut dest.css_module",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/css/properties/animation.rs",
+      "line": 356,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies dest.arena (&'a Bump reference) and dest.loc.source_index (u32) into locals before &mut dest.css_module borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/dotenv/env_loader.rs",
+      "line": 1124,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "maps parse_quoted()'s returned &[u8] (borrows self.value_buffer) to Option<usize> len, then re-slices self.value_buffer[..len] after the match so the unquoted branch can re-borrow self",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/exe_format/elf.rs",
+      "line": 91,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "computes &'static [u8] replacement inside a scoped immutable borrow of self.data, then drops it before taking the &mut borrow for writes",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/exe_format/elf.rs",
+      "line": 170,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies strtab offset and size (two usize) out of the shdr before the loop that mutably borrows self.data",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/exe_format/macho.rs",
+      "line": 93,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures self.data.as_ptr() as usize before the load-command iterator so byte offsets can be computed without holding a borrow across later mutable writes",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/exe_format/macho.rs",
+      "line": 748,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "iterates pages by usize offset and reads via from_raw_parts so self.data can be extend_from_slice'd in the same loop; no intermediate buffer",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/glob/GlobWalker.rs",
+      "line": 473,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures (path_buf.as_ptr(), root_path.len()) so the &mut PathBuffer borrow ends before handle_sys_err_with_path re-borrows self.walker",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/glob/GlobWalker.rs",
+      "line": 796,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::replace(&mut self.iter_state, IterState::GetNext) to move Matched(path) out by value; GetNext is a unit variant, pure move",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/glob/GlobWalker.rs",
+      "line": 845,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures work_item.entry_start (u32) as usize index instead of holding the entry_name sub-slice borrow; re-slices later from the raw ptr",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/glob/GlobWalker.rs",
+      "line": 1007,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "copies dir_fd/at_cwd scalars and builds the SysError first, then re-pattern-matches &mut self.iter_state to set iter_closed after the &mut self method calls",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/http/HeaderBuilder.rs",
+      "line": 82,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "keeps only .len() (usize) of the slice returned by content.fmt(args) instead of holding the &[u8] borrow, then recomputes offset from content.len",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http/h2_client/PendingConnect.rs",
+      "line": 68,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "replaces for-loop+swapRemove with iter().position() to get index, then swap_remove(i); avoids holding an iterator borrow across the mutation",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/http/h3_client/AltSvc.rs",
+      "line": 161,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies cursor.len() (usize) into a local `remaining` so the &mut reborrow of `buf` via `cursor` ends before `buf.len()` is read and `&buf[..written]` is returned",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 1579,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "calls to_result() then detach_lifetime() to widen the body &mut MutableString borrow to 'static via a ptr round-trip; all other HTTPClientResult fields are moved by value, no clones",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 3167,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies upgrade_state (Copy enum), stream buffer NonNull pointer, and ended bool into locals so the &mut original_request_body borrow ends before &mut self calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 3663,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "holds to_read as bun_ptr::RawSlice (a *const [u8] fat pointer, 2 words) instead of &[u8] so subsequent &mut self calls don't conflict with a borrow of response_message_buffer",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 4179,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "destructures HTTPClientResult fields (bools/i32/enum plus Option<Box<[u8]>>/Option<HTTPResponseMetadata>/Option<CertificateInfo> moved by value) into locals and mem::take's the body Vec<u8>, drops the &mut self borrow, mutates self, then rebuilds the result and restores the Vec — all moves, no clones",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 4384,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "same snapshot-then-rebuild as line 4179 for the multiplexed (h2/h3) progress path: moves result fields into locals, mem::take's body Vec, mutates self, restores Vec and rebuilds result — no heap allocation",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 4718,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "reads self.state.content_length (Option<usize>, Copy) into a local before taking &mut self.state.get_body_buffer() so the two borrows don't overlap",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http/lib.rs",
+      "line": 4796,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "uses InternalState::chunked_decoder_and_body_buffer() to get disjoint &mut to chunked_decoder and the body buffer via field projection instead of cloning or raw ptrs",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/http_jsc/websocket_client.rs",
+      "line": 1619,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "stash `*mut VirtualMachine` local so `rare_data()`'s &mut and `ws_client_group`'s &vm can coexist",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/http_jsc/websocket_client/WebSocketProxyTunnel.rs",
+      "line": 518,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies `to_send.len()` (usize) into a local before mutably re-borrowing write_buffer for reset/cursor update",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 473,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "passes tree_id (u32) to link_tree_bins and re-indexes self.trees inside instead of passing &mut tree",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 675,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "loops 0..trees.len() and indexes self.trees[tree_id] instead of iter_mut so &mut self methods can be called in body",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 784,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "loops 0..trees.len() with index instead of iter_mut so body can call &mut self install method; also copies self.resolutions (RawSlice, ptr+len Copy) to a local",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 838,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take(&mut self.pending_lifecycle_scripts) moves the Vec out (leaving non-allocating Vec::new()) so loop body can take &mut self.manager",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 1164,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures lockfile.buffers.string_bytes as bun_ptr::RawSlice (*const [u8]) once to avoid reborrowing self.lockfile across &mut self calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 1288,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "wraps &self.node_modules in ParentRef (NonNull<T>, pointer-sized) so PackageInstall can hold it independently of &mut self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageInstaller.rs",
+      "line": 2119,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "builds LazyPackageDestinationDir from node_modules_ref.get() (ParentRef raw-ptr deref) instead of &self.node_modules so later &mut self calls type-check",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerDirectories.rs",
+      "line": 635,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures basename length (usize) instead of holding returned &ZStr across re-borrow of buf for ByteCursor",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerDirectories.rs",
+      "line": 847,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures cache_path length (usize) to drop &ZStr borrow before mutating cache_path_buf, then rebuilds ZStr from (buf, len)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 216,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "coerces &mut NetworkTask to *mut NetworkTask so this.network_tarball_batch can be reborrowed",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 237,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "str_detached erases lifetime of &[u8] slice into string_bytes so &mut PackageManager can be passed to enqueue_local_tarball",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 284,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "str_detached erases lifetimes of url/resolved &[u8] slices into string_bytes so &mut PackageManager can be reborrowed for enqueue callees",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 425,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "coerces &mut NetworkTask to *mut NetworkTask so this.network_tarball_batch can be reborrowed",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1102,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "wraps &PackageManifest in bun_ptr::BackRef (NonNull pointer wrapper) to detach it from loaded_manifest borrow while calling &mut PackageManager fn",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1211,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "str_detached erases lifetimes of alias/url &[u8] slices into string_bytes so &mut PackageManager can be reborrowed for git enqueue callees",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1342,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "wraps task_queue.get_or_put entry in a tight block so its &mut this.task_queue borrow ends before later &mut *this calls",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1378,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "coerces &mut NetworkTask to *mut NetworkTask so enqueue_network_task(this, ..) can reborrow &mut PackageManager",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1510,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "detach_lifetime on &[u8] url slice into string_bytes so &mut PackageManager can be reborrowed for tarball enqueue callees",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 1540,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "wraps task_queue.get_or_put entry in a tight block so its &mut this.task_queue borrow ends before later &mut *this calls",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2001,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut PackageManager to split-borrow this.lockfile (shared) alongside &mut *this for is_root_dependency; disjoint field access",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2061,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut PackageManager to pass &mut *this and &mut (*this).lockfile separately to from_npm/append_package (disjoint field use)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2368,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "snapshots Copy DiskCacheCtx + captures *mut PackageManager + str_detached name slice + BackRef scope pointer so &mut (*this).manifests can be taken alongside shared options/lockfile reads",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2532,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "wraps &PackageManifest in bun_ptr::BackRef (NonNull pointer) to detach it from this.manifests borrow while calling get_or_put_resolved_package_with_find_result(&mut *this_ptr, ..)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2558,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "str_detached erases lifetime of folder_path &[u8] slice into string_bytes so FolderResolution::get_or_put(&mut PackageManager) can be called",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2670,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "str_detached erases lifetime of workspace_path &[u8] slice into string_bytes so FolderResolution::get_or_put(&mut PackageManager) can be called",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerEnqueue.rs",
+      "line": 2715,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "detach_lifetime on global_link_dir_path &[u8] + str_detached on symlink path so FolderResolution::get_or_put(&mut PackageManager) can be called",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerLifecycle.rs",
+      "line": 234,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "erases &mut self to *mut c_void before calling self.event_loop.tick_once(ctx) to avoid double-borrow of self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerResolution.rs",
+      "line": 62,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "calls disjoint helper manifests.by_name_hash_in_memory() so self.options/self.lockfile can be read alongside &mut self.manifests instead of passing &mut self twice",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerResolution.rs",
+      "line": 259,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "hoists len() debug_asserts before taking &mut self.lockfile.buffers, then field-projects buffers vs packages to get disjoint borrows",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PackageManagerResolution.rs",
+      "line": 278,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "same as assign_resolution: reorders len() asserts before &mut self.lockfile.buffers and splits buffers/packages field borrows",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/PopulateManifestCache.rs",
+      "line": 66,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures scope as BackRef(NonNull<T>), manager as *mut PackageManager, and pool slot as *mut NetworkTask before populating, to release &mut manager between steps",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/WorkspacePackageJSONCache.rs",
+      "line": 155,
+      "category": "neutral",
+      "pattern": "entry-split",
+      "what": "splits getOrPut into contains_key()+get_mut() on hit and deferred get_or_put() after parse on miss, avoiding holding entry borrow across read/parse",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 67,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut PackageManager as single provenance root to reborrow manager/lockfile/log for load_from_cwd",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 663,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "field-level split borrow of lockfile into packages/string_bytes (&) and scripts (&mut) before per-package loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 1107,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut PackageManager + ParentRef wrapper so Printer borrows lockfile/options/update_requests while &mut *mgr passed to Tree::print",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 1421,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "field-level split borrow of manager into &lockfile and &mut updating_packages for workspace-dep loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/install_with_manager.rs",
+      "line": 1782,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "discards &mut Node returned by Progress::start, tracks bool node_started, re-accesses manager.progress.root after &mut manager borrow ends",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/patchPackage.rs",
+      "line": 103,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "introduces a separate `argument_owned: Option<Box<[u8]>>` stack local so `argument: &[u8]` can conditionally borrow either it or the original 'static positional; the Box itself is produced by the helper regardless (path-join result must outlive later threadlocal-buf reuse)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/patchPackage.rs",
+      "line": 737,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "same as line 103: separate `argument_owned: Option<Box<[u8]>>` stack local so `argument: &[u8]` can conditionally borrow it; no additional heap allocation beyond what the helper already returns",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 285,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "reborrows `&mut *installer.command_ctx` into a local `Command::Context<'_>` (which is itself `&mut ContextData`) instead of moving the field",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 347,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures `name.slice()` via `bun_ptr::detach_lifetime` (ptr+len) so the `&mut task.callback` borrow can end before later reads of `name`",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 544,
+      "category": "neutral",
+      "pattern": "entry-split",
+      "what": "HashMap `insert` by-value then re-`get` instead of `get_or_put`; manifest move is unchanged, only an extra u64 hash lookup",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 555,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "hoists `tmp_fd`/`cache_fd` (Fd handles, register-sized Copy) into locals before taking shared `&manager` borrows for `save_async`",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 608,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "stores `enqueue_parse_npm_package` return in a local `queued` before `manager.task_batch.push` to avoid nested `&mut manager`",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 618,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures `*mut ExtractTarball` from the match binding so disjoint `&mut task` method calls don't conflict with the `task.callback` borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 895,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "stores `enqueue_extract_npm_package` return in a local `queued` before `manager.task_batch.push` to avoid nested `&mut manager`",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 1339,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies lockfile `String` handle (8B), `Behavior` bit, `Repository` (5×8B Copy handles) and detaches `string_bytes` slice lifetime so `&manager.lockfile` doesn't span later `&mut manager` calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 1378,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "stores `enqueue_git_checkout` return in a local `queued` before `manager.task_batch.push` to avoid nested `&mut manager`",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/runTasks.rs",
+      "line": 1771,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "reorders all `&mut this` uses (patch-task alloc, cache/temp dir, pool slot via raw ptr) before immutable `pkg_name`/`scope` borrows; captures `this_backref: *mut PackageManager` — sequencing + raw-ptr only",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/PackageManager/security_scanner.rs",
+      "line": 871,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "builds replacement into a separate `new_code: Vec<u8>` local then move-assigns `code = new_code` after the `temp_source` borrow of `code` ends; the new Vec would exist in the Zig version too (different-length placeholder substitution cannot be in-place), the reshape only delays the assignment",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 76,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures .len() (usize) of returned &mut [UpdateRequest] sub-slice, then truncates the Vec, instead of holding the returned slice borrow",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 107,
+      "category": "neutral",
+      "pattern": "own-transfer",
+      "what": "function takes Vec<UpdateRequest> by value (moved via mem::take from caller) instead of &mut slice, so it can later move into manager.update_requests",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 125,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "demotes &mut MapEntry (from workspace_package_json_cache.get_with_path) to *mut MapEntry so &mut manager can be taken concurrently",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 245,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "copies StoreRef<E::Object> (Copy, NonNull arena pointer) into a local so both inner properties slice and parent object can be mutated",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 362,
+      "category": "neutral",
+      "pattern": "own-transfer",
+      "what": "moves owned Vec<UpdateRequest> into manager.update_requests (Box<[UpdateRequest]>) via into_boxed_slice, re-borrowed after install_with_manager",
+      "mem_delta": "none (move; into_boxed_slice may shrink-realloc, no new retained bytes)",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 437,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "demotes &mut MapEntry (root package.json cache entry) to *mut MapEntry so &mut manager can be passed to edit_patched_dependencies",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/PackageManager/updatePackageJSONAndInstall.rs",
+      "line": 526,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take on manager.update_requests (Box<[UpdateRequest]>) to reclaim ownership; default empty Box<[T]> is zero-alloc dangling pointer",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/bin.rs",
+      "line": 1027,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "hoisted `content_to_free: Box<[u8]>` declaration above the if/else so `content: &[u8]` can borrow it; else-branch assigns `Box::default()` (empty boxed slice, dangling ptr, zero heap) and then-branch moves the already-allocated Vec from read_from via into_boxed_slice()",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/bin.rs",
+      "line": 1507,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "replaced Zig advancing-slice `remain.ptr` arithmetic with a `usize off` offset into `abs_target_buf` when building the package dir path",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/isolated_install/Installer.rs",
+      "line": 1214,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "Zig `defer if (cached_package_dir) |d| d.close()` rewritten so scopeguard *owns* the Option<Fd> (stack struct + zero-capture closure) and the loop body reassigns via DerefMut `*cached_package_dir = ...`",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/lockfile/Tree.rs",
+      "line": 257,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "rebinds Option<&mut DynamicBitSet> param as a mutable local so as_deref_mut() can reborrow inside the while loop",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/lockfile/Tree.rs",
+      "line": 701,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "computes next_id (u32 Id) from builder.list.len()-1 instead of holding a &mut to the just-appended entry across later &mut builder borrows",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/lockfile/Tree.rs",
+      "line": 711,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies builder.dependencies (&'a [Dependency], a 2-word fat pointer) into a local so &dependencies[i] does not keep builder borrowed",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/lockfile/Tree.rs",
+      "line": 737,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "snapshots sort_buf.len() into a usize and loops by index so the loop body can take &mut builder; no Vec collected",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/lockfile/Tree.rs",
+      "line": 947,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "re-reads Tree (Copy, ~20 bytes repr(C) struct of u32s) by index from builder.list after the dep loop instead of holding a borrow across it",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/lockfile/Tree.rs",
+      "line": 1066,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "copies ParentRef<Lockfile> (NonNull, pointer-sized Copy) to a local and derives &[u8]/slice views so builder.log can be &mut-borrowed alongside format-arg reads; inlines maybe_report_error",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/lockfile/bun.lockb.rs",
+      "line": 564,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "destructures `Lockfile { buffers, overrides, .. }` so `&buffers.string_bytes` and `&mut overrides` are seen as disjoint sibling borrows",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/lockfile/bun.lockb.rs",
+      "line": 639,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "destructures `Lockfile { buffers, catalogs, .. }` so `string_bytes` shared borrow coexists with `&mut catalogs`",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/npm.rs",
+      "line": 505,
+      "category": "neutral",
+      "pattern": "own-transfer",
+      "what": "moves owned `registry_url: Box<[u8]>` into `final_href` on the branch where the `url` borrow is provably dead; pure move, no clone",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/install/npm.rs",
+      "line": 2614,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "snapshots two `usize` cursors (`names_base`, `values_base`) before taking &mut slices into all_extern_strings/version_extern_strings",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/yarn.rs",
+      "line": 1025,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "reorders building `pkg_name`/`resolution` (via `sbuf!()` borrows of string_bytes) ahead of `this.packages.append(...)` so the borrows don't overlap; no new data",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/install/yarn.rs",
+      "line": 1250,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "re-indexes `yarn_lock.entries[yarn_idx]` per dep-map instead of holding an iterator binding so `&yarn_lock` can be passed to process_deps",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/io/PipeWriter.rs",
+      "line": 123,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "caches `self.get_buffer().len()` into a local `usize` before subsequent &mut self calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/io/PipeWriter.rs",
+      "line": 509,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures `*mut Self` as `*mut c_void` owner pointer before mutably borrowing `self.handle`",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/io/PipeWriter.rs",
+      "line": 759,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures `*mut Self` as `*mut c_void` owner pointer before mutably borrowing `self.handle`",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/js_parser/fold.rs",
+      "line": 612,
+      "category": "neutral",
+      "pattern": "entry-split",
+      "what": "splits getOrPut on commonjs_named_exports into get() (copy 8-byte Ref out) then put() on miss path",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/lexer.rs",
+      "line": 1236,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take temp_buffer_u16: Vec<u16> out of self, use for decode_escape_sequences, clear and put back (capacity retained)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/js_parser/lexer.rs",
+      "line": 2404,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "wraps self.remaining() &[u8] into StoreStr (12-byte NonNull<u8>+u32 len, no alloc) to detach borrow before &mut self scan_pragma",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/lower/lower_esm_exports_hmr.rs",
+      "line": 54,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "loops 0..decls_len with explicit Copy field reads (binding, value) so st.decls[i] read doesn't alias st.decls[new_len] write",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/lower/lower_esm_exports_hmr.rs",
+      "line": 733,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "loops 0..part.symbol_uses.count() copying k: Ref (8B) and v: symbol::Use (4B u32) per iter to avoid borrowing keys()/values() across get_or_put on last_part",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/p.rs",
+      "line": 3273,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies Loc (i32) out of scopes_in_order[last_i] via .map() before mutably borrowing self.log(); debug_assertions-only block",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/js_parser/parse/parse_prefix.rs",
+      "line": 255,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "reorders p.b(B::Identifier{..}) call to produce binding local before p.arena.alloc_slice_fill_iter so no overlapping &mut p borrows",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/visit/mod.rs",
+      "line": 1081,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies id_ref: Ref (8B) and bind_loc: Loc (4B) out of &func_args[arg_idx] in a scoped block before calling &mut self.new_expr/declare_symbol",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/visit/visit_binary.rs",
+      "line": 698,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "copies original_name: StoreStr (12-byte Copy ptr+len) out of p.symbols[..] before &mut self call to maybe_keep_expr_symbol_name",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/visit/visit_stmt.rs",
+      "line": 576,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies s2.loc/s2.data/*s2 (Stmt is 16-byte Copy: Loc + StoreRef-tagged Data) into locals so data.value can be mutated",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser/visit/visit_stmt.rs",
+      "line": 1411,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "copies StoreRef<E::Binary> (8-byte NonNull arena ptr) out of data.value.data, then DerefMut's into the arena to free the &mut data.value borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_parser_jsc/Macro.rs",
+      "line": 222,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *const bun_alloc::Arena via &raw const so closure doesn't extend &mut self across run_with_api_lock",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/js_parser_jsc/Macro.rs",
+      "line": 747,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-pattern-matches expr.data to copy the 8-byte StoreRef<E::Array> and DerefMut into arena after recursive self.run() releases &mut self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 1833,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "calls name_for_symbol() (returns &'a [u8] into arena) before each module_info() &mut borrow instead of holding one long mi borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 3069,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "two-pass lookup: stores matching index as Option<usize>, then copies LocRef+bool into stack struct and wraps key slice in BackRef (NonNull ptr) before &mut print calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 3942,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "wraps symbols().get_const() result in BackRef<Symbol> (NonNull<T>) to drop the &self borrow before &mut print calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 4752,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "fetches local_name: &'a [u8] via name_for_symbol before taking &mut module_info; just reorders borrows",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 4908,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "hoists str.slice(self.bump) -> &[u8] before borrowing self.module_info(); same slice call, just reordered",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 5288,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "wraps symbols().get_with_link_const() in BackRef<Symbol> (NonNull ptr) inside per-item loop to allow &mut print calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 5359,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "maps symbols().get_const() through BackRef<Symbol>::new (pointer-sized) so &mut print calls can follow inside the item loop",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 5488,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "computes Copy irp_id in a scoped block, then per-item re-borrows module_info() after each name_for_symbol; no new data, only borrow scoping",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/js_printer/lib.rs",
+      "line": 6007,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "scoped block yields Copy irp_id, then re-acquires &mut module_info between name_for_symbol calls for default/items/namespace; pure borrow restructuring",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/AsyncModule.rs",
+      "line": 342,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "detaches lockfile.str() &[u8] borrow via bun_ptr::RawSlice (*const [u8]) so &mut vm can be passed to resolve_error",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/AsyncModule.rs",
+      "line": 420,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "manual index-based compaction loop over self.map replaced with Vec::retain_mut (in-place, same moves, no extra alloc)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/AsyncModule.rs",
+      "line": 481,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "manual index-based compaction loop over self.map replaced with Vec::retain_mut (in-place, same moves, no extra alloc)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/ConsoleObject.rs",
+      "line": 828,
+      "category": "neutral",
+      "pattern": "entry-split",
+      "what": "find-or-append on Vec<Column> split into read-only .position() search then separate push; returns usize index instead of holding &mut",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/ConsoleObject.rs",
+      "line": 947,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-borrows &mut Vec<Column> through the scopeguard (&mut **_deref_names) so both the drop-guard and subsequent code can use it",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/SavedSourceMap.rs",
+      "line": 154,
+      "category": "neutral",
+      "pattern": "entry-split",
+      "what": "manual lock()/unlock() pairing plus HashMap get(&u64) then conditional remove(&u64) instead of single entry-borrow under a guard",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/SavedSourceMap.rs",
+      "line": 247,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "lock scope narrowed: lock, contains_key, unlock, then early-return — restructured so no borrow is held across the return",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/SavedSourceMap.rs",
+      "line": 279,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "manual lock()/unlock() pairing around std HashMap entry() match instead of RAII guard; no new data created",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 1563,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "derives a shared &VirtualMachine via core::ptr::from_ref(self) so rare_data (&mut) and vm_ref (&) can be passed disjointly to close_all_socket_groups",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 2372,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies self.global (*mut JSGlobalObject, Copy) into a local before subsequent &mut self mutations",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 3530,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "copies self.main (bun_ptr::RawSlice<u8>, a 16-byte Copy fat pointer) into a local before calling &mut self reload_entry_point",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 3781,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures NonNull<c_void> back-pointer to self before ref_strings.entry() takes &mut self, to seed RefString.ctx",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 4313,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "re-derives &mut VirtualMachine from the raw jsc_vm_ptr so the prior unique borrow doesn't span the RestoreLog drop guard",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 4521,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies self.global (*mut JSGlobalObject) into a local before self.main()/load_and_evaluate_module_ptr borrow sequence",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 5527,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "stores exception_holder.zig_exception() as *mut ZigException so need_to_clear_parser_arena_on_deinit can be borrowed disjointly from the same boxed holder",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/VirtualMachine.rs",
+      "line": 6377,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut VirtualMachine and routes rare_data()/spawn_ipc_group through raw pointers to split the self borrow across disjoint fields",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/event_loop.rs",
+      "line": 407,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "Zig `defer this.exit()` replaced with explicit tail call after JS callback (no early returns in body); avoids scopeguard closure aliasing &mut self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/event_loop.rs",
+      "line": 434,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "Zig `defer this.exit()` replaced with explicit tail call before returning result; pure control-flow reshape, no new data",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/event_loop.rs",
+      "line": 631,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "fetches global/global_vm via vm_ref() (&'static VirtualMachine) so the references detach from &self and survive later &mut self calls in tick loop",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/event_loop.rs",
+      "line": 679,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "Zig `defer vm.suppress_microtask_drain = prev` replaced with explicit Cell::set(prev) at tail after drain loop",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/hot_reloader.rs",
+      "line": 863,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "stores ctx: *mut Watcher raw pointer so self can be reborrowed in loop body and flush_evictions scopeguard doesn't hold &mut Watcher across the loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/jsc/ipc.rs",
+      "line": 1110,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "computes `use_last: bool` predicate against immutable last-entry first, then re-borrows queue mutably in separate branch to avoid NLL early-return borrow extension",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/ipc.rs",
+      "line": 1894,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "outer match on &mut send_queue.incoming discriminant only, then re-matches with let-else unreachable!() inside arms so &mut send_queue methods can be called between field accesses",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/jsc/web_worker.rs",
+      "line": 1279,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "re-derives &VirtualMachine from raw vm_ptr inside rare.close_all_socket_groups(...) call while rare (&mut RareData) is borrowed from vm",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/libarchive/lib.rs",
+      "line": 1392,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "rebinds `let mut ctx = ctx;` so Option<&mut Context> can be repeatedly .as_deref_mut()-ed per entry in the extraction loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/libarchive/lib.rs",
+      "line": 1784,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "bundles (file_handle: Fd, plucked_file: bool) into scopeguard tuple so the defer-close closure can read the plucked flag; Fd+bool are small Copy values",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/md/helpers.rs",
+      "line": 433,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "iterates text_buf by index (0..text_len) instead of `for &c in` so the loop body can also write text_buf[out_len]",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/md/inlines.rs",
+      "line": 776,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "indexes self.emph_delims[i] directly each use instead of binding `delims`/`opener` &mut aliases; no new data, just repeated indexing",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/parsers/yaml.rs",
+      "line": 4099,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::replace(&mut self.token.data, TokenData::Eof) to move TokenScalar out before self.scan() overwrites the token; Eof placeholder is a zero-sized unit variant",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/patch/lib.rs",
+      "line": 69,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures p.len() into a local usize so the &self.pathbuf borrow from get_fd_path ends before writing the NUL sentinel",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/patch/lib.rs",
+      "line": 909,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take(&mut lines_parser.result) moves Vec<FileDeets> out (empty Vec left behind, no alloc) instead of passing a slice; lines_parser is dropped right after",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/patch/lib.rs",
+      "line": 1157,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take self.result, clear() it (retain capacity), then *self = Self { result, ..Default::default() }; Default fields (empty Vecs/Options) allocate nothing",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 641,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures rel.len() into a local usize so the &[u8] borrow of buf is dropped before writing buf[len]=0",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 669,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures normalize_string_buf(..).len() into path_len:usize, drops the inner &mut slice, then re-slices relative_from_buf",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 701,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures normalize_string_buf(..).len() into path_len:usize, drops the inner &mut slice, then re-slices relative_to_buf",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 1435,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures buf.as_mut_ptr()/buf.len() plus joined offset+len (usizes) in a scoped block so buf can be mutated after join_string_buf returns a sub-borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 1511,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures buf.as_mut_ptr()/buf.len() plus joined offset+len (usizes) in a scoped block so buf can be mutated after join_string_buf_t returns a sub-borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 1749,
+      "category": "neutral",
+      "pattern": "buffer-stash",
+      "what": "copies the leading path separator (<=4 bytes) into a stack [u8; 8] so no borrow of temp_buf is held across normalize_string_buf",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 1976,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "tracks buf_off:usize (0 or 1) instead of reslicing buf so later code can index the original buf mutably",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 2232,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "scopes getcwd(buf) borrow and captures windows_filesystem_root(cwd).len() into sr_len:usize before re-slicing buf",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/paths/resolve_path.rs",
+      "line": 2280,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "scopes getcwd(buf) borrow and captures windows_filesystem_root(cwd).len() into sr_len:usize before re-slicing buf (z-variant)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/resolver/lib.rs",
+      "line": 2370,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies self.stream (bool) into a local before self.shared_buffer() takes &mut self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/resolver/resolver.rs",
+      "line": 3165,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "builds a fresh short-lived ESModule (stack struct of borrows) in a scoped block so its &mut self.debug_logs borrow ends before self.handle_esm_resolution re-borrows self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/resolver/resolver.rs",
+      "line": 3882,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take moves entry.contents out (leaving Contents::Empty, the #[default] zero-alloc variant) so entry stays whole for the close scopeguard",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/router/lib.rs",
+      "line": 763,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "writes buf[0] through the existing &mut slice instead of re-borrowing route_file_buf[0] (which buf already aliases)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/router/lib.rs",
+      "line": 809,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "types (name, match_name) as &'static [u8] after interning into DirnameStore (same interning the Zig code did) so the route_file_buf borrow drops before the abs-path block re-borrows it mutably",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/router/lib.rs",
+      "line": 857,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "replaces Zig `defer if(needs_close) file.close()` with a scopeguard owning Option<File> plus a Cell<bool> flag — all stack, no heap",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/BunObject.rs",
+      "line": 1899,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "copies vm.transpiler.env (*mut dot_env::Loader) into a local before vm.rare_data() takes the long-lived &mut vm",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/JSBundler.rs",
+      "line": 2017,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "drops the scopeguard-based `defer formatter.indent_dec()` and instead manually decrements after the block, since scopeguard would hold &mut formatter across the body",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/MarkdownObject.rs",
+      "line": 1001,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies parent.children (JSValue, a Copy 64-bit handle) out of self.stack.last() instead of holding a &mut into self.stack across &mut self calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/MarkdownObject.rs",
+      "line": 1311,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "builds a stack CallbackStackEntry copying only the scalar fields (block_type/data/flags/child_index) with ..Default::default() for buffer/href/title — Vec::new() and Box<[u8]>::default() are zero-alloc empties",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/MarkdownObject.rs",
+      "line": 1409,
+      "category": "neutral",
+      "pattern": "buffer-stash",
+      "what": "decodes the HTML entity into a local [u8; 8] stack buffer so the decoded &[u8] does not borrow from self when passed to a &mut self method",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4014,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "derefs Option<*mut Stream> via unsafe { &mut *stream_ptr } (and re-derefs after adjust_window_size) instead of holding a &mut borrow from the streams map",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4399,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "derefs Option<*mut Stream> via unsafe { &mut *stream_ptr } to get exclusive Stream access in RST_STREAM handler",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4561,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "derefs Option<*mut Stream> via unsafe { &mut *stream_ptr } to get exclusive Stream access in PRIORITY handler",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4610,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "derefs Option<*mut Stream> via unsafe { &mut *stream_ptr } to get exclusive Stream access in CONTINUATION handler",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/bun/h2_frame_parser.rs",
+      "line": 4734,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "derefs Option<*mut Stream> via unsafe { &mut *stream_ptr } to get exclusive Stream access in HEADERS handler",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/api/bun/js_bun_spawn_bindings.rs",
+      "line": 438,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "destructure-reborrows (&mut Option<*mut AbortSignal>, &mut Option<TerminalCreateResult>) through scopeguard DerefMut; no data copied",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/bun/js_bun_spawn_bindings.rs",
+      "line": 962,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "destructure-reborrows (&mut bool, &mut [Stdio;3]) through scopeguard DerefMut so guard stays armed; no data copied",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/bun/js_bun_spawn_bindings.rs",
+      "line": 1094,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "copies *mut VirtualMachineRef into sibling local so defer! closure captures a disjoint place",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/bun/js_bun_spawn_bindings.rs",
+      "line": 1707,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "copies *mut Subprocess into sibling local so defer! closure captures a disjoint place from later (*subprocess_ptr).field writes",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/api/bun/spawn/stdio.rs",
+      "line": 193,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "shadows `let _ = remain;` to end the &[u8] borrow of *self before mutating `*self`; no data moved",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/bake/DevServer.rs",
+      "line": 1922,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies route_bundle::Index/HandlerKind/AnyResponse (all Copy) and mem::replace ReqOrSaved with unit Aborted before dev_mut() reborrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/bake/FrameworkRouter.rs",
+      "line": 1530,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-indexes `&self.types[t_index]` fresh inside each match arm instead of holding a ref across (*file_ptr).kind() mut call",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/bake/dev_server/incremental_graph.rs",
+      "line": 526,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "takes *const [u8] to bundled_files key so &mut directory_watchers borrow does not overlap &self.bundled_files",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/bake/dev_server/mod.rs",
+      "line": 456,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies RawSlice<u8> source_file_path, *const [u8] specifier, Option<u32> next out of dep before resolver/&mut self calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/bake/dev_server/mod.rs",
+      "line": 1305,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies gop.index (usize) and gop.found_existing (bool) from get_or_put result before calling &mut self methods",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/bake/dev_server/mod.rs",
+      "line": 1465,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "walks dependency chain by re-indexing self.dependencies[index] each iter (copy Option<u32> next, RawSlice<u8> path) instead of holding &mut entry across free_dependency_index",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/bake/production.rs",
+      "line": 221,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "passes raw *mut VirtualMachine (vm_ptr) into build_with_vm and re-borrows inside instead of passing &mut vm alongside &mut pt",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/bake/production.rs",
+      "line": 1002,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-calls pt.output_file() at each use site instead of binding once, so later &mut pt for preload_bundled_module() doesn't conflict",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/cli/audit_command.rs",
+      "line": 325,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "hoists &pm.options and scalar url_hash before taking lockfile column slices so disjoint pm fields can be borrowed concurrently in the package loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/open.rs",
+      "line": 139,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "introduces a temporary &'static [u8] local (fat pointer) then assigns it into *out to widen the 'static slice into the 'a out-param",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/pack_command.rs",
+      "line": 920,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "finds matching bundled_dep via iter().position() -> usize then indexes ctx.bundled_deps[dep_idx] to mutate, instead of holding a &mut to the element across add_bundled_dep(&mut ctx, ..)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/cli/pack_command.rs",
+      "line": 952,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "same as line 920: locate bundled_dep index first (usize) then mutate by index so &mut ctx can be passed to add_bundled_dep",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/cli/pack_command.rs",
+      "line": 1907,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut PackageManager from ctx.manager and re-derives &mut manager so whole-ctx calls (run_lifecycle_script, iterate_bundled_deps) don't conflict with the long-lived manager borrow",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/pack_command.rs",
+      "line": 2556,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies abs_tarball_dest.len() into a usize local before mutating dest_buf, then reconstructs the ZStr afterward",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/pm_view_command.rs",
+      "line": 189,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "hoists `let versions_len: usize` and `let manifest: Expr` out of a labeled 'brk/'from_versions block so the borrow of json.versions ends before later use; pure control-flow/scope restructure with a scalar usize copy",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/publish_command.rs",
+      "line": 718,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "stashes context.command_ctx as *mut ContextData and re-derives &mut/& via unsafe deref so run_package_script_foreground can take &mut ContextData while `context` still holds it",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 1307,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "replaced Zig-style defer with explicit disable_signals_during_wait() call on each return path; control-flow only, no data copied",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 1610,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "replaced Zig-style defer with explicit disable_signals_during_wait() call on each return path; control-flow only, no data copied",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/repl.rs",
+      "line": 2018,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take(&mut self.editor_buffer) [Vec<u8>] then move back after evaluate_and_print; empty-Vec swap has no heap alloc",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/run_command.rs",
+      "line": 1046,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "captures configure_defines().is_ok() into a bool local so the &mut vm.transpiler borrow drops before fail_with_build_error(vm)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/run_command.rs",
+      "line": 1200,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "captures configure_defines().is_ok() into a bool local so the &mut vm.transpiler borrow drops before fail_with_build_error(vm)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/test/ChangedFilesFilter.rs",
+      "line": 284,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies test_files.len() into a usize local before the in-place compaction loop that mutably indexes test_files",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/test/Scanner.rs",
+      "line": 134,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures only the usize length from abs_buf() then reconstructs the slice via from_raw_parts over scan_dir_buf to drop the &mut self borrow",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/cli/test/Scanner.rs",
+      "line": 389,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "captures abs_buf_projected(..).len() as usize then reborrows open_dir_buf immutably so &self methods can be called with the slice",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/cli/test/Scanner.rs",
+      "line": 426,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "captures abs_buf_projected(..).len() as usize then reborrows open_dir_buf immutably so &self methods can be called with the slice",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/cli/test/parallel/aggregate.rs",
+      "line": 165,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "stores Option<usize> index into by_file instead of a *mut FileCoverage, re-indexing values_mut()[i] each iteration",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 670,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "iterates vm.preload by index and captures *const [u8] per entry while dereferencing other vm fields via the raw *mut VirtualMachine",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 903,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut EventLoop (and loop_) from the raw vm pointer so sibling VM fields can be touched without aliasing &mut EventLoop",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 1066,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures *mut EventLoop from the raw vm pointer so sibling VM fields can be touched without aliasing &mut EventLoop (same as auto_tick)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 2372,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "takes *mut bool and *mut Fd to two stack locals and threads them through a scopeguard payload so the guard does not alias later &mut borrows",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/jsc_hooks.rs",
+      "line": 4203,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies blob_to_deinit.is_some() into a bool local before moving the Option<Blob> into a scopeguard",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/node/types.rs",
+      "line": 960,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures Ok(res).len() as Option<usize> so the &mut buf borrow from resolve_cwd_with_external_buf_z ends at the match, then re-derives ZStr from buf",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/server/RequestContext.rs",
+      "line": 2001,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "projects pair.this and pair.stream as independent &mut borrows up front instead of accessing through pair.*",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/server/RequestContext.rs",
+      "line": 2036,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "converts already-allocated Box<ResponseStreamJSSink> to NonNull raw ptr so this.sink (stores ptr) and a local &mut view can coexist with later &mut *this calls",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/server/mod.rs",
+      "line": 884,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "casts &uws::Request (opaque ZST) through *const→*mut to decouple its lifetime from the SavedRequestUnion match guard",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/server/mod.rs",
+      "line": 2099,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "snapshots self.dev_server (Option<Box<DevServer>>) as Option<*mut DevServer> so per-iteration derefs don't conflict with &mut self.config / &mut self.user_routes",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/server/mod.rs",
+      "line": 2163,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "snapshots self.config.websocket as Option<BackRef<WebSocketServerContext>> (NonNull Copy wrapper) so it can be read inside the &mut self.user_routes loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/server/mod.rs",
+      "line": 2574,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "listen() holds no long-lived &mut Self; each use site reborrows fresh from the *mut Self / BackRef<Self> (NonNull) so set_routes()/trampoline re-derives never alias",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/shell/IOReader.rs",
+      "line": 271,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "loops by usize index and re-derives self.state() per access (copying ChildPtr/interp locals, both Copy) instead of holding a long-lived &mut State across re-entrant dispatch",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/shell/IOWriter.rs",
+      "line": 617,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "drops `&mut State` from state() before calling skip_dead(), then re-derives state() afterward; pure scope restructuring",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/shell/IOWriter.rs",
+      "line": 650,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies (bool, usize, ChildPtr) out of writers[idx] into a stack tuple before calling skip_dead(); ChildPtr is a ~24B Copy struct (NodeId+tag+*mut c_void)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/shell/builtin/mkdir.rs",
+      "line": 90,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "reads exit_code/args_start scalars into a small local NextAction enum, drops the &mut state borrow, then dispatches",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/shell/interpreter.rs",
+      "line": 1817,
+      "category": "neutral",
+      "pattern": "buffer-stash",
+      "what": "copies prev_cwd() bytes into a fixed [u8; 4096] stack buffer before the &mut self call to change_cwd_impl",
+      "mem_delta": "none (4 KiB stack array, no heap)",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/shell/interpreter.rs",
+      "line": 1869,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures only the joined path .len() (usize) from join_z_buf so the &mut buf borrow ends before trailing-separator stripping",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/shell/interpreter.rs",
+      "line": 1921,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "materializes EnvStr (Copy u128 packed ptr+len, Tag::Slice — no alloc) from self.prev_cwd()/self.cwd() before taking &mut self.export_env",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/socket/Listener.rs",
+      "line": 478,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "matches &connection to pull out a &[u8] hostname slice for error formatting; just a borrow projection, no copy",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/socket/Listener.rs",
+      "line": 1100,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "stores normalize_pipe_name result length in Option<usize> instead of holding the returned &[u8] slice into buf across the &mut connection match",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/Execution.rs",
+      "line": 305,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies usize sequence_start/sequence_end out of &mut ConcurrentGroup before borrowing self.sequences",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/Order.rs",
+      "line": 100,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "loops over current.entries by index (plus copies Only enum into local) so generate_order_sub can take &mut self",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/ScopeFunctions.rs",
+      "line": 408,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "replaces defer-style scope guard with explicit filter_buffer.clear() at end to avoid overlapping &mut borrows",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/bun_test.rs",
+      "line": 1456,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "reads usize (sequence_start, sequence_end) from group before indexing execution.sequences to avoid overlapping borrow",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/diff/diff_match_patch.rs",
+      "line": 1066,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take moves Box<[Unit]> text out of diffs[p-1]/diffs[p] (default empty Box, no alloc) then restores or overwrites",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/diff/printDiff.rs",
+      "line": 170,
+      "category": "neutral",
+      "pattern": "index-loop",
+      "what": "captures diff_segments.len() into a usize local and loops by index so inner &mut slice borrow is allowed",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/expect.rs",
+      "line": 949,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "tracks destination as usize index (dst_idx) into trimmed_buf instead of a moving &mut [u8] subslice",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/expect.rs",
+      "line": 3098,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "wraps &mut ConsoleObject::Formatter in RefCell so Display::fmt(&self) can obtain interior &mut; RefCell is stack-only (ptr + borrow flag)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/expect.rs",
+      "line": 3160,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "wraps &mut ConsoleObject::Formatter in RefCell for interior mutability inside Display::fmt(&self); no heap",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/expect.rs",
+      "line": 3212,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "wraps &mut ConsoleObject::Formatter in RefCell for interior mutability inside Display::fmt(&self); no heap",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/expect/toMatchSnapshot.rs",
+      "line": 13,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "wraps &Expect in a stack scopeguard so post_match runs on every exit path; guard holds a reference + closure capturing &JSGlobalObject",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/expect/toThrowErrorMatchingInlineSnapshot.rs",
+      "line": 63,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "hoists this.get_value() result (JSValue, Copy) into a local so the subsequent &mut self call on fn_to_err_string_or_undefined doesn't overlap",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/test_runner/pretty_format.rs",
+      "line": 984,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "copies ctx.parent (JSValue, 64-bit Copy) to a local and calls handle_first_property(&mut *ctx) before taking disjoint &mut ctx.formatter / &mut ctx.writer",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/test_runner/pretty_format.rs",
+      "line": 1102,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "constructs a stack-local WrappedWriter over writer_ (instead of also borrowing &mut self.estimated_line_length) and syncs self.failed at scope exit",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/test_runner/snapshot.rs",
+      "line": 160,
+      "category": "neutral",
+      "pattern": "entry-split",
+      "what": "probes self.values.contains_key then re-does self.values.get on hit to avoid NLL returned-borrow blocking later insert; 2 hash lookups, no allocation",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/timer/timer_object_internals.rs",
+      "line": 980,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures self.event_loop_timer() -> *mut EventLoopTimer into a local before borrowing (*state).timer.maps",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/valkey_jsc/js_valkey_functions.rs",
+      "line": 469,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "stores cmd.meta.check(&cmd) result (Meta: u8 bitflags, Copy) in a temp then assigns to cmd.meta, avoiding simultaneous &cmd and &mut cmd.meta",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/Blob.rs",
+      "line": 582,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "builds SystemError (incl. BunString::clone_utf8 of path) before t.done() which moves t; the path clone is required regardless since SystemError must own it — reshape is pure sequencing",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/Blob.rs",
+      "line": 607,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "before heap::into_raw(t) moves t: Rc::clone of S3Credentials (refcount bump), stashes path as *const [u8] backed by t.blob's store, copies request_payer (small Copy enum)",
+      "mem_delta": "none (Rc refcount bump + raw ptr + enum copy; no heap alloc)",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/Body.rs",
+      "line": 1288,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take on PendingValue (leaves PendingValue::default() — all None/null/0, Strong::empty() is Option::None) then overwrites *self with Value::Error",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/Body.rs",
+      "line": 1471,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-destructures `let Value::Locked(locked) = self` after the earlier `*self = Null` branch ended the prior borrow; pure pattern-match reborrow, no data copied",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/Body.rs",
+      "line": 1768,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "restructures match so get_body_readable_stream(&self) can be called inside an arm, then re-calls get_body_value() (returns &mut Value via interior-mut projection) — no new data",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/Body.rs",
+      "line": 1836,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "explicitly drops `locked` borrow (`let _ = locked;`) then re-calls get_body_value() and re-matches Value::Locked; pointer re-projection only",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/Body.rs",
+      "line": 2011,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-calls get_body_value() and re-destructures Value::Locked after self.get_body_readable_stream() borrowed self; &mut Value re-projection, no alloc",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/Body.rs",
+      "line": 2489,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "re-destructures `let Value::Locked(locked) = value` after the `*value = Value::Used` branch above invalidated the earlier borrow; pure reborrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/FileSink.rs",
+      "line": 598,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "reads four Cell<bool> fields into local bool out-params for open_for_writing, then Cell::set them back",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/FileSink.rs",
+      "line": 1446,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "re-derives *mut *mut c_void signal_ptr via JsCell::as_ptr()/&raw mut after assigning readable_stream",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/Response.rs",
+      "line": 555,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "returns owned ZigString (Copy (*const u8,usize) 16-byte view) instead of a borrowed slice; callers call .slice()",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/blob/copy_file.rs",
+      "line": 589,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "captures dest_len (usize) then re-borrows &ZStr from stack PathBuffer instead of from self, avoiding overlap with &mut self",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/blob/copy_file.rs",
+      "line": 1051,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies read_buf.capacity() into local usize before building uv_buf_t with as_mut_ptr()",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/blob/copy_file.rs",
+      "line": 1136,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "binds &mut Vec<u8> read_buf plus copies Fd/event_loop locals so disjoint fields of CopyFileWindows are accessed separately",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/blob/read_file.rs",
+      "line": 289,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "computes ctx: *mut () from self and copies Fd before taking &mut self.io_poll for CloseAction",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/blob/read_file.rs",
+      "line": 596,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "mem::take(&mut this.buffer) moves Vec<u8> out (leaving empty Vec::new(), no alloc) so it survives drop(this)",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/blob/read_file.rs",
+      "line": 808,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "holds read target as raw (*mut u8, usize) across &mut self do_read call instead of a &mut [u8] into self.buffer",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/blob/write_file.rs",
+      "line": 194,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "computes ctx: *mut () from self and copies Fd before taking &mut self.io_poll for CloseAction",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/runtime/webcore/blob/write_file.rs",
+      "line": 330,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "do_write takes (off: usize, len: usize) and re-derives slice from self.bytes_blob internally instead of caller passing &[u8]",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/blob/write_file.rs",
+      "line": 546,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures off/remain_len (usize) from shared_view() before &mut self do_write call",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/fetch/FetchTasklet.rs",
+      "line": 1756,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "hoists evaluation of Response::init args (headers/status_code/status_text/url/redirected) before to_body_value(&mut self); same allocations just reordered, plus u16/bool locals",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/fetch/FetchTasklet.rs",
+      "line": 2198,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "reads sink.high_water_mark() into a local usize before taking the stream_buffer mutex/&mut borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/s3/download_stream.rs",
+      "line": 107,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "labeled block defers computing `chunk` (MutableString::default() or mem::take of reported_response_buffer) until after code/message slice borrows end; moves only, empty default",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/runtime/webcore/s3/simple_request.rs",
+      "line": 348,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "binds &response once and matches this.callback by value, copying out the Copy fn-pointer payload so error arms can take &mut this",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/semver/Version.rs",
+      "line": 1028,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "computes SemverString::init before advancing buf, then uses mem::take on &mut &mut [u8] to reslice; fat-pointer moves only",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/semver/lib.rs",
+      "line": 938,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies self.len/self.cap into usize locals, then scopes the &mut self.ptr borrow for copy_from_slice before reborrowing immutably",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/semver/lib.rs",
+      "line": 962,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies self.len/self.cap into usize locals and scopes the &mut self.ptr borrow (same shape as line 938)",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/semver/lib.rs",
+      "line": 986,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "snapshots self.len/self.cap as usize before string_pool.get_or_put() so later &mut/& self.ptr borrows don't overlap the pool borrow",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/shell_parser/parse.rs",
+      "line": 769,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "moves self.errors (ArenaVec) into subparser via mem::replace with an empty ArenaVec::new_in (dangling ptr, cap=0); restored in continue_from_subparser",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/shell_parser/parse.rs",
+      "line": 776,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "moves self.jsobjs (&'bump mut [JSValue]) into subparser via mem::take; default is empty &mut [] slice, restored later",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/shell_parser/parse.rs",
+      "line": 2276,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "moves strpool/tokens/errors/js_string_ranges (ArenaVec, new_in = dangling ptr cap=0) into sublexer via mem::replace; restored in continue_from_sublexer",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/shell_parser/parse.rs",
+      "line": 2293,
+      "category": "neutral",
+      "pattern": "take-replace",
+      "what": "moves self.string_refs (&'bump mut [BunString]) into sublexer via mem::take; default is empty &mut [] slice",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/sourcemap/InternalSourceMap.rs",
+      "line": 1239,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies builder.count (integer) into a u64 local before builder.finalize() takes a &mut borrow",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/sourcemap_jsc/JSSourceMap.rs",
+      "line": 41,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "scoped-block around source_url_slice borrow + explicit drop before reassigning source_url_string; RAII Drop replaces manual deref/deinit",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLConnection.rs",
+      "line": 232,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "advance() routes through *mut JSMySQLConnection (get_js_connection) instead of &mut self.queue to avoid aliasing; queue reached via interior-mutable ParentRef/JsCell",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLConnection.rs",
+      "line": 531,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "constructs NewReader<Reader>{connection:*mut Self} (small Copy struct) in a local before passing to self.process_packets to avoid double &mut self",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLConnection.rs",
+      "line": 1284,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "handle_result_set_ok takes request:&JSMySQLQuery (shared, interior-mutable) instead of &mut, re-fetches statement at each touch point; no data copied",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLConnection.rs",
+      "line": 1705,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures RawSlice<u8> (*const [u8] fat pointer, Copy) of remaining[..count] before skip() mutates read_buffer.head",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/mysql/MySQLRequestQueue.rs",
+      "line": 128,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "Zig `defer` cleanup converted to labeled block `'advance: {}`; early returns become `break 'advance` so post-block cleanup loop always runs",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/mysql/protocol/DecodeBinaryValue.rs",
+      "line": 167,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies `w.len()` (usize) into `remaining` local before re-borrowing the fixed [u8;32] stack buffer for the output slice",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/postgres/DataCell.rs",
+      "line": 425,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "introduces stack `Option<usize> advance_after` to defer mutating `slice` until after the byte iterator borrow ends",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/postgres/DataCell.rs",
+      "line": 1127,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "returns `PGNummericString::Dynamic(result.as_slice())` borrowing the caller-owned &mut Vec<u8> instead of aliasing it; no new buffer",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/postgres/PostgresSQLConnection.rs",
+      "line": 626,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "Zig `defer this.updateHasPendingActivity()` replaced with explicit calls at each return path in set_status; control-flow only",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/sql_jsc/postgres/PostgresSQLConnection.rs",
+      "line": 699,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "Zig deferred update_has_pending_activity()+ref_and_close() expanded inline at each return in fail_with_js_value; control-flow only",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/sql_jsc/postgres/PostgresSQLConnection.rs",
+      "line": 1743,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "captures read-buffer subslice as bun_ptr::RawSlice (*const [u8] wrapper) before calling skip(&mut self) which advances the head index",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/postgres/PostgresSQLConnection.rs",
+      "line": 2407,
+      "category": "neutral",
+      "pattern": "raw-ptr-launder",
+      "what": "stores statement.structure() result as Option<ParentRef<PostgresCachedStructure>> (NonNull<T> wrapper) to detach from &mut statement so &statement.fields can be borrowed",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/sql_jsc/shared/SQLDataCell.rs",
+      "line": 549,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "copies get_or_put(...).found_existing (bool) into a local before overwriting *name_or_index with ColumnIdentifier::Duplicate",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/standalone_graph/StandaloneModuleGraph.rs",
+      "line": 1555,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "reads env.get_tls_reject_unauthorized() (bool) into a local before env.get_http_proxy_for(&url) takes a longer borrow of env",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/standalone_graph/StandaloneModuleGraph.rs",
+      "line": 1605,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "reordered/scoped gunzip work into a closure so refresher.start()/root.end() &mut borrows don't overlap the decompression borrows; no new data",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/watcher/INotifyWatcher.rs",
+      "line": 222,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "tracks read_len: usize instead of holding a &[u8] sub-slice of self.eventlist_bytes across the function",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/INotifyWatcher.rs",
+      "line": 381,
+      "category": "neutral",
+      "pattern": "buffer-stash",
+      "what": "copies returned &[*const Event] into a stack [*const Event; 128] so the borrow of this.platform ends",
+      "mem_delta": "none (stack [*const; 128] = 1KB, no heap)",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/INotifyWatcher.rs",
+      "line": 511,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "uses split_at_mut on watch_events to get two disjoint &mut for merge()",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/INotifyWatcher.rs",
+      "line": 529,
+      "category": "neutral",
+      "pattern": "split-borrow",
+      "what": "re-slices disjoint fields this.watch_events/this.changed_filepaths directly, explicitly avoiding a .to_vec()/.clone()",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/Watcher.rs",
+      "line": 371,
+      "category": "neutral",
+      "pattern": "scalar-copy",
+      "what": "captures fds.len() into a usize local before the eviction loop",
+      "mem_delta": "none",
+      "hot": false
+    },
+    {
+      "file": "src/watcher/WindowsWatcher.rs",
+      "line": 440,
+      "category": "neutral",
+      "pattern": "reborrow",
+      "what": "computes rel (ParentEqual enum) inside a scoped block so borrows of this.watchlist/this.platform.buf drop before touching this.watch_events",
+      "mem_delta": "none",
+      "hot": true
+    },
+    {
+      "file": "src/watcher/WindowsWatcher.rs",
+      "line": 514,
+      "category": "neutral",
+      "pattern": "clone-small",
+      "what": "copies all_events[i] (WatchEvent: u16+u8+u8+u8, Copy) into a local before merge() to avoid two &mut into the same slice",
+      "mem_delta": "none",
+      "hot": true
+    }
+  ]
+}

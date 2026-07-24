@@ -1,0 +1,6 @@
+src/install/PackageManager/WorkspacePackageJSONCache.rs:155 | splits getOrPut into contains_key()+get_mut() on hit and deferred get_or_put() after parse on miss, avoiding holding entry borrow across read/parse
+src/install/PackageManager/runTasks.rs:544 | HashMap `insert` by-value then re-`get` instead of `get_or_put`; manifest move is unchanged, only an extra u64 hash lookup
+src/js_parser/fold.rs:612 | splits getOrPut on commonjs_named_exports into get() (copy 8-byte Ref out) then put() on miss path
+src/jsc/ConsoleObject.rs:828 | find-or-append on Vec<Column> split into read-only .position() search then separate push; returns usize index instead of holding &mut
+src/jsc/SavedSourceMap.rs:154 | manual lock()/unlock() pairing plus HashMap get(&u64) then conditional remove(&u64) instead of single entry-borrow under a guard
+src/runtime/test_runner/snapshot.rs:160 | probes self.values.contains_key then re-does self.values.get on hit to avoid NLL returned-borrow blocking later insert; 2 hash lookups, no allocation

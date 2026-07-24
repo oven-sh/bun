@@ -225,6 +225,28 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
     return any;
 }
 
+/* Windows RSTs a socket abandoned at ExitProcess; closesocket() with default
+ * linger hands it to the kernel for a graceful close that survives process
+ * teardown (what node's RunCleanup → uv_close does). No dispatch, no free. */
+void us_loop_close_fds_for_exit(struct us_loop_t *loop) {
+#ifdef _WIN32
+    for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
+        for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
+            if (!s->flags.is_closed) {
+                bsd_close_socket(us_poll_fd(&s->p));
+            }
+        }
+    }
+    for (struct us_socket_t *s = loop->data.low_prio_head; s; s = s->next) {
+        if (!s->flags.is_closed) {
+            bsd_close_socket(us_poll_fd(&s->p));
+        }
+    }
+#else
+    (void) loop;
+#endif
+}
+
 /* This functions should never run recursively */
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;

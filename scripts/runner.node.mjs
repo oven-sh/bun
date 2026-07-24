@@ -790,6 +790,18 @@ async function runTests() {
           // drains, and common.mustCall() verifies counts in 'exit' handlers.
           BUN_TEST_DRAIN_EVENT_LOOP: "1",
         };
+        if (title.includes("test-util-styletext")) {
+          // These assert styleText's own color decisions against a TTY, so they need a
+          // color-capable environment they can then override per case. Drop the forced
+          // settings above, spawnBun's FORCE_COLOR, and CI (which resolves to "no color"
+          // in containers that don't identify the vendor), and pin TERM so every agent
+          // agrees.
+          env.FORCE_COLOR = undefined;
+          env.NO_COLOR = undefined;
+          env.NODE_DISABLE_COLORS = undefined;
+          env.CI = undefined;
+          env.TERM = "xterm-256color";
+        }
         if (!isWindows && title.includes("/sequential/")) {
           // Sequential node tests share common.PORT (12346); a cluster worker
           // or child_process subprocess that outlives its test can keep that

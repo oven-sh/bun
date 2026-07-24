@@ -209,7 +209,13 @@ impl PBKDF2 {
             None => {
                 return Err(global_this.throw_invalid_argument_type_list(
                     b"salt",
-                    &[b"string", b"ArrayBuffer", b"Buffer", b"TypedArray", b"DataView"],
+                    &[
+                        b"string",
+                        b"ArrayBuffer",
+                        b"Buffer",
+                        b"TypedArray",
+                        b"DataView",
+                    ],
                     arg1,
                 ));
             }
@@ -229,7 +235,13 @@ impl PBKDF2 {
             None => {
                 return Err(global_this.throw_invalid_argument_type_list(
                     b"password",
-                    &[b"string", b"ArrayBuffer", b"Buffer", b"TypedArray", b"DataView"],
+                    &[
+                        b"string",
+                        b"ArrayBuffer",
+                        b"Buffer",
+                        b"TypedArray",
+                        b"DataView",
+                    ],
                     arg0,
                 ));
             }

@@ -617,15 +617,12 @@ impl JSGlobalObject {
         expected_types: &[&[u8]],
         value: JSValue,
     ) -> JsError {
-        let message = match Self::format_invalid_argument_type(
-            self,
-            argname.as_ref(),
-            expected_types,
-            value,
-        ) {
-            Ok(s) => s,
-            Err(e) => return e,
-        };
+        let message =
+            match Self::format_invalid_argument_type(self, argname.as_ref(), expected_types, value)
+            {
+                Ok(s) => s,
+                Err(e) => return e,
+            };
         self.err(JscError::INVALID_ARG_TYPE, format_args!("{}", message))
             .throw()
     }

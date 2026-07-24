@@ -829,7 +829,13 @@ mod _impl {
             else {
                 return Err(global.throw_invalid_argument_type_list(
                     b"password",
-                    &[b"string", b"ArrayBuffer", b"Buffer", b"TypedArray", b"DataView"],
+                    &[
+                        b"string",
+                        b"ArrayBuffer",
+                        b"Buffer",
+                        b"TypedArray",
+                        b"DataView",
+                    ],
                     password_value,
                 ));
             };
@@ -848,7 +854,13 @@ mod _impl {
             else {
                 return Err(global.throw_invalid_argument_type_list(
                     b"salt",
-                    &[b"string", b"ArrayBuffer", b"Buffer", b"TypedArray", b"DataView"],
+                    &[
+                        b"string",
+                        b"ArrayBuffer",
+                        b"Buffer",
+                        b"TypedArray",
+                        b"DataView",
+                    ],
                     salt_value,
                 ));
             };

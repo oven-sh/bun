@@ -132,3 +132,102 @@ test("lambda HTTP events cannot override the request authority", async () => {
   expect(v1Url.origin).toBe("https://api.example.com");
   expect(v1Url.pathname).toBe("//attacker.example/reset");
 });
+
+test("console.log formats arguments like Node, not Bun.inspect per-arg", async () => {
+  // https://github.com/oven-sh/bun/issues/4826
+  // Bun.inspect("str") wraps the string in quotes and escapes newlines, which
+  // is wrong for console.log: console.log("url:", url) would print
+  //   "url:" "https://..."
+  // instead of
+  //   url: https://...
+  const runtimeSource = await Bun.file(runtimePath).text();
+
+  using dir = tempDir("bun-lambda-log", {
+    "runtime.ts": runtimeSource,
+    "handler.ts": `export default {
+  async fetch(request) {
+    console.log("url:", request.url);
+    console.log("hi %s, you are %d", "bob", 42);
+    console.error("payload:", JSON.stringify({ a: 1 }, null, 2));
+    console.log("obj:", { a: 1 });
+    console.warn("keep %s literal");
+    return new Response("ok");
+  },
+};
+`,
+    "node_modules/aws4fetch/package.json": JSON.stringify({ name: "aws4fetch", version: "1.0.0", main: "index.js" }),
+    "node_modules/aws4fetch/index.js": aws4fetchStub,
+  });
+
+  const event = {
+    version: "2.0",
+    requestContext: {
+      requestId: "req-1",
+      domainName: "api.example.com",
+      http: { method: "GET", path: "/hello" },
+    },
+    headers: {},
+    isBase64Encoded: false,
+  };
+
+  let served = false;
+  const { promise: responded, resolve: markResponded } = Promise.withResolvers<void>();
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/2018-06-01/runtime/invocation/next") {
+        if (served) {
+          // Non-ok status after the single event makes the runtime exit.
+          return new Response(null, { status: 500 });
+        }
+        served = true;
+        return new Response(JSON.stringify(event), {
+          headers: {
+            "Content-Type": "application/json",
+            "Lambda-Runtime-Aws-Request-Id": "req-1",
+            "Lambda-Runtime-Trace-Id": "trace-id",
+            "Lambda-Runtime-Invoked-Function-Arn": "arn:aws:lambda:us-east-1:000000000000:function:test",
+            "Lambda-Runtime-Deadline-Ms": String(Date.now() + 60_000),
+          },
+        });
+      }
+      if (/^\/2018-06-01\/runtime\/invocation\/[^/]+\/response$/.test(url.pathname)) {
+        markResponded();
+        return new Response(null, { status: 202 });
+      }
+      markResponded();
+      return new Response(null, { status: 202 });
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "runtime.ts"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      AWS_LAMBDA_RUNTIME_API: `localhost:${server.port}`,
+      _HANDLER: "handler.fetch",
+      LAMBDA_TASK_ROOT: String(dir),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  await responded;
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // Lines from inside the invocation carry the RequestId prefix; the trailing
+  // ERROR line is the runtime shutting down after the mock server returns 500.
+  const lines = stdout.split("\n").filter(line => line.includes("RequestId: req-1"));
+  expect(lines).toEqual([
+    "INFO RequestId: req-1 url: http://api.example.com/hello",
+    "INFO RequestId: req-1 hi bob, you are 42",
+    'ERROR RequestId: req-1 payload: {\r  "a": 1\r}',
+    "INFO RequestId: req-1 obj: { a: 1 }",
+    "WARN RequestId: req-1 keep %s literal",
+  ]);
+});

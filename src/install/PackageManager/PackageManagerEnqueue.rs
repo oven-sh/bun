@@ -110,12 +110,13 @@ pub fn enqueue_dependency_list(
         let dependencies = &mut lockfile.buffers.dependencies;
         let mut peer_i: usize = 0;
         while dependencies[peer_i].behavior.is_peer() {
+            let peer_name_hash = dependencies[peer_i].name_hash;
             let mut dep_i: usize = (end - 1) as usize;
             while !dependencies[dep_i].behavior.is_peer() {
                 if !dependencies[dep_i].behavior.is_dev()
-                    && dependencies[peer_i].name_hash == dependencies[dep_i].name_hash
+                    && dependencies[dep_i].name_hash == peer_name_hash
                 {
-                    dependencies.swap(peer_i, begin as usize);
+                    dependencies[peer_i] = dependencies[begin as usize].clone();
                     begin += 1;
                     break;
                 }

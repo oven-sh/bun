@@ -1,0 +1,73 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+
+// The Rust port of `new Bun.Transpiler(opts)` called `config.transform.clone()`
+// when handing the parsed `api::TransformOptions` to `Transpiler::init`, then
+// also moved the original `config` (still holding the populated `transform`
+// field) into the long-lived `JSTranspiler`. `TransformOptions` derives
+// `Clone`, so every `Vec<Box<[u8]>>` field (define keys/values, external, drop,
+// ...) was deep-copied and both copies lived for the lifetime of the
+// Transpiler object. The Zig original passes the struct by value, which is a
+// bitwise copy that shares slice backing memory.
+test("new Bun.Transpiler() does not retain a second deep copy of TransformOptions", async () => {
+  const N = 2000;
+  // V+2 = 10240 so each value `Box<[u8]>` lands exactly on a mimalloc size
+  // class and the per-allocation rounding overhead is the same across
+  // release and ASAN builds.
+  const V = 10238;
+  // One full copy of the define *value* payload, in bytes.
+  const payload = N * (V + 2);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const N = ${N};
+        const V = ${V};
+        const big = {};
+        // Distinct value string per key so the JS heap already holds N*V
+        // bytes before the baseline RSS read; the delta then measures only
+        // the native-side copies the constructor makes.
+        for (let i = 0; i < N; i++) {
+          big["process.env.K" + i] = JSON.stringify(Buffer.alloc(V, "v").toString());
+        }
+        Bun.gc(true);
+        const before = process.memoryUsage().rss;
+        const t = new Bun.Transpiler({ define: big });
+        Bun.gc(true);
+        const delta = process.memoryUsage().rss - before;
+
+        const out = t.transformSync("console.log(process.env.K0)");
+        if (!out.includes(big["process.env.K0"])) {
+          console.error("define not applied:", out.slice(0, 80));
+          process.exit(1);
+        }
+        console.log(JSON.stringify({ delta }));
+        globalThis.__keep = t;
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Don't assert stderr is exactly empty: debug/ASAN builds may emit benign
+  // allocator diagnostics. Include it in the combined object so a crashed
+  // child shows context instead of a bare JSON.parse error.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr, exitCode: 0 });
+  const { delta } = JSON.parse(stdout.trim());
+  const ratio = Number((delta / payload).toFixed(2));
+  // The redundant `.clone()` retains one extra full copy of the define map,
+  // shifting the ratio up by ~1.3x regardless of build. The baseline varies
+  // by configuration because release+ASAN instruments the C++ side (JSC
+  // bindings, string flattening) that debug+ASAN does not:
+  //
+  //   release         with fix ~5.0   without fix ~6.0
+  //   debug+ASAN      with fix ~5.1   without fix ~6.5
+  //   release+ASAN    with fix ~6.8   without fix ~8.1
+  const threshold = isASAN && !isDebug ? 7.4 : 5.8;
+  expect(ratio).toBeLessThan(threshold);
+});

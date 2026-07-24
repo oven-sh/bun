@@ -1725,6 +1725,54 @@ test.todo("RSA-PSS should work", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/32835
+describe("generateKeyPair('rsa-pss') deprecated hash aliases", () => {
+  const base = { modulusLength: 512, saltLength: 16 };
+  const errorCode = (fn: () => void): string | undefined => {
+    try {
+      fn();
+    } catch (e: any) {
+      return e?.code;
+    }
+    return undefined;
+  };
+
+  test.each([
+    ["hash", "hashAlgorithm"],
+    ["mgf1Hash", "mgf1HashAlgorithm"],
+  ])("conflicting %s / %s throws ERR_INVALID_ARG_VALUE", (deprecated, modern) => {
+    const options = { ...base, [deprecated]: "sha256", [modern]: "sha1" };
+    // Argument validation runs synchronously before key generation for both entry points.
+    expect(errorCode(() => generateKeyPairSync("rsa-pss", options as any))).toBe("ERR_INVALID_ARG_VALUE");
+    expect(errorCode(() => generateKeyPair("rsa-pss", options as any, () => {}))).toBe("ERR_INVALID_ARG_VALUE");
+  });
+
+  test.each([
+    ["hash", "hashAlgorithm"],
+    ["mgf1Hash", "mgf1HashAlgorithm"],
+  ])("matching %s / %s is not rejected by validation", async (deprecated, modern) => {
+    const options = { ...base, [deprecated]: "sha256", [modern]: "sha256" };
+    // BoringSSL may still reject rsa-pss key generation, but never with the conflict error.
+    expect(errorCode(() => generateKeyPairSync("rsa-pss", options as any))).not.toBe("ERR_INVALID_ARG_VALUE");
+
+    // Matching values pass validation, so the callback form does not throw; any failure
+    // (e.g. BoringSSL keygen) is delivered via the callback, never as the conflict error.
+    const { promise, resolve } = Promise.withResolvers<string | undefined>();
+    generateKeyPair("rsa-pss", options as any, (err: any) => resolve(err?.code));
+    expect(await promise).not.toBe("ERR_INVALID_ARG_VALUE");
+  });
+
+  test.each([
+    ["hash", "hashAlgorithm"],
+    ["mgf1Hash", "mgf1HashAlgorithm"],
+  ])("%s set with an empty %s is not reported as a conflict", (deprecated, modern) => {
+    // Node's guard is truthiness-based (`modern && dep !== modern`), so an empty modern
+    // value is treated as unset: the deprecated value is used rather than flagged as a conflict.
+    const options = { ...base, [deprecated]: "sha256", [modern]: "" };
+    expect(errorCode(() => generateKeyPairSync("rsa-pss", options as any))).not.toBe("ERR_INVALID_ARG_VALUE");
+  });
+});
+
 test("Ed25519 should work", async () => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 

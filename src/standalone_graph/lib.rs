@@ -9,5 +9,6 @@ pub mod StandaloneModuleGraph;
 
 // Re-export the flat surface most downstream callers use.
 pub use StandaloneModuleGraph::{
-    BASE_PATH, BASE_PUBLIC_PATH, File, StandaloneModuleGraph as Graph, is_bun_standalone_file_path,
+    BASE_PATH, BASE_PUBLIC_PATH, File, StandaloneModuleGraph as Graph,
+    exit_early_if_self_exe_truncated, is_bun_standalone_file_path,
 };

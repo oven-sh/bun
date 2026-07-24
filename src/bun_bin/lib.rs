@@ -151,6 +151,13 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // -1. A truncated `bun build --compile` executable has PT_LOAD pages past
+    //     EOF; touching any of them (including the file-backed BSS tail)
+    //     delivers SIGBUS. Detect and report that before anything else runs so
+    //     it is not misattributed to the crash handler's "bug in Bun" banner.
+    //     No-op for a plain `bun` binary and on non-ELF targets.
+    bun_standalone_graph::exit_early_if_self_exe_truncated();
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives

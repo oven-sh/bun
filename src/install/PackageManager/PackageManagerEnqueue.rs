@@ -509,10 +509,13 @@ pub fn enqueue_dependency_to_root(
         }
     }
 
-    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
-        id if id == invalid_package_id => 'brk: {
-            this.drain_dependency_list();
+    // Schedule anything the enqueue above left in `network_task_fifo`: a
+    // disk-cached `.npm` manifest resolves `resolutions[dep_id]` synchronously
+    // while only queuing (not scheduling) the tarball download.
+    this.drain_dependency_list();
 
+    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
+        id if id == invalid_package_id || this.pending_task_count() > 0 => 'brk: {
             struct Closure {
                 err: Option<crate::Error>,
                 // raw `*mut` — `sleep_until`

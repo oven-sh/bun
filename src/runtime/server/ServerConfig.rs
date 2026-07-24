@@ -880,6 +880,26 @@ impl ServerConfig {
                     )));
                 }
 
+                // The HTTP parser splits the request target at the first '?', so a literal
+                // '?' can never appear in the path the router matches against.
+                if strings::contains_char(&path, b'?') {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Invalid route {}. Route patterns cannot contain '?' because the query string is not part of the matched path.",
+                        bun_fmt::quote(&path),
+                    )));
+                }
+
+                // uWS HttpRouter treats a segment starting with '*' as a terminal catch-all
+                // and never descends into its children, so any segment after it is dead.
+                if let Some(i) = strings::index_of(&path, b"/*") {
+                    if strings::contains_char(&path[i + 2..], b'/') {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Invalid route {}. Wildcard '*' is only supported as the final path segment. Use a named parameter like ':name' to match a single segment.",
+                            bun_fmt::quote(&path),
+                        )));
+                    }
+                }
+
                 if value == JSValue::FALSE {
                     // Appends a sentinel NUL without rejecting interior NULs
                     // (which already passed `is_all_ascii`).

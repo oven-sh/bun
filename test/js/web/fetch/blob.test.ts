@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
+import { resolveObjectURL } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
 
@@ -241,6 +242,158 @@ describe("new File() lastModified option", () => {
         },
       }),
     ).toThrow("boom");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/14102
+describe("File prototype chain", () => {
+  test("File has its own prototype distinct from Blob.prototype", () => {
+    expect(File.prototype).not.toBe(Blob.prototype);
+    expect(Object.getPrototypeOf(File.prototype)).toBe(Blob.prototype);
+    expect(Object.getPrototypeOf(File)).toBe(Blob);
+    expect(File.prototype.constructor).toBe(File);
+  });
+
+  test("File Symbol.toStringTag is 'File'", () => {
+    const file = new File(["Hello"], "file.txt", { type: "text/plain" });
+    expect(file[Symbol.toStringTag]).toBe("File");
+    expect(Object.prototype.toString.call(file)).toBe("[object File]");
+    expect(Object.getOwnPropertyDescriptor(File.prototype, Symbol.toStringTag)).toEqual({
+      value: "File",
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test("Blob Symbol.toStringTag is still 'Blob'", () => {
+    const blob = new Blob(["Hello"]);
+    expect(blob[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.prototype.toString.call(blob)).toBe("[object Blob]");
+  });
+
+  test("File inherits Blob methods via prototype chain", async () => {
+    const file = new File(["Hello"], "file.txt", { type: "text/plain" });
+    expect(file instanceof File).toBe(true);
+    expect(file instanceof Blob).toBe(true);
+    expect(new Blob([]) instanceof File).toBe(false);
+    expect(await file.text()).toBe("Hello");
+    expect(file.name).toBe("file.txt");
+    expect(File.prototype.text).toBe(Blob.prototype.text);
+  });
+
+  test("subclass of File has correct prototype chain", () => {
+    class MyFile extends File {}
+    const mf = new MyFile(["x"], "a.txt");
+    expect(mf[Symbol.toStringTag]).toBe("File");
+    expect(mf instanceof MyFile).toBe(true);
+    expect(mf instanceof File).toBe(true);
+    expect(mf instanceof Blob).toBe(true);
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(mf))).toBe(File.prototype);
+  });
+
+  test("File.slice() returns a plain Blob", async () => {
+    const file = new File(["Hello"], "a.txt");
+    const sliced = file.slice(0, 3);
+    expect(sliced[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(sliced)).toBe(Blob.prototype);
+    expect(sliced instanceof File).toBe(false);
+    expect(sliced instanceof Blob).toBe(true);
+    expect(await sliced.text()).toBe("Hel");
+  });
+
+  test("Response(file).blob() and Request(..., {body: file}).blob() return plain Blobs", async () => {
+    const file = new File(["Hello"], "a.txt");
+    const res = await new Response(file).blob();
+    expect(res[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(res)).toBe(Blob.prototype);
+    expect(res instanceof File).toBe(false);
+    expect(await res.text()).toBe("Hello");
+
+    const req = await new Request("http://x", { method: "POST", body: file }).blob();
+    expect(req[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(req)).toBe(Blob.prototype);
+    expect(req instanceof File).toBe(false);
+    expect(await req.text()).toBe("Hello");
+
+    // Array body-init (Bun-specific extension) routes through the MOVE=true
+    // struct-literal in from_js_without_defer_gc.
+    const arr = await new Response([file]).blob();
+    expect(arr[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(arr)).toBe(Blob.prototype);
+    expect(arr instanceof File).toBe(false);
+    expect(await arr.text()).toBe("Hello");
+  });
+
+  test("new Blob([file]) and resolveObjectURL(createObjectURL(file)) return plain Blobs", async () => {
+    const file = new File(["Hello"], "a.txt");
+
+    const wrapped = new Blob([file]);
+    expect(wrapped[Symbol.toStringTag]).toBe("Blob");
+    expect(wrapped instanceof File).toBe(false);
+    const wrappedClone = structuredClone(wrapped);
+    expect(wrappedClone[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(wrappedClone)).toBe(Blob.prototype);
+    expect(wrappedClone instanceof File).toBe(false);
+    expect(await wrappedClone.text()).toBe("Hello");
+
+    const url = URL.createObjectURL(file);
+    const resolved = resolveObjectURL(url);
+    URL.revokeObjectURL(url);
+    expect(resolved[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(resolved)).toBe(Blob.prototype);
+    expect(resolved instanceof File).toBe(false);
+    expect(await resolved.text()).toBe("Hello");
+  });
+
+  test("structuredClone of File preserves File prototype", async () => {
+    const file = new File(["Hello"], "file.txt", { type: "text/plain" });
+    const clone = structuredClone(file);
+    expect(clone[Symbol.toStringTag]).toBe("File");
+    expect(Object.prototype.toString.call(clone)).toBe("[object File]");
+    expect(clone instanceof File).toBe(true);
+    expect(clone instanceof Blob).toBe(true);
+    expect(clone.name).toBe("file.txt");
+    expect(await clone.text()).toBe("Hello");
+
+    const blob = new Blob(["Hello"]);
+    const blobClone = structuredClone(blob);
+    expect(blobClone[Symbol.toStringTag]).toBe("Blob");
+    expect(blobClone instanceof File).toBe(false);
+  });
+
+  test("File received before File constructor is accessed has correct constructor", async () => {
+    // structuredClone deserialization can materialize a File in a realm before
+    // globalThis.File is ever touched; File.prototype.constructor must still
+    // resolve to File rather than falling through to Blob.prototype.constructor.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("worker_threads");
+          const w = new Worker(\`
+            const { parentPort } = require("worker_threads");
+            parentPort.once("message", (f) => {
+              parentPort.postMessage({
+                tag: f[Symbol.toStringTag],
+                ctorName: f.constructor.name,
+                ctorIsFile: f.constructor === File,
+              });
+            });
+          \`, { eval: true });
+          w.on("message", (m) => { console.log(JSON.stringify(m)); process.exit(0); });
+          w.postMessage(new File(["hi"], "a.txt"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ tag: "File", ctorName: "File", ctorIsFile: true });
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -533,6 +533,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSDOMFileStructure)                                   \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
                                                                                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \
@@ -745,6 +746,7 @@ public:
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+    Structure* JSDOMFileStructure() const { return m_JSDOMFileStructure.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);

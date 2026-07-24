@@ -1425,6 +1425,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             quoted: true
                         },
                     );
+                } else if dependency::is_link_path(this.lockfile.str(version.symlink())) {
+                    bun_ast::add_error_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Could not find package.json at \"{}\" for dependency \"{}\"\n\n",
+                        bstr::BStr::new(this.lockfile.str(version.symlink())),
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                    );
                 } else {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),
@@ -1447,6 +1456,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             version,
                             quoted: true
                         },
+                    );
+                } else if dependency::is_link_path(this.lockfile.str(version.symlink())) {
+                    bun_ast::add_warning_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Could not find package.json at \"{}\" for dependency \"{}\"\n\n",
+                        bstr::BStr::new(this.lockfile.str(version.symlink())),
+                        bstr::BStr::new(this.lockfile.str(&name)),
                     );
                 } else {
                     bun_ast::add_warning_pretty!(

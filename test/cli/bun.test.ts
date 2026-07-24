@@ -126,6 +126,56 @@ describe("bun", () => {
       }
     });
   });
+  describe("--help preserves <placeholder> text", () => {
+    const env = { ...bunEnv, NO_COLOR: "1" };
+    const usage: [string, string][] = [
+      ["install", "bun install [flags] <name>@<version>"],
+      ["add", "bun add [flags] <package><@version>"],
+      ["remove", "bun remove [flags] [<packages>]"],
+      ["update", "bun update [flags] <name>@<version>"],
+      ["link", "bun link [flags] [<packages>]"],
+      ["patch", "bun patch [flags or options] <package>@<version>"],
+      ["patch-commit", "bun patch-commit [flags or options] <directory>"],
+      ["info", "bun info [flags] <package>[@<version>]"],
+    ];
+    test.concurrent.each(usage)("bun %s --help usage line", async (cmd, expected) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + stderr).split(/\r?\n/).find(l => l.startsWith("Usage:")) ?? "";
+      expect(line).toBe(`Usage: ${expected}`);
+      expect(exitCode).toBe(0);
+    });
+
+    const flags: [string, string, string][] = [
+      ["audit", "--audit-level", "greater than or equal to <level> (low,"],
+      ["test", "--rerun-each", "Re-run each test file <NUMBER> times"],
+      ["test", "--bail", "Exit the test suite after <NUMBER> failures"],
+      ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
+    ];
+    test.concurrent.each(flags)("bun %s --help keeps placeholder in %s description", async (cmd, flag, expected) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + stderr).split(/\r?\n/).find(l => l.includes(flag)) ?? "";
+      expect(line).toContain(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun add --help usage line is intact with FORCE_COLOR=1", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "add", "--help"],
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = stdout + stderr;
+      // <blue>\<package\><r> renders to \x1b[34m<package>\x1b[0m, not \x1b[34m\x1b[0m
+      expect(out).toContain("\x1b[34m<package>\x1b[0m");
+      // raw tag markup must not leak through
+      expect(out).not.toContain("<blue>");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

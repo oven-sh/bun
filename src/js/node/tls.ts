@@ -1575,6 +1575,14 @@ function connect(...args) {
     validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
   }
 
+  // Node applies its `minDHSize: 1024` default by object spread, so an
+  // explicit `undefined` reaches the validator and throws.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1731-L1745
+  // BoringSSL negotiates no finite-field DHE suite at all, so there is never a
+  // server DH parameter to measure - the option is validated and then vacuous.
+  const minDHSize = ObjectPrototypeHasOwnProperty.$call(options, "minDHSize") ? options.minDHSize : 1024;
+  validateNumber(minDHSize, "options.minDHSize", 1);
+
   if (servername && net.isIP(servername)) {
     throw $ERR_INVALID_ARG_VALUE(
       "options.servername",
@@ -1596,6 +1604,17 @@ function connect(...args) {
 
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, connectOptions);
+  }
+
+  // Node builds the client's context by calling `tls.createSecureContext` off
+  // the module object, so replacing that export (proxy/MITM libraries do)
+  // changes what every tls.connect() negotiates with. The built-in one is
+  // skipped here: TLSSocket reaches the same constructor through the memoised
+  // internal path, which shares one SSL_CTX across connections.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1746
+  const createContext = tlsExports.createSecureContext;
+  if (createContext !== createSecureContext && connectOptions.secureContext === undefined) {
+    connectOptions.secureContext = createContext(connectOptions);
   }
 
   const tlssock = new TLSSocket(connectOptions);
@@ -1826,7 +1845,7 @@ function getDefaultCiphers() {
   return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
 }
 
-export default {
+const tlsExports = {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -1877,3 +1896,5 @@ export default {
   },
   getCACertificates,
 } as any as typeof import("node:tls");
+
+export default tlsExports;

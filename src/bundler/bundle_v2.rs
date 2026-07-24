@@ -6438,10 +6438,9 @@ pub mod bv2_impl {
             importer_source_index: IndexInt,
         ) -> i32 {
             let mut diff: i32 = 0;
-            // SAFETY: self_ptr is a ParentRef<BundleV2> stored into ParseTask.ctx and scheduled
-            // on the thread pool; the task calls back into BundleV2, so *mut Self write
-            // provenance is required.
-            // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
+            // SAFETY: stored into ParseTask.ctx and scheduled on the thread pool; the task
+            // calls back into BundleV2, so `ptr::from_mut` write provenance is required.
+            // Outlives every ParseTask.
             let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>>> = Some(unsafe {
                 bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),

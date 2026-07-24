@@ -59,6 +59,7 @@ std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSC::Thro
 int32_t getPadding(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options, const ncrypto::EVPKeyPointer& pkey);
 std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options);
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options);
+bool boringSSLSupportsRsaPkcs1Digest(const EVP_MD* md);
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, const ncrypto::EVPKeyPointer& pkey, WTF::Vector<uint8_t>& derBuffer);
 GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly = false);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding = false);

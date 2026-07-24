@@ -54,14 +54,18 @@ private:
     WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
     WriteBarrier<Unknown> m_initializeImportMeta;
+    // Keeps the importModuleDynamically callback alive; NodeVMScriptFetcher only
+    // holds a Weak reference to it to avoid an uncollectable Strong<> cycle.
+    WriteBarrier<Unknown> m_dynamicImportCallback;
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
     bool m_hasTopLevelAwait { false };
     bool m_linkCalled { false };
 
-    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)
+    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta, JSValue dynamicImportCallback)
         : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)
         , m_initializeImportMeta(initializeImportMeta && !initializeImportMeta.isUndefined() ? initializeImportMeta : JSValue(), JSC::WriteBarrierEarlyInit)
+        , m_dynamicImportCallback(dynamicImportCallback && dynamicImportCallback.isCell() ? dynamicImportCallback : JSValue(), JSC::WriteBarrierEarlyInit)
         , m_sourceCode(WTF::move(sourceCode))
     {
     }

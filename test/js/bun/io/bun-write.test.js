@@ -728,3 +728,89 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
+  const modeOf = p => fs.statSync(p).mode & 0o777;
+  const large = Buffer.alloc(512 * 1024, "a").toString();
+
+  for (const [label, data] of [
+    ["small string", "hello"],
+    ["empty string", ""],
+    ["small Uint8Array", new Uint8Array([1, 2, 3])],
+    ["large string (async path)", large],
+    ["large Uint8Array (async path)", new Uint8Array(512 * 1024)],
+    ["Blob", new Blob(["hello"])],
+    ["empty Blob", new Blob([])],
+  ]) {
+    test(`sets permissions on new file for ${label}`, async () => {
+      using dir = tempDir("bun-write-mode", {});
+      const dest = join(String(dir), "out.txt");
+      await Bun.write(dest, data, { mode: 0o600 });
+      expect(modeOf(dest)).toBe(0o600);
+    });
+
+    test(`sets permissions on existing file for ${label}`, async () => {
+      using dir = tempDir("bun-write-mode", { "out.txt": "old" });
+      const dest = join(String(dir), "out.txt");
+      // The seed file's mode depends on the umask; pin it so the precondition holds.
+      fs.chmodSync(dest, 0o644);
+      expect(modeOf(dest)).not.toBe(0o600);
+      await Bun.write(dest, data, { mode: 0o600 });
+      expect(modeOf(dest)).toBe(0o600);
+    });
+  }
+
+  test("sets permissions when destination is a Bun.file()", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(Bun.file(dest), "hello", { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("sets permissions when parent directory must be created", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "sub", "out.txt");
+    await Bun.write(dest, "hello", { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("sets permissions when source is a Response body", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(dest, new Response("hello"), { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("accepts mode 0", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(dest, "hello", { mode: 0o000 });
+    expect(modeOf(dest)).toBe(0o000);
+  });
+
+  // 0o646's group/other write bits are cleared by a typical umask, so only a
+  // post-open chmod can produce it. This is the path createPath recovery uses.
+  test("mode is not masked by the umask when the parent directory is created", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "sub", "out.txt");
+    await Bun.write(dest, new Blob([]), { mode: 0o646 });
+    expect(modeOf(dest)).toBe(0o646);
+  });
+
+  test("omitted mode leaves default permissions", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    const baseline = join(String(dir), "baseline.txt");
+    await Bun.write(baseline, "x");
+    await Bun.write(dest, "hello");
+    expect(modeOf(dest)).toBe(modeOf(baseline));
+  });
+
+  test("omitted mode leaves an existing file's permissions alone", async () => {
+    using dir = tempDir("bun-write-mode", { "out.txt": "old" });
+    const dest = join(String(dir), "out.txt");
+    fs.chmodSync(dest, 0o751);
+    await Bun.write(dest, "hello");
+    expect(modeOf(dest)).toBe(0o751);
+  });
+});

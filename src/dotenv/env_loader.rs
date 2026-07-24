@@ -1134,77 +1134,108 @@ impl<'a> Parser<'a> {
     }
 
     fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
-        if value.len() < 2 {
+        if value.len() < 2 || !strings::contains(value, b"$") {
             return Ok(None);
         }
 
         self.value_buffer.clear();
-
-        let mut pos = value.len() - 2;
-        let mut last = value.len();
-        loop {
-            if value[pos] == b'$' {
-                if pos > 0 && value[pos - 1] == b'\\' {
-                    // PERF: splice at the front is O(n)
-                    self.value_buffer
-                        .splice(0..0, value[pos..last].iter().copied());
-                    pos -= 1;
-                } else {
-                    let mut end = if value[pos + 1] == b'{' {
-                        pos + 2
-                    } else {
-                        pos + 1
-                    };
-                    let key_start = end;
-                    while end < value.len() {
-                        match value[end] {
-                            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => {
-                                end += 1;
-                                continue;
-                            }
-                            _ => break,
-                        }
-                    }
-                    let lookup_value = map.get(&value[key_start..end]);
-                    let default_value: &[u8] = if value[end..].starts_with(b":-") {
-                        end += b":-".len();
-                        let value_start = end;
-                        while end < value.len() {
-                            match value[end] {
-                                b'}' | b'\\' => break,
-                                _ => {
-                                    end += 1;
-                                    continue;
-                                }
-                            }
-                        }
-                        &value[value_start..end]
-                    } else {
-                        b""
-                    };
-                    if end < value.len() && value[end] == b'}' {
-                        end += 1;
-                    }
-                    self.value_buffer
-                        .splice(0..0, value[end..last].iter().copied());
-                    self.value_buffer
-                        .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
-                }
-                last = pos;
-            }
-            if pos == 0 {
-                if last == value.len() {
-                    return Ok(None);
-                }
-                break;
-            }
-            pos -= 1;
-        }
-        if last > 0 {
-            self.value_buffer
-                .splice(0..0, value[..last].iter().copied());
+        if !self.expand_into(map, value, 0)? {
+            return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
+    }
+
+    /// Append the expansion of `value` to `self.value_buffer`, returning
+    /// whether any `$` substitution or `\$` escape was processed. A nested
+    /// `${...}` inside a `:-` default is expanded recursively, so values like
+    /// `${FOO:-${BAR:-baz}}` resolve correctly. `depth` caps recursion so a
+    /// pathologically nested value cannot overflow the stack; past the cap the
+    /// remaining default is emitted verbatim instead of being expanded.
+    fn expand_into(&mut self, map: &Map, value: &[u8], depth: u32) -> Result<bool, AllocError> {
+        const MAX_EXPAND_DEPTH: u32 = 64;
+        let n = value.len();
+        let mut found = false;
+        let mut i = 0;
+        while i < n {
+            let c = value[i];
+            // `\$` escapes the dollar sign: drop the backslash and emit a
+            // literal `$` without expanding it.
+            if c == b'\\' && i + 1 < n && value[i + 1] == b'$' {
+                found = true;
+                self.value_buffer.push(b'$');
+                i += 2;
+                continue;
+            }
+            // A trailing `$` has no name to expand, so leave it literal.
+            if c == b'$' && i != n - 1 {
+                found = true;
+                let braced = value[i + 1] == b'{';
+                let key_start = if braced { i + 2 } else { i + 1 };
+                let mut j = key_start;
+                while j < n && matches!(value[j], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') {
+                    j += 1;
+                }
+                let lookup = map.get(&value[key_start..j]);
+                let mut default_range: Option<(usize, usize)> = None;
+                if value[j..].starts_with(b":-") {
+                    j += b":-".len();
+                    let default_start = j;
+                    if braced {
+                        // Find the `}` that closes this substitution. A nested
+                        // `${` opens a scope whose own `}` must be balanced; a
+                        // bare `{` is a literal byte, and an escaped `\$` never
+                        // opens a scope (it is a literal `$` once expanded).
+                        let mut brace_depth = 0usize;
+                        while j < n {
+                            match value[j] {
+                                b'\\' if j + 1 < n && value[j + 1] == b'$' => {
+                                    j += 2;
+                                    continue;
+                                }
+                                b'$' if j + 1 < n && value[j + 1] == b'{' => {
+                                    brace_depth += 1;
+                                    j += 2;
+                                    continue;
+                                }
+                                b'}' => {
+                                    if brace_depth == 0 {
+                                        break;
+                                    }
+                                    brace_depth -= 1;
+                                }
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+                    } else {
+                        while j < n && value[j] != b'}' && value[j] != b'\\' {
+                            j += 1;
+                        }
+                    }
+                    default_range = Some((default_start, j));
+                }
+                if j < n && value[j] == b'}' {
+                    j += 1;
+                }
+                match lookup {
+                    Some(found_value) => self.value_buffer.extend_from_slice(found_value),
+                    None => {
+                        if let Some((start, end)) = default_range {
+                            if depth < MAX_EXPAND_DEPTH {
+                                self.expand_into(map, &value[start..end], depth + 1)?;
+                            } else {
+                                self.value_buffer.extend_from_slice(&value[start..end]);
+                            }
+                        }
+                    }
+                }
+                i = j;
+                continue;
+            }
+            self.value_buffer.push(c);
+            i += 1;
+        }
+        Ok(found)
     }
 
     fn _parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(

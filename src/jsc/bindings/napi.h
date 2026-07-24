@@ -457,6 +457,34 @@ public:
         return static_cast<bool>(m_pendingException);
     }
 
+    // During env cleanup a finalizer may run JS (Bun allows this, unlike
+    // Node) and that JS may throw. napi_is_exception_pending deliberately
+    // skips the VM check during cleanup, so an exception left on the VM is
+    // invisible to the addon while still failing its next napi call;
+    // node-addon-api escalates that mismatch to napi_fatal_error (#34663).
+    // Mirror Node's per-call TryCatch capture: move the exception into
+    // m_pendingException, where napi_is_exception_pending and
+    // napi_get_and_clear_last_exception see it.
+    void stashExceptionDuringCleanup()
+    {
+        if (!m_isFinishingFinalizers) [[likely]] {
+            return;
+        }
+        stashExceptionDuringCleanupSlow();
+    }
+
+    void noteExceptionHandedToAddonDuringCleanup(JSC::JSValue value)
+    {
+        if (m_isFinishingFinalizers) [[unlikely]] {
+            m_cleanupExceptionHandedToAddon.set(m_vm, value);
+        }
+    }
+
+    bool isExceptionHandedToAddonDuringCleanup(JSC::JSValue value) const
+    {
+        return m_cleanupExceptionHandedToAddon && m_cleanupExceptionHandedToAddon.get() == value;
+    }
+
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     // `bun test --isolate` creates a fresh Zig::GlobalObject per file and
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
@@ -590,6 +618,9 @@ private:
     JSC::VM& m_vm;
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
+    // The exception napi_get_and_clear_last_exception handed to the addon
+    // during cleanup; napi_throw accepts rethrowing exactly this value.
+    JSC::Strong<JSC::Unknown> m_cleanupExceptionHandedToAddon;
     size_t m_cleanupHookCounter = 0;
 
     WTF::Lock m_threadSafeFunctionsLock;
@@ -602,6 +633,7 @@ private:
     // (which has JS_EXPORT_PRIVATE ctor/dtor under
     // ENABLE_EXCEPTION_SCOPE_VERIFICATION) are confined to one TU.
     void clearExceptionsBetweenFinalizers();
+    void stashExceptionDuringCleanupSlow();
 
     // Returns a vector of hooks in reverse order of insertion.
     std::vector<Napi::EitherCleanupHook> getHooks() const

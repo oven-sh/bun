@@ -414,6 +414,7 @@ impl PostgresSQLConnection {
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
         (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
+        (get_on_notification, set_on_notification => onnotification_get_cached, onnotification_set_cached),
     }
 
     pub fn setup_tls(&self) {
@@ -1049,13 +1050,19 @@ impl PostgresSQLConnection {
         event_loop.exit();
         // === defer block ===
         if self.status.get() == Status::Connected
+            && !self
+                .flags
+                .get()
+                .contains(ConnectionFlags::KEEP_ALIVE_REQUESTED)
             && !self.has_query_running()
             && self.write_buffer.get().remaining().is_empty()
         {
             // Don't keep the process alive when there's nothing to do.
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
         } else if self.status.get() == Status::Connected {
-            // Keep the process alive if there's something to do.
+            // Keep the process alive if there's something to do (or JS asked
+            // for it via ref(), e.g. a LISTEN connection waiting for
+            // notifications).
             self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
         }
         self.update_flags(|f| f.remove(ConnectionFlags::IS_PROCESSING_DATA));
@@ -1374,11 +1381,23 @@ impl<const SSL: bool> SocketHandler<SSL> {
 }
 
 impl PostgresSQLConnection {
-    bun_jsc::poll_ref_hostfns!(
-        field = poll_ref,
-        ctx = vm_ctx,
-        after = |this: &Self| this.update_has_pending_activity(),
-    );
+    // Hand-written instead of `bun_jsc::poll_ref_hostfns!` because the request
+    // must be sticky: `on_data`'s tail block drops the poll ref whenever the
+    // connection goes idle, which would silently undo a plain `ref()` on the
+    // next data event (see KEEP_ALIVE_REQUESTED in ConnectionFlags).
+    pub fn do_ref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        this.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
+        this.poll_ref.with_mut(|p| p.ref_(this.vm_ctx()));
+        this.update_has_pending_activity();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn do_unref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        this.update_flags(|f| f.remove(ConnectionFlags::KEEP_ALIVE_REQUESTED));
+        this.poll_ref.with_mut(|p| p.unref(this.vm_ctx()));
+        this.update_has_pending_activity();
+        Ok(JSValue::UNDEFINED)
+    }
 
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
@@ -3036,8 +3055,8 @@ impl PostgresSQLConnection {
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {
-                debug!("UNSUPPORTED NotificationResponse");
-                let _resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
+                let resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
+                self.dispatch_notification(&resp.channel, &resp.payload);
             }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
@@ -3084,6 +3103,61 @@ impl PostgresSQLConnection {
 
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.status.get() == Status::Connected)
+    }
+
+    /// Backend process ID delivered via the BackendKeyData ('K') message during
+    /// connection setup. Returns 0 before the message has been received. Useful
+    /// for `pg_terminate_backend(pid)` and matches the `state.pid` field exposed
+    /// by postgres.js.
+    pub fn get_process_id(this: &Self, _: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.backend_key_data.get().process_id)
+    }
+
+    /// Backend secret key delivered via BackendKeyData ('K'). Required to issue
+    /// a CancelRequest on a separate connection. Matches `state.secret` in
+    /// postgres.js.
+    pub fn get_secret_key(this: &Self, _: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.backend_key_data.get().secret_key)
+    }
+
+    /// Invoke the JS `onnotification` callback (if set) with `(channel, payload)`
+    /// for a NotificationResponse ('A') message. The callback is queued as a
+    /// microtask rather than called synchronously: we are inside the socket
+    /// data handler here, and user JS must not re-enter the protocol parser
+    /// mid-message.
+    pub fn dispatch_notification(&self, channel: &[u8], payload: &[u8]) {
+        let Some(js_value) = self.js_value.try_get() else {
+            return;
+        };
+        if self.vm().is_shutting_down() {
+            return;
+        }
+        debug!(
+            "dispatchNotification: channel={} payload.len={}",
+            bstr::BStr::new(channel),
+            payload.len()
+        );
+        js_value.ensure_still_alive();
+        let Some(callback) = js::onnotification_get_cached(js_value) else {
+            return;
+        };
+        if !callback.is_callable() {
+            return;
+        }
+        callback.ensure_still_alive();
+        let global = self.global();
+        // create_utf8_for_js copies into a fresh WTFStringImpl owned by the
+        // returned JS string (no +1 left on the Rust side), so the JSValue is
+        // safe after the NotificationResponse buffers are freed.
+        let channel_js = match crate::jsc::bun_string_jsc::create_utf8_for_js(global, channel) {
+            Ok(v) => v,
+            Err(e) => return global.report_active_exception_as_unhandled(e),
+        };
+        let payload_js = match crate::jsc::bun_string_jsc::create_utf8_for_js(global, payload) {
+            Ok(v) => v,
+            Err(e) => return global.report_active_exception_as_unhandled(e),
+        };
+        global.queue_microtask(callback, &[channel_js, payload_js]);
     }
 
     pub fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {

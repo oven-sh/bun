@@ -3558,6 +3558,32 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // https://github.com/oven-sh/bun/issues/3521
+    test("does not mutate the received object when an asymmetric matcher matches", () => {
+      const obj = { foo: "foo", bar: "bar" };
+      expect(obj).toMatchObject({ bar: expect.any(String) });
+      expect(obj).toEqual({ foo: "foo", bar: "bar" });
+      expect(obj).toMatchObject({ bar: expect.any(String) });
+      expect(obj.bar).toBe("bar");
+
+      const nested = { a: { b: { c: 42 } }, d: "keep" };
+      expect(nested).toMatchObject({ a: { b: { c: expect.any(Number) } } });
+      expect(nested).toEqual({ a: { b: { c: 42 } }, d: "keep" });
+
+      const arr = { list: [1, "two", 3] };
+      expect(arr).toMatchObject({ list: [1, expect.any(String), 3] });
+      expect(arr).toEqual({ list: [1, "two", 3] });
+
+      // The expected/subset side must also be left alone when the received
+      // side carries the asymmetric matcher.
+      const matcherSentinel = expect.any(String);
+      const matchersFirst = { a: matcherSentinel };
+      const subset = { a: "hello" };
+      expect(matchersFirst).toMatchObject(subset);
+      expect(matchersFirst.a).toBe(matcherSentinel);
+      expect(subset.a).toBe("hello");
+    });
   });
 
   describe("toMatch()", () => {

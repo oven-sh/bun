@@ -75,3 +75,13 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`property matchers do not mutate the received object 1`] = `
+{
+  "id": Any<Number>,
+  "nested": {
+    "name": Any<String>,
+  },
+  "when": Any<Date>,
+}
+`;

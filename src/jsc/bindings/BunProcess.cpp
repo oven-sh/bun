@@ -46,6 +46,13 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/JSDataView.h>
+#include <JavaScriptCore/MarkedBlockInlines.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/HashSet.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
 #include <JavaScriptCore/StructureCache.h>
@@ -3705,6 +3712,67 @@ err:
 #endif
 }
 
+// Sum the byteLength of every live ArrayBuffer / SharedArrayBuffer plus every
+// OversizeTypedArray backing store. heap.arrayBufferSize() adds
+// sizeof(ArrayBuffer) overhead per buffer and ignores OversizeTypedArray.
+static size_t computeArrayBuffersBytes(JSC::VM& vm)
+{
+    using namespace JSC;
+
+    size_t total = 0;
+    UncheckedKeyHashSet<ArrayBuffer*> buffers;
+
+    auto visitViews = [&](IsoSubspace* space) {
+        if (!space)
+            return;
+        space->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+            auto* view = static_cast<JSArrayBufferView*>(static_cast<JSCell*>(cell));
+            TypedArrayMode mode = view->mode();
+            if (mode == OversizeTypedArray)
+                total += view->byteLengthRaw();
+            else if (isWastefulTypedArray(mode)) {
+                if (ArrayBuffer* buffer = view->butterfly()->indexingHeader()->arrayBuffer())
+                    buffers.add(buffer);
+            }
+        });
+    };
+
+    HeapIterationScope iterationScope(vm.heap);
+    visitViews(vm.heap.int8ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.int16ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.int32ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint8ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint8ClampedArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint16ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.uint32ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.float16ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.float32ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.float64ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.bigInt64ArraySpace<SubspaceAccess::Concurrently>());
+    visitViews(vm.heap.bigUint64ArraySpace<SubspaceAccess::Concurrently>());
+
+    if (auto* space = vm.heap.dataViewSpace<SubspaceAccess::Concurrently>()) {
+        space->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+            auto* view = static_cast<JSDataView*>(static_cast<JSCell*>(cell));
+            if (ArrayBuffer* buffer = view->possiblySharedBuffer())
+                buffers.add(buffer);
+        });
+    }
+
+    if (auto* space = vm.heap.arrayBufferSpace<SubspaceAccess::Concurrently>()) {
+        space->forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+            auto* wrapper = static_cast<JSArrayBuffer*>(static_cast<JSCell*>(cell));
+            if (ArrayBuffer* buffer = wrapper->impl())
+                buffers.add(buffer);
+        });
+    }
+
+    for (ArrayBuffer* buffer : buffers)
+        total += buffer->byteLength();
+
+    return total;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3716,6 +3784,26 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
         throwSystemError(throwScope, globalObject, "Failed to get memory usage"_s, "memoryUsage"_s, errno);
         return {};
     }
+
+    // Sample all heap statistics before allocating the result object so that
+    // constructEmptyObject() cannot trigger a collection between the caller's
+    // last allocation and the heap walk below.
+    JSC::DeferGC deferGC(vm);
+
+    size_t heapTotal = vm.heap.blockBytesAllocated();
+    size_t heapUsed = vm.heap.sizeAfterLastEdenCollection();
+
+    // heap.arrayBufferSize() misses OversizeTypedArray backing stores and adds
+    // sizeof(ArrayBuffer) overhead per entry, so walk the relevant subspaces
+    // and report exact byteLength like Node.js does.
+    size_t arrayBuffers = computeArrayBuffersBytes(vm);
+
+    // Node documents arrayBuffers as a subset of external. extraMemorySize()
+    // only re-accumulates OversizeTypedArray bytes during GC marking, so clamp
+    // external to be at least arrayBuffers to preserve that relationship.
+    size_t external = vm.heap.extraMemorySize() + vm.heap.externalMemorySize();
+    if (external < arrayBuffers)
+        external = arrayBuffers;
 
     JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure());
     if (throwScope.exception()) [[unlikely]] {
@@ -3732,26 +3820,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     // }
 
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
-
-    // heap.size() loops through every cell...
-    // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
-
-    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
-
-    // JSC won't count this number until vm.heap.addReference() is called.
-    // That will only happen in cases like:
-    // - new ArrayBuffer()
-    // - new Uint8Array(42).buffer
-    // - fs.readFile(path, "utf-8") (sometimes)
-    // - ...
-    //
-    // But it won't happen in cases like:
-    // - new Uint8Array(42)
-    // - Buffer.alloc(42)
-    // - new Uint8Array(42).slice()
-    result->putDirectOffset(vm, 4, JSC::jsNumber(vm.heap.arrayBufferSize()));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(heapTotal));
+    result->putDirectOffset(vm, 2, JSC::jsNumber(heapUsed));
+    result->putDirectOffset(vm, 3, JSC::jsNumber(external));
+    result->putDirectOffset(vm, 4, JSC::jsNumber(arrayBuffers));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

@@ -1350,7 +1350,7 @@ impl FormatOptions {
         let arg1 = arguments[0];
 
         if arg1.is_object() {
-            if let Some(opt) = arg1.get_truthy(global_this, "depth")? {
+            if let Some(opt) = arg1.get(global_this, b"depth")? {
                 if opt.is_int32() {
                     let arg = opt.to_int32();
                     if arg < 0 {
@@ -1368,6 +1368,8 @@ impl FormatOptions {
                             "expected depth to be an integer, got {v}"
                         )));
                     }
+                } else if opt.is_null() {
+                    self.max_depth = u16::MAX;
                 }
             }
             if let Some(opt) = arg1.get_boolean_loose(global_this, "colors")? {
@@ -1400,6 +1402,8 @@ impl FormatOptions {
                             "expected depth to be an integer, got {v}"
                         )));
                     }
+                } else if depth_arg.is_null() {
+                    self.max_depth = u16::MAX;
                 }
                 if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
                     self.enable_colors = arguments[1].to_boolean();

@@ -327,6 +327,8 @@ Response.redirect("bun.sh", {
 
 Bun.inspect.custom;
 Bun.inspect;
+Bun.inspect({}, { depth: null });
+Bun.inspect({}, { depth: Infinity });
 
 fetch.preconnect("bun.sh");
 Bun.fetch.preconnect("bun.sh");

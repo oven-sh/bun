@@ -10,8 +10,6 @@ const {
   throwIfNullBytesInFileName,
 } = require("internal/validators");
 
-const kEmptyObject = Object.freeze(Object.create(null));
-
 const isDate = types.isDate;
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
@@ -1240,7 +1238,7 @@ function glob(pattern: string | string[], options, callback) {
   // the callback surfaces as an uncaught exception instead of rejecting the
   // internal promise chain (and is never routed back into `callback` as an
   // error), matching Node.js.
-  Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject)).then(
+  Array.fromAsync(lazyGlob().glob(pattern, options)).then(
     nextTickWithNullThen.bind(null, callback),
     nextTickWith.bind(null, callback),
   );
@@ -1253,7 +1251,7 @@ function nextTickWith(callback, err) {
 }
 
 function globSync(pattern: string | string[], options): string[] {
-  return Array.from(lazyGlob().globSync(pattern, options ?? kEmptyObject));
+  return Array.from(lazyGlob().globSync(pattern, options));
 }
 
 var exports = {

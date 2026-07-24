@@ -75,6 +75,8 @@ pub mod markdown_object;
 pub mod native_promise_context;
 #[path = "api/output_file_jsc.rs"]
 pub mod output_file_jsc;
+#[path = "api/QRObject.rs"]
+pub mod qr_object;
 #[path = "api/standalone_graph_jsc.rs"]
 pub mod standalone_graph_jsc;
 #[path = "api/TOMLObject.rs"]
@@ -190,6 +192,7 @@ pub use crate::api::json5_object as JSON5Object;
 pub use crate::api::jsonc_object as JSONCObject;
 pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
+pub use crate::api::qr_object as QRObject;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
 pub use crate::api::yaml_object as YAMLObject;

@@ -2689,8 +2689,6 @@ pub mod bv2_impl {
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // The Box is heap-owned and dropped by the caller.
-            transpiler.env().load_tracy();
-
             transpiler.options.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
             transpiler.resolver.opts.mark_builtins_as_external =

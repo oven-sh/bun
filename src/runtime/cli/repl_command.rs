@@ -287,8 +287,6 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         }
 
-        // SAFETY: transpiler.env is valid.
-        unsafe { (*vm.transpiler.env).load_tracy() };
         Ok(())
     }
 }

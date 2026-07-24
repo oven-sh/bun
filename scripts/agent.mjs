@@ -200,14 +200,27 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 `;
       writeFile(plistPath, plist, { mode: 0o644 });
 
-      // Matches the script already deployed on the fleet: covers both the
-      // Homebrew-agent layout (older x64 boxes) and the Library layout (this
-      // installer), fixes ownership, then reboots.
+      // agent-startup fires before the agent registers with Buildkite, so no
+      // job is in flight: the only safe point to wipe builds/ and /tmp. The
+      // path is baked in because this hook sees only the agent process env.
+      const hooksPath = join(homePath, "hooks");
+      mkdir(hooksPath);
+      const agentStartupHook = [
+        `#!/bin/sh`,
+        `pgrep -qf '[b]uildkite-agent bootstrap' && exit 0`,
+        `rm -rf '${join(homePath, "builds")}'/* /tmp/* /var/tmp/* 2>/dev/null || true`,
+        ``,
+      ].join("\n");
+      writeFile(join(hooksPath, "agent-startup"), agentStartupHook, { mode: 0o755 });
+
+      // Daily reboot; deletion of live-job paths lives in agent-startup above.
+      // Rebooting an in-flight job is exit_status -1 (agent lost), which
+      // .buildkite/ci.mjs getRetry() auto-retries once.
       const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
       const cleanupScript =
         `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
         `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
-        `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
+        `{ rm -rf /System/Volumes/Data/System/Library/Caches/com.apple.coresymbolicationd/* || true; } && ` +
         `{ chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
         `{ chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
         `{ shutdown -r now || reboot; }`;

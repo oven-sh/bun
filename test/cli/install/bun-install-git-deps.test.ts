@@ -18,12 +18,16 @@ const gitEnv = {
   GIT_COMMITTER_EMAIL: "test@example.com",
 };
 
-function git(cwd: string, ...args: string[]) {
-  const res = Bun.spawnSync({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
-  if (!res.success) {
-    throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stderr.toString()}`);
+async function run(cwd: string, cmd: string[], what: string) {
+  await using proc = Bun.spawn({ cmd, cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`${what} failed in ${cwd}:\n${stderr}`);
   }
-  return res.stdout.toString();
+}
+
+function git(cwd: string, ...args: string[]) {
+  return run(cwd, ["git", ...args], `git ${args.join(" ")}`);
 }
 
 interface BranchPackage {
@@ -34,25 +38,25 @@ interface BranchPackage {
 
 // Creates `<root>/shared-repo.git`, a bare repo with one orphan branch per
 // package, and prepares it for serving over dumb HTTP.
-function makeSharedRepo(root: string, packages: BranchPackage[]): string {
+async function makeSharedRepo(root: string, packages: BranchPackage[]): Promise<string> {
   const bare = join(root, "shared-repo.git");
   const work = join(root, "work");
-  git(root, "init", "-q", "--bare", "shared-repo.git");
+  await git(root, "init", "-q", "--bare", "shared-repo.git");
   mkdirSync(work);
-  git(work, "init", "-q");
+  await git(work, "init", "-q");
   for (const pkg of packages) {
-    git(work, "checkout", "-q", "--orphan", pkg.branch);
+    await git(work, "checkout", "-q", "--orphan", pkg.branch);
     writeFileSync(
       join(work, "package.json"),
       JSON.stringify({ name: pkg.name, version: "1.0.0", dependencies: pkg.dependencies }, null, 2),
     );
     writeFileSync(join(work, "index.js"), `module.exports = ${JSON.stringify(pkg.branch)};\n`);
-    git(work, "add", "-A");
-    git(work, "commit", "-q", "-m", pkg.branch, "--no-gpg-sign");
-    git(work, "push", "-q", bare, pkg.branch);
+    await git(work, "add", "-A");
+    await git(work, "commit", "-q", "-m", pkg.branch, "--no-gpg-sign");
+    await git(work, "push", "-q", bare, pkg.branch);
   }
   // dumb HTTP clients read the static files this generates
-  git(bare, "update-server-info");
+  await git(bare, "update-server-info");
   return bare;
 }
 
@@ -101,7 +105,7 @@ test.concurrent(
     // pkg-a re-declares 11 of its siblings as its own dependencies, so those
     // specs appear both directly (from the project) and transitively.
     const transitive = Object.fromEntries(letters.slice(1, 12).map(l => [`@scope/pkg-${l}`, `${repoUrl}#pkg-${l}`]));
-    makeSharedRepo(
+    await makeSharedRepo(
       root,
       letters.map(l => ({
         name: `@scope/pkg-${l}`,
@@ -165,13 +169,7 @@ test.concurrent("installs every tarball-URL dependency that appears directly and
       }),
     );
     writeFileSync(join(pkgDir, "index.js"), `module.exports = ${JSON.stringify(`pkg-${l}`)};\n`);
-    const res = Bun.spawnSync({
-      cmd: ["tar", "-czf", join(tarballs, `pkg-${l}.tgz`), "-C", join(root, `work-${l}`), "package"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (!res.success) throw new Error(`tar failed: ${res.stderr.toString()}`);
+    await run(root, ["tar", "-czf", join(tarballs, `pkg-${l}.tgz`), "-C", join(root, `work-${l}`), "package"], "tar");
   }
 
   const project = join(root, "project");
@@ -208,7 +206,7 @@ test.concurrent("installs every git dependency from a lockfile on a cold cache w
 
   await using server = serveStatic(root);
   const repoUrl = `git+http://localhost:${server.port}/shared-repo.git`;
-  makeSharedRepo(root, [
+  await makeSharedRepo(root, [
     { name: "@scope/pkg-m", branch: "pkg-m" },
     { name: "@scope/pkg-n", branch: "pkg-n" },
   ]);
@@ -251,7 +249,7 @@ test.concurrent("installs every git dependency from a lockfile on a cold cache w
 test.concurrent("installs a git+file:// dependency", async () => {
   using dir = tempDir("git-dep-file", {});
   const root = String(dir);
-  const bare = makeSharedRepo(root, [{ name: "@scope/pkg-b", branch: "pkg-b" }]);
+  const bare = await makeSharedRepo(root, [{ name: "@scope/pkg-b", branch: "pkg-b" }]);
 
   const project = join(root, "project");
   mkdirSync(project);

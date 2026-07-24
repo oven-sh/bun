@@ -5271,7 +5271,7 @@ pub fn write_file_internal(
 
         // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
         if let Some(archive) = data.as_class_ref::<Archive>() {
-            break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
+            break 'brk Blob::init_with_store(archive.blob_store(global_this)?, global_this);
         }
 
         break 'brk Blob::get::<false, false>(global_this, data)?;

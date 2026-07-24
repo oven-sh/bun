@@ -14,6 +14,18 @@ export default [
       },
     },
     proto: {
+      append: {
+        fn: "append",
+        length: 2,
+      },
+      stream: {
+        fn: "stream",
+        length: 0,
+      },
+      end: {
+        fn: "end",
+        length: 0,
+      },
       extract: {
         fn: "extract",
         length: 2,

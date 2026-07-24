@@ -123,6 +123,9 @@ test("dependency on workspace without version in package.json", async () => {
     "kjwoehcojrgjoj", // dist-tag does not exist, should choose local workspace
     "*.1.*",
     "*-pre",
+    // dist-tags prefer the local workspace when the name matches (npm parity)
+    "latest",
+    "",
   ];
   const shouldNotWork: string[] = [
     "1",
@@ -131,8 +134,6 @@ test("dependency on workspace without version in package.json", async () => {
     "1.1.0",
     "*-pre+build",
     "*+build",
-    "latest", // dist-tag exists, should choose package from npm
-    "",
   ];
 
   for (const version of shouldWork) {
@@ -274,8 +275,13 @@ test("dependency on same name as workspace and dist-tag", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "3 packages installed",
+    "2 packages installed",
   ]);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "4.17.21",
+  });
+  expect(await exists(join(packageDir, "packages", "bar", "node_modules", "no-deps"))).toBeFalse();
 });
 
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
@@ -2040,6 +2046,54 @@ registry = "${verdaccio.registryUrl()}"
 
     // Verify that the dependency linked to the bar package is the workspace version (using the workspace: prefix), not the npm version
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
+  });
+
+  test.concurrent("linkWorkspacePackages = false with dist-tag uses registry", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfigPath = await setupWorkspace(packageDir);
+    await Promise.all([
+      write(
+        bunfigPath,
+        `
+[install]
+linkWorkspacePackages = false
+registry = "${verdaccio.registryUrl()}"
+`,
+      ),
+
+      write(
+        join(packageDir, "packages", "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "latest",
+          },
+        }),
+      ),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+    const lockfile = parseLockfile(packageDir);
+
+    const barPackage = lockfile.packages.find(p => p.name === "bar");
+    expect(barPackage.dependencies.length).toEqual(1);
+    const barDependency = lockfile.dependencies.find(p => p.id === barPackage.dependencies[0]);
+    expect(barDependency).toBeDefined();
+
+    expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
   });
 });
 

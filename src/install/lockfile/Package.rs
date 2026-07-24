@@ -1756,6 +1756,25 @@ impl Package<u64> {
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
+            dependency::version::Tag::DistTag => {
+                if let Some(wp) = workspace_path
+                    && pm.options.link_workspace_packages
+                {
+                    let path = wp.sliced(buf);
+                    if let Some(mut dep) = dependency::parse_with_tag(
+                        external_alias.value,
+                        Some(external_alias.hash),
+                        path.slice,
+                        dependency::version::Tag::Workspace,
+                        &path,
+                        Some(&mut *log),
+                        Some(&mut *pm),
+                    ) {
+                        dep.literal = dependency_version.literal;
+                        dependency_version = dep;
+                    }
+                }
+            }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
                     let satisfies =

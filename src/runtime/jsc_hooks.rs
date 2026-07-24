@@ -5097,11 +5097,30 @@ unsafe fn resolve_hook(
     let specifier_utf8 = specifier.to_utf8();
     let source_utf8 = source.to_utf8();
 
+    let hardcoded_alias = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default());
+
     // `PluginRunner.onResolveJSC`.
     // SAFETY: `vm` is the live per-thread VM.
     if unsafe { &*vm }.plugin_runner.is_some() {
         use bun_bundler_jsc::PluginRunner as plugin_runner;
         if plugin_runner::could_be_plugin(specifier_utf8.slice()) {
+            // A builtin that is already cached keeps its canonical key so a
+            // late-registered onResolve cannot redirect it to a fresh registry
+            // entry and fork module identity (see the matching guard in
+            // `VirtualMachine::resolve_maybe_needs_trailing_slash`).
+            if let Some(hardcoded) = hardcoded_alias {
+                let canonical = hardcoded.path.as_bytes();
+                if global_ref.is_builtin_module_cached(canonical) {
+                    let path = if is_user_require_resolve && hardcoded.node_builtin {
+                        specifier.dupe_ref()
+                    } else {
+                        bun_core::String::init(canonical)
+                    };
+                    // SAFETY: per fn contract.
+                    unsafe { *res = ErrorableString::ok(path) };
+                    return true;
+                }
+            }
             let namespace = plugin_runner::extract_namespace(specifier_utf8.slice());
             let after_namespace = if namespace.is_empty() {
                 specifier_utf8.slice()
@@ -5131,7 +5150,7 @@ unsafe fn resolve_hook(
     // Hardcoded builtin alias fast path. For
     // `require.resolve("fs")` (`is_user_require_resolve && node_builtin`) Node
     // returns the bare specifier as-is, not the canonical `node:fs`.
-    if let Some(hardcoded) = Alias::get(specifier_utf8.slice(), Target::Bun, AliasCfg::default()) {
+    if let Some(hardcoded) = hardcoded_alias {
         let path = if is_user_require_resolve && hardcoded.node_builtin {
             specifier.dupe_ref()
         } else {

@@ -5,6 +5,7 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
+#include <wtf/RunLoop.h>
 
 #if USE(MIMALLOC)
 // Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
@@ -99,4 +100,15 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 #endif
         }
     }
+}
+
+// Transitional shim: delete once WEBKIT_VERSION includes oven-sh/WebKit#305,
+// where RunLoopBun's TimerBase::stop() does this via didStopWhileActive().
+// WTFTimer__cancel calls this only after wtf_disarm removed a still-ACTIVE
+// node (fired() cannot be running), so clearing m_function is safe.
+extern "C" void Bun__breakDispatchTimerCycle(WTF::RunLoop::TimerBase* timer)
+{
+    if (timer->description() != "DispatchTimer"_s) [[likely]]
+        return;
+    static_cast<WTF::RunLoop::DispatchTimer*>(timer)->setFunction({});
 }

@@ -421,6 +421,26 @@ impl Progress {
         unsafe { (*ctx_ptr).refresh_with_held_lock() };
     }
 
+    /// Erase the in-flight progress line (if any) so the caller can write a
+    /// standalone message to the same stream; the next `refresh()` /
+    /// `maybe_refresh()` redraws the tree. Unlike `root.end()`, this leaves
+    /// the node topology and `done` flag untouched. Thread-safe.
+    pub fn clear_line(&mut self) {
+        let ctx_ptr = std::ptr::from_mut::<Self>(self);
+        let Some(_g) = self.update_mutex.try_lock() else {
+            return;
+        };
+        // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
+        let this = unsafe { &mut *ctx_ptr };
+        let mut end: usize = 0;
+        this.clear_with_held_lock(&mut end);
+        if let Some(file) = this.terminal {
+            if file.write(&this.output_buffer[0..end]).is_err() {
+                this.terminal = None;
+            }
+        }
+    }
+
     fn clear_with_held_lock(&mut self, end_ptr: &mut usize) {
         let Some(file) = self.terminal else {
             return;

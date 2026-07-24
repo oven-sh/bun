@@ -2255,7 +2255,11 @@ pub mod environment_variables {
 pub(crate) extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
     // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
     let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
-    let _ = vm.report_error_keep_alive(global_object, err);
+    let _ = vm.report_error_keep_alive(
+        global_object,
+        err,
+        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+    );
 }
 
 /// Shared argument prefix for `Bun.{gzip,gunzip,deflate,inflate}Sync` and

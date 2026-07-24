@@ -1378,20 +1378,20 @@ impl VirtualMachine {
         self.uncaught_exception_impl(global_object, err, origin, true)
     }
 
-    /// Web `reportError()` (and the debug/bootstrap logging that shares it):
-    /// print like an uncaught exception — listeners and exit code included —
-    /// but keep the process running.
+    /// Print like an uncaught exception — listeners and exit code included —
+    /// but keep the process running. For Web `reportError()` and Bun-native
+    /// long-running handlers (`Bun.serve` websocket, `Bun.connect`/`Bun.listen`,
+    /// `Bun.udpSocket`, `Bun.Cron`) whose pre-existing contract is print-and-
+    /// continue; matches the `Bun.serve` HTTP fetch path, which calls
+    /// `on_unhandled_rejection` directly. Node-compat paths (nextTick drain,
+    /// N-API, `node:http`) stay on `uncaught_exception` and hard-exit.
     pub fn report_error_keep_alive(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
+        origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(
-            global_object,
-            err,
-            UncaughtExceptionOrigin::Exception,
-            false,
-        )
+        self.uncaught_exception_impl(global_object, err, origin, false)
     }
 
     fn uncaught_exception_impl(

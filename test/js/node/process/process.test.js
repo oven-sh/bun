@@ -2030,3 +2030,49 @@ it("a handled uncaughtException keeps the event loop running", async () => {
   expect(lines).toEqual(["HANDLED:caught-me", "IO-CALLBACK-RAN", "TIMER-RAN"]);
   expect(exitCode).toBe(0);
 });
+
+it("a throwing Bun.listen data handler with no error: handler keeps the server alive", async () => {
+  // Bun-native long-running handlers keep the pre-existing print-and-continue
+  // contract (matching the Bun.serve HTTP fetch path, which reports via
+  // on_unhandled_rejection and keeps serving); only Node-compat paths take
+  // the fatal exit.
+  using dir = tempDir("bun-listen-handler-throw", {
+    "server.js": `
+      let hits = 0;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {},
+          data(socket) {
+            socket.end();
+            console.log("DATA-HANDLER-RAN:" + ++hits);
+            if (hits === 2) server.stop(true);
+            throw new Error("handler-boom");
+          },
+        },
+      });
+      for (let i = 0; i < 2; i++) {
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open(s) { s.write("x"); }, data() {}, close() {} },
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Both connections reached the handler: the first throw did not exit.
+  expect(stdout.trim().split(/\r?\n/)).toEqual(["DATA-HANDLER-RAN:1", "DATA-HANDLER-RAN:2"]);
+  expect(stderr).toContain("handler-boom");
+  // No error: handler and no uncaughtException listener, so the error is
+  // reported (exit code 1), but only after the loop drained naturally.
+  expect(exitCode).toBe(1);
+});

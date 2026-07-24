@@ -515,7 +515,13 @@ pub fn post_process_js_chunk(
     }
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
-    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
+    // The pragma promises Latin-1-safe bytes for the whole chunk, so gate on
+    // every signal that any part was printed without ASCII-only escaping.
+    let is_bun = c.options.target.is_bun()
+        && c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun()
+        && !chunk
+            .flags
+            .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             const INPUT: &[u8] =

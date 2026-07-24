@@ -1,11 +1,11 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
 import fetch2, { fetch, FetchError, Headers, Request, Response } from "node-fetch";
+import { once } from "node:events";
 import * as http from "node:http";
 import * as https from "node:https";
 import * as net from "node:net";
 import * as zlib from "node:zlib";
-import { once } from "node:events";
 import * as stream from "stream";
 
 import { afterEach, describe, expect, test } from "bun:test";

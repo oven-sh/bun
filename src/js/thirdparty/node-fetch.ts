@@ -254,7 +254,9 @@ function fetchWithAgent(url, init, counter) {
             if (redirect !== "manual") {
               settled = true;
               res.resume();
-              reject(new FetchError(`uri requested responds with an invalid redirect URL: ${location}`, "invalid-redirect"));
+              reject(
+                new FetchError(`uri requested responds with an invalid redirect URL: ${location}`, "invalid-redirect"),
+              );
               return;
             }
           }
@@ -262,7 +264,12 @@ function fetchWithAgent(url, init, counter) {
         if (redirect === "error") {
           settled = true;
           res.resume();
-          reject(new FetchError(`uri requested responds with a redirect, redirect mode is set to error: ${href}`, "no-redirect"));
+          reject(
+            new FetchError(
+              `uri requested responds with a redirect, redirect mode is set to error: ${href}`,
+              "no-redirect",
+            ),
+          );
           return;
         }
         if (redirect === "follow" && locationURL !== null) {
@@ -300,8 +307,10 @@ function fetchWithAgent(url, init, counter) {
       const codings = (responseHeaders.get("content-encoding") || "").toLowerCase();
       if (compress && method !== "HEAD" && status !== 204 && status !== 304) {
         let decoder: any;
-        if (codings === "gzip" || codings === "x-gzip") decoder = zlib.createGunzip({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
-        else if (codings === "deflate" || codings === "x-deflate") decoder = zlib.createInflate({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
+        if (codings === "gzip" || codings === "x-gzip")
+          decoder = zlib.createGunzip({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
+        else if (codings === "deflate" || codings === "x-deflate")
+          decoder = zlib.createInflate({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
         else if (codings === "br") decoder = zlib.createBrotliDecompress();
         if (decoder) {
           const out = new PassThrough();

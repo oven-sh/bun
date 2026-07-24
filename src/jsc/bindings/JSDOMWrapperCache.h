@@ -46,15 +46,15 @@ template<typename WrapperClass> JSC::JSObject* getDOMPrototype(JSC::VM&, JSC::JS
 JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, JSC::ArrayBuffer*);
 void* wrapperKey(JSC::ArrayBuffer*);
 
-std::optional<JSDOMObject*> getInlineCachedWrapper(DOMWrapperWorld&, void*);
+std::optional<JSC::JSObject*> getInlineCachedWrapper(DOMWrapperWorld&, void*);
 std::optional<JSDOMObject*> getInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*);
 std::optional<JSC::JSArrayBuffer*> getInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*);
 
-bool setInlineCachedWrapper(DOMWrapperWorld&, void*, JSDOMObject*, JSC::WeakHandleOwner*);
+bool setInlineCachedWrapper(DOMWrapperWorld&, void*, JSC::JSObject*, JSC::WeakHandleOwner*);
 bool setInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*, JSDOMObject* wrapper, JSC::WeakHandleOwner* wrapperOwner);
 bool setInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*, JSC::JSArrayBuffer* wrapper, JSC::WeakHandleOwner* wrapperOwner);
 
-bool clearInlineCachedWrapper(DOMWrapperWorld&, void*, JSDOMObject*);
+bool clearInlineCachedWrapper(DOMWrapperWorld&, void*, JSC::JSObject*);
 bool clearInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*, JSDOMObject* wrapper);
 bool clearInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*, JSC::JSArrayBuffer* wrapper);
 
@@ -108,9 +108,9 @@ inline void* wrapperKey(JSC::ArrayBuffer* domObject)
     return domObject;
 }
 
-inline std::optional<JSDOMObject*> getInlineCachedWrapper(DOMWrapperWorld&, void*) { return std::nullopt; }
-inline bool setInlineCachedWrapper(DOMWrapperWorld&, void*, JSDOMObject*, JSC::WeakHandleOwner*) { return false; }
-inline bool clearInlineCachedWrapper(DOMWrapperWorld&, void*, JSDOMObject*) { return false; }
+inline std::optional<JSC::JSObject*> getInlineCachedWrapper(DOMWrapperWorld&, void*) { return std::nullopt; }
+inline bool setInlineCachedWrapper(DOMWrapperWorld&, void*, JSC::JSObject*, JSC::WeakHandleOwner*) { return false; }
+inline bool clearInlineCachedWrapper(DOMWrapperWorld&, void*, JSC::JSObject*) { return false; }
 
 inline std::optional<JSDOMObject*> getInlineCachedWrapper(DOMWrapperWorld& world, ScriptWrappable* domObject)
 {

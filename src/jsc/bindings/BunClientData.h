@@ -65,6 +65,7 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
+    JSC::IsoHeapCellType m_heapCellTypeForJSDOMException;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:

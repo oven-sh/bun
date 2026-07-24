@@ -479,13 +479,6 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // `parse_env_json` builds `E::String`/`E::Object` nodes in the
-        // thread-local AST `Expr`/`Stmt` stores, so create them now — done
-        // lazily here (idempotent no-ops once created) instead of eagerly in
-        // `Transpiler::configure_defines`, since most inits resolve every define
-        // through the fast path above and never need an AST store.
-        bun_ast::Expr::data_store_create();
-        bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
             // `Source.contents` is typed `&'static [u8]` as a stand-in for an
@@ -497,16 +490,13 @@ impl DefineDataExt for DefineData {
             path: defines_path(),
             ..Default::default()
         };
-        let expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
-        // The `deep_clone` is load-bearing even though `.data` bytes already
-        // live in `bump`: `parse_env_json` → `new_expr` → `Expr::init` allocates
-        // the `E::String` *payload* (the `StoreRef` target) in the thread-local
-        // AST store, which `configure_defines` resets on return via
-        // `StoreResetGuard`. Before the `bun_ast` unification this was masked by
-        // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
-        // is identity, so without `deep_clone` the `DefineData.value` dangles
-        // into a freed slab and `process.env.NODE_ENV` reads garbage.
-        let data: ExprData = expr.data.deep_clone(bump)?;
+        // The `AstArena` is placed in `bump` so its backing mi_heap shares the
+        // define table's lifetime (payload `StoreRef`s produced by
+        // `parse_env_json` and `deep_clone` below point into it).
+        let ast_arena: &bun_alloc::AstArena = bump.alloc(bun_alloc::AstArena::new());
+        let alloc = ast_arena.alloc();
+        let expr = bun_parsers::json_parser::parse_env_json(&source, log, alloc)?;
+        let data: ExprData = expr.data.deep_clone(alloc)?;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,

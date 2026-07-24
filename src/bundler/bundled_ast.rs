@@ -153,7 +153,7 @@ impl<'arena> BundledAst<'arena> {
     // The three `ArenaVec` fields prevent `const fn` here, but spell out the
     // defaults directly instead of round-tripping through `Ast::empty_in` +
     // `init` — this runs once per discovered module on the main thread.
-    pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
+    pub fn empty_in(arena: &'arena bun_alloc::Arena, alloc: bun_alloc::AstAlloc) -> Self {
         Self {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
@@ -164,7 +164,7 @@ impl<'arena> BundledAst<'arena> {
             css: None,
             url_for_css: b"",
             symbols: symbol::List::new_in(arena),
-            module_scope: Scope::default(),
+            module_scope: Scope::empty(alloc),
             char_freq: CharFreq::default(),
             exports_ref: Ref::NONE,
             module_ref: Ref::NONE,
@@ -172,22 +172,21 @@ impl<'arena> BundledAst<'arena> {
             require_ref: Ref::NONE,
             top_level_await_keyword: bun_ast::Range::NONE,
             tla_check: TlaCheck::default(),
-            named_imports: NamedImports::default(),
-            named_exports: NamedExports::default(),
-            export_star_import_records: bun_alloc::AstAlloc::vec(),
-            top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
-            commonjs_named_exports: CommonJSNamedExports::default(),
+            named_imports: NamedImports::new_in(alloc),
+            named_exports: NamedExports::new_in(alloc),
+            export_star_import_records: alloc.vec(),
+            top_level_symbols_to_parts: TopLevelSymbolToParts::new_in(alloc),
+            commonjs_named_exports: CommonJSNamedExports::new_in(alloc),
             redirect_import_record_index: u32::MAX,
             target: bun_ast::Target::Browser,
-            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            ts_enums: bun_ast::ast_result::TsEnumsMap::new_in(alloc),
             flags: Flags::empty(),
         }
     }
 
     // The collection types aren't Copy, so consume `self` to move them (to_ast
     // is a one-shot conversion back to the fat Ast).
-    pub fn to_ast(self) -> Ast<'arena> {
-        let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
+    pub fn to_ast(self, alloc: bun_alloc::AstAlloc) -> Ast<'arena> {
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
             nested_scope_slot_counts: self.nested_scope_slot_counts,
@@ -259,7 +258,7 @@ impl<'arena> BundledAst<'arena> {
                 None
             },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
-            ..Ast::empty_in(arena)
+            ..Ast::empty_in(alloc)
         }
     }
 

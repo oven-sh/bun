@@ -260,9 +260,7 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         let bump = &heap;
         let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
-            bump.alloc(bun_ast::ASTMemoryAllocator::new(bump));
-        ast_memory_store.reset();
-        ast_memory_store.push();
+            bump.alloc(bun_ast::ASTMemoryAllocator::new());
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
         let transpiler = completion.create_and_configure_transpiler(bump)?;
@@ -297,8 +295,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         if run.is_ok() {
             completion.complete_on_bundle_thread();
         }
-
-        ast_memory_store.pop();
 
         // `transpiler` / `ast_memory_store` are arena-allocated, but their
         // containers (`Resolver` caches, `BundleOptions` strings, the AST

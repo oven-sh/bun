@@ -3,7 +3,6 @@ use std::borrow::Cow;
 
 use crate::Error;
 use crate::bun_fs as fs;
-use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
@@ -67,8 +66,7 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        let owned: &'static [u8] =
-            Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
+        let owned: &'static [u8] = Box::leak(Box::<[u8]>::from(path_to_use));
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,

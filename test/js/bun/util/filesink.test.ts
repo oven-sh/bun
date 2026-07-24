@@ -374,7 +374,6 @@ it.skipIf(!isLinux)(
   "end() after a backpressured write() with the reader drained returns the write's promise and resolves it",
   async () => {
     const [readFd, writeFd] = createSocketPair();
-    let readFdOpen = true;
     const sink = Bun.file(writeFd).writer();
     const size = 300 * 1024;
     try {
@@ -406,7 +405,7 @@ it.skipIf(!isLinux)(
       try {
         fs.closeSync(writeFd);
       } catch {}
-      if (readFdOpen) fs.closeSync(readFd);
+      fs.closeSync(readFd);
     }
   },
 );

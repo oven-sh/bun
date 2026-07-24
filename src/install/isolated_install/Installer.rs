@@ -2712,6 +2712,9 @@ impl<'a> Installer<'a> {
             ResolutionTag::Symlink => {
                 let symlink = pkg_res.symlink().slice(string_buf);
                 if crate::dependency::is_link_path(symlink) {
+                    if bun_paths::is_absolute(symlink) {
+                        buf.clear();
+                    }
                     buf.append(symlink);
                 } else {
                     // Lazily ensuring the global link dir would mutate

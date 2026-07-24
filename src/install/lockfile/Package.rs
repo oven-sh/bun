@@ -1756,6 +1756,45 @@ impl Package<u64> {
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
+            dependency::version::Tag::Symlink => {
+                let symlink = *dependency_version.symlink();
+                if dependency::is_link_path(symlink.slice(buf)) {
+                    let mut symlink_buf = PathBuffer::uninit();
+                    let Some(joined) =
+                        resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                            FileSystem::instance().top_level_dir(),
+                            &mut symlink_buf.0,
+                            &[source.path.name().dir, symlink.slice(buf)],
+                        )
+                    else {
+                        log.add_error_fmt(
+                            source,
+                            value_loc_of(source, key_loc),
+                            format_args!(
+                                "Dependency \"{}\" has an unsafe folder path",
+                                bstr::BStr::new(external_alias.slice(buf)),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    };
+                    let relative =
+                        resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
+                    // Keep the stored value path-shaped so `is_link_path`
+                    // downstream still recognises it.
+                    dependency_version.value.symlink =
+                        if relative.is_empty() || relative == b"." {
+                            string_builder.append::<String>(b".")
+                        } else if dependency::is_link_path(relative) {
+                            string_builder.append::<String>(relative)
+                        } else {
+                            let mut prefixed = PathBuffer::uninit();
+                            prefixed[0] = b'.';
+                            prefixed[1] = b'/';
+                            prefixed[2..2 + relative.len()].copy_from_slice(relative);
+                            string_builder.append::<String>(&prefixed[..2 + relative.len()])
+                        };
+                }
+            }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
                     let satisfies =
@@ -2303,7 +2342,8 @@ impl Package<u64> {
                             // If it's a folder or workspace, pessimistically assume we will need a maximum path
                             match dependency::version::Tag::infer(value) {
                                 dependency::version::Tag::Folder
-                                | dependency::version::Tag::Workspace => {
+                                | dependency::version::Tag::Workspace
+                                | dependency::version::Tag::Symlink => {
                                     string_builder.cap += MAX_PATH_BYTES;
                                 }
                                 _ => {}

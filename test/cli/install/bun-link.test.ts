@@ -554,4 +554,60 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
     );
     await checkLink("abspkg", { name: "abspkg", version: "4.0.0" });
   });
+
+  it("resolves relative to a workspace member", async () => {
+    await mkdir(join(package_dir, "packages", "foo", "local"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "foo", "local", "package.json"),
+      JSON.stringify({ name: "localpkg", version: "5.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "packages", "foo", "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { localpkg: "link:./local" } }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+    );
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `[install]\ncache = false\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
+    );
+    const { err, exited } = await runBunInstall(env, package_dir);
+    expect(stderrForInstall(await new Response(err).text())).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const linked =
+      linker === "hoisted"
+        ? join(package_dir, "node_modules", "localpkg")
+        : join(package_dir, "packages", "foo", "node_modules", "localpkg");
+    expect(await file(join(linked, "package.json")).json()).toEqual({ name: "localpkg", version: "5.0.0" });
+    expect((await readlink(linked)).replaceAll("\\", "/")).toContain("local");
+  });
+
+  it("errors with the path when package.json is missing", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { missing: "link:./does-not-exist" },
+      }),
+    );
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `[install]\ncache = false\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
+    );
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const errText = stderrForInstall(await new Response(stderr).text());
+    expect(errText).toContain('Could not find package.json at "./does-not-exist"');
+    expect(errText).not.toContain("is not linked");
+    expect(errText).not.toContain("bun link my-pkg-name-from-package-json");
+    expect(await exited).toBe(1);
+  });
 });

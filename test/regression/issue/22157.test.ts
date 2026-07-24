@@ -14,7 +14,7 @@ beforeAll(async () => {
     "index.js": /* js */ `
       import { parseArgs } from "node:util"
 
-      console.log(JSON.stringify(process.argv));
+      console.log(JSON.stringify({ argv: process.argv, execPath: process.execPath }));
 
       if (process.argv.length === 2) {
         // This should work - no extra executable name should cause parseArgs to throw
@@ -22,7 +22,7 @@ beforeAll(async () => {
           args: process.argv.slice(2),
         });
       } else {
-        // Expect: ["bun", "/$bunfs/root/..." or "B:/~BUN/root/...", "arg1", "arg2"]
+        // Expect: [<path to this executable>, "/$bunfs/root/..." or "B:/~BUN/root/...", "arg1", "arg2"]
         if (process.argv.length !== 4) {
           console.error("Expected 4 argv items, got", process.argv.length);
           process.exit(1);
@@ -68,12 +68,10 @@ test("issue 22157: compiled binary should not include executable name in process
   expect(stdout).toContain("SUCCESS");
 
   // Verify process.argv structure
-  const argvMatch = stdout.match(/\[.*?\]/);
-  expect(argvMatch).toBeTruthy();
-
-  const processArgv = JSON.parse(argvMatch![0]);
+  const { argv: processArgv, execPath } = JSON.parse(stdout.split("\n")[0]);
   expect(processArgv).toHaveLength(2);
-  expect(processArgv[0]).toBe("bun");
+  // argv[0] is the resolved path to the compiled executable itself.
+  expect(processArgv[0]).toBe(execPath);
   // Windows uses "B:/~BUN/root/", Unix uses "/$bunfs/root/"
   expect(processArgv[1]).toMatch(/(\$bunfs|~BUN).*root/);
 });

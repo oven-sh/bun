@@ -335,17 +335,15 @@ mod _impl {
         // argv also omits the script name
         let mut args_list: Vec<BunString> = Vec::with_capacity(args_count + 2);
 
-        if vm.standalone_module_graph.is_some() {
-            // Don't break user's code because they did process.argv.slice(2)
-            // Even if they didn't type "bun", we still want to add it as argv[0]
-            args_list.push(BunString::static_(b"bun"));
-        } else {
-            let exe_path = bun_core::self_exe_path().ok();
-            args_list.push(match exe_path {
-                Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
-                None => BunString::static_(b"bun"),
-            });
-        }
+        // argv[0] is always the resolved path to the running executable. For a
+        // standalone (compiled) binary that executable *is* the program, so the
+        // `spawn(process.argv[0], ...)` self-re-exec idiom must point at it,
+        // not at whatever `bun` happens to be on `$PATH`.
+        let exe_path = bun_core::self_exe_path().ok();
+        args_list.push(match exe_path {
+            Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
+            None => BunString::static_(b"bun"),
+        });
 
         // Per-platform path-separator literal suffixes.
         const EVAL_SUFFIX: &[u8] = if cfg!(windows) {

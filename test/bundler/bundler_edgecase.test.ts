@@ -192,6 +192,114 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
+  // For server-side targets the bundle runs against a real `process.env`, so
+  // `NODE_ENV` must NOT be inlined by default: inlining would freeze the
+  // build machine's value into the output.
+  for (const target of ["bun", "node"] as const) {
+    itBundled("edgecase/NodeEnvNotInlined_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.NODE_ENV === 'production');
+          capture(process.env.NODE_ENV === 'development');
+          capture(process.env.BUN_ENV);
+        `,
+      },
+      target,
+      // The build machine's NODE_ENV must not leak into the bundle.
+      env: { NODE_ENV: "production" },
+      capture: [
+        "process.env.NODE_ENV",
+        'process.env.NODE_ENV === "production"',
+        'process.env.NODE_ENV === "development"',
+        "process.env.BUN_ENV",
+      ],
+    });
+    // `--production` is an explicit opt-in documented as "set
+    // NODE_ENV=production", so it must still inline on server-side targets
+    // (enables DCE of `if (process.env.NODE_ENV !== 'production')` branches).
+    itBundled("edgecase/NodeEnvInlinedWithProduction_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.NODE_ENV === 'production');
+          capture(process.env.NODE_ENV !== 'production');
+          capture(process.env.BUN_ENV);
+        `,
+      },
+      target,
+      production: true,
+      backend: "cli",
+      capture: ['"production"', "!0", "!1", '"production"'],
+    });
+    // An explicit `--define` must still inline on server-side targets.
+    itBundled("edgecase/NodeEnvInlinedWithDefine_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.NODE_ENV === 'production');
+        `,
+      },
+      target,
+      define: { "process.env.NODE_ENV": '"production"' },
+      capture: ['"production"', "true"],
+    });
+    // `--env=inline` must still inline on server-side targets.
+    itBundled("edgecase/NodeEnvInlinedWithEnvInline_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+        `,
+      },
+      target,
+      dotenv: "inline",
+      env: { NODE_ENV: "staging" },
+      backend: "cli",
+      capture: ['"staging"'],
+    });
+    // https://github.com/oven-sh/bun/issues/20183
+    // https://github.com/oven-sh/bun/issues/22820
+    itBundled("edgecase/NodeEnvNotInlinedAPIEnvDisable_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.OTHER);
+        `,
+      },
+      target,
+      dotenv: "disable",
+      backend: "api",
+      capture: ["process.env.NODE_ENV", "process.env.OTHER"],
+    });
+  }
+  // An HTML import from a --target=bun build spins up a lazy browser
+  // transpiler. Its emitted chunk runs in a browser (no `process`), so
+  // NODE_ENV must still be inlined there even though the parent server
+  // bundle leaves it as a runtime read.
+  itBundled("edgecase/NodeEnvInlinedForBrowserChunkInServerBuild", {
+    files: {
+      "/entry.ts": /* js */ `
+        import html from "./index.html";
+        capture(process.env.NODE_ENV);
+        Bun.serve({ port: 0, routes: { "/": html } });
+      `,
+      "/index.html": `<!doctype html><script type="module" src="./client.ts"></script>`,
+      "/client.ts": /* js */ `
+        capture(process.env.NODE_ENV);
+      `,
+    },
+    target: "bun",
+    outdir: "/out",
+    env: { NODE_ENV: undefined },
+    onAfterBundle(api) {
+      // Server chunk: not inlined (runtime read).
+      expect(api.captureFile("out/entry.js")).toEqual(["process.env.NODE_ENV"]);
+      // Browser chunk: inlined (no process in the browser).
+      const browserChunk = readdirSync(api.join("out")).find((f: string) => f.endsWith(".js") && f !== "entry.js");
+      expect(browserChunk).toBeDefined();
+      expect(api.captureFile(join("out", browserChunk!))).toEqual(['"development"']);
+    },
+  });
 
   itBundled("edgecase/StarExternal", {
     files: {

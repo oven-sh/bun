@@ -888,38 +888,47 @@ pub fn defines_from_transform_options(
     }
 
     if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
-        let quoted_node_env: Box<[u8]> = 'brk: {
-            if let Some(node_env) = node_env {
-                if !node_env.is_empty() {
-                    if (strings::starts_with_char(node_env, b'"')
-                        && strings::ends_with_char(node_env, b'"'))
-                        || (strings::starts_with_char(node_env, b'\'')
-                            && strings::ends_with_char(node_env, b'\''))
-                    {
-                        break 'brk Box::from(node_env);
-                    }
+        // A browser bundle has no `process.env` at runtime, so `NODE_ENV`
+        // must be inlined. Server-side targets (`bun`/`node`, including `bun
+        // build --compile`) run against a real `process.env`; injecting a
+        // define there would freeze the build machine's ambient `NODE_ENV`
+        // into the output. An explicit `--define` (and `--production`, which
+        // seeds `maybe_input_define` in `build_command.rs`) still wins either
+        // way via the `user_defines` insertion above.
+        if !target.is_server_side() {
+            let quoted_node_env: Box<[u8]> = 'brk: {
+                if let Some(node_env) = node_env {
+                    if !node_env.is_empty() {
+                        if (strings::starts_with_char(node_env, b'"')
+                            && strings::ends_with_char(node_env, b'"'))
+                            || (strings::starts_with_char(node_env, b'\'')
+                                && strings::ends_with_char(node_env, b'\''))
+                        {
+                            break 'brk Box::from(node_env);
+                        }
 
-                    // avoid allocating if we can
-                    if node_env == b"production" {
-                        break 'brk Box::from(b"\"production\"".as_slice());
-                    } else if node_env == b"development" {
-                        break 'brk Box::from(b"\"development\"".as_slice());
-                    } else if node_env == b"test" {
-                        break 'brk Box::from(b"\"test\"".as_slice());
-                    } else {
-                        let mut v = Vec::with_capacity(node_env.len() + 2);
-                        v.push(b'"');
-                        v.extend_from_slice(node_env);
-                        v.push(b'"');
-                        break 'brk v.into_boxed_slice();
+                        // avoid allocating if we can
+                        if node_env == b"production" {
+                            break 'brk Box::from(b"\"production\"".as_slice());
+                        } else if node_env == b"development" {
+                            break 'brk Box::from(b"\"development\"".as_slice());
+                        } else if node_env == b"test" {
+                            break 'brk Box::from(b"\"test\"".as_slice());
+                        } else {
+                            let mut v = Vec::with_capacity(node_env.len() + 2);
+                            v.push(b'"');
+                            v.extend_from_slice(node_env);
+                            v.push(b'"');
+                            break 'brk v.into_boxed_slice();
+                        }
                     }
                 }
-            }
-            Box::from(b"\"development\"".as_slice())
-        };
+                Box::from(b"\"development\"".as_slice())
+            };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+            user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
+            user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        }
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
@@ -1339,6 +1348,24 @@ impl<'a> BundleOptions<'a> {
         self.rewrite_jest_for_tests
     }
 
+    /// The `NODE_ENV` value to assume when the env loader has no
+    /// `BUN_ENV`/`NODE_ENV`: `"test"` under `bun test`, `"production"` under
+    /// `--production`, else `"development"`. Shared between `load_defines`
+    /// (which inlines it as a define for browser targets) and
+    /// `Transpiler::configure_defines` (which uses it for the JSX dev/prod
+    /// decision on server-side targets, where no define is injected).
+    pub fn default_node_env(&self) -> &'static [u8] {
+        if self.is_test() {
+            return b"test";
+        }
+
+        if self.production {
+            return b"production";
+        }
+
+        b"development"
+    }
+
     pub fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
@@ -1415,9 +1442,11 @@ impl<'a> BundleOptions<'a> {
             out_extensions: self.out_extensions.clone(),
             import_path_format: self.import_path_format,
             defines_loaded: self.defines_loaded,
-            // `Env.defaults: MultiArrayList` has no `Clone`; workers never read
-            // it (`configure_defines` early-returns on `defines_loaded`), so
-            // carry the scalars + an empty list.
+            // `Env.defaults: MultiArrayList` has no `Clone`. Workers either
+            // early-return in `configure_defines` on `defines_loaded`, or
+            // call `load_defines` directly (`initialize_client_transpiler`
+            // after retargeting to `Browser`); `defines_from_transform_options`
+            // handles empty `defaults` there. Carry scalars + an empty list.
             env: Env {
                 behavior: self.env.behavior,
                 prefix: self.env.prefix.clone(),
@@ -1560,23 +1589,11 @@ impl<'a> BundleOptions<'a> {
         // to outlive the `&mut loader_` we pass below, so it can't stay a borrow
         // into the loader). `Cow` keeps the literals zero-alloc — matters because
         // every VM with no `NODE_ENV` in its env hits the `"development"` arm.
-        let node_env: Option<Cow<[u8]>> = 'node_env: {
-            if let Some(e) = loader_.as_deref() {
-                if let Some(env_) = e.get_node_env() {
-                    break 'node_env Some(Cow::Owned(env_.to_vec()));
-                }
-            }
-
-            if self.is_test() {
-                break 'node_env Some(Cow::Borrowed(b"\"test\"".as_slice()));
-            }
-
-            if self.production {
-                break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
-            }
-
-            Some(Cow::Borrowed(b"\"development\"".as_slice()))
-        };
+        let node_env: Option<Cow<[u8]>> =
+            Some(match loader_.as_deref().and_then(|e| e.get_node_env()) {
+                Some(env_) => Cow::Owned(env_.to_vec()),
+                None => Cow::Borrowed(self.default_node_env()),
+            });
         // reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
             // No other `&mut Log` is live across this call (see `log_mut`

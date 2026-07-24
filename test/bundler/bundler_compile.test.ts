@@ -850,6 +850,49 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // A compiled binary is a runtime artifact: `process.env.NODE_ENV` must read
+  // the runtime environment, not the build machine's. An explicit `--define`
+  // is tested separately in the ReactSSR cases above.
+  itBundled("compile/NodeEnvReadsRuntimeEnvironment", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        // Prove it wasn't inlined:
+        console.log((() => process.env.NODE_ENV).toString().includes("process.env.NODE_ENV"));
+        console.log(process.env.NODE_ENV);
+      `,
+    },
+    // Build with one value...
+    env: { NODE_ENV: "development" },
+    // ...and run with another.
+    run: { env: { NODE_ENV: "production" }, stdout: "true\nproduction" },
+  });
+  itBundled("compile/NodeEnvReadsRuntimeEnvironmentUnset", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `console.log(String(process.env.NODE_ENV));`,
+    },
+    env: { NODE_ENV: "development" },
+    // `bunEnv` strips NODE_ENV, so the runtime env has no NODE_ENV set.
+    run: { stdout: "undefined" },
+  });
+  // process.argv[0] in a compiled binary should be the resolved path to that
+  // binary (i.e. process.execPath), so `spawn(process.argv[0], ...)` re-execs
+  // the binary itself instead of whatever `bun` happens to be on $PATH.
+  itBundled("compile/Argv0IsExecPath", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { realpathSync } from "node:fs";
+        const argv0 = process.argv[0];
+        const execPath = process.execPath;
+        console.log("argv0-matches-execPath:", argv0 === execPath);
+        console.log("argv0-is-absolute:", require("node:path").isAbsolute(argv0));
+        console.log("argv0-is-self:", realpathSync(argv0) === realpathSync(execPath));
+      `,
+    },
+    run: { stdout: "argv0-matches-execPath: true\nargv0-is-absolute: true\nargv0-is-self: true" },
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

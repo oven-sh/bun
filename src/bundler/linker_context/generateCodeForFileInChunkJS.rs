@@ -32,6 +32,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     runtime_require_ref: Option<Ref>,
     stmts: &mut StmtList,
     arena: &Bump,
+    ast_alloc: bun_alloc::AstAlloc,
     temp_arena: &Bump,
     decl_collector: Option<&mut DeclCollector>,
 ) -> js_printer::PrintResult {
@@ -81,7 +82,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) =
-                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
+                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast, ast_alloc)
                 {
                     return PrintResult::Err(err.into());
                 }
@@ -114,7 +115,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     B::Identifier { r#ref: hmr_api_ref },
                     bun_ast::Loc::EMPTY,
                 ),
-                ..Default::default()
+                ..G::Arg::empty(ast_alloc)
             });
 
             if ast
@@ -129,7 +130,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    ..Default::default()
+                    ..G::Arg::empty(ast_alloc)
                 });
                 clousure_args.append_assume_capacity(G::Arg {
                     binding: Binding::alloc(
@@ -139,7 +140,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    ..Default::default()
+                    ..G::Arg::empty(ast_alloc)
                 });
             }
 
@@ -150,14 +151,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     temp_arena,
                 );
                 for a in clousure_args.slice().iter_mut() {
-                    v.push(core::mem::take(a));
+                    v.push(core::mem::replace(a, G::Arg::empty(ast_alloc)));
                 }
                 v.into_bump_slice_mut()
             };
 
             stmts.all_stmts.push(Stmt::allocate_expr(
                 temp_arena,
-                Expr::init(
+                Expr::init(ast_alloc, 
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new_mut(dup_args),
@@ -218,6 +219,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             return c.print_code_for_file_in_chunk_js(
                 r,
                 arena,
+                ast_alloc,
                 writer,
                 &mut stmts.all_stmts[main_stmts_len..],
                 &ast,
@@ -263,7 +265,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     {
         stmts
             .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
+            .append_non_dependency(Stmt::alloc(ast_alloc, 
                 S::Directive {
                     value: bun_ast::StoreStr::new(b"use strict"),
                 },
@@ -295,6 +297,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             temp_arena,
             flags.wrap,
             &ast,
+            ast_alloc,
         ) {
             return PrintResult::Err(err.into());
         }
@@ -396,7 +399,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // owned heap data (`ts_decorators` is always empty, `class_static_block`
                 // is `None`), so the duplicated bits do not alias any allocation.
                 let src_len = e_object.properties.len();
-                let mut new_properties = Vec::<G::Property>::init_capacity(src_len);
+                let mut new_properties = ast_alloc.vec_with_capacity::<G::Property>(src_len);
                 // SAFETY: `new_properties` has capacity `src_len`; source slice is live
                 // arena memory of length `src_len`; see note above re: no owned heap data.
                 unsafe {
@@ -458,7 +461,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     G::Property {
                                         key,
                                         value: Some(Expr::init_identifier(export_ref, value_loc)),
-                                        ..Default::default()
+                                        ..G::Property::empty(ast_alloc)
                                     },
                                 );
                             }
@@ -469,8 +472,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 default_expr = Expr::allocate(
                     temp_arena,
                     E::Object {
-                        properties: Vec::move_from_list(new_properties),
-                        ..Default::default()
+                        properties: new_properties,
+                        ..E::Object::empty(ast_alloc)
                     },
                     default_expr.loc,
                 );
@@ -496,6 +499,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             temp_arena,
             flags.wrap,
             &ast,
+            ast_alloc,
         ) {
             return PrintResult::Err(err.into());
         }
@@ -520,7 +524,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts.inside_wrapper_suffix.clear();
 
     if c.options.minify_syntax {
-        merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
+        merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena, ast_alloc);
     }
 
     let mut out_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
@@ -555,7 +559,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        ..Default::default()
+                        ..G::Arg::empty(ast_alloc)
                     });
 
                     if ast.flags.contains(AstFlags::USES_MODULE_REF) {
@@ -567,7 +571,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 },
                                 bun_ast::Loc::EMPTY,
                             ),
-                            ..Default::default()
+                            ..G::Arg::empty(ast_alloc)
                         });
                     }
                 }
@@ -577,7 +581,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
-                let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
+                let cjs_args = ast_alloc.vec_from_slice(&[Expr::init(ast_alloc,
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new(args.into_bump_slice()),
@@ -591,24 +595,24 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     bun_ast::Loc::EMPTY,
                 )]);
 
-                let commonjs_wrapper_definition = Expr::init(
+                let commonjs_wrapper_definition = Expr::init(ast_alloc, 
                     E::Call {
-                        target: Expr::init(
+                        target: Expr::init(ast_alloc, 
                             E::Identifier {
                                 ref_: c.cjs_runtime_ref,
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        args: Vec::move_from_list(cjs_args),
-                        ..Default::default()
+                        args: cjs_args,
+                        ..E::Call::empty(ast_alloc)
                     },
                     bun_ast::Loc::EMPTY,
                 );
 
                 // "var require_foo = __commonJS(...);"
                 {
-                    let decls = G::DeclList::from_slice(&[G::Decl {
+                    let decls = ast_alloc.vec_from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,
                             B::Identifier {
@@ -621,10 +625,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(
+                        Stmt::alloc(ast_alloc, 
                             S::Local {
                                 decls,
-                                ..Default::default()
+                                ..S::Local::empty(ast_alloc)
                             },
                             bun_ast::Loc::EMPTY,
                         ),
@@ -714,18 +718,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                         } else {
                                             // if the value cannot be moved, add every destructuring key separately
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
-                                            let binding = Binding::to_expr(
+                                            let binding = Binding::to_expr(ast_alloc, 
                                                 &decl.binding,
                                                 (&raw mut hoist).cast::<core::ffi::c_void>(),
                                                 hoist_wrapper,
                                             );
-                                            value = value.join_with_comma(Expr::assign(
+                                            value = value.join_with_comma(ast_alloc, Expr::assign(ast_alloc, 
                                                 binding,
                                                 initializer,
                                             ));
                                         }
                                     } else {
-                                        let _ = Binding::to_expr(
+                                        let _ = Binding::to_expr(ast_alloc, 
                                             &decl.binding,
                                             (&raw mut hoist).cast::<core::ffi::c_void>(),
                                             hoist_wrapper,
@@ -759,7 +763,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     StoreRef::from_bump(&mut class.class);
                                 break 'stmt Stmt::allocate_expr(
                                     temp_arena,
-                                    Expr::assign(
+                                    Expr::assign(ast_alloc, 
                                         lhs,
                                         Expr {
                                             data: ExprData::EClass(class_ref),
@@ -782,12 +786,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 if !hoist.decls.is_empty() {
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(
+                        Stmt::alloc(ast_alloc, 
                             S::Local {
-                                decls: G::DeclList::move_from_list(core::mem::take(
+                                decls: ast_alloc.vec_from_iter(core::mem::take(
                                     &mut hoist.decls,
                                 )),
-                                ..Default::default()
+                                ..S::Local::empty(ast_alloc)
                             },
                             bun_ast::Loc::EMPTY,
                         ),
@@ -802,7 +806,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
+                    let esm_args = ast_alloc.vec_from_slice(&[Expr::init(ast_alloc,
                         E::Arrow {
                             is_async,
                             body: G::FnBody {
@@ -815,16 +819,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     )]);
 
                     // "var init_foo = __esm(...);"
-                    let value = Expr::init(
+                    let value = Expr::init(ast_alloc, 
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
-                            args: Vec::move_from_list(esm_args),
-                            ..Default::default()
+                            args: esm_args,
+                            ..E::Call::empty(ast_alloc)
                         },
                         bun_ast::Loc::EMPTY,
                     );
 
-                    let decls = G::DeclList::from_slice(&[G::Decl {
+                    let decls = ast_alloc.vec_from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             temp_arena,
                             B::Identifier {
@@ -837,10 +841,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(
+                        Stmt::alloc(ast_alloc, 
                             S::Local {
                                 decls,
-                                ..Default::default()
+                                ..S::Local::empty(ast_alloc)
                             },
                             bun_ast::Loc::EMPTY,
                         ),
@@ -864,7 +868,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // via a count of external modules, decremented during
                     // linking.
                     if !ast.wrapper_ref.is_empty() {
-                        let value = Expr::init(
+                        let value = Expr::init(ast_alloc, 
                             E::Arrow {
                                 is_async,
                                 body: G::FnBody {
@@ -878,9 +882,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                         stmts.append(
                             StmtListWhich::OutsideWrapperPrefix,
-                            Stmt::alloc(
+                            Stmt::alloc(ast_alloc, 
                                 S::Local {
-                                    decls: G::DeclList::from_slice(&[G::Decl {
+                                    decls: ast_alloc.vec_from_slice(&[G::Decl {
                                         binding: Binding::alloc(
                                             temp_arena,
                                             B::Identifier {
@@ -890,7 +894,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                         ),
                                         value: Some(value),
                                     }]),
-                                    ..Default::default()
+                                    ..S::Local::empty(ast_alloc)
                                 },
                                 bun_ast::Loc::EMPTY,
                             ),
@@ -932,6 +936,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     c.print_code_for_file_in_chunk_js(
         r,
         arena,
+        ast_alloc,
         writer,
         out_stmts,
         &ast,
@@ -1050,7 +1055,7 @@ impl DeclCollector {
     }
 }
 
-fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
+fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump, ast_alloc: bun_alloc::AstAlloc) {
     if stmts.is_empty() {
         return;
     }
@@ -1076,7 +1081,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         did_merge_with_previous_local = true;
 
                         let mut clone =
-                            Vec::<G::Decl>::init_capacity(before.decls.len() + after.decls.len());
+                            ast_alloc.vec_with_capacity::<G::Decl>(before.decls.len() + after.decls.len());
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
@@ -1085,7 +1090,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         stmts[end - 1] = Stmt::allocate(
                             _arena,
                             S::Local {
-                                decls: Vec::move_from_list(clone),
+                                decls: clone,
                                 is_export: before.is_export,
                                 was_commonjs_export: before.was_commonjs_export,
                                 was_ts_import_equals: before.was_ts_import_equals,

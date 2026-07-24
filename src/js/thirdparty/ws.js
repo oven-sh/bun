@@ -870,6 +870,13 @@ class BunWebSocketMocked extends EventEmitter {
     this.#state = ReadyState_CLOSED;
     this.#ws = null;
 
+    const queued = this.#enquedMessages;
+    if (queued.length) {
+      this.#enquedMessages = [];
+      this.#bufferedAmount = 0;
+      for (const [, , cb] of queued) sendAfterClose(ReadyState_CLOSED, cb);
+    }
+
     this.emit("close", code, reason);
   }
 

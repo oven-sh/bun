@@ -497,18 +497,23 @@ impl MachoFile {
         Ok(())
     }
 
-    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    // On success, returns the number of bytes written. The signed output can be
+    // smaller than the input (the replacement ad-hoc signature is usually
+    // smaller than the template's), so a caller writing over a pre-existing
+    // file must truncate it to this length: `codesign`'s strict validation
+    // requires the signature to end exactly at EOF.
+    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
             let mut data: Vec<u8> = Vec::new();
             self.build(&mut data)?;
             let mut signer = MachoSigner::init(&data)?;
-            signer.sign(writer)?;
+            signer.sign(writer)
         } else {
             self.build(writer)?;
+            Ok(self.data.len())
         }
-        Ok(())
     }
 }
 
@@ -660,7 +665,8 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    // Byte-count result: see the note on `build_and_sign`.
+    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
@@ -760,17 +766,17 @@ impl MachoSigner {
 
         if end - off > 0 {
             let remaining_len = end - off;
-            let mut last_page = [0u8; PAGE_SIZE];
-            // SAFETY: range [off..end] is within the original len.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    self.data.as_ptr().add(off),
-                    last_page.as_mut_ptr(),
-                    remaining_len,
-                );
-            }
+            // The final partial page is hashed truncated to `codeLimit % pageSize`
+            // bytes: Apple's verifier never zero-pads it to a full page (see
+            // Security.framework's CodeDirectory::Builder and Go's
+            // cmd/internal/codesign, whose output this signer mirrors).
+            // Deliberate deviation from the .zig reference, which padded the
+            // last page and produced a signature `codesign -v` rejects.
             let mut digest = [0u8; HASH_SIZE];
-            sha256_hash(&last_page, &mut digest);
+            // SAFETY: range [off..end] is within the original len (sig_off).
+            let page =
+                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), remaining_len) };
+            sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
         }
 
@@ -791,7 +797,7 @@ impl MachoSigner {
 
         // Write final binary
         writer.write_all(&self.data)?;
-        Ok(())
+        Ok(self.data.len())
     }
 }
 

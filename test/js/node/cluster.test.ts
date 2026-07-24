@@ -1216,6 +1216,7 @@ if (cluster.isPrimary) {
   process.send({ cmd: "NODE_CLUSTER", ack: null });
   process.send({ cmd: "NODE_CLUSTER", ack: "not-a-number" });
   process.send({ cmd: "NODE_CLUSTER", ack: {} });
+  process.send({ cmd: "NODE_CLUSTER", ack: 0.5 });
   process.send("sent");
 }
 `,

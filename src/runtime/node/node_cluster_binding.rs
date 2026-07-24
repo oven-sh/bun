@@ -217,10 +217,10 @@ pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> 
     let Some(p) = message.get(global, "ack")? else {
         return Ok(JSValue::FALSE);
     };
-    if !p.is_number() {
+    if !p.is_int32() {
         return Ok(JSValue::FALSE);
     }
-    let ack = p.to_int32();
+    let ack = p.as_int32();
     let entry = ipc_data
         .internal_msg_queue
         .callbacks
@@ -261,8 +261,8 @@ pub(crate) fn handle_internal_message_primary(
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
-        if p.is_number() {
-            let ack = p.to_int32();
+        if p.is_int32() {
+            let ack = p.as_int32();
             // Peek the JSValue first (ending the immutable borrow), then
             // swap_remove (which drops the Strong).
             let entry = ipc_data

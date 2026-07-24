@@ -71,7 +71,6 @@ impl JavaScript {
     pub fn parse<'a>(
         &self,
         bump: &'a Bump,
-        alloc: bun_alloc::AstAlloc,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &mut bun_ast::Log,
@@ -79,14 +78,13 @@ impl JavaScript {
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
-        let parser =
-            match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump, alloc) {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = temp_log.append_to(log);
-                    return Ok(None);
-                }
-            };
+        let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = temp_log.append_to(log);
+                return Ok(None);
+            }
+        };
 
         let result = match parser.parse() {
             Ok(r) => r,
@@ -113,7 +111,6 @@ impl JavaScript {
     pub fn scan<'a>(
         &mut self,
         bump: &'a Bump,
-        alloc: bun_alloc::AstAlloc,
         scan_pass_result: &mut js_parser::ScanPassResult,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
@@ -128,14 +125,13 @@ impl JavaScript {
         // scopeguard cannot capture &mut temp_log while it's used below;
         // explicit `append_to` calls at each exit.
 
-        let mut parser =
-            match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump, alloc) {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = temp_log.append_to(log);
-                    return Ok(());
-                }
-            };
+        let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+            Ok(p) => p,
+            Err(_) => {
+                let _ = temp_log.append_to(log);
+                return Ok(());
+            }
+        };
 
         let res = parser.scan_imports(scan_pass_result);
         drop(parser);

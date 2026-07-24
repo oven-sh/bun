@@ -5,7 +5,8 @@ use crate::parser::{JSXTag, options};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
-use bun_ast::{E, Expr, ExprNodeIndex, G};
+use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
+use bun_collections::VecExt;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
@@ -28,7 +29,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
-        let mut properties = p.alloc.vec();
+        let mut properties = bun_alloc::AstAlloc::vec();
         let mut key_prop_i: i32 = -1;
         let mut flags = flags::JSXElementBitset::empty();
         let mut start_tag: Option<ExprNodeIndex> = None;
@@ -96,7 +97,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         props.push(G::Property {
                             key: Some(prop_name),
                             value: Some(value),
-                            ..G::Property::empty(p.alloc)
+                            ..Default::default()
                         });
                         i += 1; // defer i += 1
                     }
@@ -118,7 +119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 props.push(G::Property {
                                     value: Some(value),
                                     kind: G::PropertyKind::Spread,
-                                    ..G::Property::empty(p.alloc)
+                                    ..Default::default()
                                 });
                             }
                             // This implements
@@ -179,7 +180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     value: Some(expr),
                                     key: Some(key),
                                     kind: G::PropertyKind::Normal,
-                                    ..G::Property::empty(p.alloc)
+                                    ..Default::default()
                                 });
                             }
                             // This implements
@@ -197,7 +198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     value: Some(key),
                                     key: Some(key),
                                     kind: G::PropertyKind::Normal,
-                                    ..G::Property::empty(p.alloc)
+                                    ..Default::default()
                                 });
                             }
 
@@ -218,7 +219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_key_after_spread {
                 flags.insert(flags::JSXElement::IsKeyAfterSpread);
             }
-            properties = p.alloc.vec_from_iter(props);
+            properties = G::PropertyList::move_from_list(props);
             if is_key_after_spread
                 && p.options.jsx.runtime == options::JSXRuntime::Automatic
                 && !p.has_classic_runtime_warned
@@ -277,7 +278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_prop_index: key_prop_i,
                     flags,
                     close_tag_loc,
-                    ..E::JSXElement::empty(p.alloc)
+                    ..Default::default()
                 },
                 loc,
             ));
@@ -363,12 +364,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(p.new_expr(
                         E::JSXElement {
                             tag: end_tag.data.as_expr(),
-                            children: p.alloc.vec_from_iter(children),
+                            children: ExprNodeList::move_from_list(children),
                             properties,
                             key_prop_index: key_prop_i,
                             flags,
                             close_tag_loc: end_tag.range.loc,
-                            ..E::JSXElement::empty(p.alloc)
+                            ..Default::default()
                         },
                         loc,
                     ));

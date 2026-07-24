@@ -1486,8 +1486,8 @@ pub struct PropertyOpts {
     pub has_class_decorators: bool,
 }
 
-impl PropertyOpts {
-    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
+impl Default for PropertyOpts {
+    fn default() -> Self {
         Self {
             async_range: bun_ast::Range::NONE,
             declare_range: bun_ast::Range::NONE,
@@ -1498,7 +1498,7 @@ impl PropertyOpts {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: alloc.vec(),
+            ts_decorators: bun_alloc::AstAlloc::vec(),
             has_argument_decorators: false,
             has_class_decorators: false,
         }
@@ -1522,10 +1522,10 @@ pub struct ParsePassSymbolUse {
 pub(crate) type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
 
 impl ScanPassResult {
-    pub fn init(alloc: bun_alloc::AstAlloc) -> ScanPassResult {
+    pub fn init() -> ScanPassResult {
         ScanPassResult {
             import_records: Vec::new(),
-            named_imports: bun_ast::ast_result::NamedImports::new_in(alloc),
+            named_imports: Default::default(),
             used_symbols: ParsePassSymbolUsageMap::default(),
             approximate_newline_count: 0,
         }
@@ -1779,7 +1779,6 @@ impl Default for DeferredArrowArgErrors {
 
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
-    alloc: bun_alloc::AstAlloc,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
@@ -1789,7 +1788,6 @@ pub fn new_lazy_export_ast<'bump>(
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     new_lazy_export_ast_impl(
         bump,
-        alloc,
         define,
         opts,
         log_to_copy_into,
@@ -1802,7 +1800,6 @@ pub fn new_lazy_export_ast<'bump>(
 
 pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
-    alloc: bun_alloc::AstAlloc,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
@@ -1820,7 +1817,6 @@ pub fn new_lazy_export_ast_impl<'bump>(
     let mut parser = Parser {
         options: opts,
         bump,
-        alloc,
         lexer,
         define,
         source,

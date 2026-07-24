@@ -328,10 +328,11 @@ macro_rules! new_store {
 // thread_local_ast_store! — front-end namespace for `Expr`/`Stmt` node
 // allocation.
 //
-// The thread-local slab/override machinery is gone: `append` takes the
-// [`bun_alloc::AstAlloc`] handle explicitly and routes straight into its
-// `MimallocArena`. The `$Backing` type list is kept only for the
-// [`StoredIn`] compile-time membership check.
+// `append` routes straight into the thread's active [`bun_alloc::AstArena`]
+// (installed by `AstArena::enter()`; read via the ZST [`bun_alloc::AstAlloc`]).
+// The `$Backing` type list is kept only for the [`StoredIn`] compile-time
+// membership check. `create`/`reset`/`assert` are no-op shims for callers that
+// still bracket a parse with the old lifecycle fns.
 //
 // Usage (inside `pub mod data { use super::*; … }`):
 //   crate::thread_local_ast_store!(expr_store::Store, "Expr");
@@ -346,11 +347,17 @@ macro_rules! thread_local_ast_store {
 
             #[inline]
             pub fn append<T: $crate::new_store::StoredIn<Backing>>(
-                alloc: ::bun_alloc::AstAlloc,
                 value: T,
             ) -> $crate::StoreRef<T> {
-                $crate::StoreRef::from_bump(alloc.arena().alloc(value))
+                $crate::StoreRef::from_bump(::bun_alloc::AstAlloc.arena().alloc(value))
             }
+
+            #[inline]
+            pub fn create() {}
+            #[inline]
+            pub fn reset() {}
+            #[inline]
+            pub fn assert() {}
         }
     };
 }

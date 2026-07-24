@@ -259,8 +259,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         let heap = Arena::new();
 
         let bump = &heap;
-        let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
-            bump.alloc(bun_ast::ASTMemoryAllocator::new());
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
         let transpiler = completion.create_and_configure_transpiler(bump)?;
@@ -296,29 +296,20 @@ impl<C: CompletionStruct> BundleThread<C> {
             completion.complete_on_bundle_thread();
         }
 
-        // `transpiler` / `ast_memory_store` are arena-allocated, but their
-        // containers (`Resolver` caches, `BundleOptions` strings, the AST
-        // allocator's own `mi_heap` handle, …) live on the global heap as
+        // `transpiler` is arena-allocated, but its containers (`Resolver`
+        // caches, `BundleOptions` strings, …) live on the global heap as
         // `Vec`/`Box`/`HashMap`, so dropping `heap` (`mi_heap_destroy`) reclaims
-        // the struct bytes but never runs `Transpiler::drop` /
-        // `ASTMemoryAllocator::drop` — leaking the resolver's directory/file
-        // caches and an entire `mi_heap` per `Bun.build()` call. LSan does not
-        // flag the latter (mimalloc bypasses the ASAN `malloc` interceptor), so
-        // the symptom is RSS-only: ~32 MB/build linear growth in the
-        // bun-build-api "does not leak sourcemap JSON" test.
+        // the struct bytes but never runs `Transpiler::drop` — leaking the
+        // resolver's directory/file caches per `Bun.build()` call.
         //
-        // SAFETY: both pointers are the unique `&'a mut` slots returned by
-        // `bump.alloc(...)` above; nothing else holds a reference to either
-        // past `init_and_run` (`set_transpiler` was cleared by
-        // `deinit_without_freeing_arena`, `pop()` restored the AST-allocator
-        // thread-local). The arena bytes themselves are bulk-freed afterwards
-        // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
-        // global-heap* state, so there is no double free.
+        // SAFETY: `transpiler_ptr` is the unique `&'a mut` slot returned by
+        // `bump.alloc(...)` above; nothing else holds a reference to it past
+        // `init_and_run` (`set_transpiler` was cleared by
+        // `deinit_without_freeing_arena`). The arena bytes themselves are
+        // bulk-freed afterwards by `heap`'s `Drop` — `drop_in_place` only
+        // releases the *embedded global-heap* state, so there is no double free.
         unsafe {
             core::ptr::drop_in_place(transpiler_ptr);
-            core::ptr::drop_in_place(std::ptr::from_mut::<bun_ast::ASTMemoryAllocator>(
-                ast_memory_store,
-            ));
         }
 
         run

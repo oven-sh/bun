@@ -76,10 +76,10 @@ pub mod js_meta {
         pub re_exports: AstVec<Dependency>,
         pub data: ImportTracker,
     }
-    impl ImportData {
-        pub fn empty(alloc: AstAlloc) -> Self {
+    impl Default for ImportData {
+        fn default() -> Self {
             Self {
-                re_exports: alloc.vec(),
+                re_exports: AstAlloc::vec(),
                 data: ImportTracker::default(),
             }
         }
@@ -90,10 +90,10 @@ pub mod js_meta {
         pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
         pub data: ImportTracker,
     }
-    impl ExportData {
-        pub fn empty(alloc: AstAlloc) -> Self {
+    impl Default for ExportData {
+        fn default() -> Self {
             Self {
-                potentially_ambiguous_export_star_refs: alloc.vec(),
+                potentially_ambiguous_export_star_refs: AstAlloc::vec(),
                 data: ImportTracker::default(),
             }
         }
@@ -132,16 +132,16 @@ pub mod js_meta {
         pub flags: Flags,
     }
 
-    impl JSMeta {
-        pub fn empty(alloc: AstAlloc) -> Self {
+    impl Default for JSMeta {
+        fn default() -> Self {
             Self {
-                probably_typescript_type: ProbablyTypescriptType::new_in(alloc),
-                imports_to_bind: RefImportData::new_in(alloc),
-                resolved_exports: ResolvedExports::new_in(alloc),
-                resolved_export_star: ExportData::empty(alloc),
-                sorted_and_filtered_export_aliases: alloc.vec(),
-                top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::new_in(alloc),
-                cjs_export_copies: alloc.vec(),
+                probably_typescript_type: ProbablyTypescriptType::default(),
+                imports_to_bind: RefImportData::default(),
+                resolved_exports: ResolvedExports::default(),
+                resolved_export_star: ExportData::default(),
+                sorted_and_filtered_export_aliases: AstAlloc::vec(),
+                top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
+                cjs_export_copies: AstAlloc::vec(),
                 wrapper_part_index: Index::default(),
                 entry_point_part_index: Index::default(),
                 flags: Flags::default(),
@@ -218,14 +218,12 @@ pub struct LinkerGraph<'a> {
     /// This is for cross-module inlining of TypeScript enum constants
     pub ts_enums: bun_ast::ast_result::TsEnumsMap,
 
-    /// `Copy` handle into `ast_arena`.
-    pub ast_alloc: bun_alloc::AstAlloc,
     /// Owns the AST-allocation arena for linker-generated nodes (synthetic
-    /// parts, wrapper stmts, etc.). Lives for the link step.
+    /// parts, wrapper stmts, etc.). Installed via `AstArena::enter` at the
+    /// top of `LinkerContext::link`.
     ///
     /// Declared last so it drops after every `AstAlloc`-backed field above
-    /// (`files`, `meta`, `ts_enums`): their `Drop` impls dereference the
-    /// allocator handle, which points into this arena's pinned interior.
+    /// (`files`, `meta`, `ts_enums`): their element drops read arena memory.
     pub ast_arena: bun_alloc::AstArena,
 }
 
@@ -271,8 +269,6 @@ impl<'a> LinkerGraph<'a> {
 
 impl<'a> LinkerGraph<'a> {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, crate::Error> {
-        let ast_arena = bun_alloc::AstArena::new();
-        let ast_alloc = ast_arena.alloc();
         Ok(LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::init_empty(file_count)?,
@@ -280,23 +276,20 @@ impl<'a> LinkerGraph<'a> {
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
             bump: bun_ptr::BackRef::new(bump),
-            ast_arena,
-            ast_alloc,
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
-            ts_enums: bun_ast::ast_result::TsEnumsMap::new_in(ast_alloc),
+            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            ast_arena: bun_alloc::AstArena::new(),
         })
     }
 }
 
 impl Default for LinkerGraph<'_> {
     fn default() -> Self {
-        let ast_arena = bun_alloc::AstArena::new();
-        let ast_alloc = ast_arena.alloc();
         LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::default(),
@@ -306,15 +299,14 @@ impl Default for LinkerGraph<'_> {
             // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;
             // dangling sentinel (never read before assignment).
             bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
-            ast_arena,
-            ast_alloc,
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
-            ts_enums: bun_ast::ast_result::TsEnumsMap::new_in(ast_alloc),
+            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            ast_arena: bun_alloc::AstArena::new(),
         }
     }
 }
@@ -412,12 +404,11 @@ pub(crate) fn add_part_to_file(
     DeclaredSymbol::for_each_top_level_symbol(declared_symbols, &mut ctx, |ctx, ref_| {
         let id = ctx.id;
         let part_id = ctx.part_id;
-        let alloc = *ctx.overlay[id as usize].allocator();
         let slot = ctx.overlay[id as usize].entry(ref_).or_insert_with(|| {
             if let Some(original_parts) = ctx.ast_tlsp[id as usize].get(&ref_) {
                 original_parts.clone()
             } else {
-                alloc.vec()
+                bun_alloc::AstAlloc::vec()
             }
         });
         slot.push(part_id);
@@ -478,7 +469,6 @@ pub fn generate_symbol_import_and_use(
 
     // Track that this specific symbol was imported
     if source_index_to_import_from.get() != source_index {
-        let alloc = *imports_to_bind[source_index as usize].allocator();
         imports_to_bind[source_index as usize].put(
             ref_,
             js_meta::ImportToBind {
@@ -487,7 +477,7 @@ pub fn generate_symbol_import_and_use(
                     import_ref: ref_,
                     ..Default::default()
                 },
-                ..js_meta::ImportToBind::empty(alloc)
+                ..Default::default()
             },
         )?;
     }
@@ -736,9 +726,8 @@ impl<'a> LinkerGraph<'a> {
             // Fill each slot with `Default`.
             let ast_len = self.ast.len();
             debug_assert!(ast_len <= import_records_len);
-            let ast_alloc = self.ast_alloc;
             for _ in 0..ast_len {
-                self.meta.append_assume_capacity(JSMeta::empty(ast_alloc));
+                self.meta.append_assume_capacity(JSMeta::default());
             }
 
             if scb.list.len() > 0 {
@@ -817,7 +806,7 @@ impl<'a> LinkerGraph<'a> {
             }
 
             let distances: &mut [u32] = files_cols.distance_from_entry_point;
-            distances.fill(u32::MAX);
+            distances.fill(File::default().distance_from_entry_point);
             // `Index` is `#[repr(transparent)]` over `u32`; the field stores
             // raw `u32` so unwrap via `.get()` (no slice reinterpret needed).
             self.stable_source_indices = stable_source_indices.iter().map(|i| i.get()).collect();
@@ -871,8 +860,7 @@ impl<'a> LinkerGraph<'a> {
             .zip(dest_resolved_exports.iter_mut())
             .enumerate()
         {
-            let ast_alloc = self.ast_alloc;
-            let mut resolved = ResolvedExports::new_in(ast_alloc);
+            let mut resolved = ResolvedExports::default();
             resolved
                 .ensure_total_capacity(src.count())
                 .expect("unreachable");
@@ -886,7 +874,7 @@ impl<'a> LinkerGraph<'a> {
                             name_loc: value.alias_loc,
                             source_index: Index::source(source_index as u32),
                         },
-                        ..js_meta::ResolvedExport::empty(ast_alloc)
+                        ..Default::default()
                     },
                 );
             }
@@ -904,11 +892,11 @@ impl<'a> LinkerGraph<'a> {
     /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
     ///
     /// `Vec<T, &Arena>` stores its allocator, so swap it here.
-    /// `part.dependencies` and `symbols` are not transferred here:
-    /// `DependencyList` is `Vec<_, AstAlloc>` and is re-tagged per-row inside
-    /// `do_step5` / step 6 via [`bun_alloc::AstAlloc::adopt_vec`] before any
-    /// linker-side grow; new symbols feed through `self.symbols: symbol::Map`
-    /// (global).
+    /// `part.dependencies` and `symbols` need no transfer:
+    /// `DependencyList` is `Vec<_, AstAlloc>` (linker-side grows just route
+    /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
+    /// ZST, so there is nothing to retag) and new symbols feed through
+    /// `self.symbols: symbol::Map` (global).
     pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);
@@ -1030,8 +1018,8 @@ pub struct File {
     pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
 }
 
-impl File {
-    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
+impl Default for File {
+    fn default() -> Self {
         Self {
             // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
@@ -1039,7 +1027,7 @@ impl File {
             distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,
-            line_offset_table: bun_sourcemap::line_offset_table::List::new_in(alloc),
+            line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
             quoted_source_contents: None,
         }
     }

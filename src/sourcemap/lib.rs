@@ -895,23 +895,23 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
     let mut log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
 
-    let ast_arena = bun_alloc::AstArena::new();
-    let alloc = ast_arena.alloc();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
-    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log, alloc) {
+    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
         Ok(p) => p,
         Err(_) => return Err(crate::Error::InvalidJSON),
     };
     let json = parsed.root;
 
-    if let Some(version) = json.get(alloc, b"version") {
+    if let Some(version) = json.get(b"version") {
         match version.data.as_e_number() {
             Some(n) if n.value() == 3.0 => {}
             _ => return Err(crate::Error::UnsupportedVersion),
         }
     }
 
-    let Some(mappings_str) = json.get(alloc, b"mappings") else {
+    let Some(mappings_str) = json.get(b"mappings") else {
         return Err(crate::Error::UnsupportedVersion);
     };
 
@@ -920,7 +920,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
     };
 
     let sources_content = match json
-        .get(alloc, b"sourcesContent")
+        .get(b"sourcesContent")
         .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
@@ -930,7 +930,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
     let sources_content = sources_content.get();
 
     let sources_paths = match json
-        .get(alloc, b"sources")
+        .get(b"sources")
         .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
@@ -986,7 +986,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
         } = hint
         {
             if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
-                if let Some(names) = json.get(alloc, b"names") {
+                if let Some(names) = json.get(b"names") {
                     if let bun_ast::ExprData::EArrayJSON(arr) = names.data {
                         let arr = arr.get();
                         let mut names_list: Vec<bun_semver::String> =

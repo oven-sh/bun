@@ -2861,14 +2861,36 @@ impl<T: 'static> Drop for DebugOnlyDisablerScope<T> {
     }
 }
 
-/// Copy `bytes` into `alloc`'s arena so the slice shares the same lifetime as
-/// the `StoreRef`-backed `Expr` nodes that reference it (bulk-freed on arena
-/// reset). Callers building an `EString` from a scratch buffer must intern the
-/// bytes here, not into a function-local bump, or `EString.data` dangles when
-/// that bump drops. The lifetime is erased per the `StoreStr` convention.
+/// Copy `bytes` into the thread's active AST arena so the slice shares the
+/// same lifetime as the `StoreRef`-backed `Expr` nodes that reference it
+/// (bulk-freed on arena reset). Callers building an `EString` from a scratch
+/// buffer must intern the bytes here, not into a function-local bump, or
+/// `EString.data` dangles when that bump drops. The lifetime is erased per the
+/// `StoreStr` convention.
 #[inline]
-pub fn data_store_dupe_str(alloc: bun_alloc::AstAlloc, bytes: &[u8]) -> &'static [u8] {
-    alloc.dupe_str(bytes)
+pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
+    bun_alloc::AstAlloc.dupe_str(bytes)
+}
+
+/// No-op: node allocation routes through the thread's active
+/// [`bun_alloc::AstArena`] scope (see `AstArena::enter`); there is no per-type
+/// slab to create.
+#[inline]
+pub fn initialize_store() {}
+
+/// No-op: see [`initialize_store`].
+#[inline]
+pub fn initialize_store_or_reset() {}
+
+/// No-op RAII shim kept for callers that bracketed a parse with a
+/// `disable_reset` guard; the slab it guarded is gone.
+#[must_use]
+pub struct DisableStoreReset(());
+impl DisableStoreReset {
+    #[inline]
+    pub fn new() -> Self {
+        Self(())
+    }
 }
 
 #[cfg(test)]

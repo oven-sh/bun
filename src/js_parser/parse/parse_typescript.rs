@@ -35,7 +35,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
-            return Ok(p.alloc.vec());
+            return Ok(bun_alloc::AstAlloc::vec());
         }
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);
@@ -64,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        Ok(p.alloc.vec_from_iter(decorators))
+        Ok(ExprNodeList::from_bump_vec(decorators))
     }
 
     /// Parse a standard (TC39) decorator expression following the `@` token.
@@ -169,7 +169,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             target: expr,
                             args: args.list,
                             close_paren_loc: args.loc,
-                            ..E::Call::empty(p.alloc)
+                            ..Default::default()
                         },
                         loc,
                     );
@@ -509,14 +509,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TStringLiteral)?;
             p.lexer.expect(T::TCloseParen)?;
             if !opts.is_typescript_declare {
-                let args = p.alloc.vec_from_iter([path]);
+                let args = ExprNodeList::init_one(path);
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Call {
                         target,
                         close_paren_loc,
                         args,
-                        ..E::Call::empty(p.alloc)
+                        ..Default::default()
                     },
                     loc,
                 );
@@ -555,17 +555,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
             .expect("unreachable");
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
-        let decls = p.alloc.vec_from_iter([G::Decl {
+        let decls = G::DeclList::init_one(G::Decl {
             binding,
             value: Some(value),
-        }]);
+        });
         Ok(p.s(
             S::Local {
                 kind,
                 decls,
                 is_export: opts.is_export,
                 was_ts_import_equals: true,
-                ..S::Local::empty(p.alloc)
+                ..Default::default()
             },
             loc,
         ))

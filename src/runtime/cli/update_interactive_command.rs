@@ -5,7 +5,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_alloc::AstAlloc;
+use bun_alloc::Arena as Bump;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_glob as glob;
@@ -199,7 +199,6 @@ impl UpdateInteractiveCommand {
         // re-read — only `source.contents` is written back below.
         if let Err(err) = js_printer::print_json(
             &mut package_json_writer,
-            package_json.json_arena.alloc(),
             package_json.root,
             &package_json.source,
             PrintJsonOptions {
@@ -312,6 +311,8 @@ impl UpdateInteractiveCommand {
             result.value_ptr.push(i);
         }
 
+        let bump = Bump::new();
+
         // Process each workspace
         let mut it = workspace_groups.iter();
         while let Some((workspace_path, workspace_update_idxs)) = it.next() {
@@ -356,7 +357,7 @@ impl UpdateInteractiveCommand {
             // Allocate new nodes into the entry's own `json_arena` so they live
             // as long as the cached AST (survives `install_with_manager`
             // re-reads).
-            let alloc = package_json.json_arena.alloc();
+            let _scope = package_json.json_arena.enter();
 
             let mut modified = false;
 
@@ -367,15 +368,13 @@ impl UpdateInteractiveCommand {
                 if !package_json.root.is_object() {
                     continue;
                 }
-                let Some(section_query) = package_json.root.as_property(alloc, &update.dep_type)
-                else {
+                let Some(section_query) = package_json.root.as_property(&update.dep_type) else {
                     continue;
                 };
                 let Some(mut dep_obj) = section_query.expr.data.e_object() else {
                     continue;
                 };
-                let Some(version_query) = section_query.expr.as_property(alloc, &update.name)
-                else {
+                let Some(version_query) = section_query.expr.as_property(&update.name) else {
                     continue;
                 };
                 let Some(e_str) = version_query.expr.data.e_string() else {
@@ -392,12 +391,13 @@ impl UpdateInteractiveCommand {
                 // through the CLI arena (matches PackageJSONEditor `leak_str`).
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
                 let new_expr =
-                    Expr::init(alloc, E::EString::init(interned), version_query.expr.loc);
+                    Expr::init(E::EString::init(interned), version_query.expr.loc);
                 dep_obj
-                    .put(alloc, &update.name, new_expr)
+                    .put(&bump, &update.name, new_expr)
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 modified = true;
             }
+            drop(_scope);
 
             // Write the updated package.json if modified
             if modified {
@@ -480,12 +480,9 @@ impl UpdateInteractiveCommand {
                 };
 
             // Use the PackageJSONEditor to update catalogs
-            let alloc = package_json.json_arena.alloc();
-            edit_catalog_definitions(
-                alloc,
-                &mut updates_for_workspace[..],
-                &mut package_json.root,
-            )?;
+            let _scope = package_json.json_arena.enter();
+            edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
+            drop(_scope);
 
             // Save the updated package.json
             Self::save_package_json(package_json, package_json_path)?;
@@ -2247,14 +2244,15 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // (`E::Object::put` ignores its allocator arg), which keeps
 // `update_catalog_definitions` borrowck-clean.
 pub(crate) fn edit_catalog_definitions(
-    alloc: AstAlloc,
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> crate::Result<()> {
+    let bump = Bump::new();
+
     for update in updates.iter() {
         if let Some(catalog_name) = &update.catalog_name {
             update_named_catalog(
-                alloc,
+                &bump,
                 current_package_json,
                 catalog_name,
                 &update.package_name,
@@ -2262,7 +2260,7 @@ pub(crate) fn edit_catalog_definitions(
             )?;
         } else {
             update_default_catalog(
-                alloc,
+                &bump,
                 current_package_json,
                 &update.package_name,
                 &update.new_version,
@@ -2286,20 +2284,19 @@ enum CatalogSource {
 /// `None` if absent / not an object. Mirrors the labeled-block lookup in
 /// updateDefaultCatalog/updateNamedCatalog.
 fn find_catalog_object(
-    alloc: AstAlloc,
     package_json: &Expr,
     key: &[u8],
 ) -> (Option<bun_ast::StoreRef<E::Object>>, CatalogSource) {
-    if let Some(workspaces_query) = package_json.as_property(alloc, b"workspaces") {
+    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
         if workspaces_query.expr.is_object() {
-            if let Some(q) = workspaces_query.expr.as_property(alloc, key) {
+            if let Some(q) = workspaces_query.expr.as_property(key) {
                 if let Some(o) = q.expr.data.e_object() {
                     return (Some(o), CatalogSource::Workspaces);
                 }
             }
         }
     }
-    if let Some(q) = package_json.as_property(alloc, key) {
+    if let Some(q) = package_json.as_property(key) {
         if let Some(o) = q.expr.data.e_object() {
             return (Some(o), CatalogSource::Root);
         }
@@ -2308,7 +2305,7 @@ fn find_catalog_object(
 }
 
 fn update_default_catalog(
-    alloc: AstAlloc,
+    bump: &Bump,
     package_json: &mut Expr,
     package_name: &[u8],
     new_version: &[u8],
@@ -2323,8 +2320,8 @@ fn update_default_catalog(
     // the lookup source so the in-place fast path is taken only when
     // source == placement; otherwise re-`put` the mutated arena slot at the
     // placement-mandated location.
-    let mut fresh_obj = E::Object::empty(alloc);
-    let (existing, source) = find_catalog_object(alloc, package_json, b"catalog");
+    let mut fresh_obj = E::Object::default();
+    let (existing, source) = find_catalog_object(package_json, b"catalog");
     {
         let catalog_obj: &mut E::Object = match existing {
             Some(mut o) => {
@@ -2346,20 +2343,16 @@ fn update_default_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::init(alloc, E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
-            .put(alloc, leak_dup(package_name), new_expr)
+            .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
 
     // Check if we need to update under workspaces.catalog or root-level catalog
-    if let Some(workspaces_query) = package_json.as_property(alloc, b"workspaces") {
+    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
         if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
-            if workspaces_query
-                .expr
-                .as_property(alloc, b"catalog")
-                .is_some()
-            {
+            if workspaces_query.expr.as_property(b"catalog").is_some() {
                 // Update under workspaces.catalog
                 if source == CatalogSource::Workspaces {
                     // Mutated in place; placement matches lookup.
@@ -2373,10 +2366,10 @@ fn update_default_catalog(
                         loc: Loc::EMPTY,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::init(alloc, fresh_obj, Loc::EMPTY),
+                    None => Expr::init(fresh_obj, Loc::EMPTY),
                 };
                 ws_obj
-                    .put(alloc, b"catalog", expr)
+                    .put(bump, b"catalog", expr)
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 return Ok(());
             }
@@ -2392,14 +2385,14 @@ fn update_default_catalog(
     // `workspaces.catalog` key exists.
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(alloc, b"catalog", Expr::init(alloc, fresh_obj, Loc::EMPTY))
+            .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())
 }
 
 fn update_named_catalog(
-    alloc: AstAlloc,
+    bump: &Bump,
     package_json: &mut Expr,
     catalog_name: &[u8],
     package_name: &[u8],
@@ -2409,8 +2402,8 @@ fn update_named_catalog(
     // First check if catalogs is under workspaces.catalogs (newer structure)
     // Reshaped — see `update_default_catalog` for the
     // shallow-copy-vs-in-place + lookup-vs-placement rationale.
-    let mut fresh_catalogs = E::Object::empty(alloc);
-    let (existing_catalogs, source) = find_catalog_object(alloc, package_json, b"catalogs");
+    let mut fresh_catalogs = E::Object::default();
+    let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
     {
         let catalogs_obj: &mut E::Object = match existing_catalogs {
             Some(mut o) => {
@@ -2421,7 +2414,7 @@ fn update_named_catalog(
         };
 
         // Get or create the specific catalog
-        let mut fresh_catalog = E::Object::empty(alloc);
+        let mut fresh_catalog = E::Object::default();
         let existing_catalog: Option<bun_ast::StoreRef<E::Object>> = catalogs_obj
             .get(catalog_name)
             .and_then(|e| e.data.e_object());
@@ -2444,31 +2437,27 @@ fn update_named_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::init(alloc, E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
-            .put(alloc, leak_dup(package_name), new_expr)
+            .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
 
         // Update the catalog in catalogs object
         if existing_catalog.is_none() {
             catalogs_obj
                 .put(
-                    alloc,
+                    bump,
                     leak_dup(catalog_name),
-                    Expr::init(alloc, fresh_catalog, Loc::EMPTY),
+                    Expr::init(fresh_catalog, Loc::EMPTY),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         }
     }
 
     // Check if we need to update under workspaces.catalogs or root-level catalogs
-    if let Some(workspaces_query) = package_json.as_property(alloc, b"workspaces") {
+    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
         if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
-            if workspaces_query
-                .expr
-                .as_property(alloc, b"catalogs")
-                .is_some()
-            {
+            if workspaces_query.expr.as_property(b"catalogs").is_some() {
                 // Update under workspaces.catalogs
                 if source == CatalogSource::Workspaces {
                     // Mutated in place; placement matches lookup.
@@ -2479,10 +2468,10 @@ fn update_named_catalog(
                         loc: Loc::EMPTY,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::init(alloc, fresh_catalogs, Loc::EMPTY),
+                    None => Expr::init(fresh_catalogs, Loc::EMPTY),
                 };
                 ws_obj
-                    .put(alloc, b"catalogs", expr)
+                    .put(bump, b"catalogs", expr)
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 return Ok(());
             }
@@ -2496,11 +2485,7 @@ fn update_named_catalog(
     }
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(
-                alloc,
-                b"catalogs",
-                Expr::init(alloc, fresh_catalogs, Loc::EMPTY),
-            )
+            .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())

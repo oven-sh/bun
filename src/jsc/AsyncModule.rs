@@ -1187,12 +1187,16 @@ impl AsyncModule {
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
+        // Install the arena that backs `parse_result.ast` as the active
+        // `AstAlloc` for the link + print below.
+        // SAFETY: `self.ast_arena` outlives `_scope` (field vs. stack local).
+        let _scope = unsafe { (*(&raw mut self.ast_arena)).enter() };
+        let arena: &'static bun_alloc::Arena = bun_alloc::AstAlloc.arena();
         // Take `parse_result` by value via `mem::take`, then restore below, to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
-        let alloc = self.parse_result.ast.alloc();
         let mut parse_result =
-            core::mem::replace(&mut self.parse_result, ParseResult::empty(alloc));
+            core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
         // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
         // stable for the lifetime of `*self`; this fn never replaces it, so
         // slices into it remain valid across the `&mut self` reborrows below
@@ -1252,8 +1256,7 @@ impl AsyncModule {
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
         let input_fd = self.parse_result.input_fd;
-        let alloc = self.parse_result.ast.alloc();
-        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(alloc));
+        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
         // `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
@@ -1300,8 +1303,7 @@ impl AsyncModule {
                     // `InitOpts::ast_arena` after the original parse). The
                     // printer's rope-flattening scratch belongs in it, not
                     // in the per-VM `transpiler_arena`.
-                    self.ast_arena.arena(),
-                    self.ast_arena.alloc(),
+                    arena,
                     parse_result,
                     &mut printer,
                     bun_js_printer::Format::EsmAscii,

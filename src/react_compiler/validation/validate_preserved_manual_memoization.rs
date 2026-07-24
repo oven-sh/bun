@@ -19,7 +19,7 @@ use crate::diagnostics::{
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
-    DeclarationId, DependencyPathEntry, HirVec, Identifier, IdentifierId, IdentifierName,
+    AstAlloc, DeclarationId, DependencyPathEntry, HirVec, Identifier, IdentifierId, IdentifierName,
     InstructionKind, InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot, Place,
     ReactiveBlock, ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement,
     ReactiveValue, ScopeId,
@@ -145,7 +145,6 @@ fn visit_scope(scope_block: &ReactiveScopeBlock, state: &mut VisitorState) {
             let scope = &env.scopes[scope_block.scope.0 as usize];
             for dep in &scope.dependencies {
                 validate_inferred_dep(
-                    env.alloc,
                     dep.identifier,
                     &dep.path,
                     &state.temporaries,
@@ -200,7 +199,7 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
                 decls: HashSet::new(),
                 deps_from_source,
                 manual_memo_id: *manual_memo_id,
-                reassignments: IdMap::new_in(state.env.alloc),
+                reassignments: IdMap::new(),
             });
 
             // Check that each dependency's scope has completed before the memo
@@ -379,7 +378,7 @@ fn record_temporaries(instr: &ReactiveInstruction, state: &mut VisitorState) {
                     value: lvalue.clone(),
                     constant: false,
                 },
-                path: state.env.alloc.vec(),
+                path: AstAlloc::vec(),
                 loc: lvalue.loc,
             },
         );
@@ -453,7 +452,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
                                     value: lvalue.place.clone(),
                                     constant: false,
                                 },
-                                path: state.env.alloc.vec(),
+                                path: AstAlloc::vec(),
                                 loc: lvalue.place.loc,
                             },
                         );
@@ -475,7 +474,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
                                         value: place.clone(),
                                         constant: false,
                                     },
-                                    path: state.env.alloc.vec(),
+                                    path: AstAlloc::vec(),
                                     loc: place.loc,
                                 },
                             );
@@ -665,7 +664,6 @@ fn get_compare_dependency_result_description(result: CompareDependencyResult) ->
 /// Validate that an inferred dependency matches a source dependency or was produced
 /// within the manual memo block.
 fn validate_inferred_dep(
-    alloc: bun_alloc::AstAlloc,
     dep_id: IdentifierId,
     dep_path: &[DependencyPathEntry],
     temporaries: &HashMap<IdentifierId, ManualMemoDependency>,
@@ -700,7 +698,7 @@ fn validate_inferred_dep(
                 },
                 constant: false,
             },
-            path: alloc.vec_from_slice(dep_path),
+            path: AstAlloc::vec_from_slice(dep_path),
             loc: ident.loc,
         }
     };

@@ -6,14 +6,15 @@ use core::mem::offset_of;
 use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
+use bun_collections::VecExt;
 
 use bun_ast::{Loc, Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
+use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
-use bun_ast::{LocRef, StmtOrExpr, UseDirective};
 
 use crate::AstBuilder::AstBuilder;
 use crate::JSAst;
@@ -76,12 +77,14 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .ctx
         .expect("ServerComponentParseTask.ctx set at enqueue");
     let worker = Worker::get(ctx.get());
-    // `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 
     // SAFETY: `worker.arena` is set in `Worker::create` to point at the
     // worker-owned bump arena; lives for the worker's lifetime.
     let arena: &Arena = worker.arena();
+    // NLL field split: only `worker.ctx` (shared) is touched below, disjoint
+    // from `&mut worker.ast_arena`.
+    let _scope = worker.ast_arena.enter();
 
     let value = match task_callback(task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),
@@ -137,8 +140,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
             }
         }
     }
-    // Runs at function exit, i.e. after enqueue.
-    worker.unget();
 }
 
 fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
@@ -162,14 +163,7 @@ fn task_callback(
     // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);
-    let worker = Worker::get(ctx);
-    let alloc = worker.alloc();
-    let mut ab = AstBuilder::init(
-        bump,
-        alloc,
-        &source,
-        ctx.transpiler().options.hot_module_reloading,
-    )?;
+    let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
 
     match &task.data {
         Data::ClientReferenceProxy(data) => generate_client_reference_proxy(ctx, data, &mut ab)?,
@@ -331,11 +325,9 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: b
-                .alloc
-                .vec_from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
+            args: bun_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
             close_parens_loc: Loc::EMPTY,
-            ..E::New::empty(b.alloc)
+            ..Default::default()
         });
 
         // registerClientReference(
@@ -347,7 +339,7 @@ fn generate_client_reference_proxy(
         let arrow_body_stmts: &mut [Stmt] = b.bump.alloc_slice_copy(&[throw_stmt]);
         let value = b.new_expr(E::Call {
             target: register_client_reference,
-            args: b.alloc.vec_from_slice(&[
+            args: ExprNodeList::from_slice(&[
                 b.new_expr(E::Arrow {
                     body: G::FnBody {
                         stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
@@ -358,7 +350,7 @@ fn generate_client_reference_proxy(
                 module_path,
                 b.new_expr(E::String::init(b.bump.alloc_slice_copy(key))),
             ]),
-            ..E::Call::empty(b.alloc)
+            ..Default::default()
         });
 
         if is_default {
@@ -375,7 +367,7 @@ fn generate_client_reference_proxy(
             // export const Component = registerClientReference(...);
             let export_ref = b.new_symbol(symbol::Kind::Other, key)?;
             b.append_stmt(S::Local {
-                decls: b.alloc.vec_from_slice(&[G::Decl {
+                decls: G::DeclList::from_slice(&[G::Decl {
                     binding: Binding::alloc(
                         b.bump,
                         B::Identifier { r#ref: export_ref },
@@ -385,7 +377,7 @@ fn generate_client_reference_proxy(
                 }]),
                 is_export: true,
                 kind: S::Kind::KConst,
-                ..S::Local::empty(b.alloc)
+                ..Default::default()
             })?;
         }
     }

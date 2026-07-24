@@ -37,15 +37,6 @@ impl JsonCache {
         JsonCache { bump: None }
     }
 
-    /// The [`bun_alloc::AstAlloc`] handle routing into this cache's arena.
-    /// Lazily creates the arena on first access.
-    #[inline]
-    pub fn alloc(&mut self) -> bun_alloc::AstAlloc {
-        self.bump
-            .get_or_insert_with(bun_alloc::AstArena::new)
-            .alloc()
-    }
-
     #[inline]
     fn parse(
         &mut self,
@@ -54,12 +45,15 @@ impl JsonCache {
         func: fn(
             &bun_ast::Source,
             &mut bun_ast::Log,
-            bun_alloc::AstAlloc,
+            &bun_alloc::Arena,
         ) -> Result<bun_ast::Expr, bun_parsers::Error>,
     ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
-        let ast_alloc = self.alloc();
-        let result = func(source, &mut temp_log, ast_alloc).ok();
+        let _scope = self
+            .bump
+            .get_or_insert_with(bun_alloc::AstArena::new)
+            .enter();
+        let result = func(source, &mut temp_log, bun_alloc::AstAlloc.arena()).ok();
         let _ = temp_log.append_to(log);
         Ok(result)
     }
@@ -72,12 +66,14 @@ impl JsonCache {
         func: fn(
             &bun_ast::Source,
             &mut bun_ast::Log,
-            bun_alloc::AstAlloc,
         ) -> Result<json_parser::ParsedJson, bun_parsers::Error>,
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
-        let ast_alloc = self.alloc();
-        let result = func(source, &mut temp_log, ast_alloc).ok();
+        let _scope = self
+            .bump
+            .get_or_insert_with(bun_alloc::AstArena::new)
+            .enter();
+        let result = func(source, &mut temp_log).ok();
         let _ = temp_log.append_to(log);
         Ok(result)
     }

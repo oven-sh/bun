@@ -549,9 +549,9 @@ impl Lockfile {
         if lockfile_format == LockfileFormat::Text {
             let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
-            let ast_arena = bun_alloc::AstArena::new();
-            let alloc = ast_arena.alloc();
-            let parsed = match JSON::ParsedJson::parse_package_json(&source, log, alloc) {
+            let mut ast_arena = bun_alloc::AstArena::new();
+            let _scope = ast_arena.enter();
+            let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                 Ok(j) => j,
                 Err(e) => {
                     return LoadResult::Err(LoadResultErr {
@@ -563,14 +563,9 @@ impl Lockfile {
                 }
             };
 
-            if let Err(e) = TextLockfile::parse_into_binary_lockfile(
-                self,
-                alloc,
-                parsed.root,
-                &source,
-                log,
-                manager,
-            ) {
+            if let Err(e) =
+                TextLockfile::parse_into_binary_lockfile(self, parsed.root, &source, log, manager)
+            {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
@@ -630,9 +625,9 @@ impl Lockfile {
 
                 let source = bun_ast::Source::init_path_string(b"bun.lock", writer_buf.as_slice());
                 initialize_store();
-                let ast_arena = bun_alloc::AstArena::new();
-                let alloc = ast_arena.alloc();
-                let parsed = match JSON::ParsedJson::parse_package_json(&source, log, alloc) {
+                let mut ast_arena = bun_alloc::AstArena::new();
+                let _scope = ast_arena.enter();
+                let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                     Ok(j) => j,
                     Err(e) => Output::panic(format_args!(
                         "failed to print valid json from binary lockfile: {}",
@@ -642,7 +637,6 @@ impl Lockfile {
 
                 if let Err(e) = TextLockfile::parse_into_binary_lockfile(
                     &mut *ok.lockfile,
-                    alloc,
                     parsed.root,
                     &source,
                     log,

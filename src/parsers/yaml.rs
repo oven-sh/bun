@@ -11,7 +11,6 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::AllocError;
-use bun_alloc::AstAlloc;
 use bun_ast::{self, E, Expr, G};
 use bun_ast::{self as ast, Loc};
 use bun_collections::{StringHashMap, VecExt};
@@ -27,11 +26,11 @@ impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-        alloc: AstAlloc,
+        bump: &bun_alloc::Arena,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
 
-        let mut parser: Parser<Utf8> = Parser::init(alloc, source.contents());
+        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents());
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -45,19 +44,19 @@ impl YAML {
         };
 
         match stream.docs.len() {
-            0 => Ok(Expr::init(alloc, E::Null {}, Loc::EMPTY)),
+            0 => Ok(Expr::init(E::Null {}, Loc::EMPTY)),
             1 => Ok(stream.docs[0].root),
             _ => {
                 // multi-document yaml streams are converted into arrays
-                let mut items: ast::ExprNodeList = alloc.vec_with_capacity(stream.docs.len());
+                let mut items: ast::ExprNodeList =
+                    ast::ExprNodeList::init_capacity(stream.docs.len());
                 for doc in &stream.docs {
                     items.push(doc.root);
                 }
                 Ok(Expr::init(
-                    alloc,
                     E::Array {
                         items,
-                        ..E::Array::empty(alloc)
+                        ..Default::default()
                     },
                     Loc::EMPTY,
                 ))
@@ -92,8 +91,11 @@ impl From<YamlParseError> for crate::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn parse<'i, Enc: Encoding>(alloc: AstAlloc, input: &'i [Enc::Unit]) -> ParseResult<'i, Enc> {
-    let mut parser: Parser<Enc> = Parser::init(alloc, input);
+pub fn parse<'i, Enc: Encoding>(
+    bump: &'i bun_alloc::Arena,
+    input: &'i [Enc::Unit],
+) -> ParseResult<'i, Enc> {
+    let mut parser: Parser<Enc> = Parser::init(bump, input);
 
     match parser.parse() {
         Ok(stream) => ParseResult::success(stream, &parser),
@@ -1640,7 +1642,7 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub fn resolve_null(self, alloc: AstAlloc, loc: bun_ast::Loc) -> Expr {
+    pub fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
         match self {
             NodeTag::None
             | NodeTag::Bool
@@ -1648,10 +1650,10 @@ impl NodeTag {
             | NodeTag::Float
             | NodeTag::Null
             | NodeTag::Verbatim(_)
-            | NodeTag::Unknown(_) => Expr::init(alloc, E::Null {}, loc),
+            | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
 
             // non-specific tags become seq, map, or str
-            NodeTag::NonSpecific | NodeTag::Str => Expr::init(alloc, E::String::default(), loc),
+            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
         }
     }
 }
@@ -1665,14 +1667,11 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub fn to_expr(&self, alloc: AstAlloc, pos: Pos, input: &[Enc::Unit]) -> Expr {
-        let bump = alloc.arena();
+    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
         match self {
-            NodeScalar::Null => Expr::init(alloc, E::Null {}, pos.loc()),
-            NodeScalar::Boolean(value) => {
-                Expr::init(alloc, E::Boolean { value: *value }, pos.loc())
-            }
-            NodeScalar::Number(value) => Expr::init(alloc, E::Number::new(*value), pos.loc()),
+            NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
+            NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
+            NodeScalar::Number(value) => Expr::init(E::Number::new(*value), pos.loc()),
             NodeScalar::String(value) => {
                 // For `Utf16` we route through `E::String::init_utf16`.
                 //
@@ -1698,7 +1697,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                     }
                     _ => E::String::init(Enc::key_bytes(s)),
                 };
-                Expr::init(alloc, estring, pos.loc())
+                Expr::init(estring, pos.loc())
             }
         }
     }
@@ -2238,7 +2237,7 @@ pub struct Parser<'i, Enc: Encoding> {
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
     /// `NodeScalar::to_expr`).
-    pub alloc: AstAlloc,
+    pub bump: &'i bun_alloc::Arena,
 
     pub context: ContextStack,
     pub block_indents: IndentStack,
@@ -2266,12 +2265,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// (billion-laughs style) expansion.
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
-    pub fn init(alloc: AstAlloc, input: &'i [Enc::Unit]) -> Self {
+    pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
         Self {
             input,
-            alloc,
+            bump,
             pos: start,
             line_start_pos: start,
             line_indent: Indent::NONE,
@@ -2580,7 +2579,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 | TokenData::MappingEnd
                 | TokenData::SequenceEnd
         ) {
-            return Ok(Expr::init(self.alloc, E::Null {}, start.loc()));
+            return Ok(Expr::init(E::Null {}, start.loc()));
         }
 
         // [143] the explicit key after `?` is ns-flow-map-implicit-entry,
@@ -2644,7 +2643,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let _sequence_indent = self.token.indent;
         let _sequence_line = self.line;
 
-        let mut seq: ast::ExprNodeList = self.alloc.vec();
+        let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
         self.context.set(Context::FlowIn)?;
 
@@ -2664,7 +2663,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             self.token.data,
                             TokenData::CollectEntry | TokenData::SequenceEnd
                         ) {
-                            Expr::init(self.alloc, E::Null {}, self.token.start.loc())
+                            Expr::init(E::Null {}, self.token.start.loc())
                         } else {
                             // [147] the value is ns-flow-node; threading the
                             // value's own indent as current_mapping_indent
@@ -2677,15 +2676,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             })?
                         }
                     } else {
-                        Expr::init(self.alloc, E::Null {}, self.token.start.loc())
+                        Expr::init(E::Null {}, self.token.start.loc())
                     };
-                    let mut props = MappingProps::init(self.alloc);
+                    let mut props = MappingProps::init();
                     props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
                     Expr::init(
-                        self.alloc,
                         E::Object {
                             properties: props.move_list(),
-                            ..E::Object::empty(self.alloc)
+                            ..Default::default()
                         },
                         pair_start.loc(),
                     )
@@ -2717,10 +2715,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.scan(ScanOptions::default())?;
 
         Ok(Expr::init(
-            self.alloc,
             E::Array {
-                items: core::mem::replace(&mut seq, self.alloc.vec()),
-                ..E::Array::empty(self.alloc)
+                items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
+                ..Default::default()
             },
             sequence_start.loc(),
         ))
@@ -2731,7 +2728,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let _mapping_indent = self.token.indent;
         let _mapping_line = self.token.line;
 
-        let mut props = MappingProps::init(self.alloc);
+        let mut props = MappingProps::init();
 
         self.context.set(Context::FlowIn)?;
 
@@ -2755,7 +2752,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.parse_flow_explicit_key()?
                 } else if matches!(self.token.data, TokenData::MappingValue) {
                     // [147] e-node key followed by `:`
-                    Expr::init(self.alloc, E::Null {}, self.token.start.loc())
+                    Expr::init(E::Null {}, self.token.start.loc())
                 } else {
                     self.context.set(Context::FlowKey)?;
                     let k = self.parse_node(ParseNodeOptions::default());
@@ -2765,11 +2762,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 match self.token.data {
                     TokenData::CollectEntry => {
-                        let value = Expr::init(self.alloc, E::Null {}, self.token.start.loc());
+                        let value = Expr::init(E::Null {}, self.token.start.loc());
                         props.append(G::Property {
                             key: Some(key),
                             value: Some(value),
-                            ..G::Property::empty(self.alloc)
+                            ..Default::default()
                         })?;
 
                         self.context.set(Context::FlowKey)?;
@@ -2779,11 +2776,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         continue;
                     }
                     TokenData::MappingEnd => {
-                        let value = Expr::init(self.alloc, E::Null {}, self.token.start.loc());
+                        let value = Expr::init(E::Null {}, self.token.start.loc());
                         props.append(G::Property {
                             key: Some(key),
                             value: Some(value),
-                            ..G::Property::empty(self.alloc)
+                            ..Default::default()
                         })?;
                         continue;
                     }
@@ -2799,11 +2796,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token.data,
                     TokenData::MappingEnd | TokenData::CollectEntry
                 ) {
-                    let value = Expr::init(self.alloc, E::Null {}, self.token.start.loc());
+                    let value = Expr::init(E::Null {}, self.token.start.loc());
                     props.append(G::Property {
                         key: Some(key),
                         value: Some(value),
-                        ..G::Property::empty(self.alloc)
+                        ..Default::default()
                     })?;
                 } else {
                     // [147] the value is ns-flow-node; threading the value's
@@ -2840,10 +2837,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.scan(ScanOptions::default())?;
 
         Ok(Expr::init(
-            self.alloc,
             E::Object {
                 properties: props.move_list(),
-                ..E::Object::empty(self.alloc)
+                ..Default::default()
             },
             mapping_start.loc(),
         ))
@@ -2867,7 +2863,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // Capture the fallible body's result and pop `block_indents` on EVERY
         // exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
-            let mut seq: ast::ExprNodeList = self.alloc.vec();
+            let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
             let mut prev_line = Line::from(0);
 
@@ -2905,10 +2901,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             Ok(Expr::init(
-                self.alloc,
                 E::Array {
-                    items: core::mem::replace(&mut seq, self.alloc.vec()),
-                    ..E::Array::empty(self.alloc)
+                    items: core::mem::replace(&mut seq, bun_alloc::AstAlloc::vec()),
+                    ..Default::default()
                 },
                 sequence_start.loc(),
             ))
@@ -2946,7 +2941,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // Capture the fallible body's result and pop `block_indents` on EVERY
         // exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
-            let mut props = MappingProps::init(self.alloc);
+            let mut props = MappingProps::init();
             let mut first_entry_end_line = mapping_line;
 
             {
@@ -2960,7 +2955,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if self.token.line == mapping_line {
                             return Err(Self::unexpected_token());
                         }
-                        Expr::init(self.alloc, E::Null {}, mapping_value_start.loc())
+                        Expr::init(E::Null {}, mapping_value_start.loc())
                     }
                     TokenData::MappingValue => 'value: {
                         first_entry_end_line = mapping_value_line;
@@ -2973,11 +2968,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if self.token.indent.is_less_than(mapping_indent) {
                                 // [189] e-node — `:` belongs to an outer
                                 // construct; this entry has no value.
-                                break 'value Expr::init(
-                                    self.alloc,
-                                    E::Null {},
-                                    mapping_value_start.loc(),
-                                );
+                                break 'value Expr::init(E::Null {}, mapping_value_start.loc());
                             }
                             return Err(if self.tab_after_indent {
                                 ParseError::TabIndentation
@@ -3008,7 +2999,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // [189] explicit-value is optional; the current token is the
                     // next entry (or end of mapping). Implicit first entries
                     // always arrive here with `:` so this arm is explicit-only.
-                    _ => Expr::init(self.alloc, E::Null {}, mapping_value_start.loc()),
+                    _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
                 props.append_maybe_merge(first_key, value, &mut self.merge_props_budget)?;
@@ -3016,10 +3007,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             if self.context.get() == Context::FlowIn {
                 return Ok(Expr::init(
-                    self.alloc,
                     E::Object {
                         properties: props.move_list(),
-                        ..E::Object::empty(self.alloc)
+                        ..Default::default()
                     },
                     mapping_start.loc(),
                 ));
@@ -3053,11 +3043,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     match self.token.data {
                         TokenData::Eof => {
                             if explicit_key {
-                                let value = Expr::init(self.alloc, E::Null {}, self.pos.loc());
+                                let value = Expr::init(E::Null {}, self.pos.loc());
                                 props.append(G::Property {
                                     key: Some(key),
                                     value: Some(value),
-                                    ..G::Property::empty(self.alloc)
+                                    ..Default::default()
                                 })?;
                                 continue;
                             }
@@ -3069,11 +3059,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 if self.token.indent.is_less_than(mapping_indent) {
                                     // [189] e-node — `:` belongs to an outer
                                     // construct; this entry has no value.
-                                    let value = Expr::init(self.alloc, E::Null {}, self.pos.loc());
+                                    let value = Expr::init(E::Null {}, self.pos.loc());
                                     props.append(G::Property {
                                         key: Some(key),
                                         value: Some(value),
-                                        ..G::Property::empty(self.alloc)
+                                        ..Default::default()
                                     })?;
                                     continue;
                                 }
@@ -3094,11 +3084,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if explicit_key {
                                 // [189] explicit-value is optional; the current
                                 // token is the next entry's key.
-                                let value = Expr::init(self.alloc, E::Null {}, self.pos.loc());
+                                let value = Expr::init(E::Null {}, self.pos.loc());
                                 props.append(G::Property {
                                     key: Some(key),
                                     value: Some(value),
-                                    ..G::Property::empty(self.alloc)
+                                    ..Default::default()
                                 })?;
                                 continue;
                             }
@@ -3120,7 +3110,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if self.token.line == key_line {
                                 return Err(Self::unexpected_token());
                             }
-                            Expr::init(self.alloc, E::Null {}, mapping_value_start.loc())
+                            Expr::init(E::Null {}, mapping_value_start.loc())
                         }
                         _ => {
                             let parent_indent = if mapping_value_line != key_line {
@@ -3148,10 +3138,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 Ok(Expr::init(
-                    self.alloc,
                     E::Object {
                         properties: props.move_list(),
-                        ..E::Object::empty(self.alloc)
+                        ..Default::default()
                     },
                     mapping_start.loc(),
                 ))
@@ -3173,7 +3162,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct MappingProps {
-    alloc: AstAlloc,
     list: G::PropertyList,
     merge_index: bun_collections::HashMap<u64, Vec<u32>>,
     merge_indexed: usize,
@@ -3182,10 +3170,9 @@ pub struct MappingProps {
 impl MappingProps {
     pub const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
 
-    pub fn init(alloc: AstAlloc) -> Self {
+    pub fn init() -> Self {
         Self {
-            alloc,
-            list: alloc.vec(),
+            list: bun_alloc::AstAlloc::vec(),
             merge_index: bun_collections::HashMap::default(),
             merge_indexed: 0,
         }
@@ -3236,7 +3223,7 @@ impl MappingProps {
                 kind: merge_prop.kind,
                 flags: merge_prop.flags,
                 initializer: merge_prop.initializer,
-                ..G::Property::empty(self.alloc)
+                ..Default::default()
             });
             self.merge_index
                 .get_or_put(merge_hash)?
@@ -3262,7 +3249,7 @@ impl MappingProps {
             return self.append(G::Property {
                 key: Some(key),
                 value: Some(value),
-                ..G::Property::empty(self.alloc)
+                ..Default::default()
             });
         }
 
@@ -3281,7 +3268,7 @@ impl MappingProps {
             _ => self.append(G::Property {
                 key: Some(key),
                 value: Some(value),
-                ..G::Property::empty(self.alloc)
+                ..Default::default()
             }),
         }
     }
@@ -3289,7 +3276,7 @@ impl MappingProps {
     pub fn move_list(&mut self) -> G::PropertyList {
         self.merge_index.clear();
         self.merge_indexed = 0;
-        core::mem::replace(&mut self.list, self.alloc.vec())
+        core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
     }
 }
 
@@ -3674,7 +3661,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }) => *t,
             _ => NodeTag::None,
         };
-        let e_node = resolved_tag.resolve_null(self.alloc, loc);
+        let e_node = resolved_tag.resolve_null(loc);
         if let Some(Token {
             data: TokenData::Anchor(name),
             ..
@@ -3733,7 +3720,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let node: Expr = 'node: loop {
             match &self.token.data {
                 TokenData::Eof | TokenData::DocumentStart | TokenData::DocumentEnd => {
-                    break 'node Expr::init(self.alloc, E::Null {}, self.token.start.loc());
+                    break 'node Expr::init(E::Null {}, self.token.start.loc());
                 }
 
                 TokenData::Anchor(_anchor) => {
@@ -3911,7 +3898,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 TokenData::CollectEntry | TokenData::SequenceEnd | TokenData::MappingEnd => {
                     if node_props.has_anchor_or_tag() {
-                        break 'node Expr::init(self.alloc, E::Null {}, self.pos.loc());
+                        break 'node Expr::init(E::Null {}, self.pos.loc());
                     }
                     return Err(Self::unexpected_token());
                 }
@@ -4052,7 +4039,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 TokenData::MappingValue => {
                     if self.context.get() == Context::FlowKey {
-                        break 'node Expr::init(self.alloc, E::Null {}, self.token.start.loc());
+                        break 'node Expr::init(E::Null {}, self.token.start.loc());
                     }
                     // [195] block `:` (e-node key) sits at s-indent(n) only.
                     if self.tab_after_indent && !matches!(self.context.get(), Context::FlowIn) {
@@ -4060,7 +4047,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     if let Some(current_mapping_indent) = opts.current_mapping_indent {
                         if current_mapping_indent == self.token.indent {
-                            break 'node Expr::init(self.alloc, E::Null {}, self.token.start.loc());
+                            break 'node Expr::init(E::Null {}, self.token.start.loc());
                         }
                     }
                     // [200]/[193] split: a property on the `:` line is the
@@ -4073,7 +4060,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     } else {
                         NodeTag::None
                     };
-                    let first_key = key_tag.resolve_null(self.alloc, self.token.start.loc());
+                    let first_key = key_tag.resolve_null(self.token.start.loc());
 
                     let implicit_key_anchors = node_props.implicit_key_anchors(colon_line)?;
                     if let Some(key_anchor) = implicit_key_anchors.key_anchor {
@@ -4143,7 +4130,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // `:` belongs to an outer construct (e.g. the
                             // explicit-value indicator after `? - a` or
                             // `? sky\n: blue`). This scalar is not a key.
-                            break 'node scalar.data.to_expr(self.alloc, scalar_start, self.input);
+                            break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
                         // [192] ns-l-block-map-implicit-entry: the key is at
                         // s-indent(n) (spaces only). A tab between s-indent
@@ -4159,9 +4146,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if current_mapping_indent == scalar_indent {
                                 // 3
                                 break 'node scalar.data.to_expr(
-                                    self.alloc,
                                     scalar_start,
                                     self.input,
+                                    self.bump,
                                 );
                             }
                         }
@@ -4170,9 +4157,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             Context::FlowKey => {
                                 // 1
                                 break 'node scalar.data.to_expr(
-                                    self.alloc,
                                     scalar_start,
                                     self.input,
+                                    self.bump,
                                 );
                             }
                             Context::FlowIn | Context::BlockOut | Context::BlockIn => {
@@ -4189,11 +4176,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // covers the multiline-property case where they
                         // diverge.
                         if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
-                            break 'node scalar.data.to_expr(self.alloc, scalar_start, self.input);
+                            break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
 
-                        let implicit_key =
-                            scalar.data.to_expr(self.alloc, scalar_start, self.input);
+                        let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
 
                         let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line)?;
 
@@ -4218,7 +4204,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Ok(mapping);
                     }
 
-                    break 'node scalar.data.to_expr(self.alloc, scalar_start, self.input);
+                    break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                 }
 
                 TokenData::Directive => return Err(Self::unexpected_token()),
@@ -4237,7 +4223,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         let resolved = match &node.data {
-            ast::ExprData::ENull(_) => node_props.tag().resolve_null(self.alloc, node.loc),
+            ast::ExprData::ENull(_) => node_props.tag().resolve_null(node.loc),
             _ => node,
         };
 

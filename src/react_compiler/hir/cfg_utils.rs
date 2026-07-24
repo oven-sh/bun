@@ -24,13 +24,12 @@ use super::{
 /// only reachable as fallthroughs (not through real successor edges) are
 /// replaced with empty blocks that have an Unreachable terminal.
 pub fn get_reverse_postordered_blocks(
-    alloc: bun_alloc::AstAlloc,
     hir: &HIR,
     _instructions: &[Instruction],
 ) -> IndexMap<BlockId, BasicBlock> {
-    let mut visited: IndexSet<BlockId> = IndexSet::new_in(alloc);
-    let mut used: IndexSet<BlockId> = IndexSet::new_in(alloc);
-    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new_in(alloc);
+    let mut visited: IndexSet<BlockId> = IndexSet::new();
+    let mut used: IndexSet<BlockId> = IndexSet::new();
+    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
     let mut postorder: Vec<BlockId> = Vec::new();
 
     fn visit(
@@ -99,7 +98,7 @@ pub fn get_reverse_postordered_blocks(
         &mut postorder,
     );
 
-    let mut blocks = IndexMap::new_in(alloc);
+    let mut blocks = IndexMap::new();
     for block_id in postorder.into_iter().rev() {
         let block = hir.blocks.get(&block_id).unwrap();
         if used.contains(&block_id) {
@@ -110,13 +109,13 @@ pub fn get_reverse_postordered_blocks(
                 BasicBlock {
                     kind: block.kind,
                     id: block_id,
-                    instructions: alloc.vec(),
+                    instructions: super::AstAlloc::vec(),
                     terminal: Terminal::Unreachable {
                         id: block.terminal.evaluation_order(),
                         loc: block.terminal.loc().copied(),
                     },
                     preds: block.preds.clone(),
-                    phis: alloc.vec(),
+                    phis: super::AstAlloc::vec(),
                 },
             );
         }
@@ -129,8 +128,7 @@ pub fn get_reverse_postordered_blocks(
 /// For each block with a `For` terminal whose update block is not in the
 /// blocks map, set update to None.
 pub fn remove_unreachable_for_updates(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> =
-        IndexSet::from_iter_in(hir.blocks.allocator(), hir.blocks.keys().copied());
+    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
     for block in hir.blocks.values_mut() {
         if let Terminal::For { update, .. } = &mut block.terminal {
             if let Some(update_id) = *update {
@@ -145,8 +143,7 @@ pub fn remove_unreachable_for_updates(hir: &mut HIR) {
 /// For each block with a `DoWhile` terminal whose test block is not in
 /// the blocks map, replace the terminal with a Goto to the loop block.
 pub fn remove_dead_do_while_statements(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> =
-        IndexSet::from_iter_in(hir.blocks.allocator(), hir.blocks.keys().copied());
+    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
     for block in hir.blocks.values_mut() {
         let should_replace = if let Terminal::DoWhile { test, .. } = &block.terminal {
             !block_ids.contains(test)
@@ -183,8 +180,7 @@ pub fn remove_dead_do_while_statements(hir: &mut HIR) {
 /// Also cleans up the fallthrough block's predecessors if the handler
 /// was the only path to it.
 pub fn remove_unnecessary_try_catch(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> =
-        IndexSet::from_iter_in(hir.blocks.allocator(), hir.blocks.keys().copied());
+    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
 
     // Collect the blocks that need replacement and their associated data
     let replacements: Vec<(BlockId, BlockId, BlockId, BlockId, Option<SourceLocation>)> = hir
@@ -256,7 +252,7 @@ pub fn mark_predecessors(hir: &mut HIR) {
         block.preds.clear();
     }
 
-    let mut visited: IndexSet<BlockId> = IndexSet::new_in(hir.blocks.allocator());
+    let mut visited: IndexSet<BlockId> = IndexSet::new();
 
     fn visit(
         hir: &mut HIR,

@@ -835,13 +835,13 @@ pub fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
+    bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
-    // One `AstArena` for the whole define table: JSON-parsed `--define`
-    // payloads and env-define `E::String` slabs allocate into it, and it is
-    // moved into the returned `Box<Define>` so those `StoreRef`s stay valid
-    // for the table's lifetime and are bulk-freed with it.
-    let ast_arena = bun_alloc::AstArena::new();
-    let alloc = ast_arena.alloc();
+    // Install a stack `AstArena` for any AST-building below (env-define
+    // `E::String` slabs, JSON-parsed `--define` values). No field on `Define`
+    // — the long-lived node payloads are `deep_clone`d into `bump`.
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
 
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
@@ -889,7 +889,7 @@ pub fn defines_from_transform_options(
             &default_values,
             behavior,
             &framework.prefix,
-            alloc,
+            bump,
         )?;
     }
 
@@ -951,7 +951,7 @@ pub fn defines_from_transform_options(
         }
     }
 
-    let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, alloc)?;
+    let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
@@ -960,7 +960,6 @@ pub fn defines_from_transform_options(
         Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-        ast_arena,
     )?)
 }
 
@@ -1374,9 +1373,6 @@ impl<'a> BundleOptions<'a> {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
                 drop_debugger: self.define.drop_debugger,
-                // The cloned `StoreRef`s above point into the parent's
-                // `ast_arena`; the worker's own arena stays empty.
-                ast_arena: bun_alloc::AstArena::new(),
             }),
             drop: self.drop.clone(),
             bundler_feature_flags: self
@@ -1549,6 +1545,7 @@ impl<'a> BundleOptions<'a> {
 
     pub fn load_defines(
         &mut self,
+        arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the
@@ -1556,6 +1553,11 @@ impl<'a> BundleOptions<'a> {
         // raw-pointer dance under Stacked Borrows. Dropped the param and read
         // `&self.env` here instead — disjoint from the `self.define` /
         // `self.defines_loaded` writes below, so borrowck splits it cleanly.
+        //
+        // The `arena` param is kept (spec passes `this.arena`, i.e.
+        // `bun.default_allocator`) because `DefineData::from_input` JSON-parses
+        // each define value into `EString` nodes whose `.data` slices borrow
+        // the arena — they must outlive `self.define`, not just this call.
         if self.defines_loaded {
             return Ok(());
         }
@@ -1595,6 +1597,7 @@ impl<'a> BundleOptions<'a> {
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
+            arena,
         )?;
         self.defines_loaded = true;
         Ok(())
@@ -1633,7 +1636,11 @@ impl<'a> BundleOptions<'a> {
             log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
-            define: Box::<defines::Define>::default(),
+            define: Box::new(defines::Define {
+                identifiers: Default::default(),
+                dots: Default::default(),
+                drop_debugger: false,
+            }),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,

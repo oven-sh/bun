@@ -34,7 +34,7 @@ pub fn prune_hoisted_contexts(
     let mut transform = Transform { env };
     let mut state = VisitorState {
         active_scopes: Vec::new(),
-        uninitialized: IdMap::new_in(env.alloc),
+        uninitialized: IdMap::new(),
     };
     transform_reactive_function(func, &mut transform, &mut state)
 }

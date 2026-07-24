@@ -1537,19 +1537,18 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut temp_log = bun_ast::Log::init();
 
-        let ast_arena = bun_alloc::AstArena::new();
-        let alloc = ast_arena.alloc();
-        let parsed =
-            match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log, alloc) {
-                Ok(e) => e,
-                Err(e) => {
-                    Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
-                    if self.ipc_data.len() < 1000 {
-                        Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
-                    }
-                    return Err(crate::Error::InvalidIPCMessage);
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
+            Ok(e) => e,
+            Err(e) => {
+                Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
+                if self.ipc_data.len() < 1000 {
+                    Output::err_generic("Response: {}", (BStr::new(&self.ipc_data),));
                 }
-            };
+                return Err(crate::Error::InvalidIPCMessage);
+            }
+        };
         let json_expr = parsed.root;
 
         if !matches!(json_expr.data, ExprData::EObjectJSON(_)) {
@@ -1557,7 +1556,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             return Err(crate::Error::InvalidIPCFormat);
         }
 
-        let Some(type_expr) = json_expr.get(alloc, b"type") else {
+        let Some(type_expr) = json_expr.get(b"type") else {
             Output::err_generic("Security scanner IPC message missing 'type' field", ());
             return Err(crate::Error::MissingIPCType);
         };
@@ -1568,7 +1567,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         if type_str == b"error" {
-            let Some(code_expr) = json_expr.get(alloc, b"code") else {
+            let Some(code_expr) = json_expr.get(b"code") else {
                 Output::err_generic("Security scanner error missing 'code' field", ());
                 return Err(crate::Error::MissingErrorCode);
             };
@@ -1647,7 +1646,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                     }
                 }
                 ErrorCode::InvalidVersion => {
-                    if let Some(msg) = json_expr.get(alloc, b"message") {
+                    if let Some(msg) = json_expr.get(b"message") {
                         if let Some(msg_str) = msg.as_utf8_string_literal() {
                             Output::err_generic(
                                 "Security scanner error: {}",
@@ -1658,7 +1657,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                     return Err(crate::Error::InvalidScannerVersion);
                 }
                 ErrorCode::ScanFailed => {
-                    if let Some(msg) = json_expr.get(alloc, b"message") {
+                    if let Some(msg) = json_expr.get(b"message") {
                         if let Some(msg_str) = msg.as_utf8_string_literal() {
                             Output::err_generic(
                                 "Security scanner failed: {}",
@@ -1738,17 +1737,13 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
         }
 
-        let Some(advisories_expr) = json_expr.get(alloc, b"advisories") else {
+        let Some(advisories_expr) = json_expr.get(b"advisories") else {
             Output::err_generic("Security scanner result missing 'advisories' field", ());
             return Err(crate::Error::MissingAdvisoriesField);
         };
 
-        let advisories = parse_security_advisories_from_expr(
-            self.manager,
-            alloc,
-            advisories_expr,
-            package_paths,
-        )?;
+        let advisories =
+            parse_security_advisories_from_expr(self.manager, advisories_expr, package_paths)?;
 
         if !status.is_ok() {
             match &status {
@@ -1791,7 +1786,6 @@ impl<'a> SecurityScanSubprocess<'a> {
 
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
-    alloc: bun_alloc::AstAlloc,
     advisories_expr: Expr,
     package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
@@ -1806,7 +1800,7 @@ fn parse_security_advisories_from_expr(
     };
 
     for (i, item_value) in array.get().items().iter().enumerate() {
-        let item = Expr::from_json_value(alloc, item_value, advisories_expr.loc);
+        let item = Expr::from_json_value(item_value, advisories_expr.loc);
         if !matches!(item.data, ExprData::EObjectJSON(_)) {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
@@ -1815,7 +1809,7 @@ fn parse_security_advisories_from_expr(
             return Err(crate::Error::InvalidAdvisoryFormat);
         }
 
-        let Some(name_expr) = item.get(alloc, b"package") else {
+        let Some(name_expr) = item.get(b"package") else {
             Output::err_generic(
                 "Security advisory at index {} missing required 'package' field",
                 (i,),
@@ -1838,7 +1832,7 @@ fn parse_security_advisories_from_expr(
         }
         let name_str: Box<[u8]> = Box::from(name_str_temp);
 
-        let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(alloc, b"description") {
+        let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(b"description") {
             'blk: {
                 if let Some(str) = desc_expr.as_utf8_string_literal() {
                     break 'blk Some(Box::from(str));
@@ -1856,7 +1850,7 @@ fn parse_security_advisories_from_expr(
             None
         };
 
-        let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(alloc, b"url") {
+        let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(b"url") {
             'blk: {
                 if let Some(str) = url_expr.as_utf8_string_literal() {
                     break 'blk Some(Box::from(str));
@@ -1874,7 +1868,7 @@ fn parse_security_advisories_from_expr(
             None
         };
 
-        let Some(level_expr) = item.get(alloc, b"level") else {
+        let Some(level_expr) = item.get(b"level") else {
             Output::err_generic(
                 "Security advisory at index {} missing required 'level' field",
                 (i,),

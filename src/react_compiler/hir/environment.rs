@@ -40,10 +40,6 @@ pub enum OutputMode {
 }
 
 pub struct Environment {
-    /// Arena handle backing every [`HirVec`] / `IndexMap` / AST node this
-    /// compilation produces.
-    pub alloc: bun_alloc::AstAlloc,
-
     // Counters
     pub next_block_id_counter: u32,
     pub next_scope_id_counter: u32,
@@ -127,15 +123,15 @@ pub struct OutlinedFunctionEntry {
 }
 
 impl Environment {
-    pub fn new(alloc: bun_alloc::AstAlloc) -> Self {
-        Self::with_config(alloc, EnvironmentConfig::default())
+    pub fn new() -> Self {
+        Self::with_config(EnvironmentConfig::default())
     }
 
     /// Create a new Environment with the given configuration.
     ///
     /// Initializes the shape and global registries, registers custom hooks,
     /// and sets up the module type cache.
-    pub fn with_config(alloc: bun_alloc::AstAlloc, config: EnvironmentConfig) -> Self {
+    pub fn with_config(config: EnvironmentConfig) -> Self {
         let mut shapes = ShapeRegistry::with_base(globals::base_shapes());
         let mut global_registry = GlobalRegistry::with_base();
 
@@ -178,14 +174,13 @@ impl Environment {
         }
 
         Self {
-            alloc,
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
             next_mutable_range_id_counter: 0,
-            identifiers: alloc.vec(),
-            types: alloc.vec(),
-            scopes: alloc.vec(),
-            functions: alloc.vec(),
+            identifiers: AstAlloc::vec(),
+            types: AstAlloc::vec(),
+            scopes: AstAlloc::vec(),
+            functions: AstAlloc::vec(),
             errors: CompilerError::new(),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
@@ -194,7 +189,7 @@ impl Environment {
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
-            renames: alloc.vec(),
+            renames: AstAlloc::vec(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: config
@@ -208,7 +203,7 @@ impl Environment {
             module_type_errors: HashMap::new(),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
-            outlined_functions: alloc.vec(),
+            outlined_functions: AstAlloc::vec(),
             uid_known_names: None,
             config,
         }
@@ -222,7 +217,6 @@ impl Environment {
     /// data to avoid ID conflicts.
     pub fn for_outlined_fn(&self, fn_type: ReactFunctionType) -> Self {
         Self {
-            alloc: self.alloc,
             // Start block counter past any existing blocks in the outlined function.
             // The outlined function has BlockId(0), parent may have more. Use parent's
             // counter which is guaranteed to be > any block ID in the outlined function.
@@ -242,7 +236,7 @@ impl Environment {
             instrument_fn_name: self.instrument_fn_name,
             instrument_gating_name: self.instrument_gating_name,
             hook_guard_name: self.hook_guard_name,
-            renames: self.alloc.vec(),
+            renames: AstAlloc::vec(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: self
@@ -257,7 +251,7 @@ impl Environment {
             config: self.config.clone(),
             default_nonmutating_hook: self.default_nonmutating_hook.clone(),
             default_mutating_hook: self.default_mutating_hook.clone(),
-            outlined_functions: self.alloc.vec(),
+            outlined_functions: AstAlloc::vec(),
             uid_known_names: self.uid_known_names.clone(),
         }
     }
@@ -307,11 +301,11 @@ impl Environment {
         self.scopes.push(ReactiveScope {
             id,
             range,
-            dependencies: self.alloc.vec(),
-            declarations: self.alloc.vec(),
-            reassignments: self.alloc.vec(),
+            dependencies: AstAlloc::vec(),
+            declarations: AstAlloc::vec(),
+            reassignments: AstAlloc::vec(),
             early_return_value: None,
-            merged: self.alloc.vec(),
+            merged: AstAlloc::vec(),
             loc: None,
         });
         id
@@ -782,7 +776,7 @@ impl Environment {
                     .find(|(k, _)| k.as_bytes() == module_name.slice())
                     .map(|(_, v)| v.clone())
             })
-            .or_else(|| module_str.and_then(|m| default_module_type_provider(self.alloc, m)));
+            .or_else(|| module_str.and_then(default_module_type_provider));
 
         let module_type = module_config.map(|config| {
             let mut type_errors: Vec<String> = Vec::new();
@@ -852,7 +846,7 @@ impl Environment {
         // 1. Replace non-identifier chars with '-'
         // 2. Strip leading '-' and digits
         // 3. CamelCase: replace '-' sequences + optional following char with uppercase of that char
-        let mut camel: HirVec<u8> = self.alloc.vec_with_capacity(base.len());
+        let mut camel: HirVec<u8> = AstAlloc::vec_with_capacity(base.len());
         let mut iter = base.iter().copied().peekable();
         while let Some(&c) = iter.peek() {
             let is_ident = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
@@ -909,7 +903,7 @@ impl Environment {
         // Find a name that doesn't collide, matching Babel's generateUid loop.
         // Reuse a single buffer across iterations; HashSet::contains accepts &[u8].
         let known = self.uid_known_names.as_mut().unwrap();
-        let mut uid: HirVec<u8> = self.alloc.vec_with_capacity(uid_base.len() + 4);
+        let mut uid: HirVec<u8> = AstAlloc::vec_with_capacity(uid_base.len() + 4);
         let mut i = 1u32;
         loop {
             uid.clear();
@@ -966,7 +960,7 @@ impl Environment {
 
     /// Take the outlined functions, leaving the vec empty.
     pub fn take_outlined_functions(&mut self) -> HirVec<OutlinedFunctionEntry> {
-        self.alloc.take(&mut self.outlined_functions)
+        AstAlloc::take(&mut self.outlined_functions)
     }
 
     /// Whether memoization is enabled for this compilation.
@@ -1042,6 +1036,12 @@ impl Environment {
     }
 }
 
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cold]
 #[inline(never)]
 fn shape_not_found(shape_id: &str) -> CompilerDiagnostic {
@@ -1100,8 +1100,9 @@ mod tests {
 
     #[test]
     fn test_environment_has_globals() {
-        let arena = bun_alloc::AstArena::new();
-        let env = Environment::new(arena.alloc());
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
+        let env = Environment::new();
         assert!(env.globals().contains_key("useState"));
         assert!(env.globals().contains_key("useEffect"));
         assert!(env.globals().contains_key("useRef"));
@@ -1113,8 +1114,9 @@ mod tests {
 
     #[test]
     fn test_get_property_type_array() {
-        let arena = bun_alloc::AstArena::new();
-        let mut env = Environment::new(arena.alloc());
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
+        let mut env = Environment::new();
         let array_type = Type::Object {
             shape_id: Some("BuiltInArray"),
         };
@@ -1130,8 +1132,9 @@ mod tests {
 
     #[test]
     fn test_get_function_signature() {
-        let arena = bun_alloc::AstArena::new();
-        let env = Environment::new(arena.alloc());
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
+        let env = Environment::new();
         let use_state_type = env.globals().get("useState").unwrap();
         let sig = env.get_function_signature(use_state_type).unwrap();
         assert!(sig.is_some());
@@ -1142,8 +1145,9 @@ mod tests {
 
     #[test]
     fn test_get_global_declaration() {
-        let arena = bun_alloc::AstArena::new();
-        let mut env = Environment::new(arena.alloc());
+        let mut arena = bun_alloc::AstArena::new();
+        let _scope = arena.enter();
+        let mut env = Environment::new();
         // Global binding
         let binding = NonLocalBinding {
             ref_: bun_ast::Ref::NONE,

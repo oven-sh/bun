@@ -1,5 +1,6 @@
 #![warn(unused_must_use)]
 use crate::p::P;
+use bun_alloc::Arena as Bump;
 use bun_ast::e::CallUnwrap;
 use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
@@ -193,7 +194,6 @@ impl SideEffects {
                 // "foo() ? 1 : bar()" => "foo() || bar()"
                 if ternary.yes.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
-                        p.alloc,
                         Op::Code::BinLogicalOr,
                         ternary.test_,
                         ternary.no,
@@ -203,7 +203,6 @@ impl SideEffects {
                 // "foo() ? bar() : 2" => "foo() && bar()"
                 if ternary.no.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
-                        p.alloc,
                         Op::Code::BinLogicalAnd,
                         ternary.test_,
                         ternary.yes,
@@ -318,7 +317,6 @@ impl SideEffects {
                             // Otherwise, preserve at least the structure
                             return Some(Expr::join_with_comma(
                                 left_simplified.unwrap_or_else(|| left.to_empty()),
-                                p.alloc,
                                 right_simplified.unwrap_or_else(|| right.to_empty()),
                             ));
                         }
@@ -426,11 +424,11 @@ impl SideEffects {
                             },
                             key_expr.loc,
                         );
-                        result = result.join_with_comma(p.alloc, bin);
+                        result = Expr::join_with_comma(result, bin);
                     }
                     let v = value.unwrap();
-                    result = result.join_with_comma(
-                        p.alloc,
+                    result = Expr::join_with_comma(
+                        result,
                         Self::simplify_unused_expr(p, v).unwrap_or_else(|| v.to_empty()),
                     );
                 }
@@ -501,7 +499,7 @@ impl SideEffects {
                 data: ExprData::EMissing(E::Missing {}),
                 loc: item.loc,
             });
-            result = result.join_with_comma(p.alloc, simplified);
+            result = Expr::join_with_comma(result, simplified);
         }
         if result.is_missing() {
             None
@@ -553,7 +551,7 @@ impl SideEffects {
             let top = p.binary_expression_simplify_stack[i];
             let right = top.bin.right;
             let visited_right = Self::simplify_unused_expr(p, right).unwrap_or(Expr::EMPTY);
-            result = result.join_with_comma(p.alloc, visited_right);
+            result = Expr::join_with_comma(result, visited_right);
         }
         p.binary_expression_simplify_stack.truncate(stack_bottom);
 
@@ -586,12 +584,9 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(
-        stmts: bun_ast::StmtNodeList,
-        alloc: bun_alloc::AstAlloc,
-    ) -> bool {
+    fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
         for child in stmts.slice() {
-            if Self::should_keep_stmt_in_dead_control_flow(*child, alloc) {
+            if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
                 return true;
             }
         }
@@ -611,7 +606,7 @@ impl SideEffects {
     /// assign to a global variable instead.
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, alloc: bun_alloc::AstAlloc) -> bool {
+    pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)
@@ -659,25 +654,25 @@ impl SideEffects {
                     return false;
                 }
 
-                local.decls = alloc.vec_from_iter(decls);
+                local.decls = G::DeclList::move_from_list(decls);
                 true
             }
 
             StmtData::SBlock(block) => {
-                Self::should_keep_stmts_in_dead_control_flow(block.stmts, alloc)
+                Self::should_keep_stmts_in_dead_control_flow(block.stmts, bump)
             }
 
             StmtData::STry(try_stmt) => {
-                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, alloc) {
+                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
                     return true;
                 }
                 if let Some(catch_stmt) = &try_stmt.catch_ {
-                    if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, alloc) {
+                    if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
                         return true;
                     }
                 }
                 if let Some(finally_stmt) = &try_stmt.finally {
-                    if Self::should_keep_stmts_in_dead_control_flow(finally_stmt.stmts, alloc) {
+                    if Self::should_keep_stmts_in_dead_control_flow(finally_stmt.stmts, bump) {
                         return true;
                     }
                 }
@@ -685,44 +680,44 @@ impl SideEffects {
             }
 
             StmtData::SIf(if_) => {
-                if Self::should_keep_stmt_in_dead_control_flow(if_.yes, alloc) {
+                if Self::should_keep_stmt_in_dead_control_flow(if_.yes, bump) {
                     return true;
                 }
                 match if_.no {
-                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(no, alloc),
+                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(no, bump),
                     None => false,
                 }
             }
 
             StmtData::SWhile(while_) => {
-                Self::should_keep_stmt_in_dead_control_flow(while_.body, alloc)
+                Self::should_keep_stmt_in_dead_control_flow(while_.body, bump)
             }
 
             StmtData::SDoWhile(do_while) => {
-                Self::should_keep_stmt_in_dead_control_flow(do_while.body, alloc)
+                Self::should_keep_stmt_in_dead_control_flow(do_while.body, bump)
             }
 
             StmtData::SFor(for_) => {
                 if let Some(init_) = for_.init {
-                    if Self::should_keep_stmt_in_dead_control_flow(init_, alloc) {
+                    if Self::should_keep_stmt_in_dead_control_flow(init_, bump) {
                         return true;
                     }
                 }
-                Self::should_keep_stmt_in_dead_control_flow(for_.body, alloc)
+                Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
             }
 
             StmtData::SForIn(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, alloc)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, alloc)
+                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
+                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
             }
 
             StmtData::SForOf(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, alloc)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, alloc)
+                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
+                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
             }
 
             StmtData::SLabel(label) => {
-                Self::should_keep_stmt_in_dead_control_flow(label.stmt, alloc)
+                Self::should_keep_stmt_in_dead_control_flow(label.stmt, bump)
             }
 
             _ => true,

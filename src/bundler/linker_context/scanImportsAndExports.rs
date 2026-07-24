@@ -80,7 +80,6 @@ pub fn scan_imports_and_exports(
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
-    let ast_alloc = this.alloc();
 
     // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
@@ -371,7 +370,6 @@ pub fn scan_imports_and_exports(
                 if col_ref!(export_star_import_records)[id].len() > 0 {
                     if export_star_ctx.is_none() {
                         export_star_ctx = Some(ExportStarContext {
-                            alloc: ast_alloc,
                             import_records_list,
                             export_star_records: export_star_import_records,
                             imports_to_bind: imports_to_bind_list,
@@ -396,7 +394,7 @@ pub fn scan_imports_and_exports(
                         import_ref: col_ref!(exports_refs)[id],
                         ..Default::default()
                     },
-                    ..ExportData::empty(ast_alloc)
+                    ..Default::default()
                 };
             }
         }
@@ -517,12 +515,10 @@ pub fn scan_imports_and_exports(
             );
         }
 
-        // No post-fan-out ownership transfer is needed: `do_step5` re-tags the
-        // `AstVec`s it grows (`part.dependencies`, `local_parts_with_uses`) to
-        // its own worker's `AstAlloc` before pushing, so each task's growth is
-        // a per-thread bump and the blocking `each()` above joins every writer
-        // before step 6 reads them. It never pushes to the arena-backed
-        // `PartList`/import-record columns.
+        // No post-fan-out ownership transfer is needed: `do_step5` only grows
+        // global-allocator `Vec`s (`part.dependencies`, `declared_symbols`),
+        // which are thread-safe to grow per-row, and never pushes to the
+        // arena-backed `PartList`/import-record columns.
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -619,7 +615,8 @@ pub fn scan_imports_and_exports(
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
-                let mut copies: bun_alloc::AstVec<Ref> = ast_alloc.vec_with_capacity(aliases.len());
+                let mut copies: bun_alloc::AstVec<Ref> =
+                    bun_alloc::AstAlloc::vec_with_capacity(aliases.len());
                 copies.resize(aliases.len(), Ref::NONE);
 
                 debug_assert_eq!(aliases.len(), copies.len());
@@ -753,10 +750,6 @@ pub fn scan_imports_and_exports(
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
-                            // After step 5 this vec's allocator may be a
-                            // worker arena; re-tag to the linker arena so the
-                            // growth below stays on this thread.
-                            ast_alloc.adopt_vec(&mut part.dependencies);
                             part.dependencies.ensure_total_capacity(total_len);
 
                             // Depend on the file containing the imported symbol
@@ -787,7 +780,7 @@ pub fn scan_imports_and_exports(
                 let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
 
                 let mut dependencies =
-                    bun_ast::DependencyList::with_capacity_in(extra_count, ast_alloc);
+                    bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
 
                 for alias in col_ref!(sorted_aliases)[id].iter() {
                     let exp = col_ref!(resolved_exports)[id].get(alias).unwrap();
@@ -847,7 +840,7 @@ pub fn scan_imports_and_exports(
                     Part {
                         dependencies,
                         can_be_removed_if_unused: false,
-                        ..Part::empty(ast_alloc)
+                        ..Default::default()
                     },
                 )?;
                 col!(entry_point_part_indices)[id] = Index::part(entry_point_part_index);
@@ -1264,7 +1257,6 @@ impl DependencyWrapper<'_> {
 // ExportStarContext — holds raw column ptrs.
 // ──────────────────────────────────────────────────────────────────────────
 struct ExportStarContext<'a> {
-    alloc: bun_alloc::AstAlloc,
     import_records_list: *mut [ImportRecordList<'a>],
     source_index_stack: Vec<IndexInt>,
     exports_kind: *mut [ExportsKind],
@@ -1339,35 +1331,19 @@ impl<'a> ExportStarContext<'a> {
                     }
                 }
 
-                if let Some(existing) = col!(resolved_exports)[target_id].get_ptr_mut(alias_slice) {
-                    if existing.data.source_index.get() != other_source_index {
-                        // Two different re-exports colliding makes it potentially ambiguous
-                        existing
-                            .potentially_ambiguous_export_star_refs
-                            .push(ImportData {
-                                data: ImportTracker {
-                                    source_index: Index::source(other_source_index),
-                                    import_ref: name.ref_,
-                                    name_loc: name.alias_loc,
-                                },
-                                ..ImportData::empty(self.alloc)
-                            });
-                    }
-                } else {
+                let gop = col!(resolved_exports)[target_id]
+                    .get_or_put(alias_slice)
+                    .expect("oom");
+                if !gop.found_existing {
                     // Initialize the re-export
-                    col!(resolved_exports)[target_id]
-                        .put(
-                            alias_slice,
-                            ExportData {
-                                data: ImportTracker {
-                                    import_ref: name.ref_,
-                                    source_index: Index::source(other_source_index),
-                                    name_loc: name.alias_loc,
-                                },
-                                ..ExportData::empty(self.alloc)
-                            },
-                        )
-                        .expect("oom");
+                    *gop.value_ptr = ExportData {
+                        data: ImportTracker {
+                            import_ref: name.ref_,
+                            source_index: Index::source(other_source_index),
+                            name_loc: name.alias_loc,
+                        },
+                        ..Default::default()
+                    };
 
                     // Make sure the symbol is marked as imported so that code splitting
                     // imports it correctly if it ends up being shared with another chunk
@@ -1380,10 +1356,22 @@ impl<'a> ExportStarContext<'a> {
                                     source_index: Index::source(other_source_index),
                                     ..Default::default()
                                 },
-                                ..ImportData::empty(self.alloc)
+                                ..Default::default()
                             },
                         )
                         .expect("oom");
+                } else if gop.value_ptr.data.source_index.get() != other_source_index {
+                    // Two different re-exports colliding makes it potentially ambiguous
+                    gop.value_ptr
+                        .potentially_ambiguous_export_star_refs
+                        .push(ImportData {
+                            data: ImportTracker {
+                                source_index: Index::source(other_source_index),
+                                import_ref: name.ref_,
+                                name_loc: name.alias_loc,
+                            },
+                            ..Default::default()
+                        });
                 }
             }
 

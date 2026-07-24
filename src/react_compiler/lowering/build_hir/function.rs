@@ -61,7 +61,6 @@ pub(super) fn lower_function(
 
     // Gather captured context
     let captured_context = gather_captured_context(
-        builder.alloc(),
         builder.host(),
         &func,
         builder.current_scope(),
@@ -122,7 +121,6 @@ pub(super) fn lower_function_declaration(
 
     // Gather captured context
     let captured_context = gather_captured_context(
-        builder.alloc(),
         builder.host(),
         &func,
         builder.current_scope(),
@@ -250,7 +248,6 @@ pub(super) fn lower_function_for_object_method(
     let import_bindings = builder.import_bindings().clone();
 
     let captured_context = gather_captured_context(
-        builder.alloc(),
         builder.host(),
         &func,
         builder.current_scope(),
@@ -374,7 +371,7 @@ pub(super) fn lower_object_property_key(
         // the static-key path. Roped strings fall through to the
         // computed/unsupported arms below.
         Data::EString(s) if s.next.is_none() => {
-            let name = estring_to_store_str(builder.alloc(), s);
+            let name = estring_to_store_str(s);
             // Bun stores non-computed identifier keys as `EString`; classify as
             // Identifier when the bytes form a valid identifier so the HIR
             // matches upstream's `Expression::Identifier` arm.
@@ -387,7 +384,7 @@ pub(super) fn lower_object_property_key(
         Data::ENumber(n) if !computed => {
             let scratch = n.value().to_string();
             Ok(Some(ObjectPropertyKey::Identifier {
-                name: super::helpers::arena_str(builder.alloc(), scratch.as_bytes()),
+                name: super::helpers::arena_str(scratch.as_bytes()),
             }))
         }
         Data::EIdentifier(id) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
@@ -420,13 +417,10 @@ pub(super) fn lower_object_property_key(
     }
 }
 
-fn estring_to_store_str(alloc: bun_alloc::AstAlloc, s: &E::EString) -> StoreStr {
+fn estring_to_store_str(s: &E::EString) -> StoreStr {
     debug_assert!(s.next.is_none());
     if s.is_utf16 {
-        super::helpers::arena_str(
-            alloc,
-            bun_core::strings::to_utf8_alloc(s.slice16()).as_slice(),
-        )
+        super::helpers::arena_str(bun_core::strings::to_utf8_alloc(s.slice16()).as_slice())
     } else {
         StoreStr::new(s.slice8())
     }

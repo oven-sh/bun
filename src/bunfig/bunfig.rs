@@ -152,7 +152,6 @@ pub(crate) struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
-    alloc: bun_alloc::AstAlloc,
 }
 
 impl<'a> Parser<'a> {
@@ -353,21 +352,20 @@ impl<'a> Parser<'a> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
-        let alloc = self.alloc;
 
         if !matches!(json.data, ExprData::EObject(_)) {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
         }
 
-        if let Some(expr) = json.get(alloc, b"logLevel") {
+        if let Some(expr) = json.get(b"logLevel") {
             self.load_log_level(&expr)?;
         }
 
-        if let Some(expr) = json.get(alloc, b"define") {
+        if let Some(expr) = json.get(b"define") {
             self.ctx.args.define = Some(self.parse_define_map(&expr)?);
         }
 
-        if let Some(expr) = json.get(alloc, b"origin") {
+        if let Some(expr) = json.get(b"origin") {
             self.expect_string(&expr)?;
             self.ctx.args.origin = Some(estring_to_owned(
                 expr.data
@@ -378,24 +376,24 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        if let Some(env_expr) = json.get(alloc, b"env") {
+        if let Some(env_expr) = json.get(b"env") {
             self.load_env_config(&env_expr)?;
         }
 
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
-            if let Some(expr) = json.get(alloc, b"serve") {
-                if let Some(port) = expr.get(alloc, b"port") {
+            if let Some(expr) = json.get(b"serve") {
+                if let Some(port) = expr.get(b"port") {
                     self.expect(&port, ExprTag::ENumber)?;
                     let p = port.as_number().expect("infallible: type checked") as u16;
                     self.ctx.args.port = Some(if p == 0 { 3000 } else { p });
                 }
             }
 
-            if let Some(expr) = json.get(alloc, b"preload") {
+            if let Some(expr) = json.get(b"preload") {
                 self.load_preload(&expr)?;
             }
 
-            if let Some(expr) = json.get(alloc, b"telemetry") {
+            if let Some(expr) = json.get(b"telemetry") {
                 self.expect(&expr, ExprTag::EBoolean)?;
                 bun_analytics::set_enabled(if expr.as_bool().expect("infallible: type checked") {
                     bun_analytics::TriState::Yes
@@ -406,43 +404,43 @@ impl<'a> Parser<'a> {
         }
 
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
-            if let Some(expr) = json.get(alloc, b"smol") {
+            if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
                 self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
             }
         }
 
         if cmd == CommandTag::TestCommand {
-            if let Some(test_) = json.get(alloc, b"test") {
-                if let Some(root) = test_.get(alloc, b"root") {
+            if let Some(test_) = json.get(b"test") {
+                if let Some(root) = test_.get(b"root") {
                     self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 
-                if let Some(expr) = test_.get(alloc, b"preload") {
+                if let Some(expr) = test_.get(b"preload") {
                     self.load_preload(&expr)?;
                 }
 
-                if let Some(expr) = test_.get(alloc, b"smol") {
+                if let Some(expr) = test_.get(b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.runtime_options.smol =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(alloc, b"coverage") {
+                if let Some(expr) = test_.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.enabled =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(alloc, b"onlyFailures") {
+                if let Some(expr) = test_.get(b"onlyFailures") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.reporters.only_failures =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(alloc, b"reporter") {
+                if let Some(expr) = test_.get(b"reporter") {
                     self.expect(&expr, ExprTag::EObject)?;
-                    if let Some(junit_expr) = expr.get(alloc, b"junit") {
+                    if let Some(junit_expr) = expr.get(b"junit") {
                         self.expect_string(&junit_expr)?;
                         if let ExprData::EString(s) = &junit_expr.data {
                             if s.len() > 0 {
@@ -452,16 +450,14 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    if let Some(dots_expr) =
-                        expr.get(alloc, b"dots").or_else(|| expr.get(alloc, b"dot"))
-                    {
+                    if let Some(dots_expr) = expr.get(b"dots").or_else(|| expr.get(b"dot")) {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
                         self.ctx.test_options.reporters.dots =
                             dots_expr.as_bool().expect("infallible: type checked");
                     }
                 }
 
-                if let Some(expr) = test_.get(alloc, b"coverageReporter") {
+                if let Some(expr) = test_.get(b"coverageReporter") {
                     'brk: {
                         self.ctx.test_options.coverage.reporters = CoverageReporters {
                             text: false,
@@ -482,7 +478,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(alloc, b"coverageDir") {
+                if let Some(expr) = test_.get(b"coverageDir") {
                     self.expect_string(&expr)?;
                     self.ctx.test_options.coverage.reports_directory = estring_to_owned(
                         expr.data
@@ -493,7 +489,7 @@ impl<'a> Parser<'a> {
                     );
                 }
 
-                if let Some(expr) = test_.get(alloc, b"coverageThreshold") {
+                if let Some(expr) = test_.get(b"coverageThreshold") {
                     'outer: {
                         if let ExprData::ENumber(n) = expr.data {
                             let v = n.value();
@@ -505,19 +501,19 @@ impl<'a> Parser<'a> {
                         }
 
                         self.expect(&expr, ExprTag::EObject)?;
-                        if let Some(functions) = expr.get(alloc, b"functions") {
+                        if let Some(functions) = expr.get(b"functions") {
                             self.expect(&functions, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.functions =
                                 functions.as_number().expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
-                        if let Some(lines) = expr.get(alloc, b"lines") {
+                        if let Some(lines) = expr.get(b"lines") {
                             self.expect(&lines, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.lines =
                                 lines.as_number().expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
-                        if let Some(stmts) = expr.get(alloc, b"statements") {
+                        if let Some(stmts) = expr.get(b"statements") {
                             self.expect(&stmts, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.stmts =
                                 stmts.as_number().expect("infallible: type checked");
@@ -527,13 +523,13 @@ impl<'a> Parser<'a> {
                 }
 
                 // This mostly exists for debugging.
-                if let Some(expr) = test_.get(alloc, b"coverageIgnoreSourcemaps") {
+                if let Some(expr) = test_.get(b"coverageIgnoreSourcemaps") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.ignore_sourcemap =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(alloc, b"coverageSkipTestFiles") {
+                if let Some(expr) = test_.get(b"coverageSkipTestFiles") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
@@ -541,14 +537,14 @@ impl<'a> Parser<'a> {
 
                 let mut randomize_from_config: Option<bool> = None;
 
-                if let Some(expr) = test_.get(alloc, b"randomize") {
+                if let Some(expr) = test_.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     randomize_from_config = expr.as_bool();
                     self.ctx.test_options.randomize =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(alloc, b"seed") {
+                if let Some(expr) = test_.get(b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     let seed_value =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
@@ -566,7 +562,7 @@ impl<'a> Parser<'a> {
                     self.ctx.test_options.seed = Some(seed_value);
                 }
 
-                if let Some(expr) = test_.get(alloc, b"rerunEach") {
+                if let Some(expr) = test_.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.retry != 0 {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
@@ -576,7 +572,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(alloc, b"retry") {
+                if let Some(expr) = test_.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.repeat_count != 0 {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
@@ -586,7 +582,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(alloc, b"concurrentTestGlob") {
+                if let Some(expr) = test_.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {
                             if s.len() == 0 {
@@ -638,7 +634,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(alloc, b"coveragePathIgnorePatterns") {
+                if let Some(expr) = test_.get(b"coveragePathIgnorePatterns") {
                     'brk: {
                         match &expr.data {
                             ExprData::EString(s) => {
@@ -674,7 +670,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(alloc, b"pathIgnorePatterns") {
+                if let Some(expr) = test_.get(b"pathIgnorePatterns") {
                     'brk: {
                         // Only skip if --path-ignore-patterns was explicitly passed via CLI
                         if self.ctx.test_options.path_ignore_patterns_from_cli {
@@ -721,14 +717,14 @@ impl<'a> Parser<'a> {
             || cmd == CommandTag::AutoCommand
             || cmd == CommandTag::TestCommand
         {
-            if let Some(install_obj) = json.get_object(alloc, b"install") {
+            if let Some(install_obj) = json.get_object(b"install") {
                 // Ensure ctx.install is allocated so later passes can write into it
                 // once api::BunInstall fields land.
                 if self.ctx.install.is_none() {
                     self.ctx.install = Some(Box::new(api::BunInstall::default()));
                 }
 
-                if let Some(auto_install_expr) = install_obj.get(alloc, b"auto") {
+                if let Some(auto_install_expr) = install_obj.get(b"auto") {
                     if let ExprData::EString(_) = &auto_install_expr.data {
                         let key = auto_install_expr.as_string(self.bump).unwrap_or(b"");
                         self.ctx.debug.global_cache = match GlobalCache::MAP.get(key) {
@@ -756,7 +752,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(prefer_expr) = install_obj.get(alloc, b"prefer") {
+                if let Some(prefer_expr) = install_obj.get(b"prefer") {
                     self.expect_string(&prefer_expr)?;
                     let key = prefer_expr.as_string(self.bump).unwrap_or(b"");
                     if let Some(setting) = OFFLINE_PREFER.get(key) {
@@ -769,15 +765,15 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = install_obj.get(alloc, b"logLevel") {
+                if let Some(expr) = install_obj.get(b"logLevel") {
                     self.load_log_level(&expr)?;
                 }
 
                 self.parse_install(&install_obj)?;
             }
 
-            if let Some(run_expr) = json.get(alloc, b"run") {
-                if let Some(silent) = run_expr.get(alloc, b"silent") {
+            if let Some(run_expr) = json.get(b"run") {
+                if let Some(silent) = run_expr.get(b"silent") {
                     if let Some(value) = silent.as_bool() {
                         self.ctx.debug.silent = value;
                     } else {
@@ -785,7 +781,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(elide_lines) = run_expr.get(alloc, b"elide-lines") {
+                if let Some(elide_lines) = run_expr.get(b"elide-lines") {
                     if let Some(n) = elide_lines.as_number() {
                         // Note: Rust `as` saturates on overflow/NaN
                         self.ctx.bundler_options.elide_lines = Some(n as usize);
@@ -794,7 +790,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(shell) = run_expr.get(alloc, b"shell") {
+                if let Some(shell) = run_expr.get(b"shell") {
                     if let Some(value) = shell.as_string(self.bump) {
                         if value == b"bun" {
                             self.ctx.debug.use_system_shell = false;
@@ -811,7 +807,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(bun_flag) = run_expr.get(alloc, b"bun") {
+                if let Some(bun_flag) = run_expr.get(b"bun") {
                     if let Some(value) = bun_flag.as_bool() {
                         self.ctx.debug.run_in_bun = value;
                     } else {
@@ -819,7 +815,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(no_orphans) = run_expr.get(alloc, b"noOrphans") {
+                if let Some(no_orphans) = run_expr.get(b"noOrphans") {
                     if let Some(value) = no_orphans.as_bool() {
                         if value {
                             bun_io::ParentDeathWatchdog::enable();
@@ -830,8 +826,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if let Some(console_expr) = json.get(alloc, b"console") {
-                if let Some(depth) = console_expr.get(alloc, b"depth") {
+            if let Some(console_expr) = json.get(b"console") {
+                if let Some(depth) = console_expr.get(b"depth") {
                     if let Some(n) = depth.as_number() {
                         let depth_value = n as u16;
                         // Treat depth=0 as maxInt(u16) for infinite depth
@@ -847,18 +843,18 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(serve_obj2) = json.get_object(alloc, b"serve") {
-            if let Some(serve_obj) = serve_obj2.get_object(alloc, b"static") {
+        if let Some(serve_obj2) = json.get_object(b"serve") {
+            if let Some(serve_obj) = serve_obj2.get_object(b"static") {
                 self.parse_serve_static(&serve_obj)?;
             }
         }
 
-        if let Some(_bun) = json.get(alloc, b"bundle") {
+        if let Some(_bun) = json.get(b"bundle") {
             if cmd == CommandTag::BuildCommand
                 || cmd == CommandTag::RunCommand
                 || cmd == CommandTag::AutoCommand
             {
-                if let Some(dir) = _bun.get(alloc, b"outdir") {
+                if let Some(dir) = _bun.get(b"outdir") {
                     self.expect_string(&dir)?;
                     self.ctx.args.output_dir = Some(estring_to_owned(
                         dir.data
@@ -871,11 +867,11 @@ impl<'a> Parser<'a> {
             }
 
             if cmd == CommandTag::BuildCommand {
-                if let Some(expr2) = _bun.get(alloc, b"logLevel") {
+                if let Some(expr2) = _bun.get(b"logLevel") {
                     self.load_log_level(&expr2)?;
                 }
 
-                if let Some(entry_points) = _bun.get(alloc, b"entryPoints") {
+                if let Some(entry_points) = _bun.get(b"entryPoints") {
                     self.expect(&entry_points, ExprTag::EArray)?;
                     let arr = entry_points
                         .data
@@ -896,7 +892,7 @@ impl<'a> Parser<'a> {
                     self.ctx.args.entry_points = names;
                 }
 
-                if let Some(expr) = _bun.get(alloc, b"packages") {
+                if let Some(expr) = _bun.get(b"packages") {
                     self.expect(&expr, ExprTag::EObject)?;
                     let object = expr.data.e_object().expect("infallible: variant checked");
                     let properties = object.properties.slice();
@@ -956,7 +952,7 @@ impl<'a> Parser<'a> {
         let mut jsx_runtime = api::JsxRuntime::Automatic;
         let mut jsx_dev = true;
 
-        if let Some(expr) = json.get(alloc, b"jsx") {
+        if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
                     jsx_runtime = api::JsxRuntime::Classic;
@@ -976,17 +972,17 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(expr) = json.get(alloc, b"jsxImportSource") {
+        if let Some(expr) = json.get(b"jsxImportSource") {
             if let Some(value) = expr.as_string(self.bump) {
                 jsx_import_source = Box::<[u8]>::from(value);
             }
         }
-        if let Some(expr) = json.get(alloc, b"jsxFragment") {
+        if let Some(expr) = json.get(b"jsxFragment") {
             if let Some(value) = expr.as_string(self.bump) {
                 jsx_fragment = Box::<[u8]>::from(value);
             }
         }
-        if let Some(expr) = json.get(alloc, b"jsxFactory") {
+        if let Some(expr) = json.get(b"jsxFactory") {
             if let Some(value) = expr.as_string(self.bump) {
                 jsx_factory = Box::<[u8]>::from(value);
             }
@@ -1016,15 +1012,15 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(expr) = json.get(alloc, b"debug") {
-            if let Some(editor) = expr.get(alloc, b"editor") {
+        if let Some(expr) = json.get(b"debug") {
+            if let Some(editor) = expr.get(b"editor") {
                 if let Some(value) = editor.as_string(self.bump) {
                     self.ctx.debug.editor = value.into();
                 }
             }
         }
 
-        if let Some(expr) = json.get(alloc, b"macros") {
+        if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
                 if !b.value {
                     self.ctx.debug.macros = MacroOptions::Disable;
@@ -1036,7 +1032,7 @@ impl<'a> Parser<'a> {
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
 
-        if let Some(expr) = json.get(alloc, b"external") {
+        if let Some(expr) = json.get(b"external") {
             match &expr.data {
                 ExprData::EString(s) => {
                     self.ctx.args.external = vec![estring_to_owned(s, self.bump)];
@@ -1057,7 +1053,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(expr) = json.get(alloc, b"loader") {
+        if let Some(expr) = json.get(b"loader") {
             self.expect(&expr, ExprTag::EObject)?;
             let obj = expr.data.e_object().expect("infallible: variant checked");
             let properties = obj.properties.slice();
@@ -1118,15 +1114,21 @@ impl Bunfig {
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
-        let ast_arena = bun_alloc::AstArena::new();
-        let alloc = ast_arena.alloc();
-        let bump = alloc.arena();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+
+        // This previously called `Arena::new()` (= `mi_heap_new` +
+        // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
+        // `bun -e ''` startup to. Borrow the process default heap instead so
+        // TOML/JSON parse allocations route through plain `mi_malloc`.
+        // Parsed config lives for the process lifetime either way.
+        let bump = Bump::borrowing_default();
 
         let ext = source.path.name().ext;
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
 
         let expr = if is_toml {
-            match TOML::parse(source, log, alloc, true) {
+            match TOML::parse(source, log, &bump, true) {
                 Ok(e) => e,
                 Err(e) => {
                     if log.errors + log.warnings == log_count {
@@ -1143,7 +1145,7 @@ impl Bunfig {
                 }
             }
         } else {
-            match json_parser::parse_ts_config(source, log, alloc) {
+            match json_parser::parse_ts_config(source, log, &bump) {
                 Ok(e) => e,
                 Err(e) => {
                     if log.errors + log.warnings == log_count {
@@ -1172,8 +1174,7 @@ impl Bunfig {
             log,
             source,
             ctx,
-            bump,
-            alloc,
+            bump: &bump,
         };
         parser.parse(cmd)
     }
@@ -1263,8 +1264,7 @@ impl<'a> Parser<'a> {
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
-        let alloc = self.alloc;
-        if let Some(cafile) = install_obj.get(alloc, b"cafile") {
+        if let Some(cafile) = install_obj.get(b"cafile") {
             install.cafile = match cafile.as_string(self.bump) {
                 Some(s) => Some(s.into()),
                 None => {
@@ -1274,7 +1274,7 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(ca) = install_obj.get(alloc, b"ca") {
+        if let Some(ca) = install_obj.get(b"ca") {
             match &ca.data {
                 ExprData::EArray(arr) => {
                     let items = arr.items.slice();
@@ -1303,17 +1303,17 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(exact) = install_obj.get(alloc, b"exact") {
+        if let Some(exact) = install_obj.get(b"exact") {
             if let Some(v) = exact.as_bool() {
                 install.exact = Some(v);
             }
         }
 
-        if let Some(registry) = install_obj.get(alloc, b"registry") {
+        if let Some(registry) = install_obj.get(b"registry") {
             install.default_registry = Some(self.parse_registry(&registry)?);
         }
 
-        if let Some(scopes) = install_obj.get(alloc, b"scopes") {
+        if let Some(scopes) = install_obj.get(b"scopes") {
             let mut registry_map = install.scoped.take().unwrap_or_default();
             self.expect(&scopes, ExprTag::EObject)?;
             let obj = scopes.data.e_object().expect("infallible: variant checked");
@@ -1335,40 +1335,31 @@ impl<'a> Parser<'a> {
             install.scoped = Some(registry_map);
         }
 
-        if let Some(v) = install_obj.get(alloc, b"dryRun").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj.get(b"dryRun").and_then(|e| e.as_bool()) {
             install.dry_run = Some(v);
         }
-        if let Some(v) = install_obj
-            .get(alloc, b"production")
-            .and_then(|e| e.as_bool())
-        {
+        if let Some(v) = install_obj.get(b"production").and_then(|e| e.as_bool()) {
             install.production = Some(v);
         }
-        if let Some(v) = install_obj
-            .get(alloc, b"frozenLockfile")
-            .and_then(|e| e.as_bool())
-        {
+        if let Some(v) = install_obj.get(b"frozenLockfile").and_then(|e| e.as_bool()) {
             install.frozen_lockfile = Some(v);
         }
         if let Some(v) = install_obj
-            .get(alloc, b"saveTextLockfile")
+            .get(b"saveTextLockfile")
             .and_then(|e| e.as_bool())
         {
             install.save_text_lockfile = Some(v);
         }
-        if let Some(jobs) = install_obj.get(alloc, b"concurrentScripts") {
+        if let Some(jobs) = install_obj.get(b"concurrentScripts") {
             if let Some(n) = jobs.as_number() {
                 let n = num_to_u32(n);
                 install.concurrent_scripts = if n == 0 { None } else { Some(n) };
             }
         }
-        if let Some(v) = install_obj
-            .get(alloc, b"ignoreScripts")
-            .and_then(|e| e.as_bool())
-        {
+        if let Some(v) = install_obj.get(b"ignoreScripts").and_then(|e| e.as_bool()) {
             install.ignore_scripts = Some(v);
         }
-        if let Some(node_linker_expr) = install_obj.get(alloc, b"linker") {
+        if let Some(node_linker_expr) = install_obj.get(b"linker") {
             self.expect_string(&node_linker_expr)?;
             if let Some(s) = node_linker_expr.as_string(self.bump) {
                 install.node_linker = api::NodeLinker::from_str(s);
@@ -1380,15 +1371,12 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(v) = install_obj
-            .get(alloc, b"globalStore")
-            .and_then(|e| e.as_bool())
-        {
+        if let Some(v) = install_obj.get(b"globalStore").and_then(|e| e.as_bool()) {
             install.global_store = Some(v);
         }
 
-        if let Some(lockfile_expr) = install_obj.get(alloc, b"lockfile") {
-            if let Some(lockfile) = lockfile_expr.get(alloc, b"print") {
+        if let Some(lockfile_expr) = install_obj.get(b"lockfile") {
+            if let Some(lockfile) = lockfile_expr.get(b"print") {
                 self.expect_string(&lockfile)?;
                 if let Some(value) = lockfile.as_string(self.bump) {
                     if value != b"bun" {
@@ -1402,49 +1390,46 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            if let Some(v) = lockfile_expr.get(alloc, b"save").and_then(|e| e.as_bool()) {
+            if let Some(v) = lockfile_expr.get(b"save").and_then(|e| e.as_bool()) {
                 install.save_lockfile = Some(v);
             }
             if let Some(v) = lockfile_expr
-                .get(alloc, b"path")
+                .get(b"path")
                 .and_then(|e| e.as_string(self.bump))
             {
                 install.lockfile_path = Some(v.into());
             }
             if let Some(v) = lockfile_expr
-                .get(alloc, b"savePath")
+                .get(b"savePath")
                 .and_then(|e| e.as_string(self.bump))
             {
                 install.save_lockfile_path = Some(v.into());
             }
         }
 
-        if let Some(v) = install_obj
-            .get(alloc, b"optional")
-            .and_then(|e| e.as_bool())
-        {
+        if let Some(v) = install_obj.get(b"optional").and_then(|e| e.as_bool()) {
             install.save_optional = Some(v);
         }
-        if let Some(v) = install_obj.get(alloc, b"peer").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj.get(b"peer").and_then(|e| e.as_bool()) {
             install.save_peer = Some(v);
         }
-        if let Some(v) = install_obj.get(alloc, b"dev").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj.get(b"dev").and_then(|e| e.as_bool()) {
             install.save_dev = Some(v);
         }
         if let Some(v) = install_obj
-            .get(alloc, b"globalDir")
+            .get(b"globalDir")
             .and_then(|e| e.as_string(self.bump))
         {
             install.global_dir = Some(v.into());
         }
         if let Some(v) = install_obj
-            .get(alloc, b"globalBinDir")
+            .get(b"globalBinDir")
             .and_then(|e| e.as_string(self.bump))
         {
             install.global_bin_dir = Some(v.into());
         }
 
-        if let Some(cache) = install_obj.get(alloc, b"cache") {
+        if let Some(cache) = install_obj.get(b"cache") {
             'load: {
                 if let Some(value) = cache.as_bool() {
                     if !value {
@@ -1458,19 +1443,13 @@ impl<'a> Parser<'a> {
                     break 'load;
                 }
                 if let ExprData::EObject(_) = cache.data {
-                    if let Some(v) = cache.get(alloc, b"disable").and_then(|e| e.as_bool()) {
+                    if let Some(v) = cache.get(b"disable").and_then(|e| e.as_bool()) {
                         install.disable_cache = Some(v);
                     }
-                    if let Some(v) = cache
-                        .get(alloc, b"disableManifest")
-                        .and_then(|e| e.as_bool())
-                    {
+                    if let Some(v) = cache.get(b"disableManifest").and_then(|e| e.as_bool()) {
                         install.disable_manifest_cache = Some(v);
                     }
-                    if let Some(v) = cache
-                        .get(alloc, b"dir")
-                        .and_then(|e| e.as_string(self.bump))
-                    {
+                    if let Some(v) = cache.get(b"dir").and_then(|e| e.as_string(self.bump)) {
                         install.cache_directory = Some(v.into());
                     }
                 }
@@ -1478,15 +1457,15 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(v) = install_obj
-            .get(alloc, b"linkWorkspacePackages")
+            .get(b"linkWorkspacePackages")
             .and_then(|e| e.as_bool())
         {
             install.link_workspace_packages = Some(v);
         }
 
-        if let Some(security_obj) = install_obj.get(alloc, b"security") {
+        if let Some(security_obj) = install_obj.get(b"security") {
             if let ExprData::EObject(_) = security_obj.data {
-                if let Some(scanner) = security_obj.get(alloc, b"scanner") {
+                if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
                     install.security_scanner = scanner.as_string(self.bump).map(Into::into);
                 }
@@ -1498,7 +1477,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(min_age) = install_obj.get(alloc, b"minimumReleaseAge") {
+        if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
                     if seconds.value() < 0.0 {
@@ -1520,7 +1499,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(exclusions) = install_obj.get(alloc, b"minimumReleaseAgeExcludes") {
+        if let Some(exclusions) = install_obj.get(b"minimumReleaseAgeExcludes") {
             match &exclusions.data {
                 ExprData::EArray(arr) => 'brk: {
                     let raw = arr.items.slice();
@@ -1560,13 +1539,13 @@ impl<'a> Parser<'a> {
                 }
             }
         };
-        if let Some(public_hoist_pattern_expr) = install_obj.get(alloc, b"publicHoistPattern") {
+        if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
             install.public_hoist_pattern = Some(
                 api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
             );
         }
-        if let Some(hoist_pattern_expr) = install_obj.get(alloc, b"hoistPattern") {
+        if let Some(hoist_pattern_expr) = install_obj.get(b"hoistPattern") {
             install.hoist_pattern = Some(
                 api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
@@ -1577,8 +1556,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_serve_static(&mut self, serve_obj: &Expr) -> crate::Result<()> {
-        let alloc = self.alloc;
-        if let Some(config_plugins) = serve_obj.get(alloc, b"plugins") {
+        if let Some(config_plugins) = serve_obj.get(b"plugins") {
             let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
                 if let ExprData::EArray(arr) = &config_plugins.data {
                     let raw = arr.items.slice();
@@ -1610,26 +1588,26 @@ impl<'a> Parser<'a> {
             self.ctx.args.serve_plugins = plugins;
         }
 
-        if let Some(hmr) = serve_obj.get(alloc, b"hmr") {
+        if let Some(hmr) = serve_obj.get(b"hmr") {
             if let Some(v) = hmr.as_bool() {
                 self.ctx.args.serve_hmr = Some(v);
             }
         }
 
-        if let Some(minify) = serve_obj.get(alloc, b"minify") {
+        if let Some(minify) = serve_obj.get(b"minify") {
             if let Some(v) = minify.as_bool() {
                 self.ctx.args.serve_minify_syntax = Some(v);
                 self.ctx.args.serve_minify_whitespace = Some(v);
                 self.ctx.args.serve_minify_identifiers = Some(v);
             } else if minify.is_object() {
-                if let Some(syntax) = minify.get(alloc, b"syntax") {
+                if let Some(syntax) = minify.get(b"syntax") {
                     self.ctx.args.serve_minify_syntax = Some(syntax.as_bool().unwrap_or(false));
                 }
-                if let Some(whitespace) = minify.get(alloc, b"whitespace") {
+                if let Some(whitespace) = minify.get(b"whitespace") {
                     self.ctx.args.serve_minify_whitespace =
                         Some(whitespace.as_bool().unwrap_or(false));
                 }
-                if let Some(identifiers) = minify.get(alloc, b"identifiers") {
+                if let Some(identifiers) = minify.get(b"identifiers") {
                     self.ctx.args.serve_minify_identifiers =
                         Some(identifiers.as_bool().unwrap_or(false));
                 }
@@ -1638,18 +1616,18 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Some(expr) = serve_obj.get(alloc, b"define") {
+        if let Some(expr) = serve_obj.get(b"define") {
             self.ctx.args.serve_define = Some(self.parse_define_map(&expr)?);
         }
         self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
 
-        if let Some(public_path) = serve_obj.get(alloc, b"publicPath") {
+        if let Some(public_path) = serve_obj.get(b"publicPath") {
             if let Some(v) = public_path.as_string(self.bump) {
                 self.ctx.args.serve_public_path = Some(v.into());
             }
         }
 
-        if let Some(env) = serve_obj.get(alloc, b"env") {
+        if let Some(env) = serve_obj.get(b"env") {
             match &env.data {
                 ExprData::ENull(_) => {
                     self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;

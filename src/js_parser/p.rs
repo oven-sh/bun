@@ -9,7 +9,7 @@ use bun_alloc::Arena as Bump;
 
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
+use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_wyhash::Wyhash;
@@ -204,7 +204,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub jsx_transform: JSXTransformType,
     pub macro_: MacroState<'a>,
     pub arena: &'a Bump,
-    pub alloc: bun_alloc::AstAlloc,
     pub options: ParserOptions<'a>,
     /// Raw pointer alias of `lexer.log`. Rust cannot store two `&'a mut Log` to one allocation
     /// (Stacked-Borrows UB), so this is a `NonNull` and reborrowed at use sites
@@ -605,10 +604,13 @@ pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn drop(&mut self) {
-        // Arena-allocated structs never run Drop; their maps are now backed by
-        // the same `AstAlloc` arena and bulk-freed on arena reset.
-        self.ts_namespace_scopes.clear();
-        self.ts_namespace_member_maps.clear();
+        // Arena-allocated structs never run Drop; free their global-heap maps here.
+        for mut scope in self.ts_namespace_scopes.drain(..) {
+            drop(core::mem::take(&mut scope.property_accesses));
+        }
+        for mut map in self.ts_namespace_member_maps.drain(..) {
+            drop(core::mem::take(&mut *map));
+        }
     }
 }
 
@@ -722,7 +724,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     {
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
-        let expr = Expr::init(self.alloc, t, loc);
+        let expr = Expr::init(t, loc);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
@@ -748,7 +750,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     where
         T: js_ast::stmt::StatementData,
     {
-        Stmt::alloc(self.alloc, t, loc)
+        Stmt::alloc(t, loc)
     }
 
     pub fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
@@ -881,7 +883,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
-                self.alloc,
                 E::If {
                     yes: self.maybe_transpose_if_import(ex.yes, state),
                     no: self.maybe_transpose_if_import(ex.no, state),
@@ -896,7 +897,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
-                self.alloc,
                 E::If {
                     yes: self.maybe_transpose_if_require(ex.yes, state),
                     no: self.maybe_transpose_if_require(ex.no, state),
@@ -914,7 +914,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             unreachable!()
         };
         Expr::init(
-            self.alloc,
             E::If {
                 yes: self.maybe_transpose_if_require(ex.yes, state),
                 no: self.maybe_transpose_if_require(ex.no, state),
@@ -927,7 +926,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
-                self.alloc,
                 E::If {
                     yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                     no: self.maybe_transpose_if_require_resolve(ex.no, state),
@@ -945,7 +943,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             unreachable!()
         };
         Expr::init(
-            self.alloc,
             E::If {
                 yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                 no: self.maybe_transpose_if_require_resolve(ex.no, state),
@@ -1043,8 +1040,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::Call {
                 target: require_resolve_ref,
-                args: self.alloc.vec_from_iter([arg]),
-                ..E::Call::empty(self.alloc)
+                args: ExprNodeList::init_one(arg),
+                ..Default::default()
             },
             arg.loc,
         )
@@ -1093,8 +1090,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.new_expr(
                 E::Call {
                     target: self.value_for_require(arg.loc),
-                    args: self.alloc.vec_from_iter([arg]),
-                    ..E::Call::empty(self.alloc)
+                    args: ExprNodeList::init_one(arg),
+                    ..Default::default()
                 },
                 arg.loc,
             );
@@ -1221,8 +1218,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.new_expr(
                     E::Call {
                         target: self.value_for_require(arg.loc),
-                        args: self.alloc.vec_from_iter([arg]),
-                        ..E::Call::empty(self.alloc)
+                        args: ExprNodeList::init_one(arg),
+                        ..Default::default()
                     },
                     arg.loc,
                 )
@@ -1677,7 +1674,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let import_record_i =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
 
-        let mut declared_symbols = bun_ast::DeclaredSymbolList::empty(self.alloc);
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(2)?;
 
         declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -1720,7 +1717,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 alias_loc: bun_ast::Loc::default(),
                 namespace_ref: self.bun_app_namespace_ref,
                 import_record_index: import_record_i,
-                local_parts_with_uses: self.alloc.vec(),
+                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                 alias_is_star: false,
                 is_exported: false,
             },
@@ -1746,9 +1743,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: self.alloc.vec_from_iter([import_record_i]),
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
             tag: bun_ast::PartTag::Runtime,
-            ..js_ast::Part::empty(self.alloc)
+            ..Default::default()
         });
         Ok(())
     }
@@ -1807,7 +1804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     name: LocRef::default(),
                 }
             });
-        let mut declared_symbols = bun_ast::DeclaredSymbolList::empty(self.alloc);
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(imports.len() + 1)?;
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier);
@@ -1838,15 +1835,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(
-                        self.alloc,
-                        js_ast::NamespaceAlias {
-                            namespace_ref,
-                            alias: js_ast::StoreStr::new(alias_name),
-                            import_record_index: import_record_i,
-                            was_originally_property_access: false,
-                        },
-                    ));
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                        namespace_ref,
+                        alias: js_ast::StoreStr::new(alias_name),
+                        import_record_index: import_record_i,
+                        was_originally_property_access: false,
+                    }));
                 }
             }
 
@@ -1858,7 +1852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     alias_loc: bun_ast::Loc::default(),
                     namespace_ref,
                     import_record_index: import_record_i,
-                    local_parts_with_uses: self.alloc.vec(),
+                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                     alias_is_star: false,
                     is_exported: false,
                 },
@@ -1891,9 +1885,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: self.alloc.vec_from_iter([import_record_i]),
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
             tag: bun_ast::PartTag::Runtime,
-            ..js_ast::Part::empty(self.alloc)
+            ..Default::default()
         });
         Ok(())
     }
@@ -1944,7 +1938,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             arena,
         );
 
-        let mut declared_symbols = bun_ast::DeclaredSymbolList::empty(self.alloc);
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(len)?;
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime");
@@ -1989,7 +1983,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         alias_loc: bun_ast::Loc::EMPTY,
                         namespace_ref,
                         import_record_index,
-                        local_parts_with_uses: self.alloc.vec(),
+                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                         alias_is_star: false,
                         is_exported: false,
                     },
@@ -2015,11 +2009,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.s(
                 S::Local {
                     kind: js_ast::s::Kind::KConst,
-                    decls: self.alloc.vec_from_slice(&[Decl {
+                    decls: G::DeclList::from_slice(&[Decl {
                         binding,
                         value: Some(value),
                     }]),
-                    ..S::Local::empty(self.alloc)
+                    ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -2042,9 +2036,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: self.alloc.vec_from_iter([import_record_index]),
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_index),
             tag: bun_ast::PartTag::Runtime,
-            ..js_ast::Part::empty(self.alloc)
+            ..Default::default()
         });
         Ok(())
     }
@@ -2889,15 +2883,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app");
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(
-                        self.alloc,
-                        js_ast::NamespaceAlias {
-                            namespace_ref: self.bun_app_namespace_ref,
-                            alias: js_ast::StoreStr::new(b"Response"),
-                            was_originally_property_access: false,
-                            import_record_index: u32::MAX,
-                        },
-                    ));
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                        namespace_ref: self.bun_app_namespace_ref,
+                        alias: js_ast::StoreStr::new(b"Response"),
+                        was_originally_property_access: false,
+                        import_record_index: u32::MAX,
+                    }));
                 }
             }
         }
@@ -3247,7 +3238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_nn: NonNull<Scope> = NonNull::from(arena.alloc(Scope {
             kind: KIND,
             parent: Some(parent),
-            ..Scope::empty(self.alloc)
+            ..Scope::EMPTY
         }));
         // `StoreRef` wraps the SharedRW `NonNull` derived above; every later
         // `Deref`/`DerefMut` goes through `scope_nn`, so reborrows do not pop
@@ -3776,15 +3767,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.options.features.hot_module_reloading {
                     let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                     if symbol.namespace_alias.is_none() {
-                        symbol.namespace_alias = Some(bun_alloc::ast_box(
-                            self.alloc,
-                            js_ast::NamespaceAlias {
-                                namespace_ref: stmt.namespace_ref,
-                                alias: js_ast::StoreStr::new(b"default"),
-                                import_record_index: stmt.import_record_index,
-                                was_originally_property_access: false,
-                            },
-                        ));
+                        symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                            namespace_ref: stmt.namespace_ref,
+                            alias: js_ast::StoreStr::new(b"default"),
+                            import_record_index: stmt.import_record_index,
+                            was_originally_property_access: false,
+                        }));
                     }
                 }
 
@@ -3861,15 +3849,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(
-                        self.alloc,
-                        js_ast::NamespaceAlias {
-                            namespace_ref: stmt.namespace_ref,
-                            alias: js_ast::StoreStr::new(alias),
-                            import_record_index: stmt.import_record_index,
-                            was_originally_property_access: false,
-                        },
-                    ));
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                        namespace_ref: stmt.namespace_ref,
+                        alias: js_ast::StoreStr::new(alias),
+                        import_record_index: stmt.import_record_index,
+                        was_originally_property_access: false,
+                    }));
                 }
             }
 
@@ -4276,7 +4261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
-                property_accesses: StringArrayHashMap::new_in(self.alloc),
+                property_accesses: Default::default(),
             }));
             self.ts_namespace_scopes.push(scope);
             return scope;
@@ -4286,16 +4271,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Two bump allocs from the same arena; `StoreRef` is non-null so the
         // map field can't be null-then-patched, and same-arena allocation
         // keeps the locality while avoiding a self-referential init.
-        let map = js_ast::StoreRef::from_bump(
-            self.arena
-                .alloc(js_ast::TSNamespaceMemberMap::new_in(self.alloc)),
-        );
+        let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
         self.ts_namespace_member_maps.push(map);
         let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
             exported_members: map,
             is_enum_scope,
             arg_ref: Ref::NONE,
-            property_accesses: StringArrayHashMap::new_in(self.alloc),
+            property_accesses: Default::default(),
         }));
         self.ts_namespace_scopes.push(scope);
         scope
@@ -4985,7 +4967,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
-                    let mut decls = self.alloc.vec();
+                    let mut decls = bun_alloc::AstAlloc::vec();
                     VecExt::append(
                         &mut decls,
                         Decl {
@@ -4996,7 +4978,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     part_stmts.push(self.s(
                         S::Local {
                             decls,
-                            ..S::Local::empty(self.alloc)
+                            ..Default::default()
                         },
                         local.loc,
                     ));
@@ -5020,28 +5002,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             parts.push(js_ast::Part {
                 stmts: final_stmts,
-                symbol_uses: core::mem::replace(
-                    &mut self.symbol_uses,
-                    SymbolUseMap::new_in(self.alloc),
-                ),
+                symbol_uses: core::mem::take(&mut self.symbol_uses),
                 import_symbol_property_uses: {
-                    let m = core::mem::replace(
-                        &mut self.import_symbol_property_uses,
-                        SymbolPropertyUseMap::new_in(self.alloc),
-                    );
+                    let m = core::mem::take(&mut self.import_symbol_property_uses);
                     if m.is_empty() {
                         None
                     } else {
-                        Some(bun_alloc::ast_box(self.alloc, m))
+                        Some(bun_alloc::ast_box(m))
                     }
                 },
-                declared_symbols: self.declared_symbols.to_owned_slice(self.alloc),
+                declared_symbols: self.declared_symbols.to_owned_slice(),
                 import_record_indices: {
                     let v = core::mem::replace(
                         &mut self.import_records_for_current_part,
                         BumpVec::new_in(self.arena),
                     );
-                    self.alloc.vec_from_slice(v.as_slice())
+                    js_ast::PartImportRecordIndices::from_slice(v.as_slice())
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
                 scopes: bun_ast::StoreSlice::new_mut(
@@ -5057,7 +5033,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     bun_ast::PartTag::None
                 },
-                ..js_ast::Part::empty(self.alloc)
+                ..Default::default()
             });
             // `symbol_uses` / `import_symbol_property_uses` were already reset
             // to empty by `core::mem::take` above; no second assignment needed.
@@ -5067,7 +5043,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
                 declared_symbols: self.declared_symbols.clone()?,
                 symbol_uses: self.symbol_uses.clone()?,
-                ..js_ast::Part::empty(self.alloc)
+                ..Default::default()
             });
             self.declared_symbols.clear_retaining_capacity();
             self.import_records_for_current_part.clear();
@@ -5923,7 +5899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             crate::parser::Runtime::ReplaceableExport::Delete => false,
             crate::parser::Runtime::ReplaceableExport::Replace(value) => {
                 let count = stmts.len();
-                let decls = self.alloc.vec_from_slice(&[G::Decl {
+                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                     binding: self.b(B::Identifier { r#ref: name_ref }, loc),
                     value: Some(*value),
                 }]);
@@ -5931,7 +5907,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     S::Local {
                         is_export: true,
                         decls,
-                        ..S::Local::empty(self.alloc)
+                        ..Default::default()
                     },
                     loc,
                 );
@@ -5947,7 +5923,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let inject_ref = self
                     .declare_symbol(js_ast::symbol::Kind::Other, loc, name)
                     .expect("unreachable");
-                let decls = self.alloc.vec_from_slice(&[G::Decl {
+                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                     binding: self.b(B::Identifier { r#ref: inject_ref }, loc),
                     value: Some(*value),
                 }]);
@@ -5955,7 +5931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     S::Local {
                         is_export: true,
                         decls,
-                        ..S::Local::empty(self.alloc)
+                        ..Default::default()
                     },
                     loc,
                 );
@@ -6112,7 +6088,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .put_no_clobber(name_ref, ())
                 .expect("oom");
 
-            let decls = self.alloc.vec_from_slice(&[G::Decl {
+            let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                 binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
                 value: None,
             }]);
@@ -6125,7 +6101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         kind: js_ast::s::Kind::KVar,
                         decls,
                         is_export,
-                        ..S::Local::empty(self.alloc)
+                        ..Default::default()
                     },
                     stmt_loc,
                 ));
@@ -6135,7 +6111,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     S::Local {
                         kind: js_ast::s::Kind::KLet,
                         decls,
-                        ..S::Local::empty(self.alloc)
+                        ..Default::default()
                     },
                     stmt_loc,
                 ));
@@ -6162,9 +6138,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                         name_loc,
                     );
-                    let right = self.new_expr(E::Object::empty(self.alloc), name_loc);
+                    let right = self.new_expr(E::Object::default(), name_loc);
                     break 'arg_expr Expr::assign(
-                        self.alloc,
                         Expr::init_identifier(name_ref, name_loc),
                         self.new_expr(
                             E::Binary {
@@ -6180,7 +6155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "name ||= {}"
             self.record_usage(name_ref);
-            let right = self.new_expr(E::Object::empty(self.alloc), name_loc);
+            let right = self.new_expr(E::Object::default(), name_loc);
             self.new_expr(
                 E::Binary {
                     op: js_ast::op::Code::BinLogicalOrAssign,
@@ -6195,10 +6170,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `alloc_slice_fill_iter` instead of `alloc_slice_copy`.
         let func_args = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter([G::Arg {
             binding: self.b(B::Identifier { r#ref: arg_ref }, name_loc),
-            ..G::Arg::empty(self.alloc)
+            ..Default::default()
         }]));
 
-        let args_list = self.alloc.vec_from_iter([arg_expr]);
+        let args_list = ExprNodeList::init_one(arg_expr);
 
         let target = 'target: {
             // "(() => { foo() })()" => "(() => foo())()"
@@ -6236,7 +6211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // is attached to the variable binding.
                 //
                 // can_be_unwrapped_if_unused: all_values_are_pure,
-                ..E::Call::empty(self.alloc)
+                ..Default::default()
             },
             stmt_loc,
         );
@@ -6304,7 +6279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Call {
                 target,
                 args,
-                ..E::Call::empty(self.alloc)
+                ..Default::default()
             },
             loc,
         )
@@ -6514,7 +6489,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             let args = self
                                                 .arena
                                                 .alloc_slice_copy(&[arg0, *arg_decorator]);
-                                            let args = self.alloc.vec_from_slice(args);
+                                            let args = ExprNodeList::from_arena_slice(args);
                                             let call = self.call_runtime(
                                                 arg_decorator.loc,
                                                 b"__legacyDecorateParamTS",
@@ -6583,11 +6558,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
                         full.extend_from_slice(prop.ts_decorators.slice());
                         full.extend_from_slice(&array);
-                        let full_items = self.alloc.vec_from_iter(full);
+                        let full_items = ExprNodeList::from_bump_vec(full);
                         let array_expr = self.new_expr(
                             E::Array {
                                 items: full_items,
-                                ..E::Array::empty(self.alloc)
+                                ..Default::default()
                             },
                             loc,
                         );
@@ -6597,7 +6572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             descriptor_key,
                             descriptor_kind,
                         ]);
-                        let args = self.alloc.vec_from_slice(args_slice);
+                        let args = ExprNodeList::from_arena_slice(args_slice);
 
                         let decorator = self.call_runtime(
                             prop.key.expect("infallible: prop has key").loc,
@@ -6673,15 +6648,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // remove fields with decorators from class body. Move static members outside of class.
                         if prop.flags.contains(Flags::Property::IsStatic) {
-                            static_members.push(Stmt::assign(self.alloc, target, initializer));
+                            static_members.push(Stmt::assign(target, initializer));
                         } else {
-                            instance_members.push(Stmt::assign(self.alloc, target, initializer));
+                            instance_members.push(Stmt::assign(target, initializer));
                         }
                         continue;
                     }
 
-                    // The old backing slice is overwritten right after this loop.
-                    class_properties.push(core::mem::replace(prop, G::Property::empty(self.alloc)));
+                    // The old backing slice is overwritten right after this loop, so
+                    // `take` is fine here (Property: Default).
+                    class_properties.push(core::mem::take(prop));
                 }
 
                 s_class.class.properties =
@@ -6736,13 +6712,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 },
                                 stmt.loc,
                             );
-                            let args = self.alloc.vec_from_iter([super_]);
+                            let args = ExprNodeList::init_one(super_);
 
                             let call_value = self.new_expr(
                                 E::Call {
                                     target,
                                     args,
-                                    ..E::Call::empty(self.alloc)
+                                    ..Default::default()
                                 },
                                 stmt.loc,
                             );
@@ -6781,11 +6757,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             flags: Flags::Property::IsMethod.into(),
                             key: Some(key_expr),
                             value: Some(value_expr),
-                            ..G::Property::empty(self.alloc)
+                            ..Default::default()
                         });
                         for old in old_props.slice_mut().iter_mut() {
-                            properties
-                                .push(core::mem::replace(old, G::Property::empty(self.alloc)));
+                            properties.push(core::mem::take(old));
                         }
 
                         s_class.class.properties =
@@ -6822,19 +6797,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         .serialize_metadata(ca.ts_metadata.clone())
                                         .expect("unreachable");
                                 }
-                                let items = self.alloc.vec_from_slice(param_array);
+                                let items = ExprNodeList::from_arena_slice(param_array);
                                 self.new_expr(
                                     E::Array {
                                         items,
-                                        ..E::Array::empty(self.alloc)
+                                        ..Default::default()
                                     },
                                     bun_ast::Loc::EMPTY,
                                 )
                             } else {
                                 self.new_expr(
                                     E::Array {
-                                        items: self.alloc.vec(),
-                                        ..E::Array::empty(self.alloc)
+                                        items: bun_alloc::AstAlloc::vec(),
+                                        ..Default::default()
                                     },
                                     bun_ast::Loc::EMPTY,
                                 )
@@ -6844,28 +6819,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 bun_ast::Loc::EMPTY,
                             );
                             let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
-                            let args = self.alloc.vec_from_slice(args_slice);
+                            let args = ExprNodeList::from_arena_slice(args_slice);
                             array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
                         }
                     }
 
                     let class_name = s_class.class.class_name.unwrap();
                     let class_ref = class_name.ref_;
-                    let array_items = self.alloc.vec_from_iter(array);
+                    let array_items = ExprNodeList::move_from_list(array);
                     let array_expr = self.new_expr(
                         E::Array {
                             items: array_items,
-                            ..E::Array::empty(self.alloc)
+                            ..Default::default()
                         },
                         stmt.loc,
                     );
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
-                    let args = self.alloc.vec_from_slice(args_slice);
+                    let args = ExprNodeList::from_arena_slice(args_slice);
 
                     let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let rhs = self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args);
-                    stmts.push(Stmt::assign(self.alloc, lhs, rhs));
+                    stmts.push(Stmt::assign(lhs, rhs));
 
                     self.record_usage(class_ref);
                     self.record_usage(class_ref);
@@ -6901,7 +6876,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let label = self.new_expr(E::EString::from_static($label), bun_ast::Loc::EMPTY);
                 let value = $value;
                 let args = self.arena.alloc_slice_copy(&[label, value]);
-                let args = self.alloc.vec_from_slice(args);
+                let args = ExprNodeList::from_arena_slice(args);
                 array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
             }};
         }
@@ -6933,11 +6908,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .serialize_metadata(method_arg.ts_metadata.clone())
                                     .expect("unreachable");
                             }
-                            let items = self.alloc.vec_from_slice(args_array);
+                            let items = ExprNodeList::from_arena_slice(args_array);
                             let arr = self.new_expr(
                                 E::Array {
                                     items,
-                                    ..E::Array::empty(self.alloc)
+                                    ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
                             );
@@ -6969,8 +6944,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             let arr = self.new_expr(
                                 E::Array {
-                                    items: self.alloc.vec(),
-                                    ..E::Array::empty(self.alloc)
+                                    items: bun_alloc::AstAlloc::vec(),
+                                    ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
                             );
@@ -7000,11 +6975,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .serialize_metadata(method_arg.ts_metadata.clone())
                                     .expect("unreachable");
                             }
-                            let items = self.alloc.vec_from_slice(args_array);
+                            let items = ExprNodeList::from_arena_slice(args_array);
                             let arr = self.new_expr(
                                 E::Array {
                                     items,
-                                    ..E::Array::empty(self.alloc)
+                                    ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
                             );
@@ -7585,10 +7560,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let call = self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.react_refresh.register_ref, loc),
-                args: self
-                    .alloc
-                    .vec_from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
-                ..E::Call::empty(self.alloc)
+                args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
+                ..Default::default()
             },
             loc,
         );
@@ -7637,8 +7610,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.server_components_wrap_ref, bun_ast::Loc::EMPTY),
-                args: self.alloc.vec_from_slice(&[val, module_path, name_expr]),
-                ..E::Call::empty(self.alloc)
+                args: ExprNodeList::from_slice(&[val, module_path, name_expr]),
+                ..Default::default()
             },
             bun_ast::Loc::EMPTY,
         )
@@ -7783,7 +7756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = self.new_expr(
             E::Call {
                 target: Expr::init_identifier(hook.signature_cb, loc),
-                ..E::Call::empty(self.alloc)
+                ..Default::default()
             },
             loc,
         );
@@ -7810,14 +7783,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = Some(self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.react_refresh.create_signature_ref, loc),
-                ..E::Call::empty(self.alloc)
+                ..Default::default()
             },
             loc,
         ));
         self.s(
             S::Local {
-                decls: self.alloc.vec_from_iter([G::Decl { binding, value }]),
-                ..S::Local::empty(self.alloc)
+                decls: G::DeclList::init_one(G::Decl { binding, value }),
+                ..Default::default()
             },
             loc,
         )
@@ -7861,8 +7834,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // () => [useCustom1, useCustom2]
             let array = self.new_expr(
                 E::Array {
-                    items: self.alloc.vec_from_slice(ctx.user_hooks.values()),
-                    ..E::Array::empty(self.alloc)
+                    items: ExprNodeList::from_slice(ctx.user_hooks.values()),
+                    ..Default::default()
                 },
                 loc,
             );
@@ -7884,8 +7857,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::Call {
                 target: Expr::init_identifier(ctx.signature_cb, loc),
-                args: self.alloc.vec_from_slice(args.as_slice()),
-                ..E::Call::empty(self.alloc)
+                args: ExprNodeList::from_slice(args.as_slice()),
+                ..Default::default()
             },
             loc,
         )
@@ -8051,7 +8024,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             unsafe {
                                 core::ptr::write(
                                     &raw mut part.import_record_indices,
-                                    self.alloc.vec_from_slice(arena.alloc_slice_copy(
+                                    Vec::from_arena_slice(arena.alloc_slice_copy(
                                         self.import_records_for_current_part.as_slice(),
                                     )),
                                 );
@@ -8066,10 +8039,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
                         unsafe {
                             let src = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(
-                                &raw mut (*src).symbol_uses,
-                                SymbolUseMap::new_in(self.alloc),
-                            );
+                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
                             core::ptr::write(
                                 &raw mut (*src).import_symbol_property_uses,
                                 Default::default(),
@@ -8085,17 +8055,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         parts_end += 1;
                     } else {
-                        // Filtered out; clear the alias in `parts[idx]` so a
-                        // re-scan never sees stale handles.
-                        part.symbol_uses = SymbolUseMap::new_in(self.alloc);
-                        part.import_symbol_property_uses = None;
+                        // Filtered out; free the global-heap maps and clear the
+                        // alias in `parts[idx]` so a re-scan never sees freed handles.
+                        drop(core::mem::take(&mut part.symbol_uses));
+                        drop(core::mem::take(&mut part.import_symbol_property_uses));
                         // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
                         unsafe {
                             let slot = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(
-                                &raw mut (*slot).symbol_uses,
-                                SymbolUseMap::new_in(self.alloc),
-                            );
+                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
                             core::ptr::write(
                                 &raw mut (*slot).import_symbol_property_uses,
                                 Default::default(),
@@ -8144,10 +8111,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //   })
             //
             //  which is then called in `evaluateCommonJSModuleOnce`
-            let args = arena
-                .alloc_slice_fill_with::<Arg, _>(5 + usize::from(self.has_import_meta), |_| {
-                    G::Arg::empty(self.alloc)
-                });
+            let args = arena.alloc_slice_fill_default::<Arg>(5 + usize::from(self.has_import_meta));
             args[0] = Arg {
                 binding: self.b(
                     B::Identifier {
@@ -8155,7 +8119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 ),
-                ..G::Arg::empty(self.alloc)
+                ..Default::default()
             };
             args[1] = Arg {
                 binding: self.b(
@@ -8164,7 +8128,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 ),
-                ..G::Arg::empty(self.alloc)
+                ..Default::default()
             };
             args[2] = Arg {
                 binding: self.b(
@@ -8173,7 +8137,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 ),
-                ..G::Arg::empty(self.alloc)
+                ..Default::default()
             };
             args[3] = Arg {
                 binding: self.b(
@@ -8182,7 +8146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 ),
-                ..G::Arg::empty(self.alloc)
+                ..Default::default()
             };
             args[4] = Arg {
                 binding: self.b(
@@ -8191,7 +8155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 ),
-                ..G::Arg::empty(self.alloc)
+                ..Default::default()
             };
             if self.has_import_meta {
                 self.import_meta_ref =
@@ -8203,7 +8167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    ..G::Arg::empty(self.alloc)
+                    ..Default::default()
                 };
             }
 
@@ -8269,7 +8233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // BumpVec has no `set_len`-on-grow path; ensure at least one slot then truncate.
             if parts.is_empty() {
-                parts.push(js_ast::Part::empty(self.alloc));
+                parts.push(js_ast::Part::default());
             }
             parts.truncate(1);
             parts[0].stmts = bun_ast::StoreSlice::new_mut(top_level_stmts);
@@ -8282,8 +8246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.apply_repl_transforms(parts, arena)?;
         }
 
-        let mut top_level_symbols_to_parts =
-            bun_ast::ast_result::TopLevelSymbolToParts::new_in(self.alloc);
+        let mut top_level_symbols_to_parts = bun_ast::ast_result::TopLevelSymbolToParts::default();
 
         if self.options.bundle {
             // Each part tracks the other parts it depends on within this file
@@ -8294,14 +8257,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 top_level: &'s mut bun_ast::ast_result::TopLevelSymbolToParts,
                 symbols: &'s [Symbol],
                 part_index: u32,
-                alloc: bun_alloc::AstAlloc,
             }
             for (part_index, part) in parts.iter_mut().enumerate() {
                 let mut ctx = Ctx {
                     top_level: &mut top_level_symbols_to_parts,
                     symbols: self.symbols.as_slice(),
                     part_index: part_index as u32,
-                    alloc: self.alloc,
                 };
                 DeclaredSymbol::for_each_top_level_symbol(
                     &part.declared_symbols,
@@ -8319,17 +8280,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         ctx.top_level
                             .entry(r#ref)
-                            .or_insert_with(|| ctx.alloc.vec())
+                            .or_insert_with(bun_alloc::AstAlloc::vec)
                             .push(ctx.part_index);
                     },
                 );
             }
 
             // Pulling in the exports of this module always pulls in the export part
-            let alloc = self.alloc;
             top_level_symbols_to_parts
                 .entry(self.exports_ref)
-                .or_insert_with(|| alloc.vec())
+                .or_insert_with(bun_alloc::AstAlloc::vec)
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
@@ -8378,10 +8338,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
-        // an empty one in `*self.module_scope`. `to_ast` is terminal — the
-        // parser does not touch `module_scope` afterwards.
-        let empty_scope = Scope::empty(self.alloc);
-        let module_scope = core::mem::replace(self.module_scope_mut(), empty_scope);
+        // a default in `*self.module_scope`. `to_ast` is terminal — the parser
+        // does not touch `module_scope` afterwards.
+        let module_scope = core::mem::take(self.module_scope_mut());
 
         let uses_module_ref =
             self.symbols[self.module_ref.inner_index() as usize].use_count_estimate > 0;
@@ -8425,19 +8384,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             exports_ref: self.exports_ref,
             wrapper_ref,
             module_ref: self.module_ref,
-            export_star_import_records: self
-                .alloc
-                .vec_from_slice(self.export_star_import_records.as_slice()),
+            export_star_import_records: bun_alloc::AstAlloc::vec_from_slice(
+                self.export_star_import_records.as_slice(),
+            ),
             approximate_newline_count: self.lexer.approximate_newline_count,
             exports_kind,
-            named_imports: core::mem::replace(
-                &mut *self.named_imports,
-                bun_ast::ast_result::NamedImports::new_in(self.alloc),
-            ),
-            named_exports: core::mem::replace(
-                &mut self.named_exports,
-                bun_ast::ast_result::NamedExports::new_in(self.alloc),
-            ),
+            named_imports: core::mem::take(&mut *self.named_imports),
+            named_exports: core::mem::take(&mut self.named_exports),
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
             char_freq,
@@ -8458,10 +8411,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_module_exports_assigned_deoptimized: self
                 .commonjs_module_exports_assigned_deoptimized,
             top_level_await_keyword: self.top_level_await_keyword,
-            commonjs_named_exports: core::mem::replace(
-                &mut self.commonjs_named_exports,
-                bun_ast::ast_result::CommonJSNamedExports::new_in(self.alloc),
-            ),
+            commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
 
@@ -8498,11 +8448,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // When hot module reloading is enabled, we disable enum inlining
         // to avoid making the HMR graph more complicated.
         if self.options.features.hot_module_reloading {
-            return Ok(bun_ast::ast_result::TsEnumsMap::new_in(self.alloc));
+            return Ok(Default::default());
         }
 
         use bun_ast::{InlinedEnumValue, InlinedEnumValueDecoded};
-        let mut map = bun_ast::ast_result::TsEnumsMap::new_in(self.alloc);
+        let mut map = bun_ast::ast_result::TsEnumsMap::default();
         map.ensure_total_capacity(self.top_level_enums.len())?;
         for r#ref in self.top_level_enums.iter() {
             let Some(js_ast::ts::Data::Namespace(namespace)) =
@@ -8512,8 +8462,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 unreachable!("top_level_enums entry missing namespace member data");
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
-            let mut inner_map =
-                StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::new_in(self.alloc);
+            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::default();
             inner_map.ensure_total_capacity(ns.count())?;
             for i in 0..ns.count() {
                 let key = &ns.keys()[i];
@@ -8622,7 +8571,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn init(
         out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
-        alloc: bun_alloc::AstAlloc,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source,
         define: &'a Define,
@@ -8641,10 +8589,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
         let scope_obj = arena.alloc(Scope {
+            members: Default::default(),
+            children: bun_alloc::AstAlloc::vec(),
+            generated: bun_alloc::AstAlloc::vec(),
             kind: js_ast::scope::Kind::Entry,
             label_ref: Ref::NONE,
             parent: None,
-            ..Scope::empty(alloc)
+            ..Default::default()
         });
         let _ = scope_obj
             .members
@@ -8709,7 +8660,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             fn_or_arrow_data_parse.is_top_level = true;
         }
 
-        let mut symbol_uses = SymbolUseMap::new_in(alloc);
+        let mut symbol_uses = SymbolUseMap::default();
         let _ = symbol_uses.ensure_total_capacity(estimated_symbol_count);
 
         // JSX transform mode — was the `<J: JsxT>` const-generic parameter,
@@ -8730,16 +8681,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loop_body: null_stmt_data(),
             define,
             import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
-            named_imports: NamedImportsType::Owned(bun_ast::ast_result::NamedImports::new_in(
-                alloc,
-            )), // overwritten below for !SCAN_ONLY
-            named_exports: bun_ast::ast_result::NamedExports::new_in(alloc),
+            named_imports: NamedImportsType::Owned(Default::default()), // overwritten below for !SCAN_ONLY
+            named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             arena,
-            alloc,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),
                 has_multiple_args: false,
@@ -8792,11 +8740,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,
-            declared_symbols: bun_ast::DeclaredSymbolList::empty(alloc),
+            declared_symbols: Default::default(),
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
             unwrap_all_requires,
-            commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports::new_in(alloc),
+            commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
@@ -8819,7 +8767,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),
-            import_symbol_property_uses: SymbolPropertyUseMap::new_in(alloc),
+            import_symbol_property_uses: Default::default(),
             esm_import_keyword: bun_ast::Range::NONE,
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
@@ -8836,7 +8784,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_ref_count: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
-            const_values: bun_ast::ast_result::ConstValuesMap::new_in(alloc),
+            const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),
@@ -8938,8 +8886,11 @@ impl LowerUsingDeclarationsContext {
                             stmt_loc,
                         ),
                     ]);
-                    decl.value =
-                        Some(p.call_runtime(value_loc, b"__using", p.alloc.vec_from_slice(args)));
+                    decl.value = Some(p.call_runtime(
+                        value_loc,
+                        b"__using",
+                        ExprNodeList::from_arena_slice(args),
+                    ));
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -9109,7 +9060,7 @@ impl LowerUsingDeclarationsContext {
                     loc,
                 ),
             ]);
-            p.call_runtime(loc, b"__callDispose", p.alloc.vec_from_slice(args))
+            p.call_runtime(loc, b"__callDispose", ExprNodeList::from_arena_slice(args))
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
@@ -9140,11 +9091,11 @@ impl LowerUsingDeclarationsContext {
             let promise_binding = p.b(B::Identifier { r#ref: promise_ref }, loc);
             let stmt0 = p.s(
                 S::Local {
-                    decls: p.alloc.vec_from_iter([Decl {
+                    decls: G::DeclList::init_one(Decl {
                         binding: promise_binding,
                         value: Some(call_dispose),
-                    }]),
-                    ..S::Local::empty(p.alloc)
+                    }),
+                    ..Default::default()
                 },
                 loc,
             );
@@ -9192,15 +9143,15 @@ impl LowerUsingDeclarationsContext {
             },
             loc,
         );
-        let stack_init = p.new_expr(E::Array::empty(p.alloc), loc);
+        let stack_init = p.new_expr(E::Array::default(), loc);
         result.push(p.s(
             S::Local {
-                decls: p.alloc.vec_from_iter([Decl {
+                decls: G::DeclList::init_one(Decl {
                     binding: stack_binding,
                     value: Some(stack_init),
-                }]),
+                }),
                 kind: js_ast::s::Kind::KLet,
-                ..S::Local::empty(p.alloc)
+                ..Default::default()
             },
             loc,
         ));
@@ -9216,7 +9167,7 @@ impl LowerUsingDeclarationsContext {
             );
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
             let has_err_value = p.new_expr(E::Number::new(1.0), loc);
-            let mut decls = p.alloc.vec();
+            let mut decls = bun_alloc::AstAlloc::vec();
             VecExt::append(
                 &mut decls,
                 Decl {
@@ -9234,7 +9185,7 @@ impl LowerUsingDeclarationsContext {
             let stmt0 = p.s(
                 S::Local {
                     decls,
-                    ..S::Local::empty(p.alloc)
+                    ..Default::default()
                 },
                 loc,
             );

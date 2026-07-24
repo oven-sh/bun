@@ -87,13 +87,13 @@ struct Node {
 }
 
 impl Node {
-    fn new(alloc: bun_alloc::AstAlloc, id: IdentifierId, value: NodeValue) -> Self {
+    fn new(id: IdentifierId, value: NodeValue) -> Self {
         Node {
             id,
-            created_from: IndexMap::new_in(alloc),
-            captures: IndexMap::new_in(alloc),
-            aliases: IndexMap::new_in(alloc),
-            maybe_aliases: IndexMap::new_in(alloc),
+            created_from: IndexMap::new(),
+            captures: IndexMap::new(),
+            aliases: IndexMap::new(),
+            maybe_aliases: IndexMap::new(),
             edges: Vec::new(),
             transitive: None,
             local: None,
@@ -105,23 +105,19 @@ impl Node {
 }
 
 struct AliasingState {
-    alloc: bun_alloc::AstAlloc,
     nodes: IndexMap<IdentifierId, Node>,
 }
 
 impl AliasingState {
-    fn new(alloc: bun_alloc::AstAlloc) -> Self {
+    fn new() -> Self {
         AliasingState {
-            alloc,
-            nodes: IndexMap::new_in(alloc),
+            nodes: IndexMap::new(),
         }
     }
 
     fn create(&mut self, place: &Place, value: NodeValue) {
-        self.nodes.insert(
-            place.identifier,
-            Node::new(self.alloc, place.identifier, value),
-        );
+        self.nodes
+            .insert(place.identifier, Node::new(place.identifier, value));
     }
 
     fn create_from(&mut self, index: usize, from: &Place, into: &Place) {
@@ -262,7 +258,7 @@ impl AliasingState {
             Forwards,
         }
 
-        let mut seen: IdMap<IdentifierId, MutationKind> = IdMap::new_in(env.alloc);
+        let mut seen: IdMap<IdentifierId, MutationKind> = IdMap::new();
         let mut queue: Vec<QueueEntry> = vec![QueueEntry {
             place: start,
             transitive,
@@ -470,14 +466,14 @@ pub fn infer_mutation_aliasing_ranges(
     // =========================================================================
     // Part 1: Build data flow graph and infer mutable ranges
     // =========================================================================
-    let mut state = AliasingState::new(env.alloc);
+    let mut state = AliasingState::new();
 
     struct PendingPhiOperand {
         from: Place,
         into: Place,
         index: usize,
     }
-    let mut pending_phis: IdMap<BlockId, Vec<PendingPhiOperand>> = IdMap::new_in(env.alloc);
+    let mut pending_phis: IdMap<BlockId, Vec<PendingPhiOperand>> = IdMap::new();
 
     struct PendingMutation {
         index: usize,
@@ -894,7 +890,7 @@ pub fn infer_mutation_aliasing_ranges(
 
             // Compute operand effects from instruction effects
             let effects = instr.effects.as_ref().unwrap().clone();
-            let mut operand_effects: IdMap<IdentifierId, Effect> = IdMap::new_in(env.alloc);
+            let mut operand_effects: IdMap<IdentifierId, Effect> = IdMap::new();
 
             for effect in &effects {
                 match effect {

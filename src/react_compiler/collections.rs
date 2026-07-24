@@ -14,7 +14,7 @@
 
 use core::fmt;
 use core::hash::Hash;
-use core::iter::Zip;
+use core::iter::{FromIterator, Zip};
 use core::slice;
 
 use bun_alloc::AstAlloc;
@@ -43,19 +43,12 @@ pub struct IndexMap<K, V>(Inner<K, V>);
 
 impl<K, V> IndexMap<K, V> {
     #[inline]
-    pub fn new_in(alloc: AstAlloc) -> Self {
-        Self(Inner::new_in(alloc))
+    pub fn new() -> Self {
+        Self(Inner::new())
     }
     #[inline]
-    pub fn with_capacity_in(n: usize, alloc: AstAlloc) -> Self {
-        let mut m = Inner::new_in(alloc);
-        m.reserve(n);
-        Self(m)
-    }
-
-    #[inline]
-    pub fn allocator(&self) -> AstAlloc {
-        *self.0.allocator()
+    pub fn with_capacity(n: usize) -> Self {
+        Self(Inner::with_capacity(n))
     }
 
     #[inline]
@@ -114,7 +107,7 @@ impl<K, V> IndexMap<K, V> {
     /// Remove every entry, yielding `(K, V)` in insertion order.
     pub fn drain(&mut self, range: core::ops::RangeFull) -> IntoIter<K, V> {
         let _ = range;
-        core::mem::replace(self, Self::new_in(self.allocator())).into_iter()
+        core::mem::take(self).into_iter()
     }
 }
 
@@ -154,11 +147,12 @@ impl<K: Hash + Eq, V> IndexMap<K, V> {
     pub fn remove(&mut self, key: &K) -> Option<V> {
         self.0.remove(key)
     }
+}
 
-    pub fn from_iter_in<I: IntoIterator<Item = (K, V)>>(alloc: AstAlloc, iter: I) -> Self {
-        let mut m = Self::new_in(alloc);
-        m.extend(iter);
-        m
+impl<K, V> Default for IndexMap<K, V> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -182,6 +176,20 @@ impl<K: Hash + Eq, V> Extend<(K, V)> for IndexMap<K, V> {
         for (k, v) in iter {
             self.0.insert(k, v);
         }
+    }
+}
+
+impl<K: Hash + Eq, V> FromIterator<(K, V)> for IndexMap<K, V> {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut m = Self::new();
+        m.extend(iter);
+        m
+    }
+}
+
+impl<K: Hash + Eq, V, const N: usize> From<[(K, V); N]> for IndexMap<K, V> {
+    fn from(arr: [(K, V); N]) -> Self {
+        Self::from_iter(arr)
     }
 }
 
@@ -248,19 +256,12 @@ pub struct IndexSet<K>(Inner<K, ()>);
 
 impl<K> IndexSet<K> {
     #[inline]
-    pub fn new_in(alloc: AstAlloc) -> Self {
-        Self(Inner::new_in(alloc))
+    pub fn new() -> Self {
+        Self(Inner::new())
     }
     #[inline]
-    pub fn with_capacity_in(n: usize, alloc: AstAlloc) -> Self {
-        let mut m = Inner::new_in(alloc);
-        m.reserve(n);
-        Self(m)
-    }
-
-    #[inline]
-    pub fn allocator(&self) -> AstAlloc {
-        *self.0.allocator()
+    pub fn with_capacity(n: usize) -> Self {
+        Self(Inner::with_capacity(n))
     }
 
     #[inline]
@@ -316,11 +317,12 @@ impl<K: Hash + Eq> IndexSet<K> {
     pub fn remove(&mut self, key: &K) -> bool {
         self.0.remove(key).is_some()
     }
+}
 
-    pub fn from_iter_in<I: IntoIterator<Item = K>>(alloc: AstAlloc, iter: I) -> Self {
-        let mut s = Self::new_in(alloc);
-        s.extend(iter);
-        s
+impl<K> Default for IndexSet<K> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -344,6 +346,20 @@ impl<K: Hash + Eq> Extend<K> for IndexSet<K> {
         for k in iter {
             self.insert(k);
         }
+    }
+}
+
+impl<K: Hash + Eq> FromIterator<K> for IndexSet<K> {
+    fn from_iter<I: IntoIterator<Item = K>>(iter: I) -> Self {
+        let mut s = Self::new();
+        s.extend(iter);
+        s
+    }
+}
+
+impl<K: Hash + Eq, const N: usize> From<[K; N]> for IndexSet<K> {
+    fn from(arr: [K; N]) -> Self {
+        Self::from_iter(arr)
     }
 }
 
@@ -380,8 +396,8 @@ pub struct IdMap<K, V>(IndexMap<u32, V>, core::marker::PhantomData<K>);
 
 impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     #[inline]
-    pub fn new_in(alloc: AstAlloc) -> Self {
-        Self(IndexMap::new_in(alloc), core::marker::PhantomData)
+    pub fn new() -> Self {
+        Self(IndexMap::new(), core::marker::PhantomData)
     }
     #[inline]
     pub fn get(&self, k: K) -> Option<&V> {
@@ -429,6 +445,13 @@ impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     #[inline]
     pub fn values_mut(&mut self) -> slice::IterMut<'_, V> {
         self.0.values_mut()
+    }
+}
+
+impl<K, V> Default for IdMap<K, V> {
+    #[inline]
+    fn default() -> Self {
+        Self(IndexMap::new(), core::marker::PhantomData)
     }
 }
 

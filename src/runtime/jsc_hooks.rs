@@ -2130,11 +2130,10 @@ fn transpile_source_code_inner(
             let ast_arena: bun_alloc::AstArena =
                 unsafe { (*jsc_vm).module_loader.transpile_source_code_arena.take() }
                     .unwrap_or_default();
-            // `AstAlloc` is a `Copy` handle into the pinned interior; stays
-            // valid as `ast_arena` moves into `arena_guard` and back into the
-            // VM slot on give-back.
-            let alloc: bun_alloc::AstAlloc = ast_arena.alloc();
-            let arena_ptr: *const bun_alloc::Arena = alloc.arena();
+            // `AstArena` pins its interior on the heap; the `&Arena` address
+            // stays valid as `ast_arena` moves into `arena_guard` and back into
+            // the VM slot on give-back.
+            let arena_ptr: *const bun_alloc::Arena = &raw const *ast_arena.arena();
             let give_back_arena = true;
             // Note: a scopeguard so `?`-early-returns still run the cleanup.
             let mut arena_guard = scopeguard::guard(
@@ -2167,13 +2166,54 @@ fn transpile_source_code_inner(
                     }
                     if slot.is_none() {
                         if flags != FetchFlags::PrintSource {
-                            ast_arena.reset();
+                            // SAFETY: per fn contract — `jsc_vm` is the live
+                            // per-thread VM (closure runs on the same thread,
+                            // before the hook returns).
+                            if unsafe { (*jsc_vm).smol } {
+                                ast_arena.reset();
+                            } else {
+                                // See `MimallocArena::reset_retain_with_limit`
+                                // for why this is a no-op-until-limit rather
+                                // than a bump-pointer reset (each fresh
+                                // `mi_heap`'s first alloc pays
+                                // `mi_arena_pages_alloc` → bitmap memset).
+                                //
+                                // PERF NOTE: the over-limit branch of this is
+                                // `MimallocArena::reset()` = `mi_heap_destroy`
+                                // + `mi_heap_new`, and `mi_heap_destroy` is
+                                // the costly half (per-page free-list/bitmap
+                                // teardown, plus `_mi_stats_merge_from`'s
+                                // `mi_stats_t` walk when stats are compiled in).
+                                // Because `AstAlloc::deallocate` is a no-op (the
+                                // AST graph is abandoned, not freed), this
+                                // heap's footprint only *grows* across retained
+                                // modules, so a tight cap means a
+                                // `mi_heap_destroy` every few modules — and
+                                // `next lint` transpiles a few hundred.
+                                // `mi_heap_collect` can't substitute: it only
+                                // returns *empty* pages, and there are none
+                                // while the dead AST blocks pin them. So the
+                                // lever is the cap: 8 MB matches every other
+                                // `reset_retain_with_limit` call site so the
+                                // common case retains the warm heap and the
+                                // destroy fires ~4× less often.
+                                ast_arena.reset_retain_with_limit(8 * 1024 * 1024);
+                            }
                         }
                         *slot = Some(ast_arena);
                     }
                     // else: drop the fresh arena.
                 },
             );
+            // Install this call's arena as the thread-local `AstAlloc` target.
+            // Declared after `arena_guard` so it drops (restoring the TLS slot)
+            // before the guard may reset/park the arena. The `AstArena`
+            // interior is pinned on the heap, so the raw-ptr reborrow yields a
+            // scope whose stored `prev` pointer stays valid across the guard
+            // being defused on the AsyncModule path.
+            // SAFETY: `arena_guard.1` is the `AstArena` just moved in; the
+            // guard outlives `_ast_scope` by declaration order.
+            let _ast_scope = unsafe { (*(&raw mut arena_guard.1)).enter() };
             // ── Watcher fd / package_json lookup ────────────────────────────
             let mut fd: Option<bun_sys::Fd> = None;
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
@@ -2444,7 +2484,6 @@ fn transpile_source_code_inner(
                     // SAFETY: `arena_ptr` points at the `AstArena` interior
                     // held by `arena_guard`; the guard outlives `parse_result`.
                     arena: unsafe { &*arena_ptr },
-                    alloc,
                     path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
@@ -2857,6 +2896,7 @@ fn transpile_source_code_inner(
                     }
 
                     // Hand `ast_arena` ownership to the queue (defuse the give-back guard).
+                    drop(_ast_scope);
                     let (_, ast_arena, _, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
                     // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
                     // per-thread VM / global; `package_json` is the opaque watcher
@@ -2964,7 +3004,6 @@ fn transpile_source_code_inner(
                             // rope-flattening scratch belongs in it, not in
                             // the per-VM `transpiler_arena`.
                             &*arena_ptr,
-                            alloc,
                             parse_result,
                             &mut *(*extra).source_code_printer,
                             bun_js_printer::Format::EsmAscii,

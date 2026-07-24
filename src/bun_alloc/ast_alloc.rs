@@ -2,23 +2,18 @@
 //!
 //! [`AstArena`] owns one AST-allocation scope's storage: a `MimallocArena` for
 //! node payloads and a 16 KB inline bump chunk for the tiny `AstVec`s the
-//! parser builds by the thousand. It hands out [`AstAlloc`] handles (a `Copy`
-//! pointer into its pinned interior) which implement `core::alloc::Allocator`
-//! for `Vec<T, AstAlloc>` / `Box<T, AstAlloc>`.
+//! parser builds by the thousand. It is installed into the thread-local
+//! [`ACTIVE`] slot via [`AstArena::enter`], which returns an [`AstScope`]
+//! RAII guard; for the guard's lifetime the zero-sized [`AstAlloc`] routes
+//! `allocate`/`grow` to that arena.
 //!
-//! `AstAlloc::deallocate` is a **no-op**: everything allocated through a
-//! handle is bulk-freed when the owning `AstArena` is `reset()` or dropped.
-//! This preserves the `Expr::Data::clone_in` invariant
+//! `AstAlloc::deallocate` is a **no-op**: everything allocated through it is
+//! bulk-freed when the owning `AstArena` is `reset()` or dropped. This
+//! preserves the `Expr::Data::clone_in` invariant
 //! (`src/js_parser/ast/Expr.rs:2178`): payloads are `core::ptr::read`-copied
 //! under the assumption "no `Drop`, no owned heap state". Two
 //! `Vec<_, AstAlloc>` headers may therefore alias the same buffer; neither
 //! ever frees it.
-//!
-//! The arena is a **passed value** (not ambient thread-local state): whoever
-//! owns the parse owns an `AstArena`, threads its `AstAlloc` handle into the
-//! parser/visitor/builder, and later moves the `AstArena` together with the
-//! AST it backs (e.g. into `parse_task::Success`) so the bundler's
-//! cross-thread handoff is a compiler-checked move.
 //!
 //! Placed in `bun_alloc` (not `js_parser`) so that `bun_ast::ExprNodeList` and
 //! `bun_collections::VecExt` — both below `js_parser` in the crate graph — can
@@ -26,10 +21,10 @@
 
 use core::alloc::{AllocError, Allocator, Layout};
 use core::cell::{Cell, UnsafeCell};
-use core::marker::PhantomPinned;
+use core::marker::{PhantomData, PhantomPinned};
 use core::mem::MaybeUninit;
 use core::pin::Pin;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 
 use crate::{MimallocArena, mimalloc};
 
@@ -91,7 +86,7 @@ impl AstAllocState {
 
 // ── AstArena ────────────────────────────────────────────────────────────────
 
-/// Pinned interior of an [`AstArena`]. [`AstAlloc`] is `NonNull<Self>`.
+/// Pinned interior of an [`AstArena`]. [`ACTIVE`] holds a `*const Self`.
 pub struct AstArenaInner {
     /// `UnsafeCell`: `Allocator::allocate` takes `&self` but must advance
     /// `bump_cursor`. Single-threaded contract (see `assert_owning_thread`).
@@ -157,6 +152,18 @@ impl AstArenaInner {
         state.bump_cursor = 0;
         state.spill = this.arena.heap_ptr();
     }
+
+    /// As [`Self::reset`], but retains the warm `mi_heap` when its footprint is
+    /// under `limit` (see [`MimallocArena::reset_retain_with_limit`]). The bump
+    /// chunk is always rewound.
+    fn reset_retain_with_limit(self: Pin<&mut Self>, limit: usize) {
+        // SAFETY: neither field is structurally pinned; we hold `&mut`.
+        let this = unsafe { self.get_unchecked_mut() };
+        this.arena.reset_retain_with_limit(limit);
+        let state = this.state.get_mut();
+        state.bump_cursor = 0;
+        state.spill = this.arena.heap_ptr();
+    }
 }
 
 impl AstArena {
@@ -182,11 +189,25 @@ impl AstArena {
         unsafe { self.0.as_mut().unwrap_unchecked().as_mut() }
     }
 
-    /// The [`AstAlloc`] handle that routes allocations into this arena. `Copy`;
-    /// valid until `self` is dropped or [`Self::reset`] is called.
+    /// Install this arena as the thread's active AST allocator for the
+    /// returned guard's lifetime. The guard mutably borrows `self`, so the
+    /// arena cannot be reset/dropped/re-entered while it is installed, and
+    /// restores the previously-installed arena on drop (scopes nest).
+    #[inline]
+    pub fn enter(&mut self) -> AstScope<'_> {
+        let prev = ACTIVE.replace(ptr::from_ref(self.inner()));
+        AstScope {
+            prev,
+            _arena: PhantomData,
+        }
+    }
+
+    /// A zero-sized [`AstAlloc`] handle. Allocates into whichever arena is
+    /// installed in the calling thread's [`ACTIVE`] slot (see
+    /// [`Self::enter`]); the value itself carries no state.
     #[inline]
     pub fn alloc(&self) -> AstAlloc {
-        AstAlloc(NonNull::from(self.inner()))
+        AstAlloc
     }
 
     /// Bulk-free everything allocated through any `AstAlloc` from this arena
@@ -194,6 +215,14 @@ impl AstArena {
     /// handle and every pointer they returned is invalidated.
     pub fn reset(&mut self) {
         self.inner_mut().reset();
+    }
+
+    /// As [`Self::reset`], but keeps the backing `mi_heap` warm while its
+    /// footprint is within `limit` bytes — see
+    /// [`MimallocArena::reset_retain_with_limit`] for the cap semantics. All
+    /// outstanding `AstAlloc` pointers are invalidated either way.
+    pub fn reset_retain_with_limit(&mut self, limit: usize) {
+        self.inner_mut().reset_retain_with_limit(limit);
     }
 
     /// The backing `MimallocArena` for node payloads (`StoreRef<T>` targets).
@@ -215,43 +244,101 @@ impl Drop for AstArena {
         let Some(mut inner) = self.0.take() else {
             return;
         };
-        // Clean, then park for the next `AstArena::new()` on this thread. If
-        // the slot is already occupied (nested scopes) or the thread is
-        // tearing down, the box is dropped here (`mi_heap_destroy`).
+        // Clean, then park for the next `AstArena::new()` on this thread. Any
+        // previous occupant of the slot is dropped (`mi_heap_destroy`); if the
+        // thread is tearing down (`try_with` fails), `inner` is dropped.
         inner.as_mut().reset();
         let _ = POOL.try_with(|slot| {
-            if slot.take().is_none() {
-                slot.set(Some(inner));
-            }
+            slot.set(Some(inner));
         });
     }
 }
 
+// ── Thread-local active arena ───────────────────────────────────────────────
+
+/// The [`AstArenaInner`] currently installed on this thread, or null when no
+/// `AstScope` is active (allocations then fall back to global mimalloc).
+///
+/// `#[thread_local]` (not `thread_local!`): read on every `AstAlloc`
+/// allocation, so it must stay a bare `__thread` slot — one `mov` off `fs:`,
+/// no lazy-init/dtor probe.
+#[thread_local]
+static ACTIVE: Cell<*const AstArenaInner> = Cell::new(ptr::null());
+
+/// RAII guard returned by [`AstArena::enter`]. Restores the thread's
+/// previously-installed arena on drop. Mutably borrows the `AstArena` it
+/// installed, so the borrow checker enforces that the arena outlives the
+/// scope and is not reset or re-entered while installed.
+pub struct AstScope<'a> {
+    prev: *const AstArenaInner,
+    _arena: PhantomData<&'a mut AstArena>,
+}
+
+impl Drop for AstScope<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        ACTIVE.set(self.prev);
+    }
+}
+
+/// Mutable access to the installed arena's allocation state.
+///
+/// SAFETY: single-threaded contract (one parse thread mutates its arena).
+/// Callers must not hold the returned `&mut` across any other call that
+/// reaches this same state (no re-entrancy inside this module). `None` when
+/// no `AstScope` is active.
+#[inline(always)]
+fn active_state<'a>() -> Option<&'a mut AstAllocState> {
+    let inner = ACTIVE.get();
+    if inner.is_null() {
+        return None;
+    }
+    // SAFETY: `inner` points into a pinned `AstArenaInner` whose `AstScope`
+    // holds a live `&mut AstArena`; the `UnsafeCell` is mutated only here.
+    Some(unsafe { &mut *UnsafeCell::raw_get(&raw const (*inner).state) })
+}
+
+/// Release-build fallback for [`AstAlloc::arena`] when no [`AstScope`] is
+/// active: wraps `mi_heap_main()` (see [`MimallocArena::borrowing_default`]),
+/// so node payloads allocate via global mimalloc and leak at process exit
+/// instead of null-derefing. Debug builds still assert.
+static FALLBACK_ARENA: std::sync::OnceLock<MimallocArena> = std::sync::OnceLock::new();
+
+/// The installed arena's node-payload heap, or the process-global
+/// [`FALLBACK_ARENA`] when no [`AstScope`] is active (release-build leak
+/// instead of UB; debug builds assert).
+#[inline(always)]
+fn active_arena<'a>() -> &'a MimallocArena {
+    let inner = ACTIVE.get();
+    if inner.is_null() {
+        debug_assert!(
+            false,
+            "AstAlloc used with no AstScope active (call AstArena::enter first)"
+        );
+        return FALLBACK_ARENA.get_or_init(MimallocArena::borrowing_default);
+    }
+    // SAFETY: non-null ⇒ a live `AstScope` holds `&mut AstArena`, whose pinned
+    // interior `inner` points at.
+    unsafe { &(*inner).arena }
+}
+
 // ── AstAlloc ────────────────────────────────────────────────────────────────
 
-/// `Copy` handle into an [`AstArena`]'s pinned interior. Implements
-/// `core::alloc::Allocator`; `deallocate` is a no-op (the owning arena
+/// Zero-sized `Allocator` that routes to the thread's installed [`AstArena`]
+/// (see [`AstArena::enter`]). `deallocate` is a no-op (the owning arena
 /// bulk-frees on `reset`/drop).
 ///
-/// Use as `Vec<T, AstAlloc>` (see [`AstVec`]). Carries one pointer, so the
-/// `Vec` is 32 bytes.
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct AstAlloc(NonNull<AstArenaInner>);
+/// Use as `Vec<T, AstAlloc>` (see [`AstVec`]). The ZST means the `Vec` stays
+/// 24 bytes — same size as `Vec<T>` — so AST node layouts are unchanged.
+#[derive(Clone, Copy, Default)]
+pub struct AstAlloc;
 
-// SAFETY: `AstAlloc` is a raw pointer into a pinned box. `Send`/`Sync` let an
-// `AstVec` sit in a `Send` AST that moves with its owning `AstArena`; the
-// no-op `deallocate` removes the only cross-thread hazard a `Vec<_,A>: Send`
-// would otherwise introduce, and allocation is gated to one thread by
-// `MimallocArena::assert_owning_thread`.
-unsafe impl Send for AstAlloc {}
-// SAFETY: see the `Send` impl.
-unsafe impl Sync for AstAlloc {}
-
-/// `Vec` whose backing buffer lives in an [`AstArena`].
+/// `Vec` whose backing buffer lives in the thread's installed [`AstArena`].
 pub type AstVec<T> = Vec<T, AstAlloc>;
 
-/// Arena-owned box. `AstAlloc::deallocate` is a no-op, so storing the 8-byte
+const _: () = assert!(core::mem::size_of::<AstVec<u8>>() == 24);
+
+/// Arena-owned box. `AstAlloc::deallocate` is a no-op, so storing the
 /// allocator handle alongside the pointer (as `Box<T, AstAlloc>` would) buys
 /// nothing: a bare `NonNull<T>` is behaviourally identical and keeps
 /// size-sensitive embedders (`Symbol.namespace_alias`) at one word. As with
@@ -293,72 +380,70 @@ impl<T: ?Sized> AstBox<T> {
 }
 
 impl AstAlloc {
-    /// Mutable access to the arena's allocation state.
-    ///
-    /// SAFETY: single-threaded contract (one parse thread mutates its arena).
-    /// Callers must not hold the returned `&mut` across any other call that
-    /// reaches this same state (no re-entrancy inside this module).
-    #[inline(always)]
-    unsafe fn state(self) -> *mut AstAllocState {
-        // SAFETY: `self.0` points into a live pinned `AstArenaInner` for the
-        // handle's documented lifetime.
-        unsafe { UnsafeCell::raw_get(&raw const (*self.0.as_ptr()).state) }
-    }
-
-    #[inline(always)]
-    fn heap_alloc(self, layout: Layout) -> *mut u8 {
-        // SAFETY: see `state`; no re-entrancy below.
-        let state = unsafe { &mut *self.state() };
-        // Small, normally-aligned requests: carve from the inline chunk so a
-        // burst of tiny `AstVec`s costs zero mallocs. Zero-size and
-        // over-aligned layouts fall through to mimalloc, which handles both.
-        if layout.size() != 0
-            && layout.size() <= BUMP_MAX
-            && layout.align() <= mimalloc::MI_MAX_ALIGN_SIZE
-        {
-            if let Some(p) = state.bump_alloc(layout.size(), layout.align()) {
-                return p;
-            }
-        }
-        // SAFETY: `spill` points at the sibling `MimallocArena`'s live heap
-        // (set in `AstArenaInner::{new_pinned, reset}`).
-        unsafe {
-            mimalloc::mi_heap_malloc_auto_align(state.spill, layout.size(), layout.align()).cast()
-        }
-    }
-
-    /// The `MimallocArena` node-payload storage this handle routes to.
+    /// The `MimallocArena` node-payload storage of the installed arena.
     #[inline]
     pub fn arena(self) -> &'static MimallocArena {
-        // SAFETY: `self.0` points into a live pinned `AstArenaInner`; the
-        // `'static` is the same lifetime erasure `StoreRef` uses (valid until
-        // the owning `AstArena` is dropped/reset).
-        unsafe { &(*self.0.as_ptr()).arena }
+        // SAFETY: the `'static` is the same lifetime erasure `StoreRef` uses
+        // (valid until the owning `AstArena` is dropped/reset).
+        unsafe { &*ptr::from_ref(active_arena()) }
     }
 
     /// Allocate `value` in the node-payload arena and return a stable `&mut`
     /// into it (what `Expr`/`Stmt` payloads wrap in a `StoreRef`).
     #[inline]
     pub fn store<T>(self, value: T) -> &'static mut T {
-        // SAFETY: `arena()` is live for the handle's lifetime; `alloc` returns
+        // SAFETY: `arena()` is live for the scope's lifetime; `alloc` returns
         // a fresh `&mut T` in it. `'static` per the `StoreRef` convention.
-        unsafe { &mut *core::ptr::from_mut(self.arena().alloc(value)) }
+        unsafe { &mut *ptr::from_mut(self.arena().alloc(value)) }
     }
 
-    /// Copy `bytes` into this arena so the slice shares the AST's lifetime.
+    /// Copy `bytes` into the installed arena so the slice shares the AST's
+    /// lifetime.
     #[inline]
     pub fn dupe_str(self, bytes: &[u8]) -> &'static [u8] {
-        let mut v = self.vec_with_capacity::<u8>(bytes.len());
+        let mut v = Self::vec_with_capacity::<u8>(bytes.len());
         v.extend_from_slice(bytes);
         v.leak()
+    }
+
+    /// See [`AstBox`] for the drop-safety contract.
+    #[inline]
+    pub fn boxed<T>(self, value: T) -> AstBox<T> {
+        AstBox(NonNull::from(self.arena().alloc(value)))
     }
 }
 
 use crate::alloc_result;
 
+#[inline(always)]
+fn heap_alloc(layout: Layout) -> *mut u8 {
+    let Some(state) = active_state() else {
+        // No `AstScope` active: fall back to global mimalloc. The block leaks
+        // at process exit (`deallocate` is a no-op).
+        return mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast();
+    };
+    // Small, normally-aligned requests: carve from the inline chunk so a
+    // burst of tiny `AstVec`s costs zero mallocs. Zero-size and
+    // over-aligned layouts fall through to mimalloc, which handles both.
+    if layout.size() != 0
+        && layout.size() <= BUMP_MAX
+        && layout.align() <= mimalloc::MI_MAX_ALIGN_SIZE
+    {
+        if let Some(p) = state.bump_alloc(layout.size(), layout.align()) {
+            return p;
+        }
+    }
+    // SAFETY: `spill` points at the sibling `MimallocArena`'s live heap
+    // (set in `AstArenaInner::{new_pinned, reset}`).
+    unsafe {
+        mimalloc::mi_heap_malloc_auto_align(state.spill, layout.size(), layout.align()).cast()
+    }
+}
+
 // SAFETY:
-// - `allocate`/`grow` return blocks carved from the arena's inline chunk or
-//   from `mi_heap_malloc[_aligned]` on its spill heap; all satisfy `layout`
+// - `allocate`/`grow` return blocks carved from the installed arena's inline
+//   chunk or from `mi_heap_malloc[_aligned]` on its spill heap (or from
+//   global `mi_malloc` under the no-scope fallback); all satisfy `layout`
 //   and are bulk-freed when the owning `AstArena` is reset/dropped.
 // - `deallocate` is a no-op (permitted: the trait only requires that memory
 //   *may* be reclaimed). This preserves the `Expr::Data::clone_in` invariant
@@ -369,24 +454,31 @@ use crate::alloc_result;
 //   pointer, on which `mi_expand` would corrupt the chunk's bookkeeping.
 //   Otherwise `grow` allocates a fresh block + `memcpy`; the old block is
 //   abandoned (reclaimed on arena reset).
-// - `allocate_zeroed` is `mi_heap_zalloc` (skips the redundant `memset` over
+// - `allocate_zeroed` is `mi_*zalloc` (skips the redundant `memset` over
 //   already-zero OS pages); same lifetime as `allocate`.
-// - Every `AstAlloc` with the same `NonNull` is "the same allocator", so the
-//   "pointers may be freed by any clone" requirement is satisfied.
+// - `AstAlloc` is a ZST: every instance is trivially "the same allocator", so
+//   the "pointers may be freed by any clone" requirement is satisfied.
+// - `Send + Sync` (auto-derived for a fieldless ZST) is sound: each call reads
+//   the *calling* thread's `ACTIVE` slot, and allocation is gated to that
+//   thread by `MimallocArena::assert_owning_thread`. The no-op `deallocate`
+//   removes the only cross-thread hazard a `Vec<_,A>: Send` would otherwise
+//   introduce.
 unsafe impl Allocator for AstAlloc {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        alloc_result(self.heap_alloc(layout), layout.size())
+        alloc_result(heap_alloc(layout), layout.size())
     }
 
     #[inline]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         // Never bump-carved (the chunk is uninitialised).
-        // SAFETY: see `heap_alloc`.
-        let state = unsafe { &mut *self.state() };
-        // SAFETY: `spill` is the live sibling `MimallocArena` heap.
-        let p: *mut u8 = unsafe {
-            mimalloc::mi_heap_zalloc_auto_align(state.spill, layout.size(), layout.align()).cast()
+        let p: *mut u8 = match active_state() {
+            None => mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast(),
+            // SAFETY: `spill` is the live sibling `MimallocArena` heap.
+            Some(state) => unsafe {
+                mimalloc::mi_heap_zalloc_auto_align(state.spill, layout.size(), layout.align())
+                    .cast()
+            },
         };
         alloc_result(p, layout.size())
     }
@@ -423,7 +515,7 @@ unsafe impl Allocator for AstAlloc {
             }
         }
         // Slow path: allocate-new (possibly bump-carved) + copy + abandon-old.
-        let p = NonNull::new(self.heap_alloc(new)).ok_or(AllocError)?;
+        let p = NonNull::new(heap_alloc(new)).ok_or(AllocError)?;
         // SAFETY: `p` is a fresh `new.size()`-byte block disjoint from `ptr`;
         // `old.size()` bytes at `ptr` are initialized per the `grow` contract;
         // `old.size() <= new.size()`.
@@ -449,76 +541,47 @@ unsafe impl Allocator for AstAlloc {
 // ── AstVec / AstBox construction ─────────────────────────────────────────────
 
 impl AstAlloc {
-    /// `Vec::new_in(self)`.
+    /// `Vec::new()` parity. `const` so it is usable in `Default` impls.
     #[inline]
-    pub const fn vec<T>(self) -> AstVec<T> {
-        Vec::new_in(self)
+    pub const fn vec<T>() -> AstVec<T> {
+        Vec::new_in(AstAlloc)
     }
 
-    /// `Vec::with_capacity_in(cap, self)`.
+    /// `Vec::with_capacity` parity.
     #[inline]
-    pub fn vec_with_capacity<T>(self, cap: usize) -> AstVec<T> {
-        Vec::with_capacity_in(cap, self)
+    pub fn vec_with_capacity<T>(cap: usize) -> AstVec<T> {
+        Vec::with_capacity_in(cap, AstAlloc)
     }
 
-    /// `<[T]>::to_vec` into this arena.
+    /// `<[T]>::to_vec` parity.
     #[inline]
-    pub fn vec_from_slice<T: Clone>(self, items: &[T]) -> AstVec<T> {
-        let mut v = Vec::with_capacity_in(items.len(), self);
+    pub fn vec_from_slice<T: Clone>(items: &[T]) -> AstVec<T> {
+        let mut v = Vec::with_capacity_in(items.len(), AstAlloc);
         v.extend_from_slice(items);
         v
     }
 
     /// Collect `iter` into an `AstVec`.
     #[inline]
-    pub fn vec_from_iter<T, I: IntoIterator<Item = T>>(self, iter: I) -> AstVec<T> {
+    pub fn vec_from_iter<T, I: IntoIterator<Item = T>>(iter: I) -> AstVec<T> {
         let iter = iter.into_iter();
         let (lo, _) = iter.size_hint();
-        let mut v = Vec::with_capacity_in(lo, self);
+        let mut v = Vec::with_capacity_in(lo, AstAlloc);
         v.extend(iter);
         v
     }
 
     /// `core::mem::take` for [`AstVec`] (whose `Default` impl is blocked by
-    /// orphan rules). Replaces `*v` with an empty vec backed by `self` and
-    /// returns the old contents.
+    /// orphan rules). Replaces `*v` with an empty vec and returns the old
+    /// contents.
     #[inline]
-    pub fn take<T>(self, v: &mut AstVec<T>) -> AstVec<T> {
-        core::mem::replace(v, Vec::new_in(self))
-    }
-
-    /// Re-point `v`'s allocator to `self` so subsequent growth allocates into
-    /// this arena instead of the one `v` was created in. The existing buffer
-    /// stays in place; `deallocate` is a no-op, so nothing is freed, and
-    /// `grow`'s copy-then-abandon path moves the data into `self` on the next
-    /// reallocation.
-    ///
-    /// Used when a vec created on one thread's arena must be grown on another
-    /// (e.g. the bundler's parallel `do_step5` growing parser-built
-    /// `part.dependencies`): routing growth through the calling thread's
-    /// arena avoids a data race on the original arena's `bump_cursor`.
-    #[inline]
-    pub fn adopt_vec<T>(self, v: &mut AstVec<T>) {
-        let old = core::mem::ManuallyDrop::new(core::mem::replace(v, Vec::new_in(self)));
-        // SAFETY: `ptr/len/cap` are the live header just taken from `*v`.
-        // `AstAlloc::deallocate` is a no-op, so handing the buffer to a
-        // different `AstAlloc` cannot double-free it; `grow` either
-        // `mi_expand`s the block in place (heap-agnostic) or allocates fresh
-        // in `self` and abandons the old block.
-        *v = unsafe {
-            Vec::from_raw_parts_in(old.as_ptr().cast_mut(), old.len(), old.capacity(), self)
-        };
-    }
-
-    /// See [`AstBox`] for the drop-safety contract.
-    #[inline]
-    pub fn boxed<T>(self, value: T) -> AstBox<T> {
-        AstBox(NonNull::from(self.arena().alloc(value)))
+    pub fn take<T>(v: &mut AstVec<T>) -> AstVec<T> {
+        core::mem::replace(v, Vec::new_in(AstAlloc))
     }
 }
 
-/// Free-function form of [`AstAlloc::boxed`].
+/// See [`AstBox`] for the drop-safety contract.
 #[inline]
-pub fn ast_box<T>(alloc: AstAlloc, value: T) -> AstBox<T> {
-    alloc.boxed(value)
+pub fn ast_box<T>(value: T) -> AstBox<T> {
+    AstAlloc.boxed(value)
 }

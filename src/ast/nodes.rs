@@ -895,19 +895,21 @@ pub struct DeclaredSymbolList {
     pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
 }
 
-impl DeclaredSymbolList {
-    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
+impl Default for DeclaredSymbolList {
+    fn default() -> Self {
         Self {
-            entries: MultiArrayList::new_in(alloc),
+            entries: MultiArrayList::new_in(bun_alloc::AstAlloc),
         }
     }
+}
 
+impl DeclaredSymbolList {
     pub fn refs(&self) -> &[Ref] {
         self.entries.items::<"ref_", Ref>()
     }
 
-    pub fn to_owned_slice(&mut self, alloc: bun_alloc::AstAlloc) -> DeclaredSymbolList {
-        core::mem::replace(self, Self::empty(alloc))
+    pub fn to_owned_slice(&mut self) -> DeclaredSymbolList {
+        core::mem::take(self)
     }
 
     pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
@@ -968,19 +970,17 @@ impl DeclaredSymbolList {
     // `deinit` → Drop on MultiArrayList; no explicit body needed.
 
     pub fn init_capacity(
-        alloc: bun_alloc::AstAlloc,
         capacity: usize,
     ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut entries = MultiArrayList::new_in(alloc);
+        let mut entries = MultiArrayList::new_in(bun_alloc::AstAlloc);
         entries.ensure_unused_capacity(capacity)?;
         Ok(DeclaredSymbolList { entries })
     }
 
     pub fn from_slice(
-        alloc: bun_alloc::AstAlloc,
         entries: &[DeclaredSymbol],
     ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut this = Self::init_capacity(alloc, entries.len())?;
+        let mut this = Self::init_capacity(entries.len())?;
         // errdefer this.deinit() → Drop handles it
         for entry in entries {
             this.append_assume_capacity(*entry);
@@ -1111,16 +1111,16 @@ pub type PartSymbolPropertyUseMap = ArrayHashMap<
     bun_alloc::AstAlloc,
 >;
 
-impl Part {
-    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
+impl Default for Part {
+    fn default() -> Self {
         Self {
             stmts: StoreSlice::EMPTY,
             scopes: StoreSlice::EMPTY,
-            import_record_indices: PartImportRecordIndices::new_in(alloc),
-            declared_symbols: DeclaredSymbolList::empty(alloc),
-            symbol_uses: PartSymbolUseMap::new_in(alloc),
+            import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
+            declared_symbols: DeclaredSymbolList::default(),
+            symbol_uses: PartSymbolUseMap::default(),
             import_symbol_property_uses: None,
-            dependencies: Vec::new_in(alloc),
+            dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
             tag: PartTag::None,
@@ -1141,19 +1141,19 @@ impl Default for StmtOrExpr {
 }
 
 impl StmtOrExpr {
-    pub fn to_expr(self, alloc: bun_alloc::AstAlloc) -> Expr {
+    pub fn to_expr(self) -> Expr {
         match self {
             StmtOrExpr::Expr(expr) => expr,
             StmtOrExpr::Stmt(stmt) => match stmt.data {
                 crate::stmt::Data::SFunction(mut s) => {
                     // The StoreRef arena slot is never individually dropped, so
-                    // replacing with an empty value is safe here.
+                    // `take` (replace with Default) is safe here.
                     let func = core::mem::take(&mut s.func);
-                    Expr::init(alloc, E::Function { func }, stmt.loc)
+                    Expr::init(E::Function { func }, stmt.loc)
                 }
                 crate::stmt::Data::SClass(mut s) => {
-                    let class = core::mem::replace(&mut s.class, crate::g::Class::empty(alloc));
-                    Expr::init::<E::Class>(alloc, class, stmt.loc)
+                    let class = core::mem::take(&mut s.class);
+                    Expr::init::<E::Class>(class, stmt.loc)
                 }
                 other => Output::panic(format_args!(
                     "Unexpected statement type in default export: .{}",
@@ -1191,10 +1191,10 @@ pub struct NamedImport {
     pub is_exported: bool,
 }
 
-impl NamedImport {
-    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
+impl Default for NamedImport {
+    fn default() -> Self {
         Self {
-            local_parts_with_uses: alloc.vec(),
+            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
             alias: None,
             alias_loc: crate::Loc::EMPTY,
             namespace_ref: Ref::NONE,

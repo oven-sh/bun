@@ -251,8 +251,8 @@ pub mod open {
 }
 
 // ─── non-JSC subcommand bodies ───────────────────────────────────────────────
-// `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler +
-// `bun_ast::initialize_store`; `package_manager_command.rs` needs
+// `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler;
+// `package_manager_command.rs` needs
 // bun_install::PackageManager + a real `Command::Context` (blocked on
 // `create_context_data`), so its help/print-only paths are handled inline in
 // `Command::start()` below. `install_completions_command.rs` is fully wired
@@ -415,10 +415,6 @@ pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8
 pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
-/// Process-lifetime AST arena; see [`CLI_ARENA`] for init rules.
-pub(crate) static CLI_AST_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::AstArena>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
-
 /// Process-lifetime arena for one-shot CLI commands; allocations live until
 /// exit.
 ///
@@ -435,15 +431,6 @@ pub(crate) fn cli_arena() -> &'static bun_alloc::Arena {
     // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
     // Read-only for the rest of the process lifetime.
     unsafe { (*CLI_ARENA.get()).assume_init_ref() }
-}
-
-/// Process-lifetime [`bun_alloc::AstAlloc`] handle for one-shot CLI commands.
-/// Same init/thread contract as [`cli_arena`].
-#[inline]
-pub(crate) fn cli_ast_alloc() -> bun_alloc::AstAlloc {
-    // SAFETY: `CLI_AST_ARENA` is written exactly once in `Cli::start` during
-    // single-threaded startup, before any caller exists.
-    unsafe { (*CLI_AST_ARENA.get()).assume_init_ref() }.alloc()
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
@@ -568,8 +555,6 @@ pub mod cli {
         // `cli_arena()` caller), so a plain `RacyCell` is sound.
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
-        // SAFETY: single-threaded process startup; `mimalloc` is already init.
-        unsafe { (*super::CLI_AST_ARENA.get()).write(bun_alloc::AstArena::new()) };
 
         // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.

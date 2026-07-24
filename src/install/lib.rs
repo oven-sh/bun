@@ -947,9 +947,9 @@ pub(crate) fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
 pub(crate) static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
 /// No-op: the thread-local AST store is gone. Each parse scope now owns an
-/// [`bun_alloc::AstArena`] and threads its [`bun_alloc::AstAlloc`] handle
-/// explicitly. Kept so existing call sites compile unchanged; will be removed
-/// once every caller is migrated.
+/// [`bun_alloc::AstArena`] and installs it via [`bun_alloc::AstArena::enter`].
+/// Kept so existing call sites compile unchanged; will be removed once every
+/// caller is migrated.
 #[inline]
 pub(crate) fn initialize_store() {}
 

@@ -27,7 +27,6 @@ struct SSABuilder {
     /// Indexed by `BlockId.0`.
     unsealed_preds: Vec<Option<u32>>,
     /// Indexed by `BlockId.0`. Empty Vec = no preds / not registered.
-    alloc: bun_alloc::AstAlloc,
     block_preds: Vec<Vec<BlockId>>,
     unknown: HashSet<IdentifierId>,
     context: HashSet<IdentifierId>,
@@ -37,11 +36,7 @@ struct SSABuilder {
 }
 
 impl SSABuilder {
-    fn new(
-        alloc: bun_alloc::AstAlloc,
-        blocks: &IndexMap<BlockId, BasicBlock>,
-        num_blocks: usize,
-    ) -> Self {
+    fn new(blocks: &IndexMap<BlockId, BasicBlock>, num_blocks: usize) -> Self {
         let mut block_preds: Vec<Vec<BlockId>> = vec![Vec::new(); num_blocks];
         for (id, block) in blocks {
             block_preds[id.0 as usize] = block.preds.iter().copied().collect();
@@ -49,7 +44,6 @@ impl SSABuilder {
         let mut states = Vec::with_capacity(num_blocks);
         states.resize_with(num_blocks, || None);
         SSABuilder {
-            alloc,
             states,
             current: None,
             unsealed_preds: vec![None; num_blocks],
@@ -223,7 +217,7 @@ impl SSABuilder {
     ) {
         let preds = self.block_preds[block_id.0 as usize].clone();
 
-        let mut pred_defs: IndexMap<BlockId, Place> = IndexMap::new_in(env.alloc);
+        let mut pred_defs: IndexMap<BlockId, Place> = IndexMap::new();
         for pred_block_id in &preds {
             let pred_id = self.get_id_at(old_place, *pred_block_id, env);
             pred_defs.insert(
@@ -260,7 +254,7 @@ impl SSABuilder {
     fn start_block(&mut self, block_id: BlockId) {
         self.current = Some(block_id);
         self.states[block_id.0 as usize] = Some(State {
-            defs: IdMap::new_in(self.alloc),
+            defs: IdMap::new(),
             incomplete_phis: Vec::new(),
         });
     }
@@ -272,7 +266,7 @@ impl SSABuilder {
 
 pub fn enter_ssa(func: &mut HirFunction, env: &mut Environment) -> Result<(), CompilerDiagnostic> {
     let num_blocks = env.next_block_id_counter as usize;
-    let mut builder = SSABuilder::new(env.alloc, &func.body.blocks, num_blocks);
+    let mut builder = SSABuilder::new(&func.body.blocks, num_blocks);
     let root_entry = func.body.entry;
     enter_ssa_impl(func, &mut builder, env, root_entry)?;
 
@@ -334,8 +328,8 @@ fn enter_ssa_impl(
                 )
                 .into());
             }
-            let params = env.alloc.take(&mut func.params);
-            let mut new_params = env.alloc.vec_with_capacity(params.len());
+            let params = AstAlloc::take(&mut func.params);
+            let mut new_params = AstAlloc::vec_with_capacity(params.len());
             for param in params {
                 new_params.push(match param {
                     ParamPattern::Place(p) => ParamPattern::Place(builder.define_place(&p, env)?),
@@ -372,8 +366,8 @@ fn enter_ssa_impl(
 
             // Map context places for function expressions before other operands
             if let Some(fid) = func_expr_id {
-                let context = env.alloc.take(&mut env.functions[fid.0 as usize].context);
-                env.functions[fid.0 as usize].context = env.alloc.vec_from_iter(
+                let context = AstAlloc::take(&mut env.functions[fid.0 as usize].context);
+                env.functions[fid.0 as usize].context = AstAlloc::vec_from_iter(
                     context
                         .into_iter()
                         .map(|place| builder.get_place(&place, env)),
@@ -431,8 +425,8 @@ fn enter_ssa_impl(
                 let saved_current = builder.current;
 
                 // Map inner function params
-                let inner_params = env.alloc.take(&mut env.functions[fid.0 as usize].params);
-                let mut new_inner_params = env.alloc.vec_with_capacity(inner_params.len());
+                let inner_params = AstAlloc::take(&mut env.functions[fid.0 as usize].params);
+                let mut new_inner_params = AstAlloc::vec_with_capacity(inner_params.len());
                 for param in inner_params {
                     new_inner_params.push(match param {
                         ParamPattern::Place(p) => {
@@ -446,10 +440,8 @@ fn enter_ssa_impl(
                 env.functions[fid.0 as usize].params = new_inner_params;
 
                 // Take the inner function out of the arena to process it
-                let mut inner_func = std::mem::replace(
-                    &mut env.functions[fid.0 as usize],
-                    placeholder_function(env.alloc),
-                );
+                let mut inner_func =
+                    std::mem::replace(&mut env.functions[fid.0 as usize], placeholder_function());
 
                 enter_ssa_impl(&mut inner_func, builder, env, root_entry)?;
 
@@ -500,13 +492,13 @@ fn enter_ssa_impl(
 /// Create a placeholder HirFunction for temporarily swapping an inner function
 /// out of `env.functions` via `std::mem::replace`. The placeholder is never
 /// read — the real function is swapped back immediately after processing.
-pub fn placeholder_function(alloc: bun_alloc::AstAlloc) -> HirFunction {
+pub fn placeholder_function() -> HirFunction {
     HirFunction {
         loc: None,
         id: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
-        params: hir_vec![alloc],
+        params: hir_vec![],
         return_type_annotation: None,
         returns: Place {
             identifier: IdentifierId(0),
@@ -514,15 +506,15 @@ pub fn placeholder_function(alloc: bun_alloc::AstAlloc) -> HirFunction {
             reactive: false,
             loc: None,
         },
-        context: hir_vec![alloc],
+        context: hir_vec![],
         body: HIR {
             entry: BlockId(0),
-            blocks: IndexMap::new_in(alloc),
+            blocks: IndexMap::new(),
         },
-        instructions: hir_vec![alloc],
+        instructions: hir_vec![],
         generator: false,
         is_async: false,
-        directives: hir_vec![alloc],
+        directives: hir_vec![],
         aliasing_effects: None,
     }
 }

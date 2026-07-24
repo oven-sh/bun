@@ -109,15 +109,15 @@ pub struct InputFile {
     pub flags: InputFileFlags,
 }
 
-impl InputFile {
-    pub fn empty(alloc: AstAlloc) -> Self {
+impl Default for InputFile {
+    fn default() -> Self {
         Self {
             source: bun_ast::Source::default(),
-            secondary_path: alloc.vec(),
+            secondary_path: AstAlloc::vec(),
             loader: options::Loader::default(),
             side_effects: SideEffects::default(),
-            additional_files: alloc.vec(),
-            unique_key_for_additional_file: alloc.vec().into_boxed_slice(),
+            additional_files: AstAlloc::vec(),
+            unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
         }

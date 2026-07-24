@@ -91,18 +91,9 @@ pub struct Ast<'a> {
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
-// so `Default` no longer applies; use `Ast::empty_in(alloc)`.
+// so `Default` no longer applies; use `Ast::empty_in(arena)`.
 impl<'a> Ast<'a> {
-    /// The [`AstAlloc`] this AST's arena-backed lists were built in (recovered
-    /// from an existing `AstVec` field so callers outside `allocator_api`
-    /// crates can `mem::replace` against `Ast::empty_in` in the same arena).
-    #[inline]
-    pub fn alloc(&self) -> AstAlloc {
-        *self.export_star_import_records.allocator()
-    }
-
-    pub fn empty_in(alloc: AstAlloc) -> Self {
-        let arena = alloc.arena();
+    pub fn empty_in(arena: &'a bun_alloc::MimallocArena) -> Self {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
@@ -121,20 +112,20 @@ impl<'a> Ast<'a> {
             directive: None,
             parts: PartList::new_in(arena),
             symbols: SymbolList::new_in(arena),
-            module_scope: Scope::empty(alloc),
+            module_scope: Scope::default(),
             char_freq: None,
             exports_ref: Ref::NONE,
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             require_ref: Ref::NONE,
-            named_imports: NamedImports::new_in(alloc),
-            named_exports: NamedExports::new_in(alloc),
-            export_star_import_records: alloc.vec(),
-            top_level_symbols_to_parts: TopLevelSymbolToParts::new_in(alloc),
-            commonjs_named_exports: CommonJSNamedExports::new_in(alloc),
+            named_imports: Default::default(),
+            named_exports: Default::default(),
+            export_star_import_records: AstAlloc::vec(),
+            top_level_symbols_to_parts: Default::default(),
+            commonjs_named_exports: Default::default(),
             redirect_import_record_index: None,
             target: Target::Browser,
-            ts_enums: TsEnumsMap::new_in(alloc),
+            ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
@@ -172,12 +163,12 @@ pub type TsEnumsMap =
     ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
 
 impl<'a> Ast<'a> {
-    pub fn from_parts(alloc: AstAlloc, parts: Box<[Part]>) -> Ast<'a> {
-        let mut p = PartList::with_capacity_in(parts.len(), alloc.arena());
+    pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {
+        let mut p = PartList::with_capacity_in(parts.len(), arena);
         p.extend(parts.into_vec());
         Ast {
             parts: p,
-            ..Ast::empty_in(alloc)
+            ..Ast::empty_in(arena)
         }
     }
 

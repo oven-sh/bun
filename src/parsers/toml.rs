@@ -23,7 +23,6 @@
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
-use bun_alloc::AstAlloc;
 use bun_ast::{self, E, Expr, Loc, Log, Source};
 use bun_collections::HashMap;
 use bun_core::{self, StackCheck};
@@ -154,10 +153,9 @@ impl TOML {
     pub fn parse<'a>(
         source: &'a Source,
         log: &mut Log,
-        alloc: AstAlloc,
+        bump: &'a Bump,
         redact_logs: bool,
     ) -> crate::Result<Expr> {
-        let bump: &'a Bump = alloc.arena();
         let mut parser = Parser {
             scanner: Scanner {
                 src: source.contents.as_ref(),
@@ -168,7 +166,6 @@ impl TOML {
                 redact: redact_logs,
             },
             bump,
-            alloc,
             stack_check: StackCheck::init(),
             meta: HashMap::default(),
             block: 0,
@@ -1443,7 +1440,6 @@ impl<'a, 'log> Scanner<'a, 'log> {
 struct Parser<'a, 'log> {
     scanner: Scanner<'a, 'log>,
     bump: &'a Bump,
-    alloc: AstAlloc,
     stack_check: StackCheck,
     /// Keyed by `E::Object::as_ptr()` / `E::Array::as_ptr()` addresses.
     meta: HashMap<usize, Meta>,
@@ -1466,7 +1462,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     fn parse_root(&mut self) -> PResult<Expr> {
         let start = self.scanner.init_document()?;
 
-        let root = Expr::init(self.alloc, E::Object::empty(self.alloc), loc_of(start));
+        let root = Expr::init(E::Object::default(), loc_of(start));
         let root_ptr = root
             .data
             .e_object()
@@ -1716,9 +1712,9 @@ impl<'a, 'log> Parser<'a, 'log> {
         let loc = loc_of(token.pos);
         match token.data {
             ValueData::String { text, is_ascii } => Ok(self.string_expr(text, is_ascii, loc)),
-            ValueData::Number(n) => Ok(Expr::init(self.alloc, E::Number::new(n), loc)),
-            ValueData::DateTime(text) => Ok(Expr::init(self.alloc, E::String::init(text), loc)),
-            ValueData::Boolean(b) => Ok(Expr::init(self.alloc, E::Boolean { value: b }, loc)),
+            ValueData::Number(n) => Ok(Expr::init(E::Number::new(n), loc)),
+            ValueData::DateTime(text) => Ok(Expr::init(E::String::init(text), loc)),
+            ValueData::Boolean(b) => Ok(Expr::init(E::Boolean { value: b }, loc)),
             ValueData::ArrayOpen => self.parse_array(token.pos),
             ValueData::InlineOpen => self.parse_inline_table(token.pos),
         }
@@ -1726,13 +1722,9 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     fn string_expr(&self, text: &'a [u8], is_ascii: bool, loc: Loc) -> Expr {
         if is_ascii {
-            Expr::init(self.alloc, E::String::init(text), loc)
+            Expr::init(E::String::init(text), loc)
         } else {
-            Expr::init(
-                self.alloc,
-                E::String::init_re_encode_utf8(text, self.bump),
-                loc,
-            )
+            Expr::init(E::String::init_re_encode_utf8(text, self.bump), loc)
         }
     }
 
@@ -1810,7 +1802,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     // ── table bookkeeping ──────────────────────────────────────────────────
 
     fn new_table(&mut self, pos: usize, kind: Kind) -> (Expr, *mut E::Object) {
-        let expr = Expr::init(self.alloc, E::Object::empty(self.alloc), loc_of(pos));
+        let expr = Expr::init(E::Object::default(), loc_of(pos));
         let ptr = expr
             .data
             .e_object()
@@ -1827,7 +1819,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     }
 
     fn new_array(&mut self, pos: usize, kind: Kind) -> (Expr, *mut E::Array) {
-        let expr = Expr::init(self.alloc, E::Array::empty(self.alloc), loc_of(pos));
+        let expr = Expr::init(E::Array::default(), loc_of(pos));
         let ptr = expr
             .data
             .e_array()
@@ -1862,15 +1854,11 @@ impl<'a, 'log> Parser<'a, 'log> {
         }
         let key_loc = loc_of(seg.pos);
         let key_expr = if seg.text.is_ascii() {
-            Expr::init(self.alloc, E::String::init(seg.text), key_loc)
+            Expr::init(E::String::init(seg.text), key_loc)
         } else {
-            Expr::init(
-                self.alloc,
-                E::String::init_re_encode_utf8(seg.text, self.bump),
-                key_loc,
-            )
+            Expr::init(E::String::init_re_encode_utf8(seg.text, self.bump), key_loc)
         };
-        obj.append_property(self.alloc, key_expr, value);
+        obj.append_property(key_expr, value);
         Ok(())
     }
 }

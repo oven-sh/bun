@@ -12,7 +12,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena as ThreadLocalArena;
-use bun_alloc::{AstAlloc, AstArena};
+use bun_alloc::AstArena;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
@@ -504,14 +504,6 @@ impl Worker {
         // every reference handed out here.
         unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
     }
-
-    /// The [`AstAlloc`] handle that routes AST allocations into this worker's
-    /// `ast_arena`. `Copy`; valid until the worker is torn down or the arena
-    /// is `reset()`.
-    #[inline]
-    pub fn alloc(&self) -> AstAlloc {
-        self.ast_arena.alloc()
-    }
 }
 
 pub struct WorkerData {
@@ -532,7 +524,7 @@ pub struct WorkerData {
 impl Worker {
     // CONCURRENCY: thread-pool callback — runs on the worker's own OS thread
     // during pool drain (scheduled via `deinit_soon`). Writes: own `Worker`
-    // fields only (`heap`, `data`, `ast_memory_store` teardown). The `Worker`
+    // fields only (`heap`, `data`, `ast_arena` teardown). The `Worker`
     // is per-OS-thread (`Thread::current()`-keyed), so `&mut *this` is unique.
     // `Worker` is `Send` because its arena/backref pointers are
     // owned-heap or per-thread; the `unsafe impl Send for ThreadPool` (the
@@ -615,7 +607,7 @@ impl Worker {
         }
         // SAFETY: caller contract — `this` was heap-allocated via `get_worker`.
         // Runs full field drop glue: remaining `Option` fields are `None`
-        // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
+        // (no-op), `ast_arena` is `ManuallyDrop` (no auto-drop), so no
         // double-free; defends against future `Drop`-carrying fields.
         unsafe { bun_core::heap::destroy(this) };
     }

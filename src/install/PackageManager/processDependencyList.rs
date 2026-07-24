@@ -299,14 +299,14 @@ impl PackageManager {
                     let package_json_source =
                         &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                     initialize_store();
+                    let mut ast_arena = bun_alloc::AstArena::new();
+                    let _scope = ast_arena.enter();
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
                     // never null while tasks run.
                     let log = self.log_mut();
-                    let ast_arena = bun_alloc::AstArena::new();
                     let parsed = match json::ParsedJson::parse_package_json(
                         package_json_source,
                         log,
-                        ast_arena.alloc(),
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -336,9 +336,9 @@ impl PackageManager {
                     let mut scripts: Scripts =
                         self.lockfile.packages.items_scripts()[*package_id as usize];
                     let mut builder = self.lockfile.string_builder();
-                    Scripts::parse_count(ast_arena.alloc(), &mut builder, json_root);
+                    Scripts::parse_count(&mut builder, json_root);
                     builder.allocate().expect("unreachable");
-                    scripts.parse_alloc(ast_arena.alloc(), &mut builder, json_root);
+                    scripts.parse_alloc(&mut builder, json_root);
                     scripts.filled = true;
                     let _ = scripts;
                 }

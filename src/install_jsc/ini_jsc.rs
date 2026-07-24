@@ -80,6 +80,8 @@ impl IniTestingAPIs {
 
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<config_iterator::Item> = Vec::new();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
             return bun_ast_jsc::log_to_js(&log, global, b"error");
         }
@@ -175,8 +177,10 @@ impl IniTestingAPIs {
 
         let env = global.bun_vm().as_mut().transpiler.env();
         let source = bun_ast::Source::init_path_string(b"<src>", utf8str.slice());
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let mut parser = Parser::init(&source, env);
-        parser.parse()?;
+        parser.parse(bun_alloc::AstAlloc.arena())?;
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),

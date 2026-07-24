@@ -275,11 +275,11 @@ struct Env {
 }
 
 impl Env {
-    fn new(alloc: bun_alloc::AstAlloc) -> Self {
+    fn new() -> Self {
         Self {
             changed: false,
-            data: IdMap::new_in(alloc),
-            temporaries: IdMap::new_in(alloc),
+            data: IdMap::default(),
+            temporaries: IdMap::default(),
         }
     }
 
@@ -500,7 +500,7 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 // --- Main entry point ---
 
 pub fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
-    let mut ref_env = Env::new(env.alloc);
+    let mut ref_env = Env::new();
     collect_temporaries_sidemap(
         func,
         &mut ref_env,

@@ -470,55 +470,49 @@ pub mod BunInfo {
     }
 
     #[inline]
-    fn str_expr(alloc: bun_alloc::AstAlloc, s: &[u8]) -> Expr {
-        Expr::init(alloc, EString::init(s), Loc::EMPTY)
+    fn str_expr(s: &[u8]) -> Expr {
+        Expr::init(EString::init(s), Loc::EMPTY)
     }
 
     #[inline]
-    fn prop(alloc: bun_alloc::AstAlloc, key: &'static [u8], value: Expr) -> G::Property {
+    fn prop(key: &'static [u8], value: Expr) -> G::Property {
         G::Property {
-            key: Some(str_expr(alloc, key)),
+            key: Some(str_expr(key)),
             value: Some(value),
-            ..G::Property::empty(alloc)
+            ..G::Property::default()
         }
     }
 
-    pub fn generate(alloc: bun_alloc::AstAlloc) -> Result<Expr, crate::Error> {
+    pub fn generate() -> Result<Expr, crate::Error> {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),
         };
 
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
-        let platform_props = alloc.vec_from_iter([
-            prop(alloc, b"os", str_expr(alloc, os_tag_name(info.platform.os))),
-            prop(
-                alloc,
-                b"arch",
-                str_expr(alloc, arch_tag_name(info.platform.arch)),
-            ),
-            prop(alloc, b"version", str_expr(alloc, info.platform.version)),
+        let platform_props = bun_alloc::AstAlloc::vec_from_iter([
+            prop(b"os", str_expr(os_tag_name(info.platform.os))),
+            prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
+            prop(b"version", str_expr(info.platform.version)),
         ]);
         let platform_expr = Expr::init(
-            alloc,
             E::Object {
                 properties: platform_props,
                 is_single_line: false,
-                ..E::Object::empty(alloc)
+                ..E::Object::default()
             },
             Loc::EMPTY,
         );
 
-        let root_props = alloc.vec_from_iter([
-            prop(alloc, b"bun_version", str_expr(alloc, info.bun_version)),
-            prop(alloc, b"platform", platform_expr),
+        let root_props = bun_alloc::AstAlloc::vec_from_iter([
+            prop(b"bun_version", str_expr(info.bun_version)),
+            prop(b"platform", platform_expr),
         ]);
         Ok(Expr::init(
-            alloc,
             E::Object {
                 properties: root_props,
                 is_single_line: false,
-                ..E::Object::empty(alloc)
+                ..E::Object::default()
             },
             Loc::EMPTY,
         ))
@@ -2812,12 +2806,11 @@ where
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = bun_ast::Source::init_empty_file(b"info.json");
-        let ast_arena = bun_alloc::AstArena::new();
-        let alloc = ast_arena.alloc();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let _ = bun_js_printer::print_json(
             &mut writer,
-            alloc,
-            BunInfo::generate(alloc).expect("unreachable"),
+            BunInfo::generate().expect("unreachable"),
             &source,
             bun_js_printer::PrintJsonOptions {
                 mangled_props: None,

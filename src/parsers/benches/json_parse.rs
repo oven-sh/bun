@@ -1,5 +1,6 @@
 //! Throughput benchmark for the JSON parser on the `bench/json-corpus/fetch.sh` corpus.
 //! Run via `scripts/bench-json-rust.sh [criterion args]`.
+use bun_alloc::Arena as Bump;
 use bun_alloc::AstArena;
 use bun_ast as js_ast;
 use bun_parsers::json;
@@ -52,18 +53,20 @@ fn bench_json(c: &mut Criterion) {
             })
         });
         group.bench_function(BenchmarkId::new("parse_nowarn", &name), |b| {
+            let mut bump = Bump::new();
             let mut arena = AstArena::new();
             b.iter(|| {
                 arena.reset();
+                let _scope = arena.enter();
                 let mut log = js_ast::Log::init();
+                bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
                     json_warn_duplicate_keys: false,
                     ..json::JSONOptions::DEFAULT
                 };
-                let e =
-                    json::parse_package_json_utf8_with_opts(opts, &source, &mut log, arena.alloc())
-                        .expect("parse failed");
+                let e = json::parse_package_json_utf8_with_opts(opts, &source, &mut log, &bump)
+                    .expect("parse failed");
                 std::hint::black_box(&e);
             })
         });
@@ -71,36 +74,42 @@ fn bench_json(c: &mut Criterion) {
             let mut arena = AstArena::new();
             b.iter(|| {
                 arena.reset();
+                let _scope = arena.enter();
                 let mut log = js_ast::Log::init();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let e = json::ParsedJson::parse_npm_manifest(&source, &mut log, arena.alloc())
-                    .expect("parse failed");
+                let e =
+                    json::ParsedJson::parse_npm_manifest(&source, &mut log).expect("parse failed");
                 std::hint::black_box(&e);
             })
         });
         group.bench_function(BenchmarkId::new("parse_nowarn_warm", &name), |b| {
+            let mut bump = Bump::new();
             let mut arena = AstArena::new();
             b.iter(|| {
                 arena.reset();
+                let _scope = arena.enter();
                 let mut log = js_ast::Log::init();
+                bump.reset_retain_with_limit(64 << 20);
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
                     json_warn_duplicate_keys: false,
                     ..json::JSONOptions::DEFAULT
                 };
-                let e =
-                    json::parse_package_json_utf8_with_opts(opts, &source, &mut log, arena.alloc())
-                        .expect("parse failed");
+                let e = json::parse_package_json_utf8_with_opts(opts, &source, &mut log, &bump)
+                    .expect("parse failed");
                 std::hint::black_box(&e);
             })
         });
         group.bench_function(BenchmarkId::new("parse_utf8", &name), |b| {
+            let mut bump = Bump::new();
             let mut arena = AstArena::new();
             b.iter(|| {
                 arena.reset();
+                let _scope = arena.enter();
                 let mut log = js_ast::Log::init();
+                bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let e = json::parse_utf8(&source, &mut log, arena.alloc()).expect("parse failed");
+                let e = json::parse_utf8(&source, &mut log, &bump).expect("parse failed");
                 std::hint::black_box(&e);
             })
         });
@@ -109,10 +118,12 @@ fn bench_json(c: &mut Criterion) {
     group.bench_function("per_parse_overhead/empty_object", |b| {
         let two = b"{}".to_vec();
         b.iter(|| {
-            let arena = AstArena::new();
+            let mut arena = AstArena::new();
+            let _scope = arena.enter();
             let mut log = js_ast::Log::init();
+            let bump = Bump::new();
             let source = js_ast::Source::init_path_string("fixture.json", &two[..]);
-            let e = json::parse_utf8(&source, &mut log, arena.alloc()).expect("parse failed");
+            let e = json::parse_utf8(&source, &mut log, &bump).expect("parse failed");
             std::hint::black_box(&e);
         })
     });

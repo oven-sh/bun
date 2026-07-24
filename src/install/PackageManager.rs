@@ -1570,19 +1570,18 @@ pub fn init(
                     let json_source =
                         bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
                     initialize_store();
-                    let ast_arena = bun_alloc::AstArena::new();
+                    let mut ast_arena = bun_alloc::AstArena::new();
+                    let _scope = ast_arena.enter();
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
-                    let parsed = crate::bun_json::ParsedJson::parse_package_json(
-                        &json_source,
-                        unsafe { &mut *ctx.log },
-                        ast_arena.alloc(),
-                    )?;
+                    let parsed =
+                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
+                            &mut *ctx.log
+                        })?;
                     let json = parsed.root;
-                    let alloc = ast_arena.alloc();
                     if subcommand == Subcommand::Pm {
-                        if let Some(name) = json.get(alloc, b"name").and_then(|e| {
+                        if let Some(name) = json.get(b"name").and_then(|e| {
                             if let bun_ast::ExprData::EString(s) = &e.data {
                                 Some(s.data.slice())
                             } else {
@@ -1593,7 +1592,7 @@ pub fn init(
                         }
                     }
 
-                    if let Some(prop) = json.as_property(alloc, b"workspaces") {
+                    if let Some(prop) = json.as_property(b"workspaces") {
                         let value_loc =
                             crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
                                 .unwrap_or(prop.loc);
@@ -1759,6 +1758,8 @@ pub fn init(
     )?;
 
     initialize_store();
+    let mut ast_arena = bun_alloc::AstArena::new();
+    let _scope = ast_arena.enter();
 
     if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME
         .get()

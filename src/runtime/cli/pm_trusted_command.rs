@@ -1,6 +1,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
+use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
@@ -549,8 +550,9 @@ impl TrustCommand {
             package_json_contents.as_slice(),
         );
 
-        let ast_arena = bun_alloc::AstArena::new();
-        let alloc = ast_arena.alloc();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+        let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
         // Layering: `parse_utf8` returns the T2
         // `bun_ast::Expr`; `PackageJSONEditor` and
@@ -560,7 +562,7 @@ impl TrustCommand {
         let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
             &package_json_source,
             unsafe { ctx.log_mut() },
-            alloc,
+            &bump,
         ) {
             Ok(v) => v,
             Err(err) => {
@@ -611,7 +613,6 @@ impl TrustCommand {
         }
 
         PackageJSONEditor::edit_trusted_dependencies(
-            alloc,
             &mut package_json,
             package_names_to_add.keys_mut(),
         )?;
@@ -654,7 +655,6 @@ impl TrustCommand {
 
         let _ = match bun_js_printer::print_json(
             &mut package_json_writer,
-            alloc,
             package_json,
             &package_json_source,
             bun_js_printer::PrintJsonOptions {

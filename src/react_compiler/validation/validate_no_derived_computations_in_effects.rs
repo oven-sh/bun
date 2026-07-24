@@ -128,7 +128,6 @@ struct DepElement {
 }
 
 struct ValidationContext {
-    alloc: bun_alloc::AstAlloc,
     /// Map from lvalue identifier to the FunctionId of function expressions
     functions: HashMap<IdentifierId, FunctionId>,
     /// Map from lvalue identifier to ArrayExpression elements (candidate deps)
@@ -378,7 +377,6 @@ pub fn validate_no_derived_computations_in_effects_exp(
     let identifiers = &env.identifiers;
 
     let mut context = ValidationContext {
-        alloc: env.alloc,
         functions: HashMap::new(),
         candidate_dependencies: HashMap::new(),
         derivation_cache: DerivationCache::new(),
@@ -397,7 +395,7 @@ pub fn validate_no_derived_computations_in_effects_exp(
                     DerivationMetadata {
                         place_identifier: place.identifier,
                         place_name: name,
-                        source_ids: crate::collections::IndexSet::new_in(env.alloc),
+                        source_ids: crate::collections::IndexSet::new(),
                         type_of_value: TypeOfValue::FromProps,
                         is_state_source: true,
                     },
@@ -413,7 +411,7 @@ pub fn validate_no_derived_computations_in_effects_exp(
                     DerivationMetadata {
                         place_identifier: place.identifier,
                         place_name: name,
-                        source_ids: crate::collections::IndexSet::new_in(env.alloc),
+                        source_ids: crate::collections::IndexSet::new(),
                         type_of_value: TypeOfValue::FromProps,
                         is_state_source: true,
                     },
@@ -480,7 +478,7 @@ fn record_phi_derivations(
     for phi in &block.phis {
         let mut type_of_value = TypeOfValue::Ignored;
         let mut source_ids: crate::collections::IndexSet<IdentifierId> =
-            crate::collections::IndexSet::new_in(env.alloc);
+            crate::collections::IndexSet::new();
 
         for (_block_id, operand) in &phi.operands {
             if let Some(operand_metadata) = context.derivation_cache.cache.get(&operand.identifier)
@@ -526,7 +524,7 @@ fn record_instruction_derivations(
     let mut type_of_value = TypeOfValue::Ignored;
     let is_source = false;
     let mut sources: crate::collections::IndexSet<IdentifierId> =
-        crate::collections::IndexSet::new_in(env.alloc);
+        crate::collections::IndexSet::new();
 
     match &instr.value {
         InstructionValue::FunctionExpression { lowered_func, .. } => {
@@ -579,7 +577,7 @@ fn record_instruction_derivations(
                 context.derivation_cache.add_derivation_entry(
                     lvalue_id,
                     name,
-                    crate::collections::IndexSet::new_in(env.alloc),
+                    crate::collections::IndexSet::new(),
                     TypeOfValue::FromState,
                     true,
                 );
@@ -618,7 +616,7 @@ fn record_instruction_derivations(
                 context.derivation_cache.add_derivation_entry(
                     lvalue_id,
                     name,
-                    crate::collections::IndexSet::new_in(env.alloc),
+                    crate::collections::IndexSet::new(),
                     TypeOfValue::FromState,
                     true,
                 );
@@ -778,7 +776,7 @@ fn build_tree_node(
 
     let mut children: Vec<TreeNode> = Vec::new();
     let mut named_siblings: crate::collections::IndexSet<String> =
-        crate::collections::IndexSet::new_in(context.alloc);
+        crate::collections::IndexSet::new();
 
     for child_id in &source_metadata.source_ids {
         assert_ne!(
@@ -1070,12 +1068,12 @@ fn validate_effect(
                 && effect_usage_count == total_usage_count - 1
             {
                 let mut props_set: crate::collections::IndexSet<String> =
-                    crate::collections::IndexSet::new_in(env.alloc);
+                    crate::collections::IndexSet::new();
                 let mut state_set: crate::collections::IndexSet<String> =
-                    crate::collections::IndexSet::new_in(env.alloc);
+                    crate::collections::IndexSet::new();
 
                 let mut root_nodes_map: crate::collections::IndexMap<String, TreeNode> =
-                    crate::collections::IndexMap::new_in(env.alloc);
+                    crate::collections::IndexMap::new();
                 for id in &derived.source_ids {
                     let nodes = build_tree_node(*id, context, &HashSet::new());
                     for node in nodes {

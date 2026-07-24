@@ -402,9 +402,10 @@ impl InitCommand {
         let mut package_json_file: Option<bun_sys::File> =
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         // Arena for JSON parse / Expr building.
-        let ast_arena = bun_alloc::AstArena::new();
-        let bump = ast_arena.alloc();
+        let bump = bun_alloc::Arena::new();
         'read_package_json: {
             if let Some(pkg) = package_json_file.as_ref() {
                 let size: u64 = 'brk: {
@@ -473,7 +474,7 @@ impl InitCommand {
                 );
                 let mut log = bun_ast::Log::init();
                 let package_json_expr: bun_ast::Expr =
-                    match json::parse_package_json_utf8(&source, &mut log, bump) {
+                    match json::parse_package_json_utf8(&source, &mut log, &bump) {
                         Ok(e) => e,
                         Err(_) => {
                             package_json_file = None;
@@ -488,15 +489,15 @@ impl InitCommand {
 
                 fields.object = package_json_expr.data.e_object();
 
-                if let Some(name) = package_json_expr.get(bump, b"name") {
+                if let Some(name) = package_json_expr.get(b"name") {
                     if let Some(str) = name.as_utf8_string_literal() {
                         fields.name = str.to_vec();
                     }
                 }
 
                 if let Some(name) = package_json_expr
-                    .get(bump, b"module")
-                    .or_else(|| package_json_expr.get(bump, b"main"))
+                    .get(b"module")
+                    .or_else(|| package_json_expr.get(b"main"))
                 {
                     if let Some(str_) = name.as_utf8_string_literal() {
                         fields.entry_point = str_.to_vec();
@@ -561,10 +562,9 @@ impl InitCommand {
         }
 
         if !did_load_package_json {
-            fields.object =
-                bun_ast::Expr::init(bump, bun_ast::E::Object::empty(bump), bun_ast::Loc::EMPTY)
-                    .data
-                    .e_object();
+            fields.object = bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
+                .data
+                .e_object();
         }
 
         if !auto_yes {
@@ -655,29 +655,25 @@ impl InitCommand {
 
         if !minimal {
             if !fields.name.is_empty() {
-                object.put_string(bump, b"name", &fields.name)?;
+                object.put_string(&bump, b"name", &fields.name)?;
             }
             if !fields.entry_point.is_empty() {
                 if object.has_property(b"module") {
-                    object.put_string(bump, b"module", &fields.entry_point)?;
-                    object.put_string(bump, b"type", b"module")?;
+                    object.put_string(&bump, b"module", &fields.entry_point)?;
+                    object.put_string(&bump, b"type", b"module")?;
                 } else if object.has_property(b"main") {
-                    object.put_string(bump, b"main", &fields.entry_point)?;
+                    object.put_string(&bump, b"main", &fields.entry_point)?;
                 } else {
-                    object.put_string(bump, b"module", &fields.entry_point)?;
-                    object.put_string(bump, b"type", b"module")?;
+                    object.put_string(&bump, b"module", &fields.entry_point)?;
+                    object.put_string(&bump, b"type", b"module")?;
                 }
             }
 
             if fields.private {
                 object.put(
-                    bump,
+                    &bump,
                     b"private",
-                    bun_ast::Expr::init(
-                        bump,
-                        bun_ast::E::Boolean { value: true },
-                        bun_ast::Loc::EMPTY,
-                    ),
+                    bun_ast::Expr::init(bun_ast::E::Boolean { value: true }, bun_ast::Loc::EMPTY),
                 )?;
             }
         }
@@ -707,7 +703,7 @@ impl InitCommand {
             let needs_dependencies = 'brk: {
                 if let Some(deps) = object.get(b"dependencies") {
                     for (i, dep) in dependencies.iter().enumerate() {
-                        if deps.get(bump, dep.name).is_some() {
+                        if deps.get(dep.name).is_some() {
                             needed_dependencies.unset(i);
                         }
                     }
@@ -718,7 +714,7 @@ impl InitCommand {
             let needs_dev_dependencies = 'brk: {
                 if let Some(deps) = object.get(b"devDependencies") {
                     for (i, dep) in dev_dependencies.iter().enumerate() {
-                        if deps.get(bump, dep.name).is_some() {
+                        if deps.get(dep.name).is_some() {
                             needed_dev_dependencies.unset(i);
                         }
                     }
@@ -746,7 +742,7 @@ impl InitCommand {
 
             if needs_dependencies {
                 let mut dependencies_object = object.get(b"dependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bump, bun_ast::E::Object::empty(bump), bun_ast::Loc::EMPTY)
+                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
                 let mut iter = needed_dependencies.iter_set();
                 while let Some(index) = iter.next() {
@@ -755,14 +751,14 @@ impl InitCommand {
                         .data
                         .e_object_mut()
                         .unwrap()
-                        .put_string(bump, dep.name, dep.version)?;
+                        .put_string(&bump, dep.name, dep.version)?;
                 }
-                object.put(bump, b"dependencies", dependencies_object)?;
+                object.put(&bump, b"dependencies", dependencies_object)?;
             }
 
             if needs_dev_dependencies {
                 let mut obj = object.get(b"devDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bump, bun_ast::E::Object::empty(bump), bun_ast::Loc::EMPTY)
+                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
@@ -770,26 +766,26 @@ impl InitCommand {
                     obj.data
                         .e_object_mut()
                         .unwrap()
-                        .put_string(bump, dep.name, dep.version)?;
+                        .put_string(&bump, dep.name, dep.version)?;
                 }
-                object.put(bump, b"devDependencies", obj)?;
+                object.put(&bump, b"devDependencies", obj)?;
             }
 
             if needs_typescript_dependency {
                 let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bump, bun_ast::E::Object::empty(bump), bun_ast::Loc::EMPTY)
+                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
                 peer_dependencies.data.e_object_mut().unwrap().put_string(
-                    bump,
+                    &bump,
                     b"typescript",
                     b"^6",
                 )?;
-                object.put(bump, b"peerDependencies", peer_dependencies)?;
+                object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
         }
 
         if template.is_react() {
-            template.write_to_package_json(&mut fields, bump)?;
+            template.write_to_package_json(&mut fields, &bump)?;
         }
 
         'write_package_json: {
@@ -809,7 +805,6 @@ impl InitCommand {
 
             let print_result = js_printer::print_json(
                 &mut package_json_writer,
-                bump,
                 bun_ast::Expr {
                     data: bun_ast::ExprData::EObject(fields.object.unwrap()),
                     loc: bun_ast::Loc::EMPTY,
@@ -1120,7 +1115,7 @@ impl Assets {
 pub struct PackageJSONFields {
     pub name: Vec<u8>,
     pub type_: &'static [u8],
-    /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
+    /// ARENA: allocated from the caller's `AstArena` scope; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
     pub entry_point: Vec<u8>,
     pub private: bool,
@@ -1400,22 +1395,18 @@ impl Template {
     pub(crate) fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
-        bump: bun_alloc::AstAlloc,
+        bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
         type Rope = bun_ast::E::Rope;
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(
-                bump,
-                bun_ast::E::String::init(b"scripts"),
-                bun_ast::Loc::EMPTY,
-            ),
+            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
             next: core::ptr::null_mut(),
         });
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
-        let mut scripts_json = object.get_or_put_object(bump, key).map_err(|e| match e {
+        let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
             bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,
         })?;

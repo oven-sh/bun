@@ -62,7 +62,7 @@ where
         // Take the inner function out of the arena to avoid borrow conflicts
         let mut inner_func = std::mem::replace(
             &mut env.functions[func_id.0 as usize],
-            placeholder_function(env.alloc),
+            placeholder_function(),
         );
 
         lower_with_mutation_aliasing(&mut inner_func, env, debug_logger)?;
@@ -137,7 +137,7 @@ where
     // inferReactiveScopeVariables on the inner function
     crate::inference::infer_reactive_scope_variables::infer_reactive_scope_variables(func, env)?;
 
-    func.aliasing_effects = Some(env.alloc.vec_from_iter(function_effects.iter().cloned()));
+    func.aliasing_effects = Some(AstAlloc::vec_from_iter(function_effects.iter().cloned()));
 
     // Phase 2: Populate the Effect of each context variable to use in inferring
     // the outer function. Corresponds to TS Phase 2 in lowerWithMutationAliasing.
@@ -195,13 +195,13 @@ where
 /// Create a placeholder HirFunction for temporarily swapping an inner function
 /// out of `env.functions` via `std::mem::replace`. The placeholder is never
 /// read — the real function is swapped back immediately after processing.
-fn placeholder_function(alloc: AstAlloc) -> HirFunction {
+fn placeholder_function() -> HirFunction {
     HirFunction {
         loc: None,
         id: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
-        params: alloc.vec(),
+        params: AstAlloc::vec(),
         return_type_annotation: None,
         returns: Place {
             identifier: IdentifierId(0),
@@ -209,15 +209,15 @@ fn placeholder_function(alloc: AstAlloc) -> HirFunction {
             reactive: false,
             loc: None,
         },
-        context: alloc.vec(),
+        context: AstAlloc::vec(),
         body: HIR {
             entry: BlockId(0),
-            blocks: IndexMap::new_in(alloc),
+            blocks: IndexMap::new(),
         },
-        instructions: alloc.vec(),
+        instructions: AstAlloc::vec(),
         generator: false,
         is_async: false,
-        directives: alloc.vec(),
+        directives: AstAlloc::vec(),
         aliasing_effects: None,
     }
 }

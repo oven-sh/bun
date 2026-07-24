@@ -433,13 +433,6 @@ impl<'a> LinkerContext<'a> {
         self.graph.arena()
     }
 
-    /// The linker-owned [`bun_alloc::AstAlloc`] handle for synthetic AST nodes
-    /// generated during linking.
-    #[inline]
-    pub fn alloc(&self) -> bun_alloc::AstAlloc {
-        self.graph.ast_alloc
-    }
-
     /// `arena` must be the arena owned by the thread making this call — on
     /// worker threads (chunk post-processing) that is `worker.arena()`, NOT
     /// `self.arena()` (the bundle-thread graph arena). `generic_path_with_pretty_initialized`
@@ -758,6 +751,14 @@ impl<'a> LinkerContext<'a> {
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
+        // Install the linker's arena for the whole link phase so synthetic
+        // parts / wrapper stmts land there. Split-borrow via raw ptr: the rest
+        // of this function uses `&mut self` freely and never touches
+        // `self.graph.ast_arena` again.
+        // SAFETY: `self.graph.ast_arena` is not accessed for the guard's
+        // lifetime except via the thread-local `ACTIVE` slot.
+        let _scope = unsafe { (*(&raw mut self.graph.ast_arena)).enter() };
+
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
@@ -1436,8 +1437,9 @@ impl SourceMapDataTask {
         // only a shared borrow is formed and it ends before any per-slot write.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
-        SourceMapData::compute_line_offsets(ctx, worker.arena(), worker.alloc(), task.source_index);
-        worker.unget();
+        let worker_arena = worker.arena();
+        let _scope = worker.ast_arena.enter();
+        SourceMapData::compute_line_offsets(ctx, worker_arena, task.source_index);
     }
 
     // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
@@ -1477,13 +1479,9 @@ impl SourceMapDataTask {
         // handed (it allocates via the default allocator internally), so we
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (§Dispatch).
-        SourceMapData::compute_quoted_source_contents(
-            ctx,
-            worker.arena(),
-            worker.alloc(),
-            task.source_index,
-        );
-        worker.unget();
+        let worker_arena = worker.arena();
+        let _scope = worker.ast_arena.enter();
+        SourceMapData::compute_quoted_source_contents(ctx, worker_arena, task.source_index);
     }
 }
 
@@ -1497,8 +1495,7 @@ impl SourceMapData {
     /// `source_index`) via a raw column pointer.
     pub fn compute_line_offsets(
         this: bun_ptr::ParentRef<LinkerContext<'_>>,
-        _arena: &Bump,
-        alloc: bun_alloc::AstAlloc,
+        alloc: &Bump,
         source_index: crate::IndexInt,
     ) {
         debug!("Computing LineOffsetTable: {}", source_index);
@@ -1525,7 +1522,9 @@ impl SourceMapData {
         if !loader.can_have_source_map() {
             // This is not a file which we support generating source maps for
             // SAFETY: sole writer to this slot (disjoint by source_index).
-            unsafe { *line_offset_table = SourceMap::line_offset_table::List::new_in(alloc) };
+            unsafe {
+                *line_offset_table = SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc)
+            };
             return;
         }
 
@@ -1533,13 +1532,13 @@ impl SourceMapData {
         let approximate_line_count =
             this.graph.ast.items_approximate_newline_count()[source_index as usize];
 
+        let _ = alloc;
         // SAFETY: sole writer to this slot (disjoint by source_index).
-        // `alloc` is this worker's `AstAlloc` handle, so the SoA slab +
-        // every `columns_for_non_ascii` payload lands in the worker arena
-        // for bulk-free on `pool.deinit()`.
+        // The caller installs this worker's `ast_arena` via `enter()`, so the
+        // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
+        // payload there for bulk-free on `pool.deinit()`.
         unsafe {
-            *line_offset_table = LineOffsetTable::generate_in(
-                alloc,
+            *line_offset_table = LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
                 &source.contents,
                 // We don't support sourcemaps for source files with more than 2^31 lines
                 (approximate_line_count as u32 & 0x7FFF_FFFF) as i32,
@@ -1552,8 +1551,7 @@ impl SourceMapData {
     /// for the `ParentRef` aliasing contract.
     pub fn compute_quoted_source_contents(
         this: bun_ptr::ParentRef<LinkerContext<'_>>,
-        _arena: &Bump,
-        alloc: bun_alloc::AstAlloc,
+        _alloc: &Bump,
         source_index: crate::IndexInt,
     ) {
         debug!("Computing Quoted Source Contents: {}", source_index);
@@ -1585,7 +1583,9 @@ impl SourceMapData {
         // the arena at bundle end, and `StringJoiner` only borrows a `&[u8]`
         // view downstream.
         let contents: &[u8] = &source.contents;
-        let mut buf = alloc.vec_with_capacity::<u8>(contents.len() + (contents.len() >> 3) + 8);
+        let mut buf = bun_alloc::AstAlloc::vec_with_capacity::<u8>(
+            contents.len() + (contents.len() >> 3) + 8,
+        );
         buf.push(b'"');
         js_printer::write_pre_quoted_string_inner::<_, { js_printer::Encoding::Utf8 }>(
             contents, &mut buf, b'"', false, true,
@@ -2086,7 +2086,6 @@ impl<'a> LinkerContext<'a> {
         namespace_ref: Ref,
         import_record_index: u32,
         alloc: &Bump,
-        ast_alloc: bun_alloc::AstAlloc,
         ast: &JSAst<'_>,
     ) -> Result<bool, BunError> {
         let record = &ast.import_records[import_record_index as usize];
@@ -2105,9 +2104,8 @@ impl<'a> LinkerContext<'a> {
             stmts
                 .inside_wrapper_prefix
                 .append_non_dependency(Stmt::alloc(
-                    ast_alloc,
                     S::Local {
-                        decls: ast_alloc.vec_from_slice(&[G::Decl {
+                        decls: G::DeclList::from_slice(&[G::Decl {
                             binding: Binding::alloc(
                                 alloc,
                                 bun_ast::b::Identifier {
@@ -2116,7 +2114,6 @@ impl<'a> LinkerContext<'a> {
                                 loc,
                             ),
                             value: Some(Expr::init(
-                                ast_alloc,
                                 E::RequireString {
                                     import_record_index,
                                     ..Default::default()
@@ -2124,7 +2121,7 @@ impl<'a> LinkerContext<'a> {
                                 loc,
                             )),
                         }]),
-                        ..S::Local::empty(ast_alloc)
+                        ..Default::default()
                     },
                     record.range.loc,
                 ))
@@ -2152,9 +2149,8 @@ impl<'a> LinkerContext<'a> {
                 stmts
                     .inside_wrapper_prefix
                     .append_non_dependency(Stmt::alloc(
-                        ast_alloc,
                         S::Local {
-                            decls: ast_alloc.vec_from_slice(&[G::Decl {
+                            decls: G::DeclList::from_slice(&[G::Decl {
                                 binding: Binding::alloc(
                                     alloc,
                                     bun_ast::b::Identifier {
@@ -2163,7 +2159,6 @@ impl<'a> LinkerContext<'a> {
                                     loc,
                                 ),
                                 value: Some(Expr::init(
-                                    ast_alloc,
                                     E::RequireString {
                                         import_record_index,
                                         ..Default::default()
@@ -2171,7 +2166,7 @@ impl<'a> LinkerContext<'a> {
                                     loc,
                                 )),
                             }]),
-                            ..S::Local::empty(ast_alloc)
+                            ..Default::default()
                         },
                         loc,
                     ))?;
@@ -2196,24 +2191,21 @@ impl<'a> LinkerContext<'a> {
 
                 // Replace the statement with a call to "init()"
                 let init_call = Expr::init(
-                    ast_alloc,
                     E::Call {
                         target: Expr::init_identifier(wrapper_ref, loc),
-                        ..E::Call::empty(ast_alloc)
+                        ..Default::default()
                     },
                     loc,
                 );
 
                 if other_flags.is_async_or_has_async_dependency {
-                    stmts.inside_wrapper_prefix.append_async_dependency(
-                        ast_alloc,
-                        init_call,
-                        self.promise_all_runtime_ref,
-                    )?;
+                    stmts
+                        .inside_wrapper_prefix
+                        .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
                 } else {
                     stmts
                         .inside_wrapper_prefix
-                        .append_sync_dependency(ast_alloc, init_call)?;
+                        .append_sync_dependency(init_call)?;
                 }
             }
         }
@@ -2225,7 +2217,6 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         r: renamer::Renamer,
         alloc: &Bump,
-        ast_alloc: bun_alloc::AstAlloc,
         writer: &mut js_printer::BufferWriter,
         out_stmts: &mut [Stmt],
         ast: &JSAst<'_>,
@@ -2238,7 +2229,7 @@ impl<'a> LinkerContext<'a> {
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
-            ..Part::empty(ast_alloc)
+            ..Default::default()
         }];
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
@@ -2330,8 +2321,7 @@ impl<'a> LinkerContext<'a> {
         // double-free.
         // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
         // the read is a bitwise copy whose result is never dropped.
-        let printer_ast =
-            core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast(ast_alloc));
+        let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
 
         // Note: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
         // printer struct stores it with a single lifetime), but `Renamer`'s
@@ -2351,7 +2341,6 @@ impl<'a> LinkerContext<'a> {
             js_printer::print_with_writer::<&mut js_printer::BufferPrinter, true>(
                 &mut printer,
                 alloc,
-                ast_alloc,
                 ast.target,
                 &printer_ast,
                 source,
@@ -2364,7 +2353,6 @@ impl<'a> LinkerContext<'a> {
             js_printer::print_with_writer::<&mut js_printer::BufferPrinter, false>(
                 &mut printer,
                 alloc,
-                ast_alloc,
                 ast.target,
                 &printer_ast,
                 source,
@@ -3182,10 +3170,9 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 // generate a dummy part that depends on the "__commonJS" symbol.
-                let ast_alloc = self.alloc();
                 let dependencies: DependencyList =
                     if self.options.output_format != Format::InternalBakeDev {
-                        let mut deps = ast_alloc.vec_with_capacity(common_js_parts.len());
+                        let mut deps = DependencyList::init_capacity(common_js_parts.len());
                         for &part in common_js_parts {
                             deps.append_assume_capacity(Dependency {
                                 part_index: part,
@@ -3194,9 +3181,9 @@ impl<'a> LinkerContext<'a> {
                         }
                         deps
                     } else {
-                        DependencyList::new_in(ast_alloc)
+                        DependencyList::new_in(bun_alloc::AstAlloc)
                     };
-                let mut symbol_uses = PartSymbolUseMap::new_in(ast_alloc);
+                let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
                     .put(wrapper_ref, SymbolUse { count_estimate: 1 })
                     .expect("OOM");
@@ -3209,26 +3196,23 @@ impl<'a> LinkerContext<'a> {
                         source_index,
                         Part {
                             symbol_uses,
-                            declared_symbols: DeclaredSymbolList::from_slice(
-                                ast_alloc,
-                                &[
-                                    DeclaredSymbol {
-                                        ref_: exports_ref,
-                                        is_top_level: true,
-                                    },
-                                    DeclaredSymbol {
-                                        ref_: module_ref,
-                                        is_top_level: true,
-                                    },
-                                    DeclaredSymbol {
-                                        ref_: wrap_ref,
-                                        is_top_level: true,
-                                    },
-                                ],
-                            )
+                            declared_symbols: DeclaredSymbolList::from_slice(&[
+                                DeclaredSymbol {
+                                    ref_: exports_ref,
+                                    is_top_level: true,
+                                },
+                                DeclaredSymbol {
+                                    ref_: module_ref,
+                                    is_top_level: true,
+                                },
+                                DeclaredSymbol {
+                                    ref_: wrap_ref,
+                                    is_top_level: true,
+                                },
+                            ])
                             .expect("unreachable"),
                             dependencies,
-                            ..Part::empty(ast_alloc)
+                            ..Default::default()
                         },
                     )
                     .expect("unreachable");
@@ -3302,9 +3286,8 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let ast_alloc = self.alloc();
                 let mut dependencies =
-                    ast_alloc.vec_with_capacity(esm_parts.len() + promise_all_parts.len());
+                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
                 for &part in esm_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
@@ -3318,7 +3301,7 @@ impl<'a> LinkerContext<'a> {
                     });
                 }
 
-                let mut symbol_uses = PartSymbolUseMap::new_in(ast_alloc);
+                let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
                     .put(wrapper_ref, SymbolUse { count_estimate: 1 })
                     .expect("OOM");
@@ -3328,16 +3311,13 @@ impl<'a> LinkerContext<'a> {
                         source_index,
                         Part {
                             symbol_uses,
-                            declared_symbols: DeclaredSymbolList::from_slice(
-                                ast_alloc,
-                                &[DeclaredSymbol {
-                                    ref_: wrapper_ref,
-                                    is_top_level: true,
-                                }],
-                            )
+                            declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                                ref_: wrapper_ref,
+                                is_top_level: true,
+                            }])
                             .expect("unreachable"),
                             dependencies,
-                            ..Part::empty(ast_alloc)
+                            ..Default::default()
                         },
                     )
                     .expect("unreachable");
@@ -3942,8 +3922,7 @@ impl<'a> LinkerContext<'a> {
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
 
-            let ast_alloc = self.alloc();
-            let mut re_exports: bun_alloc::AstVec<Dependency> = ast_alloc.vec();
+            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
             let result = self.match_import_with_export(
                 ImportTracker {
                     source_index: crate::Index::init(source_index),
@@ -3973,14 +3952,11 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
                     // (graph.ast SoA) and `result` (stack local).
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(bun_alloc::ast_box(
-                            ast_alloc,
-                            G::NamespaceAlias {
-                                namespace_ref: result.namespace_ref,
-                                alias: result.alias,
-                                ..Default::default()
-                            },
-                        ));
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
+                            namespace_ref: result.namespace_ref,
+                            alias: result.alias,
+                            ..Default::default()
+                        }));
                 }
                 MatchImportKind::NormalAndNamespace => {
                     imports_to_bind
@@ -4000,14 +3976,11 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(bun_alloc::ast_box(
-                            ast_alloc,
-                            G::NamespaceAlias {
-                                namespace_ref: result.namespace_ref,
-                                alias: result.alias,
-                                ..Default::default()
-                            },
-                        ));
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
+                            namespace_ref: result.namespace_ref,
+                            alias: result.alias,
+                            ..Default::default()
+                        }));
                 }
                 MatchImportKind::Cycle => {
                     let source = self.get_source(source_index);
@@ -4100,19 +4073,15 @@ impl<'a> LinkerContext<'a> {
         let r#ref =
             self.graph
                 .generate_new_symbol(source_index, bun_ast::symbol::Kind::Other, name);
-        let ast_alloc = self.alloc();
         let part_index = self.graph.add_part_to_file(
             source_index,
             Part {
-                declared_symbols: DeclaredSymbolList::from_slice(
-                    ast_alloc,
-                    &[DeclaredSymbol {
-                        ref_: r#ref,
-                        is_top_level: true,
-                    }],
-                )?,
+                declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                    ref_: r#ref,
+                    is_top_level: true,
+                }])?,
                 can_be_removed_if_unused: true,
-                ..Part::empty(ast_alloc)
+                ..Default::default()
             },
         )?;
 
@@ -4127,7 +4096,7 @@ impl<'a> LinkerContext<'a> {
             .graph
             .meta
             .items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
-        top_level.put(r#ref, ast_alloc.vec_from_slice(&[part_index]))?;
+        top_level.put(r#ref, bun_alloc::AstAlloc::vec_from_slice(&[part_index]))?;
 
         let resolved_exports =
             &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];
@@ -4139,7 +4108,7 @@ impl<'a> LinkerContext<'a> {
                     import_ref: r#ref,
                     ..Default::default()
                 },
-                ..crate::ExportData::empty(ast_alloc)
+                ..Default::default()
             },
         )?;
         Ok((r#ref, part_index))
@@ -4322,15 +4291,10 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    pub(crate) fn append_sync_dependency(
-        &mut self,
-        ast_alloc: bun_alloc::AstAlloc,
-        call_expr: Expr,
-    ) -> Result<(), AllocError> {
+    pub(crate) fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
         self.stmts.insert(
             self.sync_dependencies_end,
             Stmt::alloc(
-                ast_alloc,
                 S::SExpr {
                     value: call_expr,
                     ..Default::default()
@@ -4344,7 +4308,6 @@ impl InsideWrapperPrefix {
 
     pub(crate) fn append_async_dependency(
         &mut self,
-        ast_alloc: bun_alloc::AstAlloc,
         call_expr: Expr,
         promise_all_ref: Ref,
     ) -> Result<(), AllocError> {
@@ -4353,9 +4316,8 @@ impl InsideWrapperPrefix {
             self.stmts.insert(
                 self.sync_dependencies_end,
                 Stmt::alloc(
-                    ast_alloc,
                     S::SExpr {
-                        value: Expr::init(ast_alloc, E::Await { value: call_expr }, Loc::EMPTY),
+                        value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
                         ..Default::default()
                     },
                     Loc::EMPTY,
@@ -4401,7 +4363,6 @@ impl InsideWrapperPrefix {
             // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
 
             let promise_all = Expr::init(
-                ast_alloc,
                 E::Identifier {
                     ref_: promise_all_ref,
                     ..Default::default()
@@ -4409,35 +4370,31 @@ impl InsideWrapperPrefix {
                 Loc::EMPTY,
             );
 
-            let mut items = ast_alloc.vec_with_capacity(2);
+            let mut items = bun_ast::ExprNodeList::init_capacity(2);
             items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
 
-            let mut args = ast_alloc.vec_with_capacity(1);
+            let mut args = bun_ast::ExprNodeList::init_capacity(1);
             args.append_assume_capacity(Expr::init(
-                ast_alloc,
                 E::Array {
                     items,
-                    ..E::Array::empty(ast_alloc)
+                    ..Default::default()
                 },
                 Loc::EMPTY,
             ));
 
             let promise_all_call = Expr::init(
-                ast_alloc,
                 E::Call {
                     target: promise_all,
                     args,
-                    ..E::Call::empty(ast_alloc)
+                    ..Default::default()
                 },
                 Loc::EMPTY,
             );
 
             // replace the `await init_` expr with `await __promiseAll`
             self.stmts[self.sync_dependencies_end] = Stmt::alloc(
-                ast_alloc,
                 S::SExpr {
                     value: Expr::init(
-                        ast_alloc,
                         E::Await {
                             value: promise_all_call,
                         },

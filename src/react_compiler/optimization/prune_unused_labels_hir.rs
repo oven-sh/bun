@@ -45,7 +45,7 @@ pub fn prune_unused_labels_hir(func: &mut HirFunction) {
     }
 
     // Phase 2: Apply merges
-    let mut rewrites: IdMap<BlockId, BlockId> = IdMap::new_in(func.body.blocks.allocator());
+    let mut rewrites: IdMap<BlockId, BlockId> = IdMap::new();
 
     for (original_label_id, next_id, fallthrough_id) in &merged {
         let label_id = rewrites

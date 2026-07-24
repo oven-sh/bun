@@ -51,8 +51,8 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         b"input.json5",
         true,
         true,
-        |alloc, log, source| {
-            let root = match json5::JSON5Parser::parse(source, log, alloc) {
+        |bump, log, source| {
+            let root = match json5::JSON5Parser::parse(source, log, bump) {
                 Ok(r) => r,
                 Err(json5::ExternalError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(json5::ExternalError::StackOverflow) => {

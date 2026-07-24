@@ -223,8 +223,8 @@ impl MacroContext {
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
         let ast_arena = self.bump.get_or_insert_with(bun_alloc::AstArena::new);
-        let alloc = ast_arena.alloc();
-        let bump: *const bun_alloc::Arena = &raw const *alloc.arena();
+        let _scope = ast_arena.enter();
+        let bump: *const bun_alloc::Arena = bun_alloc::AstAlloc.arena();
         let ret = VirtualMachine::get().run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated
             // for the duration of this closure; `bump` points into `*self`,
@@ -233,7 +233,6 @@ impl MacroContext {
                 unsafe { &*macro_ },
                 log,
                 unsafe { &*bump },
-                alloc,
                 function_name,
                 caller,
                 source,
@@ -555,7 +554,6 @@ pub struct Run<'a> {
     // outlive `run_async` — the returned `Expr` is spliced into the AST and
     // printed long after this frame returns.
     pub bump: &'a bun_alloc::Arena,
-    pub alloc: bun_alloc::AstAlloc,
     pub id: i32,
     pub log: &'a mut Log,
     pub source: &'a Source,
@@ -568,7 +566,6 @@ impl<'a> Run<'a> {
         macro_: &Macro,
         log: &mut Log,
         bump: &bun_alloc::Arena,
-        alloc: bun_alloc::AstAlloc,
         function_name: &[u8],
         caller: Expr,
         args: &[JSValue],
@@ -594,7 +591,6 @@ impl<'a> Run<'a> {
             macro_,
             global: VirtualMachine::get().global(),
             bump,
-            alloc,
             id,
             log,
             source,
@@ -649,7 +645,6 @@ impl<'a> Run<'a> {
         value: JSValue,
     ) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
-        let alloc = self.alloc;
         match tag {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
@@ -661,10 +656,10 @@ impl<'a> Run<'a> {
                 if self.is_top_level {
                     return Ok(self.caller);
                 } else {
-                    return Ok(Expr::init(alloc, E::Undefined {}, self.caller.loc));
+                    return Ok(Expr::init(E::Undefined {}, self.caller.loc));
                 }
             }
-            T::Null => return Ok(Expr::init(alloc, E::Null {}, self.caller.loc)),
+            T::Null => return Ok(Expr::init(E::Null {}, self.caller.loc)),
             T::Private => {
                 self.is_top_level = false;
                 if let Some(cached) = self.visited.get(&value) {
@@ -701,11 +696,11 @@ impl<'a> Run<'a> {
                     // shared-view/content-type slices borrow its store.
                     let (bytes, ct) =
                         unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
-                    return expr_from_blob(bytes, self.bump, alloc, ct, self.log, self.caller.loc)
+                    return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
                         .map_err(|_| MacroError::MacroFailed);
                 }
 
-                return Ok(Expr::init(alloc, E::EString::EMPTY, self.caller.loc));
+                return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
             }
 
             T::Boolean => {
@@ -727,14 +722,13 @@ impl<'a> Run<'a> {
                 let mut iter = JSArrayIterator::init(value, self.global)?;
 
                 // Process all array items
-                let mut array: ExprNodeList = alloc.vec_with_capacity(iter.len as usize);
+                let mut array = ExprNodeList::init_capacity(iter.len as usize);
                 // (errdefer free deleted — drops on `?`)
                 let expr = Expr::init(
-                    alloc,
                     E::Array {
-                        items: alloc.vec(),
+                        items: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
-                        ..E::Array::empty(alloc)
+                        ..Default::default()
                     },
                     self.caller.loc,
                 );
@@ -768,11 +762,10 @@ impl<'a> Run<'a> {
 
                 // Reserve a placeholder to break cycles.
                 let expr = Expr::init(
-                    alloc,
                     E::Object {
-                        properties: alloc.vec(),
+                        properties: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
-                        ..E::Object::empty(alloc)
+                        ..Default::default()
                     },
                     self.caller.loc,
                 );
@@ -791,7 +784,7 @@ impl<'a> Run<'a> {
                 // `object_iter` dropped at scope exit (was `defer object_iter.deinit()`)
 
                 // Build properties list
-                let mut properties: G::PropertyList = alloc.vec_with_capacity(object_iter.len);
+                let mut properties = G::PropertyList::init_capacity(object_iter.len);
                 // (errdefer clearAndFree deleted — drops on `?`)
 
                 while let Some(prop) = object_iter.next()? {
@@ -802,14 +795,14 @@ impl<'a> Run<'a> {
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
-                    let key = Expr::init(alloc, E::EString::init(key_bytes), self.caller.loc);
+                    let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
                         &mut properties,
                         G::Property {
                             flags: E::own_key_property_flags(&key),
                             key: Some(key),
                             value: Some(object_value),
-                            ..G::Property::empty(alloc)
+                            ..Default::default()
                         },
                     );
                 }
@@ -827,14 +820,12 @@ impl<'a> Run<'a> {
 
             T::Integer => {
                 return Ok(Expr::init(
-                    alloc,
                     E::Number::new(value.to_int32() as f64),
                     self.caller.loc,
                 ));
             }
             T::Double => {
                 return Ok(Expr::init(
-                    alloc,
                     E::Number::new(value.as_number()),
                     self.caller.loc,
                 ));
@@ -855,7 +846,6 @@ impl<'a> Run<'a> {
                 // the `MacroContext` bump arena.
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
                 return Ok(Expr::init(
-                    alloc,
                     E::EString::init_utf16(arena_slice),
                     self.caller.loc,
                 ));
@@ -922,7 +912,6 @@ impl Runner {
         macro_: &Macro,
         log: &mut Log,
         bump: &bun_alloc::Arena,
-        alloc: bun_alloc::AstAlloc,
         function_name: &[u8],
         caller: Expr,
         source: &Source,
@@ -1027,7 +1016,6 @@ impl Runner {
             macro_: &'c Macro,
             log: &'c mut Log,
             bump: &'c bun_alloc::Arena,
-            alloc: bun_alloc::AstAlloc,
             function_name: &'c [u8],
             caller: Expr,
             js_args: &'c [JSValue],
@@ -1044,7 +1032,6 @@ impl Runner {
                     state.macro_,
                     state.log,
                     state.bump,
-                    state.alloc,
                     state.function_name,
                     state.caller,
                     state.js_args,
@@ -1058,7 +1045,6 @@ impl Runner {
             macro_,
             log,
             bump,
-            alloc,
             function_name,
             caller,
             js_args: &js_args.args,
@@ -1094,7 +1080,6 @@ unsafe extern "C" {
 fn expr_from_blob(
     bytes: &[u8],
     bump: &bun_alloc::Arena,
-    alloc: bun_alloc::AstAlloc,
     mime_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
@@ -1108,7 +1093,7 @@ fn expr_from_blob(
 
     if is_json {
         let source = &Source::init_path_string(b"fetch.json", bytes);
-        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, alloc) {
+        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
             Err(_) => return Err(crate::Error::MacroFailed),
         };
@@ -1141,7 +1126,6 @@ fn expr_from_blob(
         };
         let data = Str::new(bump.alloc_slice_copy(unquoted));
         return Ok(Expr::init(
-            alloc,
             E::String {
                 data,
                 ..Default::default()
@@ -1166,7 +1150,6 @@ fn expr_from_blob(
     let n = bun_base64::encode(&mut buf[i..], bytes);
     let data = Str::new(&buf[..i + n]);
     Ok(Expr::init(
-        alloc,
         E::String {
             data,
             ..Default::default()

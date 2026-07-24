@@ -584,9 +584,9 @@ impl TranspilerJob {
         // bought nothing and cost RSS. `AstArena::Drop` resets and parks the
         // inner heap per-thread, so the worker holds no live parse pages
         // between calls.
-        let ast_arena = bun_alloc::AstArena::new();
-        let alloc = ast_arena.alloc();
-        let arena = alloc.arena();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
+        let arena = bun_alloc::AstAlloc.arena();
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
@@ -789,7 +789,6 @@ impl TranspilerJob {
 
         let mut parse_options = ParseOptions {
             arena,
-            alloc,
             path,
             loader,
             dirname_fd: Fd::INVALID,
@@ -1118,7 +1117,6 @@ impl TranspilerJob {
                 // Same per-call `arena` that `transpiler.set_arena(arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.
                 arena,
-                alloc,
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,

@@ -220,8 +220,8 @@ impl<'a> Snapshots<'a> {
         );
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
-        let ast_arena = bun_alloc::AstArena::new();
-        let alloc = ast_arena.alloc();
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _scope = ast_arena.enter();
         let mut temp_log = bun_ast::Log::init();
 
         // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
@@ -265,7 +265,6 @@ impl<'a> Snapshots<'a> {
             &source,
             &vm.transpiler.options.define,
             &arena,
-            alloc,
         )?;
 
         let parse_result = parser.parse()?;
@@ -377,7 +376,7 @@ impl<'a> Snapshots<'a> {
         for file_id in file_ids {
             arena.reset();
             ast_arena.reset();
-            let alloc = ast_arena.alloc();
+            let _scope = ast_arena.enter();
             let ils_info = self
                 .inline_snapshots_to_write
                 .get_mut(&file_id)
@@ -570,7 +569,6 @@ impl<'a> Snapshots<'a> {
                     js_parser::TSXParser::init(
                         &mut __parser_slot,
                         &arena,
-                        alloc,
                         core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
                         &source,
                         &vm.transpiler.options.define,

@@ -3257,24 +3257,24 @@ impl DevServer {
         // Pinned interior so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
-        let ast_arena = bun_alloc::AstArena::new();
-        let heap: &'static bun_alloc::MimallocArena = ast_arena.alloc().arena();
+        let mut ast_arena = bun_alloc::AstArena::new();
 
         // The bundler stores
-        // `Option<NonNull<AnyEventLoop>>`. Park the value in `heap`
+        // `Option<NonNull<AnyEventLoop>>`. Park the value in the arena
         // — bumpalo chunks are heap-allocated, so the address is stable across
         // the move of `ast_arena` into `bv2.graph.heap` and lives exactly as
         // long as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            // SAFETY: `self.vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-            Some(::core::ptr::NonNull::from(heap.alloc(
+            Some(::core::ptr::NonNull::from(ast_arena.arena().alloc(
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
         // SAFETY: `ast_arena`'s interior is pinned on the heap and moved into
         // `CurrentBundle` (which also owns `bv2`); the arena's address is
         // stable for the lifetime of `bv2.graph.heap`'s borrow.
-        let heap_ptr: *const bun_alloc::Arena = heap;
+        let heap_ptr: *const bun_alloc::Arena = ast_arena.arena();
+        let ast_scope = ast_arena.enter();
+
         // Note: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
@@ -3334,6 +3334,7 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
+        drop(ast_scope);
         self.current_bundle = Some(CurrentBundle {
             bv2,
             ast_arena,
@@ -3836,7 +3837,7 @@ pub(super) fn finalize_bundle(
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
         }
-        // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
+        // Drops `CurrentBundle.ast_arena` (the arena `bv2.graph.heap` borrows).
         dev.current_bundle = None;
         dev.log.clear_and_free();
 

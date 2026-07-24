@@ -119,18 +119,10 @@ pub struct Function {
     pub func: G::Fn,
 }
 
+#[derive(Default)]
 pub struct Class {
     pub class: G::Class,
     pub is_export: bool, // = false
-}
-
-impl Class {
-    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
-        Self {
-            class: G::Class::empty(alloc),
-            is_export: false,
-        }
-    }
 }
 
 pub struct If {
@@ -256,11 +248,11 @@ pub struct Local {
     pub was_commonjs_export: bool, // = false
 }
 
-impl Local {
-    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
+impl Default for Local {
+    fn default() -> Self {
         Self {
             kind: Kind::default(),
-            decls: alloc.vec(),
+            decls: bun_alloc::AstAlloc::vec(),
             is_export: false,
             was_ts_import_equals: false,
             was_commonjs_export: false,

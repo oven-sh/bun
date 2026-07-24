@@ -1147,6 +1147,9 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> crate::Result<()> {
+        let mut ast_arena = bun_alloc::AstArena::new();
+        let _ast_scope = ast_arena.enter();
+
         // The caller (`DevServer::init`) hands us an uninitialized slot, so
         // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
         // `&mut Transpiler` for the field assignments below.
@@ -1253,7 +1256,6 @@ impl Framework {
                 bundler_options.define.values.len()
             );
             use bun_bundler::DefineDataExt;
-            let alloc = out.options.define.alloc();
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -1261,14 +1263,14 @@ impl Framework {
                 .zip(bundler_options.define.values.iter())
             {
                 let parsed =
-                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, alloc)?;
+                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
                 out.options.define.insert(k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {
                 if !drop_item.is_empty() {
                     let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, alloc,
+                        drop_item, b"", true, true, log, arena,
                     )?;
                     out.options.define.insert(drop_item, parsed)?;
                 }

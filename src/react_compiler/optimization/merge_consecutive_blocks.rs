@@ -27,7 +27,6 @@ use crate::ssa::enter_ssa::placeholder_function;
 
 /// Merge consecutive blocks in the function's CFG, including inner functions.
 pub fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunction]) {
-    let alloc = *func.instructions.allocator();
     // Collect inner function IDs for recursive processing
     let inner_func_ids: Vec<usize> = func
         .body
@@ -50,8 +49,7 @@ pub fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunc
     for func_id in inner_func_ids {
         // Use std::mem::replace to temporarily take the inner function out,
         // process it, then put it back (standard borrow checker workaround)
-        let mut inner_func =
-            std::mem::replace(&mut functions[func_id], placeholder_function(alloc));
+        let mut inner_func = std::mem::replace(&mut functions[func_id], placeholder_function());
         merge_consecutive_blocks(&mut inner_func, functions);
         functions[func_id] = inner_func;
     }
@@ -64,7 +62,7 @@ pub fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunc
         }
     }
 
-    let mut merged = MergedBlocks::new(alloc);
+    let mut merged = MergedBlocks::new();
 
     // Collect block IDs for iteration (since we modify during iteration)
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
@@ -135,7 +133,7 @@ pub fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunc
                     loc: GENERATED_SOURCE,
                 },
                 loc: GENERATED_SOURCE,
-                effects: Some(hir_vec![alloc; AliasingEffect::Alias {
+                effects: Some(hir_vec![AliasingEffect::Alias {
                     from: operand,
                     into: lvalue,
                 }]),
@@ -194,10 +192,8 @@ struct MergedBlocks {
 }
 
 impl MergedBlocks {
-    fn new(alloc: bun_alloc::AstAlloc) -> Self {
-        Self {
-            map: IdMap::new_in(alloc),
-        }
+    fn new() -> Self {
+        Self { map: IdMap::new() }
     }
 
     /// Record that `block` was merged into `into`.

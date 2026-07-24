@@ -120,8 +120,7 @@ fn populate_macro_tags(
     func: &HirFunction,
     macro_kinds: &HashMap<Vec<u8>, MacroDefinition>,
 ) -> IdMap<IdentifierId, MacroDefinition> {
-    let mut macro_tags: IdMap<IdentifierId, MacroDefinition> =
-        IdMap::new_in(*func.instructions.allocator());
+    let mut macro_tags: IdMap<IdentifierId, MacroDefinition> = IdMap::new();
 
     for block in func.body.blocks.values() {
         for &instr_id in &block.instructions {

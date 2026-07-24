@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1756,3 +1756,38 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
 });
+
+// JSPropertyIterator held a Ref<JSC::VM>. When a worker was terminated in the
+// handful of instructions between the C++ create()'s own exception check and
+// the Rust caller's post-call trap check, the returned raw pointer was dropped
+// (a no-op) and the iterator leaked that VM ref, so the worker's deref() left
+// the refcount at 1 and ~VM (and every cell finalizer) was skipped. The race
+// is narrow; http2's request() path walks headers via JSPropertyIterator on
+// every tick, so a chain of terminate()-mid-dispatch workers hits it reliably.
+test.skipIf(!isASAN || isWindows)(
+  "terminate() during native property iteration still runs the worker VM's finalizers",
+  async () => {
+    const env = {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+    };
+    // Six independent processes so a regression fails fast at the first LSan
+    // sweep instead of after one ~2-minute 252-worker run.
+    for (let i = 0; i < 6; i++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dirname, "worker-terminate-propiter-parent-fixture.js")],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("LeakSanitizer");
+      expect(stderr).not.toMatch(/h2::connection|h2_frame_parser|JSPropertyIterator|PropertyNameArray/);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  },
+  180_000,
+);

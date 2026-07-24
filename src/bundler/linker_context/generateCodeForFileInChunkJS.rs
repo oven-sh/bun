@@ -699,37 +699,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     break 'stmt stmt;
                                 }
 
-                                // Convert the declarations to assignments
+                                // Convert the declarations to assignments. Hoist only the bare
+                                // binding; the initializer stays inside the wrapper so a cyclic
+                                // `require()` of this module sees the binding as uninitialized.
                                 let mut value = Expr::EMPTY;
                                 for decl in local.decls.slice() {
+                                    let binding = Binding::to_expr(
+                                        &decl.binding,
+                                        (&raw mut hoist).cast::<core::ffi::c_void>(),
+                                        hoist_wrapper,
+                                    );
                                     if let Some(initializer) = decl.value {
-                                        let can_be_moved = initializer.can_be_moved();
-                                        if can_be_moved {
-                                            // if the value can be moved, move the decl directly to preserve destructuring
-                                            // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
-                                            hoist.decls.push(G::Decl {
-                                                binding: decl.binding,
-                                                value: decl.value,
-                                            });
-                                        } else {
-                                            // if the value cannot be moved, add every destructuring key separately
-                                            // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
-                                            let binding = Binding::to_expr(
-                                                &decl.binding,
-                                                (&raw mut hoist).cast::<core::ffi::c_void>(),
-                                                hoist_wrapper,
-                                            );
-                                            value = value.join_with_comma(Expr::assign(
-                                                binding,
-                                                initializer,
-                                            ));
-                                        }
-                                    } else {
-                                        let _ = Binding::to_expr(
-                                            &decl.binding,
-                                            (&raw mut hoist).cast::<core::ffi::c_void>(),
-                                            hoist_wrapper,
-                                        );
+                                        value = value
+                                            .join_with_comma(Expr::assign(binding, initializer));
                                     }
                                 }
 
@@ -743,21 +725,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                 continue 'hoist;
                             }
-                            StmtData::SClass(mut class) => 'stmt: {
+                            StmtData::SClass(mut class) => {
                                 // `class` is `StoreRef<S::Class>` — an arena-owned pointer.
                                 // `&mut class.class` (via DerefMut) yields a `&mut G::Class` into arena
                                 // memory, so wrapping it in a StoreRef for `EClass` is sound.
-                                if class.class.can_be_moved() {
-                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
-                                    continue 'hoist;
-                                }
-
                                 let class_name_loc = class.class.class_name.unwrap().loc;
                                 let class_name_ref = class.class.class_name.unwrap().ref_;
                                 let lhs = hoist.wrap_identifier(class_name_loc, class_name_ref);
                                 let class_ref: StoreRef<E::Class> =
                                     StoreRef::from_bump(&mut class.class);
-                                break 'stmt Stmt::allocate_expr(
+                                Stmt::allocate_expr(
                                     temp_arena,
                                     Expr::assign(
                                         lhs,
@@ -766,7 +743,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                             loc: stmt.loc,
                                         },
                                     ),
-                                );
+                                )
                             }
                             _ => stmt,
                         };

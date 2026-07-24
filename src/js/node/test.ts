@@ -299,7 +299,6 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
-  if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
   if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
@@ -343,6 +342,37 @@ function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[]
     }
   }
   return Array.from(results).sort();
+}
+
+function readExecArgvValue(name: string): string | undefined {
+  const argv = process.execArgv;
+  const prefix = `${name}=`;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith(prefix)) return argv[i].slice(prefix.length);
+    if (argv[i] === name && i + 1 < argv.length) return argv[i + 1];
+  }
+  return undefined;
+}
+
+// node's setupGlobalSetupTeardownFunctions (utils.js:733-751): the module is
+// imported once in the runner process — never in the per-file children — and
+// only its `globalSetup`/`globalTeardown` exports are consulted.
+async function loadGlobalSetupModule(globalSetupPath: string | undefined, cwd: string) {
+  if (globalSetupPath == null) return null;
+  const { resolve } = require("node:path");
+  const { pathToFileURL } = require("node:url");
+  const mod = await import(pathToFileURL(resolve(cwd, globalSetupPath)).href);
+  let globalSetupFunction;
+  let globalTeardownFunction;
+  if (mod.globalSetup) {
+    validateFunction(mod.globalSetup, "globalSetupModule.globalSetup");
+    globalSetupFunction = mod.globalSetup;
+  }
+  if (mod.globalTeardown) {
+    validateFunction(mod.globalTeardown, "globalSetupModule.globalTeardown");
+    globalTeardownFunction = mod.globalTeardown;
+  }
+  return { __proto__: null, globalSetupFunction, globalTeardownFunction };
 }
 
 function makeRunCounts() {
@@ -413,7 +443,13 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   // events (the file node's enqueue/dequeue) are not emitted into no listeners.
   await Promise.resolve();
 
+  let globalTeardownFunction: Function | undefined;
   try {
+    // node awaits the globalSetup module (its bootstrap promise) before the
+    // run's own setup callback — runner.js runChain().
+    const globalHooks = await loadGlobalSetupModule(opts.globalSetupPath as string | undefined, opts.cwd as string);
+    globalTeardownFunction = globalHooks?.globalTeardownFunction;
+    if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
     // Explicit files keep their spelling: the per-file test is named by the
@@ -472,6 +508,9 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       duration_ms: durationMs,
       file: undefined,
     });
+    // node runs globalTeardown from the root's postRun, after the summary, and
+    // skips it entirely when globalSetup threw (harness.js:280).
+    if (globalTeardownFunction !== undefined) await globalTeardownFunction();
   } catch (err) {
     reporter.destroy(err as Error);
     return;
@@ -1872,16 +1911,42 @@ class MockTracker {
 const mock = MockTracker.createFileScoped();
 
 // -----------------------------------------------------------------------------
-// Assertions (t.assert + custom assertion registry)
+// Snapshots (internal/test/snapshot — node's lib/internal/test_runner/snapshot.js)
 // -----------------------------------------------------------------------------
 
-function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
-  throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");
+// node builds the manager lazily on the first `t.assert` access
+// (test.js lazyAssertObject) and flushes it from the root test's postRun
+// (test.js:1537). node:test in bun has no single postRun — the same
+// registrations also run under `bun test` — so the flush is an exit hook,
+// installed only when snapshots are being regenerated.
+let snapshotManager;
+let snapshotAssert: Function;
+let fileSnapshotAssert: Function;
+function initSnapshotManager() {
+  const { SnapshotManager } = require("internal/test/snapshot");
+  snapshotManager = new SnapshotManager(process.execArgv.includes("--test-update-snapshots"));
+  snapshotAssert = snapshotManager.createAssert();
+  fileSnapshotAssert = snapshotManager.createFileAssert();
+  if (snapshotManager.updateSnapshots) process.on("exit", writeSnapshotFilesOnExit);
 }
 
-function snapshot(_value: unknown, _options: { serializers?: Function[] } = kEmptyObject) {
-  throwNotImplemented("snapshot()", 5090, "Use `bun:test` in the interim.");
+function writeSnapshotFilesOnExit() {
+  snapshotManager?.writeSnapshotFiles();
 }
+
+function snapshot(this: unknown, ...args: unknown[]) {
+  if (snapshotManager === undefined) initSnapshotManager();
+  return snapshotAssert.$apply(this, args);
+}
+
+function fileSnapshot(this: unknown, ...args: unknown[]) {
+  if (snapshotManager === undefined) initSnapshotManager();
+  return fileSnapshotAssert.$apply(this, args);
+}
+
+// -----------------------------------------------------------------------------
+// Assertions (t.assert + custom assertion registry)
+// -----------------------------------------------------------------------------
 
 const nodeAssert = require("node:assert");
 const { innerOk } = require("internal/assert/utils");
@@ -3497,7 +3562,11 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   // Callers attach listeners synchronously on the returned stream; yield first.
   await Promise.resolve();
 
+  let globalTeardownFunction: Function | undefined;
   try {
+    const globalHooks = await loadGlobalSetupModule(opts.globalSetupPath as string | undefined, opts.cwd as string);
+    globalTeardownFunction = globalHooks?.globalTeardownFunction;
+    if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
     const files = discoverRunFiles(opts);
@@ -3597,6 +3666,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       duration_ms: durationMs,
       file: undefined,
     });
+    if (globalTeardownFunction !== undefined) await globalTeardownFunction();
   } catch (err) {
     restoreAfterInProcessRun();
     reporter.destroy(err as Error);
@@ -3654,12 +3724,22 @@ async function runStandalone() {
   const reporterDone = Promise.all(reporterFlush);
   const root = getRootNode();
 
+  // node's harness runs the --test-global-setup module's globalSetup before the
+  // first test executes and its globalTeardown after the run, in every mode —
+  // including a file run directly, without --test.
+  const globalSetupPath = readExecArgvValue("--test-global-setup");
+  let globalTeardownFunction: Function | undefined;
+
   try {
+    const globalHooks = await loadGlobalSetupModule(globalSetupPath, process.cwd());
+    globalTeardownFunction = globalHooks?.globalTeardownFunction;
+    if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     const hookError = await executeStandaloneQueue(root);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
     }
+    if (globalTeardownFunction !== undefined) await globalTeardownFunction();
   } catch (err) {
     console.error(err);
     counts.failed++;
@@ -4455,14 +4535,6 @@ function afterEach(arg0: unknown, arg1: unknown) {
   hookOwner().hooks.afterEach.push(createHook(arg0, arg1));
 }
 
-function setDefaultSnapshotSerializer(_serializers: unknown[]) {
-  throwNotImplemented("setDefaultSnapshotSerializer()", 5090, "Use `bun:test` in the interim.");
-}
-
-function setResolveSnapshotPath(_fn: unknown) {
-  throwNotImplemented("setResolveSnapshotPath()", 5090, "Use `bun:test` in the interim.");
-}
-
 test.describe = describe;
 test.suite = describe;
 test.test = test;
@@ -4472,10 +4544,16 @@ test.after = after;
 test.beforeEach = beforeEach;
 test.afterEach = afterEach;
 test.assert = assert;
-test.snapshot = {
-  setDefaultSnapshotSerializer,
-  setResolveSnapshotPath,
-};
+// node exposes these lazily through a getter on module.exports (lib/test.js:44).
+Object.defineProperty(test, "snapshot", {
+  __proto__: null,
+  configurable: true,
+  enumerable: true,
+  get() {
+    const { setDefaultSnapshotSerializers, setResolveSnapshotPath } = require("internal/test/snapshot");
+    return { __proto__: null, setDefaultSnapshotSerializers, setResolveSnapshotPath };
+  },
+});
 test.run = run;
 test.mock = mock;
 test.getTestContext = getTestContext;

@@ -240,6 +240,7 @@ export const exposedInternals = {
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
   "internal/freelist": require("internal/freelist"),
   "internal/validators": require("internal/validators"),
+  "internal/test_runner/snapshot": require("internal/test/snapshot"),
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

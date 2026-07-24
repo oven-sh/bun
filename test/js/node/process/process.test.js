@@ -1346,6 +1346,9 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    // a `-`-prefixed value is still a value (bun_clap consumes it by arity),
+    // not a short chain to normalize
+    ["--define -d:1 index.ts", ["--define", "-d:1"], []],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {

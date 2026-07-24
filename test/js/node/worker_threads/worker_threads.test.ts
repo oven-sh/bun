@@ -544,6 +544,18 @@ describe("execArgv option", async () => {
     expect(got).toBe("G");
   });
 
+  it("accepts node's whole-token short aliases", async () => {
+    // `-pe` is emitted verbatim into process.execArgv (process.test.js pins
+    // it); node's option parser recognizes it as a whole-token alias, so the
+    // worker validator accepts it too.
+    const w = new Worker("require('worker_threads').parentPort.postMessage(process.execArgv);", {
+      eval: true,
+      execArgv: ["-pe", "1"],
+    });
+    const [got] = await once(w, "message");
+    expect(got).toEqual(["-pe", "1"]);
+  });
+
   it("rejects glued short flags in NODE_OPTIONS like node", async () => {
     // node v26.3.0 rejects the glued forms with the whole token in the
     // message; the space-separated form is accepted. Relative paths only:

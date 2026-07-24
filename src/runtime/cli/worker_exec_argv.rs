@@ -230,6 +230,14 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
         for &(name, spec) in NODE_FLAGS {
             put(name.to_vec(), spec);
         }
+        // `create_exec_argv` emits NODE_SHORT_ALIASES tokens verbatim (`-pe`);
+        // node's option parser recognizes them as whole-token aliases, so
+        // accept them with the target's spec.
+        for &(from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+            if let Some(&s) = map.get(to) {
+                bun_core::handle_oom(map.put(from, s));
+            }
+        }
         map
     });
     &MAP
@@ -330,6 +338,14 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
     let _ = iter.next(); // argv[0]
     for arg in iter {
         let arg: &[u8] = arg;
+        // bun_clap consumes the next token as a One/Many value unconditionally
+        // (no leading-`-` check), so a `-`-prefixed value is still a value,
+        // not a new flag to normalize.
+        if prev_takes_value {
+            out.push(arg.to_vec());
+            prev_takes_value = false;
+            continue;
+        }
         if arg.len() >= 1 && arg[0] == b'-' {
             // Node's whole-token aliases (`-pe`) are substituted before clap
             // parsing on the bun/node entry points, so they are not short
@@ -358,12 +374,6 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
         }
         if !seen_run && arg == b"run" {
             seen_run = true;
-            prev_takes_value = false;
-            continue;
-        }
-        if prev_takes_value {
-            out.push(arg.to_vec());
-            prev_takes_value = false;
             continue;
         }
         // we hit the script name

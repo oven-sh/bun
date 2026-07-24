@@ -19,12 +19,11 @@ bun_core::define_scoped_log!(debug, MySQLRequestQueue, visible);
 type Queue = LinearFifo<*mut JSMySQLQuery, DynamicBuffer<*mut JSMySQLQuery>>;
 
 pub struct MySQLRequestQueue {
-    // All fields are interior-mutable so `advance()` can mutate via the
-    // `ParentRef<Self>` backref (yields `&Self`) without per-site `unsafe`
-    // raw-pointer writes. The queue is single-JS-thread (embedded inside the
-    // connection's `JsCell`), so `Cell`/`JsCell`'s `!Sync` story is fine.
-    // `requests` uses `JsCell` (closure-scoped `with_mut`) since `LinearFifo`
-    // mutators need `&mut Queue`.
+    // All fields are interior-mutable so `advance()` can mutate through a
+    // plain `&Self` without per-site `unsafe` raw-pointer writes. The queue is
+    // single-JS-thread (embedded inside the connection's `JsCell`), so
+    // `Cell`/`JsCell`'s `!Sync` story is fine. `requests` uses `JsCell`
+    // (closure-scoped `with_mut`) since `LinearFifo` mutators need `&mut Queue`.
     requests: JsCell<Queue>,
 
     pipelined_requests: Cell<u32>,

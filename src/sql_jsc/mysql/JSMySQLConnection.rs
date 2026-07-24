@@ -175,7 +175,7 @@ impl JSMySQLConnection {
     pub(crate) fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
         // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
         // `&mut` is fresh per call site; reentrancy through
-        // `MySQLConnection::get_js_connection()` forms a shared
+        // `MySQLConnection::js_connection_ref()` forms a shared
         // `&JSMySQLConnection` only.
         unsafe { self.connection.get_mut() }
     }

@@ -369,9 +369,8 @@ impl Diagnostic {
 #[derive(Clone, Copy)]
 pub struct Help {
     /// The description text exactly as written in the param spec — may still
-    /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which
-    /// emit it verbatim, and as the source for the ANSI form
-    /// built lazily by [`pretty_help_desc`] on the `bun --help` colour path.
+    /// contain `<tag>` colour markup. Source for the ANSI form built lazily
+    /// by [`pretty_help_desc`] on the `bun --help` colour path.
     pub msg: &'static [u8],
     /// `msg` with `<tag>` colour markup stripped — the non-TTY / piped help form.
     /// Precomputed at compile time by `parse_param!` (the strip is the only

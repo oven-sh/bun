@@ -26,8 +26,8 @@ mod c {
         pub value_len: usize,
     }
     /// Mirrors `struct phr_chunked_decoder` from picohttpparser.h. The HTTP
-    /// client writes `consume_trailer` directly, so the layout must match C
-    /// exactly.
+    /// client writes `consume_trailer` and reads `_state` directly, so the
+    /// layout must match C exactly.
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
     pub struct phr_chunked_decoder {

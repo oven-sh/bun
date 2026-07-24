@@ -67,7 +67,6 @@ impl Default for StripOpts {
 pub struct PEFile {
     pub data: Vec<u8>,
     // Store offsets instead of pointers to avoid invalidation after resize
-    pub dos_header_offset: usize,
     pub pe_header_offset: usize,
     pub optional_header_offset: usize,
     pub section_headers_offset: usize,
@@ -381,7 +380,6 @@ impl PEFile {
 
         Ok(Box::new(PEFile {
             data,
-            dos_header_offset: 0,
             pe_header_offset: pe_off,
             optional_header_offset,
             section_headers_offset,

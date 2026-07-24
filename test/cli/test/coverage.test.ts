@@ -589,3 +589,67 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/35345
+test("coverage is unioned across re-imported instances of the same module", () => {
+  const dir = tempDirWithFiles("cov", {
+    "qs-target.ts": `
+export function fnA(x: number): number {
+  const a = x + 1;
+  return a * 2;
+}
+
+export function fnB(x: number): number {
+  const b = x + 10;
+  return b * 3;
+}
+`,
+    "qs-repro.test.ts": `
+import { expect, test } from "bun:test";
+
+let n = 0;
+async function load() {
+  return import(\`./qs-target?bun-test=\${++n}\`);
+}
+
+test("instance 1 calls only fnA", async () => {
+  const { fnA } = await load();
+  expect(fnA(1)).toBe(4);
+});
+
+test("instance 2 calls only fnB", async () => {
+  const { fnB } = await load();
+  expect(fnB(1)).toBe(33);
+});
+`,
+  });
+
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./qs-repro.test.ts"],
+    {
+      cwd: dir,
+      env: {
+        ...bunEnv,
+      },
+      stdio: ["inherit", "inherit", "inherit"],
+    },
+  );
+  expect(result.exitCode).toBe(0);
+
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("qs-target.ts"));
+  expect(record).toBeDefined();
+
+  // Both functions executed, each in a different instance of the module.
+  expect(record).toContain("FNF:2");
+  expect(record).toContain("FNH:2");
+
+  // Every executable line was hit in one of the two instances; no DA line
+  // may report 0 hits.
+  const zeroHitLines = [...record!.matchAll(/^DA:(\d+),0$/gm)].map(m => m[1]);
+  expect(zeroHitLines).toEqual([]);
+
+  const lf = Number(record!.match(/^LF:(\d+)$/m)![1]);
+  const lh = Number(record!.match(/^LH:(\d+)$/m)![1]);
+  expect(lh).toBe(lf);
+});

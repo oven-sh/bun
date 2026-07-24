@@ -87,30 +87,62 @@ impl Report {
         // functionHasExecutedCache), so we must preserve write provenance.
         let vm = global_this.vm_ptr();
 
-        let mut result: Option<Report> = None;
-
-        let mut generator = Generator {
-            result: &mut result,
-            byte_range_mapping,
+        let mut collector = BlockCollector {
+            blocks: Vec::new(),
+            function_blocks: Vec::new(),
         };
 
-        // SAFETY: `vm` is the live `*mut VM` owning `global_this`; Generator and the
-        // callback are kept alive for the duration of the FFI call;
-        // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
-        let ok = unsafe {
-            CodeCoverage__withBlocksAndFunctions(
-                vm,
-                generator.byte_range_mapping.source_id,
-                (&raw mut generator).cast::<c_void>(),
-                ignore_sourcemap_,
-                Generator::do_,
-            )
-        };
-        if !ok {
+        // A source URL can have multiple JSC source IDs when the same file is
+        // evaluated more than once (e.g. cache-busting `import("./mod?v=" + n)`).
+        // Query the profiler for every instance so earlier instances' hits are
+        // not lost.
+        for source_id in byte_range_mapping
+            .prior_source_ids
+            .iter()
+            .copied()
+            .chain(core::iter::once(byte_range_mapping.source_id))
+        {
+            // SAFETY: `vm` is the live `*mut VM` owning `global_this`; the collector
+            // and the callback are kept alive for the duration of the FFI call;
+            // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
+            let ok = unsafe {
+                CodeCoverage__withBlocksAndFunctions(
+                    vm,
+                    source_id,
+                    (&raw mut collector).cast::<c_void>(),
+                    ignore_sourcemap_,
+                    BlockCollector::collect,
+                )
+            };
+            if !ok {
+                return None;
+            }
+        }
+
+        if collector.blocks.is_empty() {
             return None;
         }
 
-        result
+        if !byte_range_mapping.prior_source_ids.is_empty() {
+            // The source text is identical across instances, so ranges line up
+            // byte-for-byte; union the per-instance data per range.
+            merge_duplicate_ranges(&mut collector.blocks);
+            merge_duplicate_ranges(&mut collector.function_blocks);
+        }
+
+        // No ownership transfer here:
+        // `from_utf8_never_free` already detaches the lifetime by design, and
+        // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
+        let source_url =
+            ZigStringSlice::from_utf8_never_free(byte_range_mapping.source_url.slice());
+        byte_range_mapping
+            .generate_report_from_blocks(
+                source_url,
+                &collector.blocks,
+                &collector.function_blocks,
+                ignore_sourcemap_,
+            )
+            .ok()
     }
 }
 
@@ -360,25 +392,26 @@ unsafe extern "C" {
         source_id: i32,
         ctx: *mut c_void,
         ignore_sourcemap: bool,
-        cb: extern "C" fn(*mut Generator, *const BasicBlockRange, usize, usize, bool),
+        cb: extern "C" fn(*mut BlockCollector, *const BasicBlockRange, usize, usize, bool),
     ) -> bool;
 }
 
-struct Generator<'a> {
-    byte_range_mapping: &'a mut ByteRangeMapping,
-    result: &'a mut Option<Report>,
+struct BlockCollector {
+    blocks: Vec<BasicBlockRange>,
+    function_blocks: Vec<BasicBlockRange>,
 }
 
-impl<'a> Generator<'a> {
-    extern "C" fn do_(
-        this: *mut Generator,
+impl BlockCollector {
+    extern "C" fn collect(
+        this: *mut BlockCollector,
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
-        ignore_sourcemap: bool,
+        _ignore_sourcemap: bool,
     ) {
-        // SAFETY: `this` was passed as &mut Generator to CodeCoverage__withBlocksAndFunctions
-        // and is valid for the duration of this synchronous callback.
+        // SAFETY: `this` was passed as &mut BlockCollector to
+        // CodeCoverage__withBlocksAndFunctions and is valid for the duration of this
+        // synchronous callback.
         let this = unsafe { &mut *this };
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
@@ -395,20 +428,34 @@ impl<'a> Generator<'a> {
             function_blocks = &function_blocks[1..];
         }
 
-        if blocks.is_empty() {
-            return;
-        }
-
-        // No ownership transfer here:
-        // `from_utf8_never_free` already detaches the lifetime by design, and
-        // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
-        let source_url =
-            ZigStringSlice::from_utf8_never_free(this.byte_range_mapping.source_url.slice());
-        *this.result = this
-            .byte_range_mapping
-            .generate_report_from_blocks(source_url, blocks, function_blocks, ignore_sourcemap)
-            .ok();
+        this.blocks.extend_from_slice(blocks);
+        this.function_blocks.extend_from_slice(function_blocks);
     }
+}
+
+/// Union coverage data for identical byte ranges collected from multiple
+/// instances of the same source: a range counts as executed if it executed in
+/// any instance, and hit counts are summed.
+fn merge_duplicate_ranges(ranges: &mut Vec<BasicBlockRange>) {
+    if ranges.len() < 2 {
+        return;
+    }
+    ranges.sort_unstable_by_key(|r| (r.start_offset, r.end_offset));
+    let mut out: usize = 0;
+    for i in 1..ranges.len() {
+        if ranges[i].start_offset == ranges[out].start_offset
+            && ranges[i].end_offset == ranges[out].end_offset
+        {
+            ranges[out].has_executed |= ranges[i].has_executed;
+            ranges[out].execution_count = ranges[out]
+                .execution_count
+                .saturating_add(ranges[i].execution_count);
+        } else {
+            out += 1;
+            ranges[out] = ranges[i];
+        }
+    }
+    ranges.truncate(out + 1);
 }
 
 #[repr(C)]
@@ -422,7 +469,12 @@ pub struct BasicBlockRange {
 
 pub struct ByteRangeMapping {
     pub line_offset_table: line_offset_table::List,
+    /// The most recent JSC source ID for this source URL.
     pub source_id: i32,
+    /// Source IDs of earlier instances of the same URL (one per extra
+    /// evaluation, e.g. cache-busting query-string re-imports). Coverage is
+    /// unioned across all of them.
+    pub prior_source_ids: Vec<i32>,
     pub source_url: ZigStringSlice,
 }
 
@@ -829,6 +881,7 @@ impl ByteRangeMapping {
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
             source_id,
+            prior_source_ids: Vec::new(),
             source_url,
         }
     }
@@ -852,7 +905,16 @@ pub(crate) extern "C" fn ByteRangeMapping__generate(
     let hash = bun_wyhash::hash(slice.slice());
     let source_contents = source_contents_str.to_utf8();
 
-    let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);
+    let mut new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);
+    // Re-evaluating the same URL (e.g. `import("./mod?v=" + n)`) creates a new
+    // JSC source ID; keep the old ones so report generation can union coverage
+    // across every instance instead of only the latest.
+    if let Some(old) = map.get_mut(&hash) {
+        new_value.prior_source_ids = core::mem::take(&mut old.prior_source_ids);
+        if old.source_id != source_id {
+            new_value.prior_source_ids.push(old.source_id);
+        }
+    }
     map.insert(hash, new_value);
     // `source_contents` drops here (matches `defer source_contents.deinit()`).
     // Note: `slice` ownership transferred into the new ByteRangeMapping.source_url.

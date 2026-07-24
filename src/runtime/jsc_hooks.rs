@@ -897,8 +897,6 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
-    // SAFETY: tick_immediate_tasks/uws loop dispatch JS callbacks that re-enter the VM and its
-    // EventLoop; no stable &mut can span the tick.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
@@ -1059,8 +1057,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
-    // SAFETY: same as `auto_tick` above: event-loop tick re-enters JS which mutates
-    // VM/EventLoop; raw per-field deref is required.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).

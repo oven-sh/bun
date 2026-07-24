@@ -241,7 +241,7 @@ impl PackageManager {
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
         Output::flush();
-        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
+        // `is_done` callback reborrows
         // `self` (the struct that owns `event_loop`), so use the raw-pointer
         // `tick_raw` variant which only holds `&mut event_loop` between
         // `is_done` calls.

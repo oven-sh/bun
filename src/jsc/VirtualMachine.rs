@@ -3775,9 +3775,6 @@ impl VirtualMachine {
         // RAII guard releases on every
         // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();
-        // SAFETY: the `*mut VirtualMachine` is stored as `RefString.ctx` for the WTF
-        // external-string finalizer (`clear_ref_string`) invoked later from C; a
-        // `&self`-derived pointer would carry SharedReadOnly provenance.
         let self_ctx = NonNull::new(std::ptr::from_mut::<VirtualMachine>(self).cast::<c_void>());
 
         match self.ref_strings.entry(hash) {

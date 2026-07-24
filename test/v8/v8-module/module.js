@@ -27,6 +27,25 @@ module.exports = debugMode => {
       console.log(f());
     },
 
+    test_v8_function_set_name() {
+      const dumpName = (label, fn) => {
+        const d = Object.getOwnPropertyDescriptor(fn, "name");
+        console.log(
+          `${label}.name =`,
+          JSON.stringify(d.value),
+          "writable =",
+          d.writable,
+          "enumerable =",
+          d.enumerable,
+          "configurable =",
+          d.configurable,
+        );
+      };
+      dumpName("fn", nativeModule.create_and_name_function());
+      // functions registered via NODE_SET_METHOD are named through v8::Function::SetName
+      dumpName("exported", nativeModule.test_v8_native_call);
+    },
+
     print_native_function() {
       nativeModule.print_values_from_js(nativeModule.create_function_with_data());
     },

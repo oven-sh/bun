@@ -644,11 +644,13 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 
     let trait_impl = quote! {
         const _: () = {
-            // `safe fn` (not bare `fn`) so these match the `safe fn`
-            // declarations `generate-classes.ts` emits in
-            // `generated_classes.rs` — otherwise `clashing_extern_declarations`
-            // fires for every codegen'd class (the only difference was the
-            // call-safety qualifier).
+            // Call-safety qualifiers must match the declarations
+            // `generate-classes.ts` emits in `generated_classes.rs` —
+            // otherwise `clashing_extern_declarations` fires for every
+            // codegen'd class. `__from_js*`/`__get_constructor` are `safe fn`
+            // (pure type-checked lookups); `__create` is unsafe because it
+            // installs `ptr` into a GC cell whose finalizer later frees it
+            // (deferred deref → ownership precondition).
             #[cfg(all(windows, target_arch = "x86_64"))]
             unsafe extern "sysv64" {
                 #[link_name = #from_js_lit]
@@ -656,7 +658,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                 #[link_name = #from_js_direct_lit]
                 safe fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #create_lit]
-                safe fn __create(
+                fn __create(
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
@@ -669,7 +671,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                 #[link_name = #from_js_direct_lit]
                 safe fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #create_lit]
-                safe fn __create(
+                fn __create(
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
@@ -693,9 +695,9 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     ptr: *mut Self,
                     global: &::bun_jsc::JSGlobalObject,
                 ) -> ::bun_jsc::JSValue {
-                    // Caller contract — `ptr` is a fresh heap payload;
+                    // SAFETY: caller contract — `ptr` is a fresh heap payload;
                     // ownership transfers to the C++ wrapper. See `to_js`.
-                    __create(global.as_mut_ptr(), ptr)
+                    unsafe { __create(global.as_mut_ptr(), ptr) }
                 }
 
                 /// Wrap an owned `Box<Self>` in a JS object. Typed sibling of
@@ -706,19 +708,22 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     this: ::std::boxed::Box<Self>,
                     global: &::bun_jsc::JSGlobalObject,
                 ) -> ::bun_jsc::JSValue {
-                    // Ownership transfers to the C++ wrapper; see `to_js`.
-                    __create(global.as_mut_ptr(), ::bun_jsc::heap::into_raw(this))
+                    // SAFETY: the owned `Box` is leaked right here, so the
+                    // pointer is a unique heap payload; ownership transfers to
+                    // the C++ wrapper. See `to_js`.
+                    unsafe { __create(global.as_mut_ptr(), ::bun_jsc::heap::into_raw(this)) }
                 }
             }
 
             impl ::bun_jsc::JsClass for #rust_ty {
                 fn to_js(self, global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
                     let ptr = ::bun_jsc::heap::alloc(self);
-                    // `ptr` ownership transfers to the C++ wrapper (freed via
+                    // SAFETY: `ptr` is the unique allocation made on the line
+                    // above; ownership transfers to the C++ wrapper (freed via
                     // `${T}Class__finalize`). `as_mut_ptr` derives `*mut` via
                     // `UnsafeCell` so C++ allocating on the GC heap through this
                     // pointer is sound (no read-only provenance from `&JSGlobalObject`).
-                    __create(global.as_mut_ptr(), ptr)
+                    unsafe { __create(global.as_mut_ptr(), ptr) }
                 }
                 fn from_js(value: ::bun_jsc::JSValue) -> ::core::option::Option<*mut Self> {
                     // Pure FFI downcast; returns null on type mismatch.

@@ -305,9 +305,9 @@ impl Listener {
                     }
                 }
 
-                // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
-                // transfers to the C++ wrapper.
-                let this_value = js_Listener::to_js(this, global);
+                // SAFETY: `this` is the unique heap allocation from above, not
+                // yet wrapped; ownership transfers to the C++ wrapper.
+                let this_value = unsafe { js_Listener::to_js(this, global) };
                 // The listener holds the handlers cell in a visited slot; every
                 // accepted socket shares the same cell.
                 js_Listener::handlers_set_cached(this_value, global, this_ref.handlers.cell());
@@ -557,10 +557,10 @@ impl Listener {
         }
 
         let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
-        // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
-        // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
-        // `Listener::finalize` → `deinit`).
-        let this_value = js_Listener::to_js(this, global);
+        // SAFETY: `this` is the unique heap allocation from above, not yet
+        // wrapped; ownership transfers to the C++ wrapper (freed via
+        // `ListenerClass__finalize` → `Listener::finalize` → `deinit`).
+        let this_value = unsafe { js_Listener::to_js(this, global) };
         // The listener holds the handlers cell in a visited slot; every
         // accepted socket shares the same cell.
         js_Listener::handlers_set_cached(this_value, global, this_ref.handlers.cell());

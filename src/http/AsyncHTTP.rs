@@ -780,6 +780,7 @@ impl<'a> AsyncHTTP<'a> {
                 }
                 let elapsed = (*this).elapsed;
                 bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", elapsed);
+                let slot_released_on_pause = (*this).client.flags.released_active_slot;
                 callback.run(async_http, result);
 
                 // SAFETY: `async_http` is the `async_http` field of a
@@ -807,8 +808,10 @@ impl<'a> AsyncHTTP<'a> {
                     std::alloc::Layout::new::<ThreadlocalAsyncHTTP>(),
                 );
 
-                let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
-                debug_assert!(active_requests > 0);
+                if !slot_released_on_pause {
+                    let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
+                    debug_assert!(active_requests > 0);
+                }
             }
         }
 

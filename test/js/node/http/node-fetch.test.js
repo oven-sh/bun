@@ -317,6 +317,44 @@ describe("node-fetch honours the agent option", () => {
     }
   });
 
+  test("sends Basic auth from URL userinfo", async () => {
+    const { agent } = makeAgent();
+    try {
+      await withServer(
+        (req, res) => res.end(req.headers.authorization ?? ""),
+        async port => {
+          const res = await fetch2(`http://alice:s%40cret@127.0.0.1:${port}/`, { agent });
+          expect(await res.text()).toBe("Basic " + Buffer.from("alice:s@cret").toString("base64"));
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  test("clone() preserves url and redirected", async () => {
+    const { agent } = makeAgent();
+    try {
+      await withServer(
+        (req, res) => {
+          if (req.url === "/a") {
+            res.writeHead(302, { location: "/b" });
+            res.end();
+          } else res.end("ok");
+        },
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/a`, { agent });
+          const c = res.clone();
+          expect(c.url).toBe(res.url);
+          expect(c.redirected).toBe(true);
+          expect(await c.text()).toBe("ok");
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
+  });
+
   test("honours the agent carried on a Request input", async () => {
     const { agent, calls } = makeAgent();
     try {

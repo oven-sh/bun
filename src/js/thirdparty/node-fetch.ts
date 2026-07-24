@@ -72,7 +72,14 @@ class Response extends WebResponse {
   }
 
   clone() {
-    return Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    const c = Object.setPrototypeOf(super.clone(this), ResponsePrototype);
+    const u = this[kUrl];
+    if (u !== undefined) c[kUrl] = u;
+    for (const name of ["status", "ok", "redirected"]) {
+      const d = Object.getOwnPropertyDescriptor(this, name);
+      if (d) Object.defineProperty(c, name, d);
+    }
+    return c;
   }
 
   async arrayBuffer() {
@@ -219,16 +226,12 @@ function fetchWithAgent(url, init, counter) {
       } else if (body instanceof Blob) headers.set("content-length", String(body.size));
     }
 
+    const { urlToHttpOptions } = require("internal/url");
     const parsedHostname = parsed.hostname;
-    const requestOpts = {
-      protocol,
-      hostname: parsedHostname[0] === "[" ? parsedHostname.slice(1, -1) : parsedHostname,
-      port: parsed.port,
-      path: parsed.pathname + parsed.search,
-      method,
-      headers: headers.toJSON(),
-      agent,
-    };
+    const requestOpts = urlToHttpOptions(parsed);
+    requestOpts.method = method;
+    requestOpts.headers = headers.toJSON();
+    requestOpts.agent = agent;
 
     const send = protocol === "https:" ? https.request : http.request;
     const req = send(requestOpts);
@@ -310,8 +313,8 @@ function fetchWithAgent(url, init, counter) {
             finalize(new FetchError(`maximum redirect reached at: ${href}`, "max-redirect"));
             return;
           }
-          const nextHeaders = new Headers(init.headers || undefined);
-          const nextInit: any = { ...init, counter: counter + 1, headers: nextHeaders };
+          const nextHeaders = new Headers(init.headers || (url instanceof WebRequest && url.headers) || undefined);
+          const nextInit: any = { ...init, method, body: init.body, counter: counter + 1, headers: nextHeaders };
           const nextURL = new URL(locationURL);
           if (nextURL.hostname !== parsedHostname || nextURL.protocol !== protocol) {
             for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) nextHeaders.delete(name);

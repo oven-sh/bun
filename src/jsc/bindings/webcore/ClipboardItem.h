@@ -84,6 +84,11 @@ public:
     void getType(const String&, Ref<DeferredPromise>&&);
     static bool supports(const String& type);
 
+    // The lowercased mimesniff §4.4 essence (`type/subtype`), or empty for an
+    // input that does not parse. Every MIME-type comparison site normalizes
+    // through this so validation and storage cannot drift apart.
+    static String parseMIMETypeEssence(const String&);
+
     void collectDataForWriting(Clipboard& destination, CompletionHandler<void(std::optional<ClipboardItemData>, JSC::JSValue failureReason)>&&);
 
     PresentationStyle presentationStyle() const { return m_presentationStyle; }

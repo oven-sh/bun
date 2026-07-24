@@ -34,6 +34,7 @@
 #include "ClipboardPlatform.h"
 #include "ExceptionCode.h"
 #include "ExceptionOr.h"
+#include "HTTPParsers.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromise.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -87,7 +88,22 @@ void ClipboardItem::collectDataForWriting(Clipboard& destination, CompletionHand
 
 bool ClipboardItem::supports(const String& type)
 {
-    return clipboardSupportsType(type);
+    auto essence = parseMIMETypeEssence(type);
+    return !essence.isEmpty() && clipboardSupportsType(essence);
+}
+
+String ClipboardItem::parseMIMETypeEssence(const String& type)
+{
+    auto view = StringView(type).trim(isASCIIWhitespace<char16_t>);
+    size_t semicolon = view.find(';');
+    if (semicolon != notFound)
+        view = view.left(semicolon).trim(isASCIIWhitespace<char16_t>);
+    size_t slash = view.find('/');
+    if (slash == notFound)
+        return {};
+    if (!isValidHTTPToken(view.left(slash)) || !isValidHTTPToken(view.substring(slash + 1)))
+        return {};
+    return view.convertToASCIILowercase();
 }
 
 Ref<Blob> ClipboardItem::blobFromString(JSC::JSGlobalObject* globalObject, const String& stringData, const String& type)

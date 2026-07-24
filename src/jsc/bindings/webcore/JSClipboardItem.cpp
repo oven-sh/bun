@@ -22,7 +22,6 @@
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
-#include "HTTPParsers.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -52,21 +51,6 @@
 
 namespace WebCore {
 using namespace JSC;
-
-// WebIDL: every key of the items record must parse per mimesniff §4.4, which
-// strips surrounding HTTP whitespace and parses `;`-delimited parameters. Only
-// the `type "/" subtype` essence is validated here, each half an HTTP token.
-static bool isValidClipboardMIMEType(const String& type)
-{
-    auto view = StringView(type).trim(isASCIIWhitespace<char16_t>);
-    size_t semicolon = view.find(';');
-    if (semicolon != notFound)
-        view = view.left(semicolon).trim(isASCIIWhitespace<char16_t>);
-    size_t slash = view.find('/');
-    if (slash == notFound)
-        return false;
-    return isValidHTTPToken(view.left(slash)) && isValidHTTPToken(view.substring(slash + 1));
-}
 
 static ASCIILiteral presentationStyleString(ClipboardItem::PresentationStyle style)
 {
@@ -147,12 +131,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardItemDOMConstr
     Vector<KeyValuePair<String, Ref<DOMPromise>>> items;
     items.reserveInitialCapacity(record.size());
     for (auto& entry : record) {
-        if (!isValidClipboardMIMEType(entry.key)) [[unlikely]]
+        // Spec: `types` holds the serialization of the parsed MIME type
+        // (mimesniff §4.4), and two keys parsing to the same essence are one
+        // representation twice.
+        String normalized = ClipboardItem::parseMIMETypeEssence(entry.key);
+        if (normalized.isEmpty()) [[unlikely]]
             return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("\""_s, entry.key, "\" is not a valid MIME type"_s)));
-
-        // Spec: `types` holds the serialization of the parsed MIME type, and
-        // two keys with the same serialization are one representation twice.
-        String normalized = entry.key.convertToASCIILowercase();
         bool duplicate = items.containsIf([&](auto& item) { return item.key == normalized; });
         if (duplicate) [[unlikely]]
             return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("Duplicate MIME type \""_s, normalized, "\""_s)));
@@ -319,8 +303,11 @@ static inline JSC::EncodedJSValue jsClipboardItemPrototypeFunction_getTypeBody(J
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     throwScope.release();
-    // MIME types are matched by their lowercased serialization.
-    impl.getType(type.convertToASCIILowercase(), WTF::move(promise));
+    // Stored keys are mimesniff-essences; match the argument the same way,
+    // falling back to a plain lowercase so an unparsable argument still hits
+    // the data source's own NotFoundError.
+    String essence = ClipboardItem::parseMIMETypeEssence(type);
+    impl.getType(essence.isEmpty() ? type.convertToASCIILowercase() : essence, WTF::move(promise));
     return JSValue::encode(jsUndefined());
 }
 

@@ -147,11 +147,24 @@ describe("ClipboardItem", () => {
     expect(new ClipboardItem(new Proxy({ "text/plain": "x" }, {})).types).toEqual(["text/plain"]);
     const items = Object.defineProperty({ "text/plain": "x" }, "not a mime", { value: "y", enumerable: false });
     expect(new ClipboardItem(items).types).toEqual(["text/plain"]);
-    // mimesniff §4.4: leading/trailing whitespace and `;`-parameters are
-    // accepted (Chrome/Firefox behave the same).
-    expect(() => new ClipboardItem({ "text/plain;charset=utf-8": "x" })).not.toThrow();
-    expect(() => new ClipboardItem({ " text/plain ": "x" })).not.toThrow();
+    // mimesniff §4.4: leading/trailing whitespace and `;`-parameters parse to
+    // the essence, which is what `types` reports and what every lookup compares
+    // against (Chrome/Firefox behave the same).
+    const parameterized = new ClipboardItem({ "Text/Plain; charset=utf-8": "x" });
+    expect(parameterized.types).toEqual(["text/plain"]);
+    const padded = new ClipboardItem({ " text/plain ": "y" });
+    expect(padded.types).toEqual(["text/plain"]);
     expect(() => new ClipboardItem({ "text/": "x" })).toThrow(TypeError);
+    // Two spellings of one essence are one representation, not two.
+    expect(() => new ClipboardItem({ "text/plain": "a", " text/plain ": "b" })).toThrow(TypeError);
+    // supports() normalizes the same way.
+    expect(ClipboardItem.supports("text/plain;charset=utf-8")).toBe(true);
+  });
+
+  test("getType() matches by the parsed MIME essence", async () => {
+    const item = new ClipboardItem({ " Text/Plain ; charset=utf-8": "essence" });
+    expect(await (await item.getType("text/plain")).text()).toBe("essence");
+    expect(await (await item.getType(" text/plain;charset=utf-8 ")).text()).toBe("essence");
   });
 
   test("MIME types are normalized to their lowercased serialization", async () => {

@@ -286,9 +286,8 @@ impl FileCloser for ReadFile {
             let this = unsafe { bun_ptr::callback_ctx::<ReadFile>(ctx.cast()) };
             <ReadFile as FileCloser>::on_io_request_closed(this);
         }
-        // SAFETY: `ctx` is the async io-close callback's *mut Self (on_done re-enters/mutates
-        // self); the hoist before `&mut this.io_poll` is already the minimal safe
-        // ordering.
+        // SAFETY: `ctx` is the async io-close callback's *mut Self; on_done re-enters and
+        // mutates self, so `ptr::from_mut` write provenance is required.
         let ctx = std::ptr::from_mut::<ReadFile>(this).cast::<()>();
         let fd = this.opened_fd;
         io::Action::Close(io::CloseAction {

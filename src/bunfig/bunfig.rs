@@ -195,6 +195,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub(crate) fn expect_bool(&mut self, expr: &Expr) -> crate::Result<bool> {
+        self.expect(expr, ExprTag::EBoolean)?;
+        Ok(expr.as_bool().expect("infallible: type checked"))
+    }
+
+    pub(crate) fn expect_owned_string(&mut self, expr: &Expr) -> crate::Result<Box<[u8]>> {
+        self.expect_string(expr)?;
+        Ok(expr
+            .as_string(self.bump)
+            .expect("infallible: type checked")
+            .into())
+    }
+
     fn apply_coverage_reporter_item(&mut self, item: &Expr) -> crate::Result<()> {
         let item_str = item.as_string(self.bump).unwrap_or(b"");
         if item_str == b"text" {
@@ -1301,9 +1314,7 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(exact) = install_obj.get(b"exact") {
-            if let Some(v) = exact.as_bool() {
-                install.exact = Some(v);
-            }
+            install.exact = Some(self.expect_bool(&exact)?);
         }
 
         if let Some(registry) = install_obj.get(b"registry") {
@@ -1332,29 +1343,32 @@ impl<'a> Parser<'a> {
             install.scoped = Some(registry_map);
         }
 
-        if let Some(v) = install_obj.get(b"dryRun").and_then(|e| e.as_bool()) {
-            install.dry_run = Some(v);
+        if let Some(expr) = install_obj.get(b"dryRun") {
+            install.dry_run = Some(self.expect_bool(&expr)?);
         }
-        if let Some(v) = install_obj.get(b"production").and_then(|e| e.as_bool()) {
-            install.production = Some(v);
+        if let Some(expr) = install_obj.get(b"production") {
+            install.production = Some(self.expect_bool(&expr)?);
         }
-        if let Some(v) = install_obj.get(b"frozenLockfile").and_then(|e| e.as_bool()) {
-            install.frozen_lockfile = Some(v);
+        if let Some(expr) = install_obj.get(b"frozenLockfile") {
+            install.frozen_lockfile = Some(self.expect_bool(&expr)?);
         }
-        if let Some(v) = install_obj
-            .get(b"saveTextLockfile")
-            .and_then(|e| e.as_bool())
-        {
-            install.save_text_lockfile = Some(v);
+        if let Some(expr) = install_obj.get(b"saveTextLockfile") {
+            install.save_text_lockfile = Some(self.expect_bool(&expr)?);
         }
         if let Some(jobs) = install_obj.get(b"concurrentScripts") {
-            if let Some(n) = jobs.as_number() {
-                let n = num_to_u32(n);
-                install.concurrent_scripts = if n == 0 { None } else { Some(n) };
+            self.expect(&jobs, ExprTag::ENumber)?;
+            let value = jobs.as_number().expect("infallible: type checked");
+            if !value.is_finite() || value < 0.0 {
+                self.add_error(
+                    jobs.loc,
+                    b"Expected a non-negative finite number for concurrentScripts",
+                )?;
             }
+            let n = num_to_u32(value);
+            install.concurrent_scripts = if n == 0 { None } else { Some(n) };
         }
-        if let Some(v) = install_obj.get(b"ignoreScripts").and_then(|e| e.as_bool()) {
-            install.ignore_scripts = Some(v);
+        if let Some(expr) = install_obj.get(b"ignoreScripts") {
+            install.ignore_scripts = Some(self.expect_bool(&expr)?);
         }
         if let Some(node_linker_expr) = install_obj.get(b"linker") {
             self.expect_string(&node_linker_expr)?;
@@ -1368,11 +1382,12 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(v) = install_obj.get(b"globalStore").and_then(|e| e.as_bool()) {
-            install.global_store = Some(v);
+        if let Some(expr) = install_obj.get(b"globalStore") {
+            install.global_store = Some(self.expect_bool(&expr)?);
         }
 
         if let Some(lockfile_expr) = install_obj.get(b"lockfile") {
+            self.expect(&lockfile_expr, ExprTag::EObject)?;
             if let Some(lockfile) = lockfile_expr.get(b"print") {
                 self.expect_string(&lockfile)?;
                 if let Some(value) = lockfile.as_string(self.bump) {
@@ -1387,77 +1402,71 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            if let Some(v) = lockfile_expr.get(b"save").and_then(|e| e.as_bool()) {
-                install.save_lockfile = Some(v);
+            if let Some(expr) = lockfile_expr.get(b"save") {
+                install.save_lockfile = Some(self.expect_bool(&expr)?);
             }
-            if let Some(v) = lockfile_expr
-                .get(b"path")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.lockfile_path = Some(v.into());
+            if let Some(expr) = lockfile_expr.get(b"path") {
+                install.lockfile_path = Some(self.expect_owned_string(&expr)?);
             }
-            if let Some(v) = lockfile_expr
-                .get(b"savePath")
-                .and_then(|e| e.as_string(self.bump))
-            {
-                install.save_lockfile_path = Some(v.into());
+            if let Some(expr) = lockfile_expr.get(b"savePath") {
+                install.save_lockfile_path = Some(self.expect_owned_string(&expr)?);
             }
         }
 
-        if let Some(v) = install_obj.get(b"optional").and_then(|e| e.as_bool()) {
-            install.save_optional = Some(v);
+        if let Some(expr) = install_obj.get(b"optional") {
+            install.save_optional = Some(self.expect_bool(&expr)?);
         }
-        if let Some(v) = install_obj.get(b"peer").and_then(|e| e.as_bool()) {
-            install.save_peer = Some(v);
+        if let Some(expr) = install_obj.get(b"peer") {
+            install.save_peer = Some(self.expect_bool(&expr)?);
         }
-        if let Some(v) = install_obj.get(b"dev").and_then(|e| e.as_bool()) {
-            install.save_dev = Some(v);
+        if let Some(expr) = install_obj.get(b"dev") {
+            install.save_dev = Some(self.expect_bool(&expr)?);
         }
-        if let Some(v) = install_obj
-            .get(b"globalDir")
-            .and_then(|e| e.as_string(self.bump))
-        {
-            install.global_dir = Some(v.into());
+        if let Some(expr) = install_obj.get(b"globalDir") {
+            install.global_dir = Some(self.expect_owned_string(&expr)?);
         }
-        if let Some(v) = install_obj
-            .get(b"globalBinDir")
-            .and_then(|e| e.as_string(self.bump))
-        {
-            install.global_bin_dir = Some(v.into());
+        if let Some(expr) = install_obj.get(b"globalBinDir") {
+            install.global_bin_dir = Some(self.expect_owned_string(&expr)?);
         }
 
         if let Some(cache) = install_obj.get(b"cache") {
-            'load: {
-                if let Some(value) = cache.as_bool() {
-                    if !value {
+            match &cache.data {
+                ExprData::EBoolean(b) => {
+                    if !b.value {
                         install.disable_cache = Some(true);
                         install.disable_manifest_cache = Some(true);
                     }
-                    break 'load;
                 }
-                if let Some(value) = cache.as_string(self.bump) {
-                    install.cache_directory = Some(value.into());
-                    break 'load;
+                ExprData::EString(_) => {
+                    install.cache_directory = Some(
+                        cache
+                            .as_string(self.bump)
+                            .expect("infallible: variant checked")
+                            .into(),
+                    );
                 }
-                if let ExprData::EObject(_) = cache.data {
-                    if let Some(v) = cache.get(b"disable").and_then(|e| e.as_bool()) {
-                        install.disable_cache = Some(v);
+                ExprData::EObject(_) => {
+                    if let Some(expr) = cache.get(b"disable") {
+                        install.disable_cache = Some(self.expect_bool(&expr)?);
                     }
-                    if let Some(v) = cache.get(b"disableManifest").and_then(|e| e.as_bool()) {
-                        install.disable_manifest_cache = Some(v);
+                    if let Some(expr) = cache.get(b"disableManifest") {
+                        install.disable_manifest_cache = Some(self.expect_bool(&expr)?);
                     }
-                    if let Some(v) = cache.get(b"dir").and_then(|e| e.as_string(self.bump)) {
-                        install.cache_directory = Some(v.into());
+                    if let Some(expr) = cache.get(b"dir") {
+                        install.cache_directory = Some(self.expect_owned_string(&expr)?);
                     }
+                }
+                _ => {
+                    self.add_error(
+                        cache.loc,
+                        b"Expected cache to be a boolean, string, or object",
+                    )?;
                 }
             }
         }
 
-        if let Some(v) = install_obj
-            .get(b"linkWorkspacePackages")
-            .and_then(|e| e.as_bool())
-        {
-            install.link_workspace_packages = Some(v);
+        if let Some(expr) = install_obj.get(b"linkWorkspacePackages") {
+            install.link_workspace_packages = Some(self.expect_bool(&expr)?);
         }
 
         if let Some(security_obj) = install_obj.get(b"security") {

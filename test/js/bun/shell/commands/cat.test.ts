@@ -41,6 +41,15 @@ describe.concurrent("cat (builtin)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("empty regular file", async () => {
+    using dir = tempDir("shell-cat-empty", { "empty.txt": "" });
+    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat empty.txt > out.txt");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(path.join(String(dir), "out.txt")).text()).toBe("");
+  });
+
   test("concatenates multiple file arguments", async () => {
     using dir = tempDir("shell-cat-multi", {
       "a.txt": "first\n",

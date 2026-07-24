@@ -479,26 +479,30 @@ impl ReadFile {
 
     /// Pick the read target: `buffer`'s spare capacity if it is at least as
     /// large as `stack_buffer`, otherwise `stack_buffer`; capped by
-    /// `max_length - read_off`.
+    /// `max_length - read_off`. Returns `(use_stack, target)` so the caller
+    /// keys its `extend_from_slice`/`commit_spare` decision off the same
+    /// branch taken here.
     #[cfg(not(windows))]
     fn remaining_buffer<'a>(
         buffer: &'a mut Vec<u8>,
         stack_buffer: &'a mut [u8],
         max_length: SizeType,
         read_off: SizeType,
-    ) -> &'a mut [u8] {
+    ) -> (bool, &'a mut [u8]) {
         let cap = (max_length.saturating_sub(read_off)) as usize;
         let spare = buffer.spare_capacity_mut();
         if spare.len() < stack_buffer.len() {
             let n = stack_buffer.len().min(cap);
-            &mut stack_buffer[..n]
+            (true, &mut stack_buffer[..n])
         } else {
             let n = spare.len().min(cap);
             // SAFETY: `spare` is `&mut [MaybeUninit<u8>]` over the Vec's spare
             // capacity. The bytes are only written by the `read()`/`recv()`
             // syscall below and `commit_spare` advances `len` by exactly the
             // kernel-reported initialized count; no uninit byte is ever read.
-            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), n) }
+            let target =
+                unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), n) };
+            (false, target)
         }
     }
 
@@ -800,9 +804,7 @@ impl ReadFile {
             // held as a safe `&mut [u8]` across the `&mut self` call.
             let mut buffer = core::mem::take(&mut self.buffer);
             while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-                let use_stack =
-                    buffer.capacity() - buffer.len() < stack_buffer.len();
-                let buf = Self::remaining_buffer(
+                let (use_stack, buf) = Self::remaining_buffer(
                     &mut buffer,
                     &mut stack_buffer,
                     self.max_length,

@@ -2054,10 +2054,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // not repeated.
         unsafe { (*transpiler_for_deinit).deinit() };
     }
-    // `Transpiler::env` is a process-singleton `*mut` (set by `init`); pass as
-    // raw pointer so `run_package_script_foreground` can `&mut` it without
-    // conflicting with our `&Transpiler` borrow.
-    let transpiler_env: *mut bun_dotenv::Loader = this_transpiler.env;
     ctx.manager.env_mut().map.put(b"npm_command", b"pack")?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
@@ -2090,7 +2086,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                         prepublish_only,
                         b"prepublishOnly",
                         abs_workspace_path,
-                        transpiler_env,
+                        ctx.manager.env_mut(),
                         ctx.manager.options.log_level == LogLevel::Silent,
                     )?;
                 }
@@ -2105,7 +2101,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     prepack_script_str,
                     b"prepack",
                     abs_workspace_path,
-                    transpiler_env,
+                    ctx.manager.env_mut(),
                     ctx.manager.options.log_level == LogLevel::Silent,
                 )?;
             }
@@ -2119,7 +2115,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     prepare_script_str,
                     b"prepare",
                     abs_workspace_path,
-                    transpiler_env,
+                    ctx.manager.env_mut(),
                     ctx.manager.options.log_level == LogLevel::Silent,
                 )?;
             }
@@ -2439,7 +2435,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 postpack_script_str,
                 b"postpack",
                 abs_workspace_path,
-                pm_env(ctx.manager),
+                ctx.manager.env_mut(),
                 ctx.manager.options.log_level == LogLevel::Silent,
             )?;
         }
@@ -2926,7 +2922,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             postpack_script_str,
             b"postpack",
             abs_workspace_path,
-            pm_env(ctx.manager),
+            ctx.manager.env_mut(),
             ctx.manager.options.log_level == LogLevel::Silent,
         )?;
     }
@@ -2965,7 +2961,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
-    env: *mut bun_dotenv::Loader,
+    env: &mut bun_dotenv::Loader,
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
     let use_system_shell = command_ctx.debug.use_system_shell;
@@ -2974,9 +2970,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
         script,
         name,
         abs_workspace_path,
-        // SAFETY: `env` is non-null (set by `PackageManager::init` /
-        // `configure_env_for_run`).
-        unsafe { &mut *env },
+        env,
         &[],
         silent,
         use_system_shell,

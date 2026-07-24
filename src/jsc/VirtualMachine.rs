@@ -2200,6 +2200,7 @@ impl VirtualMachine {
         if opts.is_main_thread {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
+            crate::memory_pressure_watcher::install_on_event_loop(vm);
         }
 
         if opts.smol {
@@ -4379,6 +4380,9 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        if self.is_main_thread {
+            crate::memory_pressure_watcher::uninstall();
+        }
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 

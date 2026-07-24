@@ -18,7 +18,7 @@ const {
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
-  NodeHTTPResponseAbortEvent,
+  onDataIncomingMessage,
   kAbortController,
 } = require("internal/http");
 
@@ -409,29 +409,6 @@ IncomingMessage.prototype._read = function _read(_n) {
     handle.hasCustomOnData = false;
   }
 };
-
-function onDataIncomingMessage(
-  this: import("node:http").IncomingMessage,
-  chunk,
-  isLast,
-  aborted: NodeHTTPResponseAbortEvent,
-) {
-  if (aborted === NodeHTTPResponseAbortEvent.abort) {
-    this.destroy();
-    return;
-  }
-
-  // Incoming request-body bytes are socket activity: push the connection's
-  // inactivity timeout (socket.setTimeout / server.timeout) further out, like
-  // Node.js does for reads on the socket.
-  this.socket?._unrefTimer?.();
-
-  if (chunk && !this._dumped) this.push(chunk);
-
-  if (isLast) {
-    emitEOFIncomingMessage(this);
-  }
-}
 
 // It's possible that the socket will be destroyed, and removed from
 // any messages, before ever calling this.  In that case, just skip

@@ -33,12 +33,3 @@ impl EOFPacket {
         Ok(())
     }
 }
-
-impl EOFPacket {
-    pub fn decode<Context: ReaderContext>(
-        &mut self,
-        context: Context,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(NewReader { wrapped: context })
-    }
-}

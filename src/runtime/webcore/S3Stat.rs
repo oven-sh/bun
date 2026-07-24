@@ -13,7 +13,7 @@ pub struct S3Stat {
 
 impl S3Stat {
     pub(crate) fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
-        Err(global.throw_illegal_constructor("S3Stat"))
+        Err(global.throw_illegal_constructor())
     }
 
     pub(crate) fn init(

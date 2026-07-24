@@ -252,16 +252,6 @@ pub struct Op {
     pub is_keyword: bool,
 }
 
-impl Default for Op {
-    fn default() -> Self {
-        Op {
-            text: b"",
-            level: Level::Lowest,
-            is_keyword: false,
-        }
-    }
-}
-
 impl Op {
     pub const fn init(text: &'static [u8], level: Level, is_keyword: bool) -> Op {
         Op {
@@ -272,29 +262,14 @@ impl Op {
     }
 }
 
-pub type TableType = Table;
-
 /// `.rodata` `[Op; Code::COUNT]` indexed by [`Code`] discriminant. Exposes
-/// `get_ptr_const`/`get`/`[]` accessors so downstream callers don't see the
-/// raw array.
+/// a `get_ptr_const` accessor so downstream callers don't see the raw array.
 #[repr(transparent)]
 pub struct Table(pub [Op; <Code as Enum>::LENGTH]);
 
 impl Table {
     #[inline]
     pub fn get_ptr_const(&'static self, code: Code) -> &'static Op {
-        &self.0[code as usize]
-    }
-    #[inline]
-    pub fn get(&self, code: Code) -> Op {
-        self.0[code as usize]
-    }
-}
-
-impl core::ops::Index<Code> for Table {
-    type Output = Op;
-    #[inline]
-    fn index(&self, code: Code) -> &Op {
         &self.0[code as usize]
     }
 }

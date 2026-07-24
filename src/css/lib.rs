@@ -39,8 +39,6 @@ pub mod compat;
 pub mod logical;
 #[path = "prefixes.rs"]
 pub mod prefixes;
-#[path = "sourcemap.rs"]
-pub mod sourcemap;
 #[path = "targets.rs"]
 pub mod targets;
 
@@ -90,7 +88,7 @@ pub use values as css_values;
 // selector/property/media_query bodies via `css::*`.
 pub use css_parser::{
     CssRef, CssRefTag, CssResult as Result, Delimiters, EnumProperty, IntoParserError, Maybe,
-    ParserState, enum_property_util, nth, parse_utility, signfns, void_wrap,
+    ParserState, enum_property_util, nth, parse_utility, signfns,
 };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
@@ -122,7 +120,6 @@ pub(crate) unsafe fn arena_str(p: Str) -> &'static [u8] {
 pub use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
-pub use error::ParserErrorKind as ErrorKind;
 pub use properties::custom::{TokenList, TokenListFns};
 pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
@@ -153,28 +150,6 @@ pub mod css_parser;
 pub mod printer;
 #[path = "values/mod.rs"]
 pub mod values;
-
-/// Re-exports from `values::{color,ident,url}` so callers that still use
-/// the legacy `values_stub` path resolve to the canonical types.
-pub mod values_stub {
-    /// Re-export the real `values/color.rs` surface so any remaining
-    /// `values_stub::color::*` paths resolve to the canonical types.
-    pub mod color {
-        pub use crate::values::color::*;
-
-        pub type CssColorParseResult = crate::values::color::ParseResult;
-
-        /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
-        /// Real body lives in `css_parser::color::hsl_to_rgb`; re-exported for
-        /// any callers that reached it via the stub path.
-        pub use crate::css_parser::color::hsl_to_rgb;
-    }
-
-    /// Re-export of the real `values/ident.rs`.
-    pub mod ident {
-        pub use crate::values::ident::*;
-    }
-}
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 
@@ -217,7 +192,7 @@ pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
 pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
-pub use values_stub::color::CssColorParseResult;
+pub type CssColorParseResult = values::color::ParseResult;
 
 // Cross-crate re-exports.
 pub use error::{
@@ -225,7 +200,7 @@ pub use error::{
     ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
 };
 pub type Error = Err<ParserError>;
-pub use logical::{LogicalGroup, PropertyCategory};
+pub use logical::PropertyCategory;
 pub use targets::{Browsers, Features, Targets};
 
 // Bundler-facing surface (`bun_bundler::Chunk` / `scanImportsAndExports`
@@ -255,9 +230,6 @@ bitflags::bitflags! {
 }
 
 impl VendorPrefix {
-    pub const EMPTY: VendorPrefix = VendorPrefix::empty();
-    pub const ALL_PREFIXES: VendorPrefix = VendorPrefix::all();
-
     /// Fields listed here so we can iterate them in the order we want
     pub const FIELDS: &'static [VendorPrefix] = &[
         VendorPrefix::WEBKIT,
@@ -291,15 +263,6 @@ impl VendorPrefix {
     #[inline]
     pub fn or_(self, other: VendorPrefix) -> VendorPrefix {
         if self.is_empty() { other } else { self }
-    }
-
-    pub fn difference_(left: Self, right: Self) -> Self {
-        // Arithmetic subtraction on bits, not set difference; callers depend on it.
-        Self::from_bits_retain(left.bits().wrapping_sub(right.bits()))
-    }
-
-    pub fn bitwise_and(self, b: Self) -> Self {
-        self & b
     }
 
     pub fn as_bits(self) -> u8 {

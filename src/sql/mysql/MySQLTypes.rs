@@ -108,8 +108,5 @@ impl FieldType {
 // Callers import `bun_sql_jsc::mysql::mysql_value::Value` directly.
 
 pub(crate) type MySQLInt32 = Int4;
-pub(crate) type MySQLInt64 = Int8;
 // encode/decode sites must mask/read exactly 3 bytes. Verify all Int3 users do so.
-pub type Int3 = u32;
 pub type Int4 = u32;
-pub type Int8 = u64;

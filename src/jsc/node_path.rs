@@ -213,14 +213,6 @@ impl PathLike {
             Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
         }
     }
-
-    /// Consuming `to_thread_safe()`: protect any JS-backed buffer and return a
-    /// guard that unprotects on drop.
-    #[inline]
-    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-        self.to_thread_safe();
-        ThreadSafe::adopt(self)
-    }
 }
 
 impl Unprotect for PathLike {
@@ -290,13 +282,6 @@ impl PathOrFileDescriptor {
         if let Self::Path(p) = self {
             p.to_thread_safe();
         }
-    }
-
-    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
-    #[inline]
-    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
-        self.to_thread_safe();
-        ThreadSafe::adopt(self)
     }
 
     #[inline]

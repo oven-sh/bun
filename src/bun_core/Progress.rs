@@ -329,62 +329,6 @@ impl Node {
         }
     }
 
-    /// Thread-safe.
-    pub fn set_name(&mut self, name: &'static [u8]) {
-        let ctx_ptr = self.context_ptr();
-        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        let progress = unsafe { &mut *ctx_ptr };
-        // `timer` is `Copy` and write-once (set in `Progress::start` before any
-        // child node exists); read it through the live `&mut Progress` instead
-        // of a second raw `(*ctx_ptr).timer` deref later.
-        let timer = progress.timer;
-        let _g = progress.update_mutex.lock();
-        self.name = name;
-        let self_ptr: *mut Node = self;
-        let parent_ptr = self.parent_ptr();
-        if let Some(parent) = self.parent() {
-            parent
-                .recently_updated_child
-                .store(self_ptr, Ordering::Release);
-            if let Some(grand_parent) = parent.parent() {
-                grand_parent
-                    .recently_updated_child
-                    .store(parent_ptr, Ordering::Release);
-            }
-            if let Some(timer) = timer {
-                // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
-            }
-        }
-    }
-
-    /// Thread-safe.
-    pub fn set_unit(&mut self, unit: Unit) {
-        let ctx_ptr = self.context_ptr();
-        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        let progress = unsafe { &mut *ctx_ptr };
-        // See `set_name` — `timer` is write-once `Copy`; hoist the read.
-        let timer = progress.timer;
-        let _g = progress.update_mutex.lock();
-        self.unit = unit;
-        let self_ptr: *mut Node = self;
-        let parent_ptr = self.parent_ptr();
-        if let Some(parent) = self.parent() {
-            parent
-                .recently_updated_child
-                .store(self_ptr, Ordering::Release);
-            if let Some(grand_parent) = parent.parent() {
-                grand_parent
-                    .recently_updated_child
-                    .store(parent_ptr, Ordering::Release);
-            }
-            if let Some(timer) = timer {
-                // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
-            }
-        }
-    }
-
     /// Thread-safe. 0 means unknown.
     pub fn set_estimated_total_items(&self, count: usize) {
         self.unprotected_estimated_total_items
@@ -679,39 +623,6 @@ impl Progress {
             return;
         }
         self.columns_written = 0;
-    }
-
-    /// Allows the caller to freely write to stderr until `unlock_stderr()` is
-    /// called. During the lock, the progress information is cleared from the
-    /// terminal.
-    ///
-    /// `crate::Mutex` (std::sync wrapper) has no
-    /// raw `unlock()`, and storing a guard on `self` is self-referential. There
-    /// are currently **no callers** of `lock_stderr`/`unlock_stderr`,
-    /// so this clears the terminal under a scoped lock
-    /// and `unlock_stderr` is a no-op. If a caller materializes, refactor to
-    /// return the guard (or move `update_mutex` to a raw `bun_threading::Mutex`
-    /// once layering allows) and route stderr through a shared global mutex.
-    pub fn lock_stderr(&mut self) {
-        let ctx_ptr = std::ptr::from_mut::<Self>(self);
-        let _g = self.update_mutex.lock();
-        // SAFETY: ctx_ptr from &mut self; guard only references the mutex field
-        // (same disjoint-field pattern as `refresh`/`maybe_refresh` above).
-        let this = unsafe { &mut *ctx_ptr };
-        if let Some(file) = this.terminal {
-            let mut end: usize = 0;
-            this.clear_with_held_lock(&mut end);
-            if file.write(&this.output_buffer[0..end]).is_err() {
-                // stop trying to write to this file
-                this.terminal = None;
-            }
-        }
-        // `_g` drops here; lock is NOT held past return — see the doc comment above.
-    }
-
-    pub fn unlock_stderr(&mut self) {
-        // No-op; see the doc comment on `lock_stderr`.
-        let _ = self;
     }
 
     fn buf_write(&mut self, end: &mut usize, args: fmt::Arguments<'_>) {

@@ -342,16 +342,6 @@ pub fn dependency_url(url: &[u8]) -> DependencyUrlFormatter<'_> {
 // IntegrityFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-// adt_const_params (enum const-generic) is nightly. Stable rewrite: const bool.
-pub const INTEGRITY_SHORT: bool = true;
-pub const INTEGRITY_FULL: bool = false;
-#[doc(hidden)]
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum IntegrityFormatStyle {
-    Short,
-    Full,
-} // kept for callers that name the enum
-
 pub struct IntegrityFormatter<const SHORT: bool> {
     pub bytes: [u8; SHA512_DIGEST],
 }
@@ -573,37 +563,6 @@ pub fn utf16(slice_: &[u16]) -> FormatUTF16<'_> {
     FormatUTF16 {
         buf: slice_,
         path_fmt_opts: None,
-    }
-}
-
-/// Debug, this does not handle invalid utf32
-#[inline]
-pub fn debug_utf32_path_formatter(path: &[u32]) -> DebugUTF32PathFormatter<'_> {
-    DebugUTF32PathFormatter { path }
-}
-
-pub struct DebugUTF32PathFormatter<'a> {
-    pub path: &'a [u32],
-}
-
-impl Display for DebugUTF32PathFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut path_buf = crate::PathBuffer::uninit();
-        let buf = path_buf.as_mut_slice();
-        // SAFETY: FFI reads exactly path.len() u32s and writes ≤ MAX_PATH_BYTES bytes.
-        let result = unsafe {
-            bun_simdutf_sys::simdutf::simdutf__convert_utf32_to_utf8_with_errors(
-                self.path.as_ptr(),
-                self.path.len(),
-                buf.as_mut_ptr(),
-            )
-        };
-        let converted: &[u8] = if result.is_successful() {
-            &buf[..result.count]
-        } else {
-            b"Invalid UTF32!"
-        };
-        write_bytes(f, converted)
     }
 }
 
@@ -1361,20 +1320,6 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
     Ok(())
 }
 
-pub struct GithubActionFormatter<'a> {
-    pub text: &'a [u8],
-}
-
-impl Display for GithubActionFormatter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        github_action_writer(f, self.text)
-    }
-}
-
-pub fn github_action(self_: &[u8]) -> GithubActionFormatter<'_> {
-    GithubActionFormatter { text: self_ }
-}
-
 /// Formats a string to be safe to use as a Github Actions workflow-command
 /// *property* value (e.g. the `title=` in `::error title=...::`). Unlike
 /// [`github_action`] (which only escapes the message-class metacharacters), this
@@ -1445,13 +1390,6 @@ impl Display for QuotedFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 // QuickAndDirtyJavaScriptSyntaxHighlighter
 // ───────────────────────────────────────────────────────────────────────────
-
-pub fn fmt_java_script(
-    text: &[u8],
-    opts: HighlighterOptions,
-) -> QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
-    QuickAndDirtyJavaScriptSyntaxHighlighter { text, opts }
-}
 
 /// snake_case alias of `fmt_java_script`. Several
 /// downstream crates spell it `fmt_javascript`.
@@ -1717,15 +1655,6 @@ impl Keywords {
         }
         KEYWORDS.get(s).copied()
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RedactedKeyword {
-    Auth,      // _auth
-    AuthToken, // _authToken
-    Token,     // token
-    Password,  // _password
-    Email,     // email
 }
 
 pub struct RedactedKeywords;
@@ -2308,14 +2237,7 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // ───────────────────────────────────────────────────────────────────────────
 
 // ConstParamTy is nightly, so use a runtime value instead.
-// adt_const_params rewrite: SEPARATOR enum → const bool (only 2 variants).
-pub const SEP_LIST: bool = true;
 pub const SEP_DASH: bool = false;
-#[doc(hidden)]
-pub enum EnumTagListSeparator {
-    List,
-    Dash,
-} // kept for callers naming the enum
 
 pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
     pub pretty: bool,
@@ -2581,20 +2503,6 @@ macro_rules! impl_digit_count_signed {
 impl_digit_count_unsigned!(u8, u16, u32, u64, usize);
 impl_digit_count_signed!(i8, i16, i32, i64, isize);
 
-#[deprecated(note = "use digit_count / digit_count_u64")]
-#[doc(hidden)]
-#[inline]
-pub fn fast_digit_count(x: u64) -> u64 {
-    digit_count_u64(x) as u64
-}
-
-#[deprecated(note = "use digit_count / digit_count_i64")]
-#[doc(hidden)]
-#[inline]
-pub fn count_int(n: i64) -> usize {
-    digit_count_i64(n)
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // SizeFormatter
 // ───────────────────────────────────────────────────────────────────────────
@@ -2696,22 +2604,6 @@ pub fn bytes_to_hex_lower_string(input: &[u8]) -> String {
     bytes_to_hex_lower(input, &mut out);
     // SAFETY: hex alphabet is ASCII.
     unsafe { String::from_utf8_unchecked(out) }
-}
-pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
-    SizeFormatter {
-        value: bytes as usize,
-        opts,
-    }
-}
-pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
-    // Clamp to 0 instead of panicking so release builds never crash on a
-    // transiently negative size, while keeping the safe-build trap via
-    // debug_assert.
-    debug_assert!(bytes >= 0);
-    SizeFormatter {
-        value: bytes.max(0) as usize,
-        opts,
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2930,16 +2822,6 @@ pub const fn hex_byte_upper(b: u8) -> [u8; 2] {
     ]
 }
 
-/// Two hex nibbles for a `u8` (`\\xXX`). `LOWER == false` → uppercase.
-#[inline]
-pub const fn hex_u8<const LOWER: bool>(b: u8) -> [u8; 2] {
-    if LOWER {
-        hex_byte_lower(b)
-    } else {
-        hex_byte_upper(b)
-    }
-}
-
 // ── compat aliases (pre-dedup names) ──────────────────────────────────────
 #[doc(hidden)]
 #[inline]
@@ -2956,12 +2838,6 @@ pub const fn hex2_lower(b: u8) -> [u8; 2] {
 pub const fn hex4_upper(v: u16) -> [u8; 4] {
     hex_u16::<false>(v)
 }
-#[doc(hidden)]
-#[inline]
-pub const fn hex4_lower(v: u16) -> [u8; 4] {
-    hex_u16::<true>(v)
-}
-
 /// Four hex nibbles for a `u16` (`\\uXXXX`). `LOWER == false` → uppercase.
 #[inline]
 pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
@@ -3006,12 +2882,6 @@ impl<const LOWER: bool, const NIBBLES: usize> Display for HexIntFormatter<LOWER,
         let buf = Self::get_out_buf(self.value);
         write_bytes(f, &buf)
     }
-}
-
-pub fn hex_int<const LOWER: bool, const NIBBLES: usize>(
-    value: u64,
-) -> HexIntFormatter<LOWER, NIBBLES> {
-    HexIntFormatter { value }
 }
 
 pub fn hex_int_lower<const NIBBLES: usize>(value: u64) -> HexIntFormatter<true, NIBBLES> {
@@ -3577,11 +3447,6 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
         self.value.write_received(f)
     }
 }
-
-pub type DoubleOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, f64>;
-pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
-pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
-pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
 
 #[derive(Copy, Clone)]
 pub struct OutOfRangeOptions<'a> {

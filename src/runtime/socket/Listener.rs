@@ -85,7 +85,7 @@ pub struct Listener {
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
     /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
     /// stopped listener safely.
-    pub secure_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+    pub secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
     pub reject_unauthorized: bool,
@@ -131,23 +131,18 @@ pub enum UnixOrHost {
     Fd(Fd),
 }
 
-impl UnixOrHost {
-    // Note: deinit() deleted — Box<[u8]> fields auto-drop.
-}
-
 impl Listener {
     #[bun_jsc::host_fn(method)]
     pub fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = frame.arguments_old::<1>();
+        let [opts] = frame.arguments_as_array::<1>();
 
-        if args.len < 1
+        if frame.arguments_count() < 1
             || (matches!(this.listener.get(), ListenerType::None)
                 && this.handlers.active_connections.get() == 0)
         {
             return Err(global.throw(format_args!("Expected 1 argument")));
         }
 
-        let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
@@ -232,7 +227,7 @@ impl Listener {
                     ),
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
-                    secure_ctx: None,
+                    secure_ctx: Cell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                 }));
@@ -354,7 +349,7 @@ impl Listener {
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
-            secure_ctx: None,
+            secure_ctx: Cell::new(None),
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
         }));
@@ -377,7 +372,7 @@ impl Listener {
         let cleanup = scopeguard::guard(this, |this| {
             // SAFETY: this is still the sole owner on the error path
             let this_ref = unsafe { &mut *this };
-            if let Some(c) = this_ref.secure_ctx {
+            if let Some(c) = this_ref.secure_ctx.take() {
                 // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
                 unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
             }
@@ -395,7 +390,9 @@ impl Listener {
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
             match ssl_cfg.as_usockets().create_ssl_context(&mut create_err) {
-                Some(ctx) => this_ref.secure_ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                Some(ctx) => this_ref
+                    .secure_ctx
+                    .set(NonNull::new(ctx.cast::<boring_sys::SSL_CTX>())),
                 None => {
                     return Err(global.throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
@@ -424,6 +421,7 @@ impl Listener {
 
         let secure_ctx_ptr: Option<*mut uws::SslCtx> = this_ref
             .secure_ctx
+            .get()
             .map(|p| p.as_ptr().cast::<uws::SslCtx>());
 
         let mut errno: c_int = 0;
@@ -444,8 +442,9 @@ impl Listener {
                 });
                 if !ls.is_null() {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    *port = u16::try_from(bun_opaque::opaque_deref_mut(ls).get_local_port())
-                        .expect("int cast");
+                    if let Some(p) = bun_opaque::opaque_deref_mut(ls).get_local_port() {
+                        *port = p;
+                    }
                 }
                 ls
             }
@@ -530,7 +529,7 @@ impl Listener {
 
         if let Some(ssl_config) = ssl_cfg_taken.as_ref() {
             // `ssl_enabled` ⇒ `createSSLContext` succeeded above ⇒ `secure_ctx` set.
-            let secure = this_ref.secure_ctx.expect("unreachable");
+            let secure = this_ref.secure_ctx.get().expect("unreachable");
             if let Some(server_name) = ssl_config.server_name_cstr() {
                 if !server_name.to_bytes().is_empty() {
                     // Registering the default cert under its own server_name is a
@@ -611,6 +610,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // See `on_create`: each accepted named-pipe connection holds the loop
+        // on its own so `conn.unref()` is meaningful.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -654,6 +656,11 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted socket holds the event loop on its own (same as a
+        // client socket after `connect_finish`), so `conn.unref()` works and
+        // `server.unref()`/`server.close()` don't tear out live connections'
+        // hold. on_close/mark_inactive already unref this.
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
@@ -778,13 +785,13 @@ impl Listener {
 
     #[bun_jsc::host_fn(method)]
     pub fn stop(this: &Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
+        let [arg0] = frame.arguments_as_array::<1>();
         log!("close");
 
         Self::do_stop(
             this,
-            if arguments.len > 0 && arguments.ptr[0].is_boolean() {
-                arguments.ptr[0].to_boolean()
+            if frame.arguments_count() > 0 && arg0.is_boolean() {
+                arg0.to_boolean()
             } else {
                 false
             },
@@ -803,8 +810,12 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
+        // The listener's poll_ref tracks the listening socket only; accepted
+        // sockets each have their own (see `on_create`). Drop it now so a
+        // closed server whose connections the caller unref'd lets the process
+        // exit like Node does.
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
@@ -826,6 +837,11 @@ impl Listener {
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
+        }
+
+        if let Some(ctx) = this.secure_ctx.take() {
+            // SAFETY: FFI — releases the one ref `listen()` took from the cache.
+            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
     }
 
@@ -891,19 +907,15 @@ impl Listener {
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
         unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-        if let Some(ctx) = this_ref.secure_ctx {
-            // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
+        if let Some(ctx) = this_ref.secure_ctx.take() {
+            // SAFETY: FFI — a Listener torn down without do_stop() still owns
+            // its ref; do_stop() already took it when it ran.
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
 
         // connection / protos / the handlers `Rc`: dropped by heap::take below
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.active_connections.get() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1425,7 +1437,10 @@ impl Listener {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let address_js = ZigString::init(formatted).to_js(global);
-        let port_js = JSValue::js_number(socket_ref.get_local_port() as f64);
+        let port_js = match socket_ref.get_local_port() {
+            Some(p) => JSValue::js_number(p as f64),
+            None => JSValue::UNDEFINED,
+        };
 
         out.put(global, b"family", family_js);
         out.put(global, b"address", address_js);
@@ -1585,13 +1600,16 @@ fn connect_finish<const IS_SSL: bool>(
 pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let arguments = frame.arguments_old::<3>();
-    if arguments.len < 3 {
-        return Err(global.throw_not_enough_arguments("addServerName", 3, arguments.len));
+    let [listener, hostname, tls] = frame.arguments_as_array::<3>();
+    if frame.arguments_count() < 3 {
+        return Err(global.throw_not_enough_arguments(
+            "addServerName",
+            3,
+            frame.arguments_count() as usize,
+        ));
     }
-    let listener = arguments.ptr[0];
     if let Some(this) = listener.as_class_ref::<Listener>() {
-        return Listener::add_server_name(this, global, arguments.ptr[1], arguments.ptr[2]);
+        return Listener::add_server_name(this, global, hostname, tls);
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }

@@ -2058,15 +2058,6 @@ pub mod formatter {
         pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
             Tag::get(value, global_this)
         }
-        /// Delegates to `Tag::get_advanced`.
-        #[inline]
-        pub fn get_advanced(
-            value: JSValue,
-            global_this: &JSGlobalObject,
-            opts: TagOptions,
-        ) -> JsResult<TagResult> {
-            Tag::get_advanced(value, global_this, opts)
-        }
         pub fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
@@ -2740,8 +2731,6 @@ pub mod formatter {
     }
 
     impl<'w> WrappedWriter<'w> {
-        pub const IS_WRAPPED_WRITER: bool = true;
-
         /// Mirror of `Formatter::add_for_new_line` routed through the borrowed
         /// `estimated_line_length` so callers don't need a second `&mut self`
         /// on the parent `Formatter` while a `WrappedWriter` is live.
@@ -2822,34 +2811,6 @@ pub mod formatter {
             if self.ctx.write_fmt(args).is_err() {
                 self.failed = true;
             }
-        }
-
-        pub fn write_latin1(&mut self, buf: &[u8]) {
-            let mut remain = buf;
-            while !remain.is_empty() {
-                if let Some(i) = strings::first_non_ascii(remain) {
-                    if i > 0 {
-                        if self.ctx.write_all(&remain[0..i as usize]).is_err() {
-                            self.failed = true;
-                            return;
-                        }
-                    }
-                    if self
-                        .ctx
-                        .write_all(&strings::latin1_to_codepoint_bytes_assume_not_ascii(
-                            remain[i as usize],
-                        ))
-                        .is_err()
-                    {
-                        self.failed = true;
-                    }
-                    remain = &remain[i as usize + 1..];
-                } else {
-                    break;
-                }
-            }
-
-            let _ = self.ctx.write_all(remain);
         }
 
         #[inline]
@@ -5800,7 +5761,6 @@ pub mod formatter {
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
     pub trait TypedArrayElement: Copy {
         const IS_BIGINT: bool;
-        const IS_FLOAT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;
     }
@@ -5808,7 +5768,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = false;
-                const IS_FLOAT: bool = false;
                 type Display = $t;
                 fn display(self) -> Self::Display { self }
             }
@@ -5819,7 +5778,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = true;
-                const IS_FLOAT: bool = false;
                 type Display = $t;
                 fn display(self) -> Self::Display { self }
             }
@@ -5830,7 +5788,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = false;
-                const IS_FLOAT: bool = true;
                 type Display = bun_core::fmt::DoubleFormatter;
                 fn display(self) -> Self::Display { bun_core::fmt::double(f64::from(self)) }
             }
@@ -5843,7 +5800,6 @@ pub mod formatter {
     // primitive — but the body is identical.
     impl TypedArrayElement for bun_core::f16 {
         const IS_BIGINT: bool = false;
-        const IS_FLOAT: bool = true;
         type Display = bun_core::fmt::DoubleFormatter;
         fn display(self) -> Self::Display {
             bun_core::fmt::double(f64::from(self))

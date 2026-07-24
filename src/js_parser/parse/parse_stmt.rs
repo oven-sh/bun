@@ -1029,7 +1029,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
                     p.lexer.expect_or_insert_semicolon()?;
                     let value = js_ast::StmtOrExpr::Expr(expr);
-                    p.has_export_default = true;
                     return Ok(p.s(
                         S::ExportDefault {
                             default_name,
@@ -1098,7 +1097,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         p.create_default_name(default_loc)
                     };
-                    p.has_export_default = true;
                     p.has_es_module_syntax = true;
                     return Ok(p.s(
                         S::ExportDefault {
@@ -1157,7 +1155,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         p.create_default_name(default_loc)
                     };
-                    p.has_export_default = true;
                     return Ok(p.s(
                         S::ExportDefault {
                             default_name,
@@ -1186,7 +1183,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect_or_insert_semicolon()?;
 
                 // Use the expression name if present, since it's a better name
-                p.has_export_default = true;
                 let default_name = p.default_name_for_expr(expr, default_loc);
                 Ok(p.s(
                     S::ExportDefault {

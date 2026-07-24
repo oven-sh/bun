@@ -1354,8 +1354,15 @@ impl NodeHTTPResponse {
         {
             return Ok(JSValue::FALSE);
         }
-        self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        // Body already delivered: nothing to buffer, and re-arming onData would
+        // overwrite a pipelined request's userData on the shared HttpResponseData.
+        // pause_socket() still runs so pausePipelineReads can gate the fd.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
+            raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+        }
 
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]
@@ -1419,8 +1426,15 @@ impl NodeHTTPResponse {
         {
             return JSValue::FALSE;
         }
-        self.set_on_aborted_handler();
-        raw.on_data(on_data_shim, self.as_ctx_ptr());
+        // Body already delivered: re-arming onData/onTimeout would overwrite a
+        // pipelined request's userData on the shared HttpResponseData. The drain
+        // below still runs so a body buffered-while-paused reaches its own caller.
+        if self.body_read_state.get() == BodyReadState::Pending
+            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+        {
+            self.set_on_aborted_handler();
+            raw.on_data(on_data_shim, self.as_ctx_ptr());
+        }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
         let mut result: JSValue = JSValue::TRUE;
 
@@ -1448,10 +1462,10 @@ pub(crate) fn node_http_request_on_resolve(
     callframe: &CallFrame,
 ) -> JSValue {
     scoped_log!(NodeHTTPResponse, "onResolve");
-    let arguments = callframe.arguments_old::<2>();
+    let arguments = callframe.arguments_as_array::<2>();
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1460,7 +1474,7 @@ pub(crate) fn node_http_request_on_resolve(
         had
     });
     // defer this.deref(); — moved to tail.
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !flags.contains(Flags::SOCKET_CLOSED) {
@@ -1494,11 +1508,11 @@ pub(crate) fn node_http_request_on_reject(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
-    let arguments = callframe.arguments_old::<2>();
-    let err = arguments.ptr[0];
+    let arguments = callframe.arguments_as_array::<2>();
+    let err = arguments[0];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1506,7 +1520,7 @@ pub(crate) fn node_http_request_on_reject(
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
     // defer this.deref(); — moved to tail.
 
@@ -1822,11 +1836,25 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // Finish any zero-copy write before telling JS we're drained.
+        // Partial pinned progress: return false so onWritable's close gate
+        // waits (bufferedAmount does not count the pinned tail). Zero progress
+        // after the peer's FIN is handed to the buffered path (spill) so the
+        // sibling `flushed == 0 && RECEIVED_FIN` close in HttpContext::
+        // onWritable decides; without FIN (SSL WANT_READ, ENOBUFS) retries.
+        let pinned_before = self.pending_pinned_write.get().remaining.len();
         if self.drain_pending_pinned_write(response) {
+            if self.pending_pinned_write.get().remaining.len() < pinned_before {
+                return false;
+            }
+            if response.state().is_node_received_fin() {
+                self.spill_pending_pinned_write(self.server.global_this());
+            }
             return true;
         }
 
+        // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see
+        // a stale shim (callOnWritable would restore it); writes re-arm.
+        response.clear_on_writable();
         response.corked(|| self.on_drain_corked(offset));
         // return true means we may have something to drain
         true

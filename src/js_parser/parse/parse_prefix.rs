@@ -183,7 +183,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 AwaitOrYield::AllowIdent => {
                     p.lexer.prev_token_was_await_keyword = true;
-                    p.lexer.await_keyword_loc = name_range.loc;
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                 }
             },
@@ -710,7 +709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_open_bracket(p: &mut Self, mut errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
+    fn pfx_t_open_bracket(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
@@ -731,10 +730,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
                 T::TDotDotDot => {
-                    if let Some(e) = errors.as_deref_mut() {
-                        e.array_spread_feature = Some(p.lexer.range());
-                    }
-
                     let dots_loc = p.lexer.loc();
                     p.lexer.next()?;
                     // Parse into a local then push.

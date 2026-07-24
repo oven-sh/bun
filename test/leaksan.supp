@@ -85,6 +85,7 @@ leak:JSC::stringProtoFuncReplaceUsingRegExp
 leak:WebCore::parseTypeAndSubtype
 leak:runtime.node.util.parse_args.parseArgs
 leak:JSC::IntlDateTimeFormat::initializeDateTimeFormat
+leak:JSC::TemporalCore::withTimeZone
 leak:WebCore__DOMURL__fileSystemPath
 leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
@@ -108,8 +109,6 @@ leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
-# test/js/node/tls/node-tls-cert.test.ts
-leak:create_ssl_context_from_bun_options
 # test/js/node/test/parallel/test-inspector-enabled.js
 leak:jsc.Debugger.startJSDebuggerThread
 # test/js/sql/sqlite-sql.test.ts
@@ -126,3 +125,7 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# test/regression/issue/30205.test.ts — global_exit's final GC sweep fires
+# NAPI weak finalizers which enqueue Box<NapiFinalizerTask> into the event
+# loop; the loop is already exiting so they never drain.
+leak:napi_internal_enqueue_finalizer

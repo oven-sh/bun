@@ -80,32 +80,6 @@ impl Editor {
         None
     }
 
-    pub fn by_path<'a>(
-        env: &mut dot_env::Loader,
-        buf: &'a mut PathBuffer,
-        cwd: &[u8],
-        out: &mut &'a [u8],
-    ) -> Option<Editor> {
-        let path_env = env.get(b"PATH")?;
-
-        // Note: borrowck — `which` ties its return to `&'a mut *buf`; on a
-        // miss we need `buf` again next iteration but NLL conservatively keeps
-        // the borrow live (Polonius case). Re-borrow through a raw pointer; on
-        // a hit we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = buf;
-        for &editor in &DEFAULT_PREFERENCE_LIST {
-            if let Some(path) = BIN_NAME[editor] {
-                // SAFETY: see note above — exclusive per-iteration reborrow.
-                if let Some(bin) = which(unsafe { &mut *buf_ptr }, path_env, cwd, path) {
-                    *out = bin.as_bytes();
-                    return Some(editor);
-                }
-            }
-        }
-
-        None
-    }
-
     pub fn by_path_for_editor<'a>(
         env: &mut dot_env::Loader,
         editor: Editor,
@@ -474,61 +448,6 @@ impl Default for EditorContext {
 }
 
 impl EditorContext {
-    pub fn open_in_editor(
-        &mut self,
-        editor_: Editor,
-        blob: &[u8],
-        id: &[u8],
-        tmpdir: bun_sys::Fd,
-        line: &[u8],
-        column: &[u8],
-    ) {
-        if let Err(err) = Self::_open_in_editor(self.path, editor_, blob, id, tmpdir, line, column)
-        {
-            if editor_ != Editor::Other {
-                bun_core::pretty_errorln!(
-                    "Error {} opening in {}",
-                    err.name(),
-                    <&'static str>::from(editor_),
-                );
-            }
-            self.editor = Some(Editor::None);
-        }
-    }
-
-    fn _open_in_editor(
-        path: &[u8],
-        editor_: Editor,
-        blob: &[u8],
-        id: &[u8],
-        tmpdir: bun_sys::Fd,
-        line: &[u8],
-        column: &[u8],
-    ) -> crate::Result<()> {
-        let mut basename_buf = [0u8; 512];
-        let mut basename = bun_paths::basename(id);
-        if strings::ends_with(basename, b".bun") && basename.len() < 499 {
-            basename_buf[..basename.len()].copy_from_slice(basename);
-            basename_buf[basename.len()..basename.len() + 3].copy_from_slice(b".js");
-            basename = &basename_buf[0..basename.len() + 3];
-        }
-
-        // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
-        let mut basename_zbuf = PathBuffer::uninit();
-        let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
-        // `?` converts bun_sys::Error → crate::Error directly; explicit
-        // .map_err(Into::into) became ambiguous once node_os::OsError added
-        // its own From<bun_sys::Error>.
-        bun_sys::File::write_file(tmpdir, basename_z, blob)?;
-
-        let opened = bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0)?;
-
-        let mut path_buf = PathBuffer::uninit();
-        let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf)?;
-
-        editor_.open(path, resolved, Some(line), Some(column))
-    }
-
     pub fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
             self.detect_editor(env);

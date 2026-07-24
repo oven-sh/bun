@@ -97,7 +97,7 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_core::{MutableString, strings};
+use bun_core::strings;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
@@ -148,10 +148,7 @@ pub struct MultiPartUpload {
     pub content_type: Option<Box<[u8]>>,
     pub content_disposition: Option<Box<[u8]>>,
     pub content_encoding: Option<Box<[u8]>>,
-    // Duped into an owned Box here to avoid a self-referential struct
-    // (a slice into `uploadid_buffer`).
     pub upload_id: Box<[u8]>,
-    pub uploadid_buffer: MutableString,
 
     pub multipart_etags: Vec<UploadPartResult>,
     pub multipart_upload_list: Vec<u8>, // was bun.Vec<u8>
@@ -406,7 +403,6 @@ impl Drop for MultiPartUpload {
         // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
         // constructing `writable_stream`/`upload_stream` adopted.
         self.credentials.deref();
-        // uploadid_buffer: MutableString — Drop
         // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
         // multipart_upload_list: Vec<u8> — Drop
         // bun.destroy(this) — handled by deref_() via heap::take
@@ -694,7 +690,6 @@ impl MultiPartUpload {
                         }
                     }
                 }
-                this.uploadid_buffer = response.body;
                 if this.upload_id.is_empty()
                     || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN
                     || this

@@ -1,8 +1,5 @@
 //! bun_threading crate root — thin re-exports.
 
-pub mod error;
-pub use error::{Error, Result};
-
 pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;

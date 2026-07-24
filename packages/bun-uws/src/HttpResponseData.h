@@ -131,10 +131,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * and everything after the end of the message is opaque data for the
          * 'upgrade' listener's socket. */
         HTTP_NODE_TUNNEL_AFTER_BODY = 1 << 14,
-        /* The peer half-closed (FIN) while pipelined responses were still queued
-         * behind the in-flight one. Like Node's http server, the connection stays
-         * open so those responses can still be written; it is shut down once the
-         * pipeline has drained (see shouldCloseConnection()). */
+        /* The peer half-closed (FIN) while there was still something to flush
+         * before teardown: buffered/pinned response bytes, or (with
+         * httpAllowHalfOpen) an in-flight or queued pipelined response. The
+         * connection is shut down from the shouldCloseConnection()/onWritable
+         * gates once those have drained. Without httpAllowHalfOpen, onWritable
+         * forces the close as soon as the buffer has flushed (Node's
+         * socketOnEnd -> socket.end()). */
         HTTP_NODE_RECEIVED_FIN = 1 << 15,
         /* NodeHttpResponseData::nodeHttpResponseTrailers is non-empty. Mirrored
          * into the shared word so the shared response-end path (internalEnd) never

@@ -11,7 +11,6 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Cat {
-    pub opts: Opts,
     pub state: CatState,
 }
 
@@ -63,7 +62,6 @@ impl Cat {
                 }
             }
         };
-        Self::state_mut(interp, cmd).opts = opts;
 
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let should_read_from_stdin = filepath_start.is_none() || filepath_start == Some(argc);
@@ -416,22 +414,7 @@ impl Cat {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {
-    /// `-b` — number the non-blank output lines, starting at 1.
-    pub number_nonblank: bool,
-    /// `-e` — display non-printing characters and a `$` at end of each line.
-    pub show_ends: bool,
-    /// `-n` — number the output lines, starting at 1.
-    pub number_all: bool,
-    /// `-s` — squeeze multiple adjacent empty lines.
-    pub squeeze_blank: bool,
-    /// `-t` — display non-printing characters and tabs as `^I`.
-    pub show_tabs: bool,
-    /// `-u` — disable output buffering.
-    pub disable_output_buffering: bool,
-    /// `-v` — display non-printing characters so they are visible.
-    pub show_nonprinting: bool,
-}
+pub struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {

@@ -1301,18 +1301,13 @@ pub(crate) fn get_workspace_filters(
                 }
             };
 
-            match glob::r#match(pattern, path_or_name) {
-                glob::MatchResult::Match | glob::MatchResult::NegateMatch => {
-                    install_root_dependencies = true;
-                }
-
-                glob::MatchResult::NegateNoMatch => {
-                    // always skip if a pattern specifically says "!<name>"
-                    install_root_dependencies = false;
-                    break;
-                }
-
-                glob::MatchResult::NoMatch => {}
+            let result = glob::r#match(pattern, path_or_name);
+            if result.matches() {
+                install_root_dependencies = true;
+            } else if result.is_negated() {
+                // always skip if a pattern specifically says "!<name>"
+                install_root_dependencies = false;
+                break;
             }
         }
     }

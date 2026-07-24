@@ -67,7 +67,7 @@ template<> CryptoAlgorithmEcdhKeyDeriveParams convertDictionary<CryptoAlgorithmE
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!publicKeyValue.isUndefined()) {
-        result.publicKey = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue);
+        result.publicKey = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwDictionaryMemberTypeError(lexicalGlobalObject, scope, "publicKey"_s, "EcdhKeyDeriveParams"_s, "CryptoKey"_s); });
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicKey"_s, "EcdhKeyDeriveParams"_s, "CryptoKey"_s);

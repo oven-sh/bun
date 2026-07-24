@@ -11,8 +11,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
@@ -96,6 +96,30 @@ export function machoPostlinkImplicitInputs(cfg: Config): string[] {
 }
 
 /**
+ * ELF + rust-lld: rust-lang/llvm-project builds lld without LLVM_ENABLE_ZLIB,
+ * so `-Wl,--compress-debug-sections=zlib` is dropped when the crosslang-LTO
+ * rust-lld swap is active (flags.ts). Uncompressed DWARF makes bun-profile
+ * ~2x larger (~900MB), and every `bun build --compile` in the test suite
+ * copies the running binary, so the size shows up as CI test timeouts, not
+ * just artifact bloat. Compress after the link with llvm-objcopy instead —
+ * same tool the musl CRT decompress shim already relies on.
+ */
+export function needsElfDebugCompressPostlink(cfg: Config): boolean {
+  return (cfg.linux || cfg.freebsd) && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld;
+}
+
+/**
+ * Command suffix for the link rule: `... -o $out && llvm-objcopy
+ * --compress-debug-sections=zlib $out`. Empty when not needed so callers
+ * can append unconditionally (mutually exclusive with machoPostlinkCommand).
+ */
+export function elfDebugCompressPostlinkCommand(cfg: Config): string {
+  if (!needsElfDebugCompressPostlink(cfg)) return "";
+  const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
+  return ` && ${quote(existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy", false)} --compress-debug-sections=zlib $out`;
+}
+
+/**
  * macOS-from-Linux cross links resolve compiler-rt builtins from the SDK's
  * libSystem reexport (libcompiler_rt.tbd), which covers the generic builtins
  * (__divti3 …) but NOT the x86 `__builtin_cpu_supports` support globals
@@ -166,11 +190,12 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
   }
 
   if (needsMuslCrtDecompress(cfg)) {
-    // binutils objcopy (same package as `strip`, already required on linux —
-    // see tools.ts). restat=1: a no-op decompress keeps the mtime so the
-    // link doesn't re-run.
+    // llvm-objcopy (multi-target; host GNU objcopy rejects foreign-arch ELF).
+    // Resolve it next to clang (debian has no unversioned symlink on PATH).
+    // restat=1: a no-op decompress keeps the mtime so the link doesn't re-run.
+    const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
     n.rule("shim_crt_decompress", {
-      command: `objcopy --decompress-debug-sections $in $out`,
+      command: `${q(existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy")} --decompress-debug-sections $in $out`,
       description: "decompress-crt $out",
       restat: true,
     });
@@ -242,12 +267,19 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
     // tiny dir, no point routing through the obj-dir set).
     mkdirSync(crtDir, { recursive: true });
 
+    // Cross-compiling musl from a glibc host: point the probe at the musl
+    // sysroot so clang resolves the CRT there instead of the host /usr/lib.
+    // Native musl (sysroot undefined) keeps the bare probe.
+    const probeArgs = cfg.sysroot !== undefined ? [`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot}`] : [];
+
     for (const name of MUSL_CRT_OBJECTS) {
       // Ask clang where it would find this startfile. Legitimate
       // configure-time spawn (environment probe, not a build artifact).
       // If the file isn't installed clang echoes the bare name back —
       // skip those rather than emit a broken edge.
-      const found = spawnSync(cfg.cc, [`-print-file-name=${name}`], { encoding: "utf8" }).stdout.trim();
+      const found = spawnSync(cfg.cc, [...probeArgs, `-print-file-name=${name}`], {
+        encoding: "utf8",
+      }).stdout.trim();
       if (!found || found === name) continue;
       const out = resolve(crtDir, name);
       n.build({ outputs: [out], rule: "shim_crt_decompress", inputs: [found] });

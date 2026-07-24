@@ -26,6 +26,61 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("module.enableCompileCache validates its argument", () => {
+    expect(Module.enableCompileCache.length).toBe(1);
+    for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {
+      expect(() => Module.enableCompileCache(invalid)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    }
+    expect(() => Module.enableCompileCache({ directory: 1 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // A function is not treated as an options bag (typeof === "object" in node).
+    expect(() => Module.enableCompileCache(function () {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // A throwing getter propagates unchanged.
+    expect(() =>
+      Module.enableCompileCache({
+        get directory() {
+          throw new RangeError("boom");
+        },
+      }),
+    ).toThrow(RangeError);
+    // Node destructures `directory` then `portable` before validating, so a throwing
+    // `portable` getter propagates even when `directory` is already invalid.
+    const order = [];
+    expect(() =>
+      Module.enableCompileCache({
+        get directory() {
+          order.push("directory");
+          return 42;
+        },
+        get portable() {
+          order.push("portable");
+          throw new RangeError("portable boom");
+        },
+      }),
+    ).toThrow(new RangeError("portable boom"));
+    expect(order).toEqual(["directory", "portable"]);
+    // Valid shapes: string | {directory?, portable?} | undefined.
+    for (const ok of [
+      undefined,
+      "/tmp/cache",
+      {},
+      [],
+      Object.create(null),
+      { directory: "/tmp/cache" },
+      { directory: undefined },
+    ]) {
+      expect(Module.enableCompileCache(ok)).toEqual({
+        status: Module.constants.compileCacheStatus.FAILED,
+        message: expect.any(String),
+      });
+    }
+  });
+
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.
     const compile = new Module("not-a-constructor-test")._compile;
@@ -38,6 +93,15 @@ describe.concurrent("node-module-module", () => {
     expect(() => Reflect.construct(Module._resolveFilename, ["fs"])).toThrow(TypeError);
     // Calling still works.
     expect(Module._resolveFilename("fs")).toBe("fs");
+  });
+
+  test("Module._resolveFilename accepts an options object without paths", () => {
+    // An options object without .paths used to segfault on the isArray() check.
+    expect(Module._resolveFilename("fs", null, false, {})).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, Object.create(null))).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, [])).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, { paths: undefined })).toBe("fs");
+    expect(Module._resolveFilename("fs", null, false, { paths: null })).toBe("fs");
   });
 
   test("createRequire trailing slash", () => {

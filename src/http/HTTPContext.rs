@@ -78,39 +78,25 @@ pub(crate) struct ActiveSocketTypes<const SSL: bool>;
 
 // Note: tags assigned 1024 - i, descending.
 impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
-    const LEN: usize = 4;
     const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
-    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
-        match tag {
-            1024 => Some("DeadSocket"),
-            1023 => Some("HTTPClient"),
-            1022 => Some("PooledSocket"),
-            1021 => Some("H2.ClientSession"),
-            _ => None,
-        }
-    }
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for DeadSocket {
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
-    const NAME: &'static str = "DeadSocket";
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for HTTPClient<'static>
 {
     const TAG: bun_ptr::tagged_pointer::TagType = 1023;
-    const NAME: &'static str = "HTTPClient";
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for PooledSocket<SSL>
 {
     const TAG: bun_ptr::tagged_pointer::TagType = 1022;
-    const NAME: &'static str = "PooledSocket";
 }
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>>
     for h2::ClientSession
 {
     const TAG: bun_ptr::tagged_pointer::TagType = 1021;
-    const NAME: &'static str = "H2.ClientSession";
 }
 
 /// Typed accessors for the `ActiveSocket` tagged-pointer recovered from a
@@ -287,12 +273,6 @@ impl<const SSL: bool> ExistingSocket<SSL> {
         h2_session_as_mut(self.h2_session)
     }
 }
-
-/// The ext stores `*anyopaque` (the `ActiveSocket` tagged pointer), so
-/// dispatch reads it as `**anyopaque` and `Handler` decodes the tag.
-// Note: a `pub type ActiveSocketHandler = Handler<SSL>;` inherent
-// associated type is unstable, so this is a free alias.
-pub type ActiveSocketHandler<const SSL: bool> = Handler<SSL>;
 
 impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) const KIND: uws::SocketKind = if SSL {
@@ -510,6 +490,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
                     uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
                     uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
+                    uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
                     _ => InitError::FailedToOpenSocket,
                 });
             }
@@ -1171,7 +1152,7 @@ impl<const SSL: bool> Handler<SSL> {
                             .expect("TLS socket has native handle after handshake")
                             .cast::<bun_boringssl_sys::SSL>()
                     };
-                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl, true) {
+                    if !client.check_server_identity::<SSL>(socket, ssl, true) {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated

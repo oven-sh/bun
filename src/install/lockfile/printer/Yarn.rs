@@ -27,7 +27,6 @@ pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), 
         };
         let mut stream = WriteStream::new(WriteStreamOptions {
             indent: 2,
-            emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
         crate::lockfile_real::json_stringify(this.lockfile, &mut stream)?;

@@ -16,24 +16,24 @@ impl NotificationResponse {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        reader.length()?;
+        let mut remaining = reader.body_length()?;
+        if remaining < 4 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
+        let pid = reader.int4()?;
+        remaining -= 4;
+        let (channel, consumed) = reader.string_within(remaining)?;
+        remaining -= consumed;
+        let (payload, _) = reader.string_within(remaining)?;
 
         Ok(Self {
-            pid: reader.int4()?,
-            channel: reader
-                .read_z()?
+            pid,
+            channel: channel
                 .to_owned()
                 .map_err(|_| AnyPostgresError::OutOfMemory)?,
-            payload: reader
-                .read_z()?
+            payload: payload
                 .to_owned()
                 .map_err(|_| AnyPostgresError::OutOfMemory)?,
         })
-    }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
     }
 }

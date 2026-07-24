@@ -86,17 +86,11 @@ impl ErrorCode {
     pub const PROTOCOL_ERROR: Self = Self(0x1);
     pub const INTERNAL_ERROR: Self = Self(0x2);
     pub const FLOW_CONTROL_ERROR: Self = Self(0x3);
-    pub const SETTINGS_TIMEOUT: Self = Self(0x4);
-    pub const STREAM_CLOSED: Self = Self(0x5);
     pub const FRAME_SIZE_ERROR: Self = Self(0x6);
     pub const REFUSED_STREAM: Self = Self(0x7);
     pub const CANCEL: Self = Self(0x8);
     pub const COMPRESSION_ERROR: Self = Self(0x9);
-    pub const CONNECT_ERROR: Self = Self(0xa);
     pub const ENHANCE_YOUR_CALM: Self = Self(0xb);
-    pub const INADEQUATE_SECURITY: Self = Self(0xc);
-    pub const HTTP_1_1_REQUIRED: Self = Self(0xd);
-    pub const MAX_PENDING_SETTINGS_ACK: Self = Self(0xe);
 }
 
 #[repr(transparent)]
@@ -111,7 +105,6 @@ impl SettingsType {
     pub const SETTINGS_MAX_HEADER_LIST_SIZE: Self = Self(0x6);
     // Non-standard extension settings (still unsupported):
     pub const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
-    pub const SETTINGS_NO_RFC7540_PRIORITIES: Self = Self(0x9);
 }
 
 // ─── wire helpers ───────────────────────────────
@@ -132,10 +125,6 @@ pub struct UInt31WithReserved(u32);
 
 impl UInt31WithReserved {
     #[inline]
-    pub const fn reserved(self) -> bool {
-        self.0 & 0x8000_0000 != 0
-    }
-    #[inline]
     pub const fn uint31(self) -> u32 {
         self.0 & 0x7fff_ffff
     }
@@ -148,16 +137,8 @@ impl UInt31WithReserved {
         Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
     }
     #[inline]
-    pub const fn to_uint32(self) -> u32 {
-        self.0
-    }
-    #[inline]
     pub fn from_bytes(src: &[u8]) -> Self {
         Self(u32_from_bytes(src))
-    }
-    #[inline]
-    pub fn encode_into(self, dst: &mut [u8; 4]) {
-        *dst = self.0.to_be_bytes();
     }
 }
 
@@ -192,13 +173,6 @@ impl StreamPriority {
         // Brace-expr `{packed.field}` performs an unaligned copy;
         // assignment to a packed field is an unaligned store. No `unsafe`.
         dst.stream_identifier = u32::swap_bytes(dst.stream_identifier);
-    }
-
-    #[inline]
-    pub fn encode_into(self, dst: &mut [u8; Self::BYTE_SIZE]) {
-        let mut swap = self;
-        swap.stream_identifier = u32::swap_bytes(swap.stream_identifier);
-        dst.copy_from_slice(bytemuck::bytes_of(&swap));
     }
 }
 
@@ -237,17 +211,6 @@ impl FrameHeader {
             stream_identifier: u32::from_be_bytes([raw[5], raw[6], raw[7], raw[8]]),
         }
     }
-
-    #[inline]
-    pub fn encode_into(&self, dst: &mut [u8; Self::BYTE_SIZE]) {
-        // Emit the packed 9-byte frame header big-endian manually.
-        dst[0] = ((self.length >> 16) & 0xFF) as u8;
-        dst[1] = ((self.length >> 8) & 0xFF) as u8;
-        dst[2] = (self.length & 0xFF) as u8;
-        dst[3] = self.type_;
-        dst[4] = self.flags;
-        dst[5..9].copy_from_slice(&self.stream_identifier.to_be_bytes());
-    }
 }
 
 /// 6-byte SETTINGS entry: BE u16 type + BE u32 value.
@@ -277,12 +240,6 @@ impl SettingsPayloadUnit {
             dst.type_ = u16::swap_bytes(dst.type_);
             dst.value = u32::swap_bytes(dst.value);
         }
-    }
-
-    #[inline]
-    pub fn encode(dst: &mut [u8; Self::BYTE_SIZE], setting: SettingsType, value: u32) {
-        dst[0..2].copy_from_slice(&setting.0.to_be_bytes());
-        dst[2..6].copy_from_slice(&value.to_be_bytes());
     }
 }
 

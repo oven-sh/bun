@@ -6,15 +6,10 @@
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
 // `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots. Field
-// access on a `const J: JSONOptions` param is rejected by nightly-2025-12-10
-// ("overly complex generic constant"); assoc-const projection on a *type*
-// param works under `generic_const_exprs`. `adt_const_params` keeps
-// `JSONOptions: ConstParamTy` for value-level reification.
+// eight `const bool` slots; assoc-const projection on a *type*
+// param works under `generic_const_exprs`.
 #![feature(adt_const_params, generic_const_exprs)]
 #![allow(incomplete_features)]
-
-pub use bun_collections::VecExt as _VecExtReexport;
 
 pub mod error;
 pub use error::Error;
@@ -586,7 +581,6 @@ pub use defines::{Define, DefineData};
 // (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
     use bun_ast::SlotCounts;
-    use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
@@ -695,31 +689,6 @@ pub mod renamer {
         }
 
         slot_counts
-    }
-
-    #[derive(Copy, Clone)]
-    pub struct StableSymbolCount {
-        pub stable_source_index: u32,
-        pub ref_: Ref,
-        pub count: u32,
-    }
-
-    impl StableSymbolCount {
-        pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> bool {
-            if i.count > j.count {
-                return true;
-            }
-            if i.count < j.count {
-                return false;
-            }
-            if i.stable_source_index < j.stable_source_index {
-                return true;
-            }
-            if i.stable_source_index > j.stable_source_index {
-                return false;
-            }
-            i.ref_.inner_index() < j.ref_.inner_index()
-        }
     }
 
     // The remaining renamer types are only consumed by the printer and bundler

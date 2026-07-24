@@ -36,9 +36,6 @@ unsafe extern "C" {
     -> *mut RegularExpression;
     fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
     safe fn Yarr__RegularExpression__isValid(this: &RegularExpression) -> bool;
-    safe fn Yarr__RegularExpression__matchedLength(this: &RegularExpression) -> i32;
-    // C++: int Yarr__RegularExpression__searchRev(RegularExpression*, BunString) (bindings/RegularExpression.cpp:30)
-    safe fn Yarr__RegularExpression__searchRev(this: &RegularExpression, string: BunString) -> i32;
     safe fn Yarr__RegularExpression__matches(this: &RegularExpression, string: BunString) -> i32;
 }
 
@@ -74,16 +71,6 @@ impl RegularExpression {
     #[inline]
     pub fn matches(&mut self, str: BunString) -> bool {
         Yarr__RegularExpression__matches(self, str) >= 0
-    }
-
-    #[inline]
-    pub fn search_rev(&mut self, str: BunString) -> i32 {
-        Yarr__RegularExpression__searchRev(self, str)
-    }
-
-    #[inline]
-    pub fn matched_length(&mut self) -> i32 {
-        Yarr__RegularExpression__matchedLength(self)
     }
 
     /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.

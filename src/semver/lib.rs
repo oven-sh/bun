@@ -8,8 +8,6 @@ pub use crate::version::VersionType;
 pub use crate::semver_query::Query;
 pub use crate::semver_range::Range;
 pub use crate::sliced_string::SlicedString;
-// `SemverObject` re-export from `../semver_jsc/` deleted — *_jsc
-// extension traits live in the `bun_semver_jsc` crate, not here.
 
 #[path = "SemverQuery.rs"]
 pub mod semver_query;
@@ -179,16 +177,6 @@ pub mod external_string {
             }
 
             self.value.order(rhs.value, lhs_buf, rhs_buf)
-        }
-
-        /// ExternalString but without the hash
-        #[inline]
-        pub fn from(in_: &[u8]) -> ExternalString {
-            ExternalString {
-                value: String::init(in_, in_),
-                // Wyhash with seed 0.
-                hash: bun_wyhash::hash(in_),
-            }
         }
 
         #[inline]
@@ -551,8 +539,6 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
-        // `toJS` deleted — lives in bun_semver_jsc (tier-6; deferred to Pass C).
-
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]
         pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
@@ -674,12 +660,6 @@ pub mod semver_string {
         }
     }
 
-    // ── String.Tag ────────────────────────────────────────────────────────
-    pub enum Tag {
-        Small,
-        Big,
-    }
-
     // ── String.Formatter ──────────────────────────────────────────────────
     pub struct Formatter<'a> {
         pub str: &'a String,
@@ -750,21 +730,6 @@ pub mod semver_string {
     }
 
     // ── HashContext / ArrayHashContext ────────────────────────────────────
-    pub struct HashContext<'a> {
-        pub arg_buf: &'a [u8],
-        pub existing_buf: &'a [u8],
-    }
-
-    impl<'a> HashContext<'a> {
-        pub fn eql(&self, arg: String, existing: String) -> bool {
-            arg.eql(existing, self.arg_buf, self.existing_buf)
-        }
-
-        pub fn hash(&self, arg: String) -> u64 {
-            let str = arg.slice(self.arg_buf);
-            bun_wyhash::hash(str)
-        }
-    }
 
     pub struct ArrayHashContext<'a> {
         pub arg_buf: &'a [u8],

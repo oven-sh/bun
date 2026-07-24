@@ -108,29 +108,39 @@ void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, con
     const auto& ecParameters = downcast<CryptoAlgorithmEcKeyParams>(parameters);
 
     RefPtr<CryptoKeyEC> result;
+    bool keyTypeMismatch = false;
     switch (format) {
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
 
         if (usages && ((!key.d.isNull() && (usages ^ CryptoKeyUsageSign)) || (key.d.isNull() && (usages ^ CryptoKeyUsageVerify)))) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
         if (usages && !key.use.isNull() && key.use != "sig"_s) {
-            exceptionCallback(DataError, ""_s);
+            exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
 
-        bool isMatched = false;
-        if (key.crv == P256)
-            isMatched = key.alg.isNull() || key.alg == ALG256;
-        if (key.crv == P384)
-            isMatched = key.alg.isNull() || key.alg == ALG384;
-        if (key.crv == P521)
-            isMatched = key.alg.isNull() || key.alg == ALG512;
-        if (!isMatched) {
-            exceptionCallback(DataError, ""_s);
-            return;
+        // A present-but-wrong "crv" is a curve mismatch and outranks the "alg" check; an
+        // absent "crv" is neither, and falls through to importJwk's "Invalid keyData".
+        if (!key.crv.isNull()) {
+            if (key.crv != ecParameters.namedCurve) {
+                exceptionCallback(DataError, "JWK \"crv\" does not match the requested algorithm"_s);
+                return;
+            }
+
+            bool isMatched = false;
+            if (key.crv == P256)
+                isMatched = key.alg.isNull() || key.alg == ALG256;
+            if (key.crv == P384)
+                isMatched = key.alg.isNull() || key.alg == ALG384;
+            if (key.crv == P521)
+                isMatched = key.alg.isNull() || key.alg == ALG512;
+            if (!isMatched) {
+                exceptionCallback(DataError, "JWK \"alg\" does not match the requested algorithm"_s);
+                return;
+            }
         }
 
         result = CryptoKeyEC::importJwk(ecParameters.identifier, ecParameters.namedCurve, WTF::move(key), extractable, usages);
@@ -138,28 +148,28 @@ void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, con
     }
     case CryptoKeyFormat::Raw:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
         result = CryptoKeyEC::importRaw(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
-        result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageSign)) {
-            exceptionCallback(SyntaxError, ""_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
-        result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     }
     if (!result) {
-        exceptionCallback(DataError, ""_s);
+        exceptionCallback(DataError, keyTypeMismatch ? "Invalid key type"_s : "Invalid keyData"_s);
         return;
     }
 

@@ -294,10 +294,6 @@ impl Kind {
     pub fn is_using(self) -> bool {
         matches!(self, Kind::KUsing | Kind::KAwaitUsing)
     }
-
-    pub fn is_reassignable(self) -> bool {
-        matches!(self, Kind::KVar | Kind::KLet)
-    }
 }
 
 #[derive(Default)]

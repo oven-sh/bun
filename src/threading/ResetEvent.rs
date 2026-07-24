@@ -33,9 +33,8 @@ impl ResetEvent {
         }
     }
 
-    /// Returns whether [`set`](Self::set) has been called (and not since
-    /// [`reset`](Self::reset)). Memory accesses before `set()` happen-before
-    /// this returning `true`.
+    /// Returns whether [`set`](Self::set) has been called. Memory accesses
+    /// before `set()` happen-before this returning `true`.
     #[inline]
     pub fn is_set(&self) -> bool {
         // Acquire barrier ensures memory accesses before set() happen before we return true.
@@ -49,12 +48,6 @@ impl ResetEvent {
             Ok(()) => {}
             Err(TimeoutError::Timeout) => unreachable!(), // no timeout provided so we shouldn't have timed-out
         }
-    }
-
-    /// [`wait`](Self::wait) with a timeout in nanoseconds. Returns
-    /// `Err(Timeout)` if the event was not set in time.
-    pub fn timed_wait(&self, timeout_ns: u64) -> Result<(), TimeoutError> {
-        self.wait_inner(Some(timeout_ns))
     }
 
     #[inline]
@@ -105,8 +98,7 @@ impl ResetEvent {
     }
 
     /// Marks the event "set" and wakes all threads blocked in
-    /// [`wait`](Self::wait) / [`timed_wait`](Self::timed_wait). Idempotent
-    /// until [`reset`](Self::reset).
+    /// [`wait`](Self::wait).
     pub fn set(&self) {
         // Quick check if already set before the atomic swap below — set() may
         // be called often and multiple swap()s increase contention.
@@ -119,12 +111,5 @@ impl ResetEvent {
         if self.state.swap(IS_SET, Ordering::Release) == WAITING {
             Futex::wake(&self.state, u32::MAX);
         }
-    }
-
-    /// Unmarks the event from its "set" state. Undefined behavior if called
-    /// while threads are blocked in `wait()`/`timed_wait()`. Concurrent
-    /// `set()`/`is_set()`/`reset()` calls are allowed.
-    pub fn reset(&self) {
-        self.state.store(UNSET, Ordering::Relaxed);
     }
 }

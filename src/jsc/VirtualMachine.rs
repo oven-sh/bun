@@ -3520,10 +3520,11 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                // Under hot, fall through to the counter/print tail like
-                // Mode::Bun/Throw so the error is still reported.
-                let handled = handle_unhandled();
-                if !handled {
+                // Under hot, fall through to the counter/print tail
+                // unconditionally: under strict, an unhandledRejection
+                // listener alone does not suppress the uncaught treatment
+                // (only emit_warning is gated on it).
+                if !handle_unhandled() {
                     emit_warning(self);
                 }
             }

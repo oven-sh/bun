@@ -225,7 +225,7 @@ describe("web worker", () => {
           using dir = tempDir("worker-preload-wt-order", {
             "bunfig.toml": `preload = ["./setup.ts"]`,
             "setup.ts": `
-              if (!require("node:worker_threads").isMainThread) {
+              if (!Bun.isMainThread) {
                 console.log("from inherited preload");
                 let chdirErr = "no throw";
                 try { process.chdir("/"); } catch (e) { chdirErr = e.code; }
@@ -267,6 +267,77 @@ describe("web worker", () => {
           expect(exitCode).toBe(0);
         },
       );
+
+      test.concurrent("execArgv: [] opts out of inherited preloads", async () => {
+        using dir = tempDir("worker-preload-execargv-optout", {
+          "bunfig.toml": `preload = ["./setup.ts"]`,
+          "setup.ts": `globalThis.__preloadRan = (globalThis.__preloadRan ?? 0) + 1;`,
+          "worker.ts": `
+            require("node:worker_threads").parentPort.postMessage({
+              preloadRan: globalThis.__preloadRan ?? 0,
+            });
+          `,
+          "main.ts": `
+            const { Worker } = require("node:worker_threads");
+            async function run(execArgv) {
+              const w = new Worker(new URL("./worker.ts", import.meta.url),
+                execArgv === undefined ? {} : { execArgv });
+              const r = await new Promise((res, rej) => {
+                w.on("message", res);
+                w.on("error", rej);
+              });
+              await w.terminate();
+              return r.preloadRan;
+            }
+            console.log(JSON.stringify({
+              inherited: await run(undefined),
+              optedOut: await run([]),
+            }));
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "main.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ inherited: 1, optedOut: 0 });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("inherited preload resolves against startup cwd after process.chdir", async () => {
+        using dir = tempDir("worker-preload-chdir", {
+          "bunfig.toml": `preload = ["./plugin.ts"]`,
+          "plugin.ts": pluginFile,
+          "sub/.keep": "",
+          "worker.ts": workerFile,
+          "main.ts": `
+            import msg from "my-virtual-module";
+            process.chdir("./sub");
+            const worker = new Worker(new URL("./worker.ts", import.meta.url));
+            const result = await new Promise((resolve, reject) => {
+              worker.onmessage = e => resolve(e.data);
+              worker.onerror = e => reject(new Error(e.message));
+            });
+            console.log(JSON.stringify({ worker: result }));
+            await worker.terminate();
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "main.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({
+          worker: { msg: "from-plugin", preloadRan: 1 },
+        });
+        expect(exitCode).toBe(0);
+      });
 
       test.concurrent("inherited preload runs before option.preload", async () => {
         using dir = tempDir("worker-preload-order", {

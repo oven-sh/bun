@@ -126,14 +126,14 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // that bypass Bun's normal module resolver and plugin system.
     vm.regular_event_loop.global = NonNull::new(vm.global);
     vm.event_loop_ref().ensure_waker();
+    // preload/argv are `Vec<Box<[u8]>>`; clone because the VM owns its
+    // fields. Startup-only, so the copies are not hot.
+    vm.preload.clone_from(&ctx.preloads);
+    vm.seed_initial_preload();
+    vm.argv.clone_from(&ctx.passthrough);
+    vm.arena = NonNull::new(&raw mut arena);
     {
         let b = &mut vm.transpiler;
-        // preload/argv are `Vec<Box<[u8]>>`; clone because the VM owns its
-        // fields. Startup-only, so the copies are not hot.
-        vm.preload.clone_from(&ctx.preloads);
-        vm.initial_preload = vm.preload.clone();
-        vm.argv.clone_from(&ctx.passthrough);
-        vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.arena() — dropped per §Allocators
         // `BundleOptions.install` is `Option<NonNull<_>>`, so no
         // lifetime-extension cast is needed.

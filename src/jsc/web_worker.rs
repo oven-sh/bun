@@ -516,10 +516,19 @@ impl WebWorker {
         // Inherit the parent VM's configured preloads (bunfig `preload` /
         // `--preload` / `--require` / `--import`). `initial_preload` is set
         // once at startup on the parent thread and never mutated, so reading
-        // it here (on that same thread) is race-free. They are left unresolved
-        // because `load_preloads` on the worker thread resolves them against
-        // the same process-global `top_level_dir` the main thread used.
-        let inherited_preloads: Vec<Box<[u8]>> = parent_ref.initial_preload.clone();
+        // it here (on that same thread) is race-free. Relative entries were
+        // absolutised at seed time so a later `process.chdir()` does not break
+        // resolution in `load_preloads`.
+        //
+        // Skipped when the user passed an explicit `execArgv` (including
+        // `execArgv: []`): Node.js puts `--require` in `execArgv` and a worker
+        // that overrides it does not re-run the parent's `--require`, so
+        // `execArgv: []` is the opt-out for inherited preloads.
+        let inherited_preloads: Vec<Box<[u8]>> = if inherit_exec_argv {
+            parent_ref.initial_preload.clone()
+        } else {
+            Vec::new()
+        };
         let mut preloads: Vec<Box<[u8]>> =
             Vec::with_capacity(inherited_preloads.len() + preload_modules_len);
 

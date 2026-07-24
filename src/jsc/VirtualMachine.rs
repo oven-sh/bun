@@ -2251,6 +2251,39 @@ impl VirtualMachine {
         self.main = bun_ptr::RawSlice::new(path);
     }
 
+    /// Snapshot `self.preload` into `self.initial_preload` for worker
+    /// inheritance, absolutising `./` / `../` entries against the startup
+    /// `top_level_dir` so a later `process.chdir()` on the main thread does
+    /// not break resolution when the worker's `load_preloads` runs. Absolute
+    /// paths, `node:`/`bun:`/`file://` specifiers and bare package names are
+    /// kept verbatim.
+    pub fn seed_initial_preload(&mut self) {
+        use bun_paths::{is_absolute, is_package_path_not_absolute, path_buffer_pool, resolve_path};
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        self.initial_preload = self
+            .preload
+            .iter()
+            .map(|p| {
+                if is_absolute(p)
+                    || is_package_path_not_absolute(p)
+                    || p.starts_with(b"node:")
+                    || p.starts_with(b"bun:")
+                    || p.starts_with(b"file://")
+                {
+                    return p.clone();
+                }
+                let mut buf = path_buffer_pool::get();
+                resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
+                    top_level_dir,
+                    &mut buf[..],
+                    &[p],
+                )
+                .to_vec()
+                .into_boxed_slice()
+            })
+            .collect();
+    }
+
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].

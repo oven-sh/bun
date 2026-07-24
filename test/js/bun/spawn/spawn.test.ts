@@ -446,10 +446,10 @@ for (let [gcTick, label] of [
         await proc.exited;
       });
 
-      it("stdin.end() rejects with EPIPE when the child exits before consuming the write", async () => {
+      it("stdin write()/end() reject with EPIPE when the child exits before consuming the write", async () => {
         // Child reads a single byte and exits; the parent queues 16MB on stdin
         // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
-        // named-pipe buffer on Windows) so end() is still draining when the
+        // named-pipe buffer on Windows) so the sink is still draining when the
         // read end closes. On Windows libuv previously surfaced that as code
         // "EOF" because uv__process_pipe_write_req used the read-side error
         // translator.
@@ -460,9 +460,15 @@ for (let [gcTick, label] of [
           stdout: "ignore",
           stderr: "ignore",
         });
-        proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+        // write() backpressures and returns the sink's pending promise; when
+        // end()'s flush also backpressures it returns that same promise, but if
+        // end()'s flush sees EPIPE synchronously it throws and leaves the write()
+        // promise to be rejected later by on_attached_process_exit. Await both so
+        // neither path becomes an unhandled rejection.
         let caught: any;
         try {
+          const wrote = proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+          if (wrote instanceof Promise) await wrote;
           await proc.stdin!.end();
         } catch (e) {
           caught = e;

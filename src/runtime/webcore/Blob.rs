@@ -1997,12 +1997,26 @@ impl BlobExt for Blob {
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_[..];
 
-        if self.size.get() == 0 {
-            let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
-            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
+        // The W3C relative-start/end clamp below needs the real size. For a
+        // lazy `Bun.file()` the size is still the `MAX_SIZE` sentinel, so
+        // negative `end` (and `start`) would be computed against that and
+        // over/under-read. Resolve now, same as `.size` does. A non-seekable
+        // file (pipe, FIFO) has no meaningful size; on macOS fstat reports the
+        // currently-buffered byte count there, which must not cap the slice.
+        if self.size.get() == MAX_SIZE && self.needs_to_read_file() {
+            self.resolve_size();
+            if let Some(store) = self.store.get() {
+                if let store::Data::File(file) = store.data_mut() {
+                    if file.seekable == Some(false) {
+                        self.size.set(MAX_SIZE);
+                    }
+                }
+            }
         }
+
+        // No `size == 0` early return: the clamp below already yields
+        // `(0, 0)` and `get_slice_from` keeps the store (so a missing file
+        // still surfaces ENOENT on read) and honours the `contentType` arg.
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;

@@ -27,12 +27,10 @@ for (const info of [
   {
     blob: new Blob(["Bun", "Foo"]),
     name: "Blob.slice",
-    is_file: false,
   },
   {
     blob: Bun.file(path.join(import.meta.dir, "fixtures", "slice.txt")),
     name: "Bun.file().slice",
-    is_file: true,
   },
 ]) {
   test(info.name, async () => {
@@ -45,11 +43,8 @@ for (const info of [
     expect(b2.size).toBe(0);
     const b3 = blob.slice(100, 3);
     expect(b3.size).toBe(0);
-    // file will lazy read until EOF if the size is wrong
-    if (!info.is_file) {
-      const b4 = blob.slice(0, 10);
-      expect(b4.size).toBe(blob.size);
-    }
+    const b4 = blob.slice(0, 10);
+    expect(b4.size).toBe(blob.size);
     expect(blob.slice().size).toBe(blob.size);
     expect(blob.slice(0).size).toBe(blob.size);
     expect(blob.slice(NaN).size).toBe(blob.size);
@@ -92,6 +87,81 @@ for (const info of [
     expect(await blob.slice(-blob.size, 4).slice(-blob.size, 3).text()).toBe("Bun");
   });
 }
+
+describe.concurrent("Bun.file().slice with relative start/end", () => {
+  // Each case slices a FRESH `Bun.file()` so the size has not been resolved by
+  // a prior `.size` read. The slice clamp must stat the file itself rather than
+  // compute against the lazy MAX_SIZE sentinel.
+  const cases: Array<[[number] | [number, number], string]> = [
+    [[1, -1], "12345678"],
+    [[0, -6], "0123"],
+    [[3, -3], "3456"],
+    [[0, -10], ""],
+    [[5, -5], ""],
+    [[0, -100], ""],
+    [[-3], "789"],
+    [[-3, -1], "78"],
+    [[-100], "0123456789"],
+    [[-100, -1], "012345678"],
+    [[0, 100], "0123456789"],
+    [[1, 3], "12"],
+  ];
+  const memBlob = new Blob(["0123456789"]);
+
+  test.each(cases)("slice(%p) size/text/bytes/arrayBuffer/stream", async (args, want) => {
+    using dir = tempDir("bun-file-slice-rel", { "f.bin": "0123456789" });
+    const p = path.join(String(dir), "f.bin");
+
+    // Each consumer reads a fresh slice of a fresh Bun.file().
+    const file = () => Bun.file(p).slice(...(args as [number, number]));
+
+    // In-memory Blob is the reference implementation.
+    expect({ size: want.length, text: want }).toEqual({
+      size: memBlob.slice(...(args as [number, number])).size,
+      text: await memBlob.slice(...(args as [number, number])).text(),
+    });
+
+    expect(file().size).toBe(want.length);
+    expect(await file().text()).toBe(want);
+    expect(Buffer.from(await file().bytes()).toString()).toBe(want);
+    expect(Buffer.from(await file().arrayBuffer()).toString()).toBe(want);
+    expect(await new Response(file().stream()).text()).toBe(want);
+  });
+
+  test("slice-of-slice with negative end", async () => {
+    using dir = tempDir("bun-file-slice-rel", { "f.bin": "0123456789" });
+    const p = path.join(String(dir), "f.bin");
+    const inner = Bun.file(p).slice(1, -1).slice(1, -1);
+    expect({ size: inner.size, text: await inner.text() }).toEqual({ size: 6, text: "234567" });
+  });
+
+  test(".size agrees with the bytes actually read", async () => {
+    using dir = tempDir("bun-file-slice-rel", { "f.bin": "0123456789" });
+    const p = path.join(String(dir), "f.bin");
+    const b = Bun.file(p).slice(1, -1);
+    const size = b.size;
+    const text = await b.text();
+    expect({ size, textLength: text.length }).toEqual({ size: 8, textLength: 8 });
+  });
+
+  test("slice of a nonexistent file still rejects with ENOENT on read", async () => {
+    using dir = tempDir("bun-file-slice-rel", {});
+    const bad = path.join(String(dir), "does-not-exist");
+    // Resolving the size for the clamp must not drop the File store; the
+    // read still has to surface the open() error, same as the unsliced case.
+    expect(async () => await Bun.file(bad).slice(0, 5).text()).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(async () => await Bun.file(bad).slice(1, -1).text()).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+
+  test("slice preserves the contentType arg when the source is empty", async () => {
+    using dir = tempDir("bun-file-slice-rel", { "empty.bin": "" });
+    const p = path.join(String(dir), "empty.bin");
+    // Same registry-normalised type a non-empty source produces.
+    const want = new Blob(["x"]).slice(0, 1, "text/html").type;
+    expect(Bun.file(p).slice(0, 5, "text/html").type).toBe(want);
+    expect(new Blob([]).slice(0, 0, "text/html").type).toBe(want);
+  });
+});
 
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });

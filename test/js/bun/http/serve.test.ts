@@ -1942,7 +1942,6 @@ describe("should support Content-Range with Bun.file()", () => {
   const badRanges = [
     [10, NaN],
     [10, -Infinity],
-    [-(full.byteLength / 2) | 0, Infinity],
     [-(full.byteLength / 2) | 0, -Infinity],
     [full.byteLength + 100, full.byteLength],
     [full.byteLength + 100, full.byteLength + 100],
@@ -1960,6 +1959,17 @@ describe("should support Content-Range with Bun.file()", () => {
       });
     });
   }
+
+  // A negative start is a valid W3C relative index, not a bad range: slice(-n)
+  // addresses the last n bytes, same as ArrayBuffer.prototype.slice.
+  it(`negative start: ${-(full.byteLength / 2) | 0} - Infinity`, async () => {
+    const start = -(full.byteLength / 2) | 0;
+    await getServer(async server => {
+      const response = await fetch(`${server.url.origin}/?start=${start}&end=Infinity`);
+      expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, Infinity));
+      expect(response.status).toBe(206);
+    });
+  });
 });
 
 it("formats error responses correctly", async () => {

@@ -993,6 +993,17 @@ describe("expect()", () => {
     expect(new Float32Array([0])).not.toEqual(new Uint8Array([0, 0, 0, 0]));
   });
 
+  test("deepEquals and DataView", () => {
+    const dv = bytes => new DataView(new Uint8Array(bytes).buffer);
+    expect(dv([1, 2, 3])).toEqual(dv([1, 2, 3]));
+    expect(dv([])).toEqual(dv([]));
+    expect(dv([1, 2, 3])).not.toEqual(dv([1, 9, 3]));
+    expect(dv([1, 2, 3])).not.toEqual(dv([1, 2]));
+    expect(dv([1, 2, 3])).not.toEqual(new Uint8Array([1, 2, 3]));
+    expect(dv([1, 2, 3])).toStrictEqual(dv([1, 2, 3]));
+    expect(dv([1, 2, 3])).not.toStrictEqual(dv([1, 9, 3]));
+  });
+
   test("deepEquals throw getters", () => {
     let a = {
       get x() {

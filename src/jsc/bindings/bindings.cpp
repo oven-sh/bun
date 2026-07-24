@@ -1366,6 +1366,37 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
         break;
     }
+    case DataViewType: {
+        if (c2Type != DataViewType) {
+            return false;
+        }
+
+        JSC::JSArrayBufferView* left = uncheckedDowncast<JSArrayBufferView>(c1);
+        JSC::JSArrayBufferView* right = uncheckedDowncast<JSArrayBufferView>(c2);
+        size_t byteLength = left->byteLength();
+
+        if (right->byteLength() != byteLength) {
+            return false;
+        }
+
+        if (byteLength == 0)
+            return true;
+
+        if (right->isDetached() || left->isDetached()) [[unlikely]] {
+            return false;
+        }
+
+        const void* vector = left->vector();
+        const void* rightVector = right->vector();
+        if (!vector || !rightVector) [[unlikely]] {
+            return false;
+        }
+
+        if (vector == rightVector) [[unlikely]]
+            return true;
+
+        return (memcmp(vector, rightVector, byteLength) == 0);
+    }
     case Int8ArrayType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:

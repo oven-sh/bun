@@ -31,6 +31,15 @@ test("BuildMessage.position.namespace owns its bytes for plugin-supplied namespa
     });
 
     Bun.gc(true);
+    // Churn allocations the same size as the namespace's backing bytes so the
+    // freed slot is recycled before we read it back. On main Location.namespace
+    // holds a borrow of those bytes, so the read observes whatever landed in
+    // the reused slot; on this branch the bytes are owned and untouched.
+    const churn = [];
+    for (let i = 0; i < 4096; i++) {
+      churn.push(Buffer.from("x".padEnd(ns.length, String(i))).toString());
+    }
+    Bun.gc(true);
 
     const got = result.logs[0]?.position?.namespace;
     if (got !== ns) {

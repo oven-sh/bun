@@ -1192,6 +1192,44 @@ test.concurrent.each([
   },
 );
 
+test.concurrent("run(): a child inheriting --bail emits no reporter chrome", async () => {
+  // bun test's bail notice is default-reporter output; a run() child must
+  // carry only the serialized event stream (plus genuine user stderr).
+  using dir = tempDir("node-test-bail-chrome", {
+    "f.test.mjs": `
+      import { test } from 'node:test';
+      test('one', () => { throw new Error('boom1'); });
+      test('two', () => { throw new Error('boom2'); });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], argv: ['--bail'] });
+      const out = { stderr: [], fails: 0 };
+      stream.on('test:stderr', function onStderr(t) { out.stderr.push(t.message); });
+      stream.on('test:fail', function onFail(t) { out.fails++; });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim() || "null");
+  expect({
+    bailChrome: out.stderr.filter((l: string) => l.includes("Bailed out")),
+    atLeastOneFail: out.fails >= 1,
+  }).toEqual({
+    bailChrome: [],
+    atLeastOneFail: true,
+  });
+});
+
 test.concurrent("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
   using dir = tempDir("node-test-suite-duration", {
     "f.test.mjs": `

@@ -30,6 +30,7 @@
 #include "ZigGlobalObject.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
+#include "webcrypto/CryptoKeyAKP.h"
 #include "webcrypto/CryptoKeyOKP.h"
 #include "webcrypto/CryptoKeyEC.h"
 #include "webcrypto/CryptoKeyRSA.h"
@@ -101,6 +102,13 @@ AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
     case CryptoAlgorithmIdentifier::ECDH:
         key = downcast<WebCore::CryptoKeyEC>(cryptoKey).platformKey();
         break;
+    case CryptoAlgorithmIdentifier::ML_DSA_44:
+    case CryptoAlgorithmIdentifier::ML_DSA_65:
+    case CryptoAlgorithmIdentifier::ML_DSA_87:
+    case CryptoAlgorithmIdentifier::ML_KEM_768:
+    case CryptoAlgorithmIdentifier::ML_KEM_1024:
+        key = downcast<WebCore::CryptoKeyAKP>(cryptoKey).platformKey();
+        break;
     case CryptoAlgorithmIdentifier::X25519:
     case CryptoAlgorithmIdentifier::Ed25519: {
         const auto& okpKey = downcast<WebCore::CryptoKeyOKP>(cryptoKey);
@@ -132,6 +140,7 @@ AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
     case CryptoAlgorithmIdentifier::SHA3_512:
     case CryptoAlgorithmIdentifier::HKDF:
     case CryptoAlgorithmIdentifier::PBKDF2:
+    case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
     case CryptoAlgorithmIdentifier::None:
         key = nullptr;
         break;

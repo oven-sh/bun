@@ -33,6 +33,7 @@ pub struct Stream {
     // BACKREF: borrows the request body owned by `client`; not freed here.
     // `RawSlice` carries the outlives-holder invariant.
     pub pending_body: bun_ptr::RawSlice<u8>,
+    pub headers_sent: bool,
     pub request_body_done: bool,
     pub is_streaming_body: bool,
     pub headers_delivered: bool,
@@ -52,6 +53,7 @@ impl Stream {
             body_buffer: Vec::new(),
             status_code: 0,
             pending_body: bun_ptr::RawSlice::EMPTY,
+            headers_sent: false,
             request_body_done: false,
             is_streaming_body: false,
             headers_delivered: false,

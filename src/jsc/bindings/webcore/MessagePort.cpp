@@ -67,8 +67,10 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    if (!m_isDetached)
-        m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
+    if (!m_isDetached) {
+        auto* context = scriptExecutionContext();
+        m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected, context ? context->identifier() : 0);
+    }
 }
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)

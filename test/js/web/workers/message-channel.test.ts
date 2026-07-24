@@ -1,3 +1,5 @@
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -456,4 +458,205 @@ test("transferring a port from inside peerClosed()'s flush preserves the remaini
   await done.promise;
   // m1 delivered to the old owner; m2/m3 buffered for the new owner.
   expect(seen).toEqual(["old:m1", "new:m2", "new:m3"]);
+});
+
+// https://github.com/oven-sh/bun/issues/32562
+// A local MessageChannel port with a message listener must keep the event loop
+// alive like Node, even when the unreferenced peer is garbage-collected: node
+// never closes a channel because a wrapper was collected. The forced Bun.gc
+// makes the collected-peer path deterministic. ref()/unref(), listener
+// removal, and messageerror-only modulate the hold.
+describe("keeps the event loop alive while a message listener is attached", () => {
+  async function streamHasMarker(stream: ReadableStream<Uint8Array>, marker: string) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      while (!buf.includes(marker)) {
+        const { done, value } = await reader.read();
+        if (done) return false;
+        buf += decoder.decode(value, { stream: true });
+      }
+      return true;
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  async function expectStaysAlive(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Drain stderr in the background so debug/ASAN warnings can't fill the OS
+    // pipe buffer and deadlock the child while it is expected to stay alive.
+    const stderrDrained = proc.stderr.text();
+    // Synchronize on delivery (condition, not time) so slow ASAN/debug startup
+    // does not race the decision below.
+    const gotMarker = await streamHasMarker(proc.stdout, "RECEIVED");
+    // After delivery the buggy build exits within milliseconds; a real keep
+    // alive hangs. A short window cleanly separates the two.
+    const outcome = await Promise.race([
+      proc.exited.then(() => "exited" as const),
+      Bun.sleep(isDebug || isASAN ? 2000 : 750).then(() => "alive" as const),
+    ]);
+    proc.kill();
+    await Promise.all([stderrDrained, proc.exited]);
+    return { gotMarker, outcome };
+  }
+
+  async function expectExitsOnItsOwn(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Generous upper bound: a process that exits resolves this fast; the full
+    // window only elapses if it wrongly hangs (the failure we are guarding).
+    const outcome = await Promise.race([
+      proc.exited.then(exitCode => ({ kind: "exited" as const, exitCode, signalCode: proc.signalCode })),
+      Bun.sleep(isDebug || isASAN ? 6000 : 2500).then(() => ({
+        kind: "alive" as const,
+        exitCode: -1,
+        signalCode: null,
+      })),
+    ]);
+    if (outcome.kind === "alive") proc.kill();
+    await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return outcome;
+  }
+
+  test.concurrent(".on('message') stays alive after the unreferenced peer is GC'd", async () => {
+    expect(
+      await expectStaysAlive(`
+        const { MessageChannel } = require("node:worker_threads");
+        const { port1 } = (() => {
+          const { port1, port2 } = new MessageChannel();
+          port1.on("message", () => console.log("RECEIVED"));
+          port2.postMessage({ foo: "bar" });
+          return { port1 };
+        })(); // port2 is now unreferenced
+        for (let i = 0; i < 10; i++) Bun.gc(true); // collecting port2 must not close port1
+      `),
+    ).toEqual({ gotMarker: true, outcome: "alive" });
+  });
+
+  test.concurrent("addEventListener('message') (web API) stays alive under GC", async () => {
+    expect(
+      await expectStaysAlive(`
+        const { port1 } = (() => {
+          const { port1, port2 } = new MessageChannel();
+          port1.addEventListener("message", () => console.log("RECEIVED"));
+          port1.start();
+          port2.postMessage({ foo: "bar" });
+          return { port1 };
+        })();
+        for (let i = 0; i < 10; i++) Bun.gc(true);
+      `),
+    ).toEqual({ gotMarker: true, outcome: "alive" });
+  });
+
+  test.concurrent(".onmessage setter stays alive under GC", async () => {
+    expect(
+      await expectStaysAlive(`
+        const { port1 } = (() => {
+          const { port1, port2 } = new MessageChannel();
+          port1.onmessage = () => console.log("RECEIVED");
+          port2.postMessage({ foo: "bar" });
+          return { port1 };
+        })();
+        for (let i = 0; i < 10; i++) Bun.gc(true);
+      `),
+    ).toEqual({ gotMarker: true, outcome: "alive" });
+  });
+
+  test.concurrent("unref() releases the hold so the process exits", async () => {
+    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      port1.on("message", () => {});
+      port1.unref();
+      port2.postMessage({ foo: "bar" });
+    `);
+    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+  });
+
+  test.concurrent("removing the last message listener lets the process exit", async () => {
+    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      const listener = () => {};
+      port1.on("message", listener);
+      port1.off("message", listener);
+      port2.postMessage({ foo: "bar" });
+    `);
+    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+  });
+
+  test.concurrent("a second listener added after the peer was GC'd keeps the process alive", async () => {
+    // attach() re-runs on every addEventListener; its retroactive peer-close
+    // check must not treat a same-context collected sibling as a real close.
+    expect(
+      await expectStaysAlive(`
+        const { MessageChannel } = require("node:worker_threads");
+        const { port1 } = (() => {
+          const { port1, port2 } = new MessageChannel();
+          port1.on("message", () => console.log("RECEIVED"));
+          port2.postMessage({ foo: "bar" });
+          return { port1 };
+        })();
+        for (let i = 0; i < 10; i++) Bun.gc(true); // collect port2
+        port1.on("message", () => {});             // re-attach must not release the hold
+      `),
+    ).toEqual({ gotMarker: true, outcome: "alive" });
+  });
+
+  test.concurrent("a listener added after a worker-side port was collected is still released", async () => {
+    // Cross-context late attach: the worker-side port was collected and the
+    // worker is gone, so attaching on main must observe the dead peer and exit.
+    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { Worker, MessageChannel } = require("node:worker_threads");
+      const channel = new MessageChannel();
+      const worker = new Worker(\`
+        const { workerData } = require("worker_threads");
+        workerData.messagePort = null;             // drop the only ref
+        for (let i = 0; i < 10; i++) Bun.gc(true); // collect it inside the worker
+      \`, { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] });
+      worker.on("exit", () => {
+        channel.port1.on("message", () => {});     // attach only after the worker is gone
+      });
+    `);
+    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+  });
+
+  test.concurrent("a worker-side port collected before worker exit still releases the main listener", async () => {
+    // Cross-context: once the worker-side port is collected, the worker's
+    // teardown has nothing left to close, so collection itself must release
+    // the listening peer (node delivers this close at worker exit).
+    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { Worker, MessageChannel } = require("node:worker_threads");
+      const channel = new MessageChannel();
+      new Worker(\`
+        const { workerData } = require("worker_threads");
+        workerData.messagePort.postMessage("Meow");
+        workerData.messagePort = null;              // drop the only ref
+        for (let i = 0; i < 10; i++) Bun.gc(true);  // collect it before the worker exits
+      \`, { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] });
+      channel.port1.on("message", () => {});
+    `);
+    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+  });
+
+  test.concurrent("onmessageerror alone does not keep the process alive", async () => {
+    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      port1.onmessageerror = () => {};
+      port2.postMessage({ foo: "bar" });
+    `);
+    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+  });
 });

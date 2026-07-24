@@ -101,16 +101,13 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
         return;
     }
 
-    // The lambda must not hold a strong Ref<DOMPromise>: that closes the same
-    // native<->GC cycle the write path's reaction avoids (guardedObjects roots
-    // the JSPromise whose reaction owns the lambda). Re-read it from
-    // m_itemPromises once the item is proven alive.
-    m_itemPromises[matchIndex].value->whenSettled([this, weakItem = WeakPtr { m_item.get() }, matchIndex, promise = WTF::move(promise), type]() mutable {
-        RefPtr protectedItem = weakItem.get();
-        if (!protectedItem) {
-            promise->reject(ExceptionCode::InvalidStateError);
-            return;
-        }
+    // The item is the only thing keeping m_itemPromises alive across the async
+    // gap, so the reaction holds it strongly. It does not, however, hold a
+    // strong Ref<DOMPromise> — that would close a native<->GC cycle through
+    // guardedObjects for a never-settling representation. The reaction drops
+    // its captures when it fires (whenPromiseIsSettled's std::exchange), so a
+    // source that does settle releases the item then.
+    m_itemPromises[matchIndex].value->whenSettled([this, protectedItem = Ref { m_item.get() }, matchIndex, promise = WTF::move(promise), type]() mutable {
         Ref itemPromise = m_itemPromises[matchIndex].value;
         if (itemPromise->status() != DOMPromise::Status::Fulfilled) {
             // Forward the caller's own rejection reason, as the write path does

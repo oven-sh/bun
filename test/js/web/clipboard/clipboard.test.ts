@@ -209,6 +209,19 @@ describe("ClipboardItem", () => {
     expect(Buffer.from(await png.arrayBuffer()).equals(PNG_1X1)).toBe(true);
   });
 
+  // The reaction getType() installs must keep the item (and so its stored
+  // DOMPromise) alive until the representation settles; otherwise a temporary
+  // item is collected first and the await spuriously rejects.
+  test("an in-flight getType() keeps its item alive across GC", async () => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const pending = new ClipboardItem({ "text/plain": promise }).getType("text/plain");
+    Bun.gc(true);
+    Bun.gc(true);
+    resolve("survived");
+    const blob = await pending;
+    expect(await blob.text()).toBe("survived");
+  });
+
   test("getType() of an absent type rejects with a NotFoundError DOMException", async () => {
     const item = new ClipboardItem({ "text/plain": "x" });
     await expectDOMException(item.getType("image/png"), "NotFoundError");

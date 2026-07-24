@@ -2258,7 +2258,9 @@ impl VirtualMachine {
     /// paths, `node:`/`bun:`/`file://` specifiers and bare package names are
     /// kept verbatim.
     pub fn seed_initial_preload(&mut self) {
-        use bun_paths::{is_absolute, is_package_path_not_absolute, path_buffer_pool, resolve_path};
+        use bun_paths::{
+            is_absolute, is_package_path_not_absolute, path_buffer_pool, resolve_path,
+        };
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         self.initial_preload = self
             .preload

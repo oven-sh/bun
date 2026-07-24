@@ -1014,7 +1014,10 @@ it("client verify-reject prevents the server seeing a completed handshake", asyn
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const [reject, allow] = stdout.trim().split("\n").map(l => JSON.parse(l));
+  const [reject, allow] = stdout
+    .trim()
+    .split("\n")
+    .map(l => JSON.parse(l));
 
   // rejectUnauthorized: true (default): client drops, server handshake never
   // completes. Node reports ECONNRESET here.

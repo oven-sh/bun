@@ -1567,8 +1567,12 @@ export function bunIncludes(cfg: Config): string[] {
     // include anywhere (our headers, bun-uws, or a WebKit header pulled into a
     // Bun TU) drags libstdc++'s globals_io.o into the link and runs
     // std::ios_base::Init + the full locale facet set before main. Debug builds
-    // keep the real header available for ad-hoc printf-debugging.
-    ...(cfg.release ? [join(cwd, "src/banned-includes")] : []),
+    // keep the real header available for ad-hoc printf-debugging. ASAN builds
+    // are release-profile but are instrumentation artifacts, not shipped
+    // binaries, so the startup-bloat concern the shim guards does not apply;
+    // the fully instrumented local WebKit (its bundled simdutf) legitimately
+    // includes <iostream>, which would otherwise trip the shim.
+    ...(cfg.release && !cfg.asan ? [join(cwd, "src/banned-includes")] : []),
     join(cwd, "packages"),
     join(cwd, "packages/bun-usockets"),
     join(cwd, "packages/bun-usockets/src"),

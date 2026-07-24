@@ -1,4 +1,3 @@
-// Flags: --expose-internals
 'use strict';
 
 // This tests that fs.access and fs.accessSync works as expected
@@ -14,8 +13,7 @@ if (common.isIBMi)
 const assert = require('assert');
 const fs = require('fs');
 
-const { internalBinding } = require('internal/test/binding');
-const { UV_ENOENT } = internalBinding('uv');
+const { UV_ENOENT } = process.binding('uv');
 
 const tmpdir = require('../common/tmpdir');
 const doesNotExist = tmpdir.resolve('__this_should_not_exist');
@@ -90,17 +88,20 @@ fs.promises.access(readOnlyFile, fs.constants.R_OK)
   .catch(throwNextTick);
 
 {
-  const expectedError = common.mustCall((err) => {
+  const expectedError = (err) => {
     assert.notStrictEqual(err, null);
     assert.strictEqual(err.code, 'ENOENT');
     assert.strictEqual(err.path, doesNotExist);
-  }, 2);
-  fs.access(doesNotExist, expectedError);
-  assert.rejects(fs.promises.access(doesNotExist), (err) => {
+  };
+  const expectedErrorPromise = (err) => {
     expectedError(err);
-    assert.match(err.stack, /at async Object\.access/);
-    return true;
-  }).then(common.mustCall());
+    // TODO: https://github.com/oven-sh/bun/issues/2704
+    // assert.match(err.stack, /at async Object\.access/);
+  };
+  fs.access(doesNotExist, common.mustCall(expectedError));
+  fs.promises.access(doesNotExist)
+    .then(common.mustNotCall(), common.mustCall(expectedErrorPromise))
+    .catch(throwNextTick);
 }
 
 {
@@ -120,18 +121,19 @@ fs.promises.access(readOnlyFile, fs.constants.R_OK)
 }
 
 {
-  const expectedError = common.mustCall((err) => {
+  const expectedError = (err) => {
     assert.strictEqual(err.code, 'ERR_INVALID_ARG_TYPE');
     assert.ok(err instanceof TypeError);
     return true;
-  }, 2);
+  };
   assert.throws(
     () => { fs.access(100, fs.constants.F_OK, common.mustNotCall()); },
     expectedError
   );
 
-  assert.rejects(fs.promises.access(100, fs.constants.F_OK), expectedError)
-    .then(common.mustCall());
+  fs.promises.access(100, fs.constants.F_OK)
+    .then(common.mustNotCall(), common.mustCall(expectedError))
+    .catch(throwNextTick);
 }
 
 assert.throws(

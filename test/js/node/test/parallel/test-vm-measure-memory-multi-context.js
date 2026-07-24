@@ -23,6 +23,8 @@ expectExperimentalWarning();
       // We must hold on to the contexts here so that they
       // don't get GC'ed until the measurement is complete
       assert.strictEqual(arr.length, count);
-      assertDetailedShape(result, count + common.isWindows);
+      // V8 reports one extra internal context on Windows (the
+      // `+ common.isWindows` upstream); JSC has no such extra context.
+      assertDetailedShape(result, count + (typeof Bun === 'undefined' ? common.isWindows : 0));
     }));
 }

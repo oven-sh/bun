@@ -525,6 +525,11 @@ impl Loop {
         let _ = unsafe { uv_run(self, RunMode::NoWait) };
     }
     #[inline]
+    pub fn tick_without_idle(&mut self) {
+        // SAFETY: self is a live loop.
+        let _ = unsafe { uv_run(self, RunMode::NoWait) };
+    }
+    #[inline]
     pub fn wakeup(&mut self) {
         self.wq_async.send();
     }

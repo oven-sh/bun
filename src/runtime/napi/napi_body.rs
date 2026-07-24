@@ -2312,6 +2312,19 @@ pub(super) extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     );
 }
 
+/// One non-blocking poll of the platform I/O loop. Called from
+/// `NapiEnv::waitForAsyncCleanupHooks` so async cleanup hooks that complete via
+/// uv handles on this thread's loop can make progress while env teardown waits.
+#[unsafe(no_mangle)]
+pub(super) extern "C" fn napi_internal_tick_platform_loop(env_: napi_env) {
+    // SAFETY: caller (NapiEnv::waitForAsyncCleanupHooks) guarantees env_ is
+    // non-null and we are on the env's JS thread.
+    let env = unsafe { &*env_ };
+    if let Some(loop_) = env.to_js().bun_vm().platform_loop_opt() {
+        loop_.tick_without_idle();
+    }
+}
+
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT

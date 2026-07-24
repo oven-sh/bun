@@ -342,3 +342,101 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
     });
   },
 );
+
+describe("randomFill with resizable ArrayBuffer", () => {
+  // The async path fills a private scratch buffer on the WorkPool thread and
+  // copies it back on the JS thread after re-fetching the ArrayBuffer view.
+  // Previously the copy-back was all-or-nothing: if the buffer had been shrunk
+  // below `offset + size` between scheduling and completion, the bounds check
+  // failed and the scratch was silently dropped, so the callback fired with
+  // err=null and an untouched (all-zero) buffer. Node copies whatever prefix
+  // still fits; match that.
+
+  // With N bytes surviving, the chance all of them are independently zero is
+  // 2^-8N; loop a few times so the remaining flake probability is negligible.
+  async function expectFilled(
+    make: () => { view: ArrayBufferView; check: () => Uint8Array; shrink: () => void },
+    offset?: number,
+  ) {
+    let filled = false;
+    for (let i = 0; i < 8 && !filled; i++) {
+      const { view, check, shrink } = make();
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      const cb = (err: Error | null, out: unknown) => (err ? reject(err) : resolve(out));
+      if (offset === undefined) randomFill(view, cb);
+      else randomFill(view, offset, cb);
+      shrink();
+      expect(await promise).toBe(view);
+      if (check().some(b => b !== 0)) filled = true;
+    }
+    expect(filled).toBe(true);
+  }
+
+  it("fills the surviving bytes when the backing ArrayBuffer shrinks before the callback", async () => {
+    await expectFilled(() => {
+      const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+      const view = new Uint8Array(ab);
+      return { view, check: () => new Uint8Array(ab), shrink: () => ab.resize(8) };
+    });
+  });
+
+  it("fills the surviving bytes after the offset when the buffer shrinks into [offset, offset+size)", async () => {
+    await expectFilled(() => {
+      const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+      const view = new Uint8Array(ab);
+      // offset 32, requested 32 bytes; shrink to 48 leaves 16 bytes after the offset.
+      return {
+        view,
+        check: () => new Uint8Array(ab).subarray(32),
+        shrink: () => ab.resize(48),
+      };
+    }, 32);
+  });
+
+  it("fills the surviving bytes of a length-tracking view when its backing buffer shrinks", async () => {
+    await expectFilled(() => {
+      const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+      const view = new Uint8Array(ab, 16); // length-tracking, starts at byte 16
+      return { view, check: () => new Uint8Array(ab).subarray(16), shrink: () => ab.resize(24) };
+    });
+  });
+
+  it("does not touch bytes before the offset when the buffer shrinks", async () => {
+    const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+    const view = new Uint8Array(ab);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    randomFill(view, 32, err => (err ? reject(err) : resolve()));
+    ab.resize(48);
+    await promise;
+    expect(Array.from(new Uint8Array(ab).subarray(0, 32))).toEqual(new Array(32).fill(0));
+  });
+
+  it("succeeds with no write when the buffer shrinks below the offset", async () => {
+    const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+    const view = new Uint8Array(ab);
+    const { promise, resolve } = Promise.withResolvers<[Error | null, unknown]>();
+    randomFill(view, 32, (err, b) => resolve([err, b]));
+    ab.resize(16);
+    const [err, b] = await promise;
+    expect(err).toBeNull();
+    expect(b).toBe(view);
+    expect(Array.from(new Uint8Array(ab))).toEqual(new Array(16).fill(0));
+  });
+
+  it("still fills exactly the requested range when the buffer grows before the callback", async () => {
+    let filled = false;
+    let tailClean = true;
+    for (let i = 0; i < 8 && !filled; i++) {
+      const ab = new ArrayBuffer(64, { maxByteLength: 128 });
+      const view = new Uint8Array(ab);
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      randomFill(view, err => (err ? reject(err) : resolve()));
+      ab.resize(128);
+      await promise;
+      const bytes = new Uint8Array(ab);
+      if (bytes.subarray(0, 64).some(b => b !== 0)) filled = true;
+      if (bytes.subarray(64).some(b => b !== 0)) tailClean = false;
+    }
+    expect({ filled, tailClean }).toEqual({ filled: true, tailClean: true });
+  });
+});

@@ -280,16 +280,17 @@ pub mod random {
             if let Some(scratch) = self.scratch.take() {
                 // Re-fetch the buffer on the JS thread and re-validate bounds:
                 // the user may have detached or resized it while the WorkPool
-                // task ran. On mismatch, drop the random bytes rather than
-                // write through a stale pointer.
+                // task ran. Copy however much of `scratch` still fits in the
+                // view's current byte range. (A fixed-length TypedArray view
+                // that falls out of bounds on shrink reports `byteLength = 0`
+                // and receives nothing; filling the surviving backing-store
+                // bytes in that case would need the underlying ArrayBuffer's
+                // data/byteLength, which `as_array_buffer` does not expose.)
                 if let Some(mut buf) = self.value.as_array_buffer(global) {
                     let off = self.offset as usize;
-                    let dst = buf.slice_mut();
-                    match off.checked_add(scratch.len()) {
-                        Some(end) if end <= dst.len() => {
-                            dst[off..end].copy_from_slice(&scratch);
-                        }
-                        _ => {}
+                    if let Some(dst) = buf.slice_mut().get_mut(off..) {
+                        let n = scratch.len().min(dst.len());
+                        dst[..n].copy_from_slice(&scratch[..n]);
                     }
                 }
             }

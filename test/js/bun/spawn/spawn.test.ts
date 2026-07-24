@@ -1,5 +1,5 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
   bunEnv,
@@ -11,6 +11,7 @@ import {
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
@@ -1038,6 +1039,21 @@ describe("close handling", () => {
       }
     });
 
+    // An extra slot is a read source, so the slice window is meaningful there,
+    // but only stdin has a writer to pump the narrowed bytes through. Reject it
+    // rather than hand the child the whole file.
+    it.skipIf(isWindows)("Bun.file(path).slice() at index >= 3 is rejected", () => {
+      const file = join(tmp, "stdio-extra-bunfile-slice.txt");
+      writeFileSync(file, "from-bun-file");
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", readFd3],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", Bun.file(file).slice(5, 9)],
+        }),
+      ).toThrow("A sliced Bun.file() cannot be used for stdio[3] yet");
+    });
+
     it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
       await using proc = spawn({
         cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
@@ -1401,5 +1417,161 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
+  });
+});
+
+// Sequential on purpose: every case spawns a `bun` child, and 5 concurrent
+// ASAN children (the `--max-concurrency` default there) overrun the 5s timeout.
+describe("Bun.file().slice() as stdin", () => {
+  const contents = "0123456789".repeat(10);
+  const pipeStdin = "process.stdin.pipe(process.stdout)";
+
+  let dir: ReturnType<typeof tempDir>;
+  let filePath: string;
+  let bigPath: string;
+  const bigSize = 1024 * 1024;
+
+  beforeAll(() => {
+    dir = tempDir("slice-stdin", {
+      "slice-stdin.txt": contents,
+      "slice-stdin-big.bin": Buffer.concat([Buffer.alloc(bigSize - 8, "A"), Buffer.alloc(8, "B")]),
+    });
+    filePath = join(String(dir), "slice-stdin.txt");
+    bigPath = join(String(dir), "slice-stdin-big.bin");
+  });
+
+  afterAll(() => {
+    dir[Symbol.dispose]();
+  });
+
+  // `.slice()` narrows a Bun.file() Blob to [offset, offset + size). The spawn
+  // stdio fast path hands the child the fd/path behind the Blob, which carries
+  // no end bound, so the whole file used to leak through.
+  const windows: [label: string, make: () => Blob, expected: () => string][] = [
+    ["slice(3, 9)", () => Bun.file(filePath).slice(3, 9), () => contents.slice(3, 9)],
+    ["slice(3)", () => Bun.file(filePath).slice(3), () => contents.slice(3)],
+    ["slice(0, 10)", () => Bun.file(filePath).slice(0, 10), () => contents.slice(0, 10)],
+    ["slice(3, 3)", () => Bun.file(filePath).slice(3, 3), () => ""],
+    // Windows that cover the whole file keep the zero-copy fd/path fast path.
+    ["no slice", () => Bun.file(filePath), () => contents],
+    ["slice(0, size)", () => Bun.file(filePath).slice(0, contents.length), () => contents],
+    ["slice(0, past end)", () => Bun.file(filePath).slice(0, contents.length * 4), () => contents],
+  ];
+
+  for (const [label, make, expected] of windows) {
+    it(`spawn: ${label}`, async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", pipeStdin],
+        env: bunEnv,
+        stdin: make(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, exitCode }).toEqual({ stdout: expected(), exitCode: 0 });
+      expect(stderr).toBe("");
+    });
+
+    it(`spawnSync: ${label}`, () => {
+      const { stdout, stderr, exitCode } = spawnSync({
+        cmd: [bunExe(), "-e", pipeStdin],
+        env: bunEnv,
+        stdin: make(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: expected(), exitCode: 0 });
+      expect(stderr.toString()).toBe("");
+    });
+  }
+
+  it("a window larger than the pipe buffer is written in full", async () => {
+    const size = 200 * 1024;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", pipeStdin],
+      env: bunEnv,
+      stdin: Bun.file(bigPath).slice(0, size),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toEqual(new Uint8Array(Buffer.alloc(size, "A")));
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  it("spawnSync reads a window at the end of a large file", () => {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", pipeStdin],
+      env: bunEnv,
+      stdin: Bun.file(bigPath).slice(bigSize - 12, bigSize),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "AAAABBBBBBBB", exitCode: 0 });
+    expect(stderr.toString()).toBe("");
+  });
+
+  it("Response wrapping a file slice is narrowed too", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", pipeStdin],
+      env: bunEnv,
+      stdin: new Response(Bun.file(filePath).slice(3, 9)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "345678", stderr: "", exitCode: 0 });
+  });
+
+  it.skipIf(isWindows)("a fd-backed file slice is narrowed and leaves the fd position alone", async () => {
+    const fd = openSync(filePath, "r");
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", pipeStdin],
+        env: bunEnv,
+        stdin: Bun.file(fd).slice(3, 9),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "345678", stderr: "", exitCode: 0 });
+
+      const buf = Buffer.alloc(4);
+      expect(readSync(fd, buf, 0, 4, null)).toBe(4);
+      expect(buf.toString()).toBe(contents.slice(0, 4));
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // A file with no resolvable length (missing, pipe, tty) has no window to read,
+  // so it keeps taking the fd/path fast path rather than failing the spawn.
+  it("a slice of a missing file behaves like the unsliced file", () => {
+    const missing = join(String(dir), "nope.txt");
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", pipeStdin],
+      env: bunEnv,
+      stdin: Bun.file(missing).slice(0, 5),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    expect(stderr.toString()).toBe("");
+  });
+
+  // stdout/stderr take a Blob as a write target; the window means nothing there,
+  // so they keep writing to the whole file.
+  it("a slice used as stdout still writes to the file", async () => {
+    const out = join(String(dir), "slice-stdout.txt");
+    writeFileSync(out, "");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('written')"],
+      env: bunEnv,
+      stdout: Bun.file(out).slice(0, 2),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readFileSync(out, "utf8")).toBe("written");
   });
 });

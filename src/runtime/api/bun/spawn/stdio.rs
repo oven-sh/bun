@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -578,10 +578,31 @@ impl Stdio {
     pub fn extract_blob(
         &mut self,
         global: &JSGlobalObject,
-        blob: webcore::blob::Any,
+        mut blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).map(FdStdio::fd);
+
+        // A sliced `Bun.file()` addresses `[offset, offset + size)`, but the fd/path
+        // fast path below carries no end bound, so read the range up front and pipe
+        // those bytes. stdout/stderr are write targets, where the range is moot.
+        if i != 1 && i != 2 {
+            if let Some((offset, size)) = webcore::blob::file_view_range(&blob) {
+                if i != 0 {
+                    // Same limit as an in-memory Blob here: only stdin has a
+                    // parent-side writer to pump the bytes through.
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "A sliced Bun.file() cannot be used for stdio[{i}] yet"
+                    )));
+                }
+                let bytes = match webcore::blob::read_file_range(&blob, offset, size) {
+                    Ok(bytes) => bytes,
+                    Err(err) => return Err(err.throw(global)),
+                };
+                blob.detach();
+                blob = webcore::blob::Any::from_owned_slice(bytes);
+            }
+        }
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {

@@ -173,20 +173,18 @@ describe.if(!isWindows)("uv stubs", () => {
 
   test("uv_async: ref'd handle keeps the process alive until unref", async () => {
     const addon = path.join(tempdir, "./build/Release/uv_test.node");
+    // The timer is unref'd so the uv_async handle is the only thing keeping
+    // the loop alive; if its loop ref is a no-op the process exits before the
+    // timer fires and stdout is empty.
     const script = `
       const addon = require(${JSON.stringify(addon)});
       addon.testUvAsyncKeepaliveInit();
-      let ticks = 0;
-      (function tick() {
-        if (++ticks === 3) {
-          console.log("unref");
-          addon.testUvAsyncKeepaliveUnref();
-          // After unref there is nothing keeping the loop alive; the process
-          // must exit on its own without an explicit process.exit().
-        } else {
-          setImmediate(tick);
-        }
-      })();
+      setTimeout(() => {
+        console.log("alive");
+        addon.testUvAsyncKeepaliveUnref();
+        // After unref there is nothing keeping the loop alive; the process
+        // must exit on its own without an explicit process.exit().
+      }, 20).unref();
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -196,7 +194,7 @@ describe.if(!isWindows)("uv stubs", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("unref\n");
+    expect(stdout).toBe("alive\n");
     expect(exitCode).toBe(0);
   });
 });

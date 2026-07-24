@@ -447,13 +447,12 @@ impl hooks::AutoInstaller for PackageManager {
 //   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
 //     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
-//     process-lifetime). `init_with_runtime` stores it as
-//     `NonNull<Loader<'static>>`.
+//     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
-    mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
+    mut env: core::ptr::NonNull<bun_dotenv::Loader>,
 ) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
     // ABI: the resolver-side `extern "Rust"` declaration names
     // `bun_errno::SystemErrno` (both crates depend on bun_errno; carries the
@@ -469,7 +468,7 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
         install.map(|p| unsafe { p.as_ref() });
     // SAFETY: caller guarantees `log` / `env` point at process-lifetime
     // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader<'static>) =
+    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader) =
         unsafe { (log.as_mut(), env.as_mut()) };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(

@@ -280,8 +280,7 @@ impl CreateCommand {
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -1664,8 +1663,7 @@ impl CreateCommand {
             Global::crash();
         }
 
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -2412,9 +2410,10 @@ impl Example {
             *URL_.get() = Some(api_url.erase_lifetime());
         }
 
-        // SAFETY: `http_proxy` borrows from `env_loader`'s arena-backed map
-        // (see `DotEnv::Loader::init(cli_arena().alloc(...))` in `exec`); erase
-        // to `'static` for `AsyncHTTP::init_sync` — same as `fetch_from_github`.
+        // SAFETY: `http_proxy` borrows from `env_loader`, which outlives this
+        // fn. Erased to `'static` because `async_http` is `cli_arena()`-backed
+        // (so its type parameter is `'static`), but the proxy URL is only read
+        // during the `send_sync()` calls below while `env_loader` is live.
         let mut http_proxy: Option<URL<'static>> = env_loader
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
             .map(|u| unsafe { u.erase_lifetime() });
@@ -2511,7 +2510,7 @@ impl Example {
         // ensure very stable memory address
         let parsed_tarball_url = URL::parse(tarball_url);
 
-        // SAFETY: see note on `http_proxy` above — env-loader-backed `'static`.
+        // SAFETY: see note on `http_proxy` above.
         http_proxy = env_loader
             .get_http_proxy_for(&parsed_tarball_url)
             .map(|u| unsafe { u.erase_lifetime() });
@@ -2699,8 +2698,7 @@ pub(crate) struct CreateListExamplesCommand;
 impl CreateListExamplesCommand {
     pub(crate) fn exec(ctx: &Command::Context) -> crate::Result<()> {
         let filesystem = fs::FileSystem::init(None)?;
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 

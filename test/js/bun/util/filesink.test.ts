@@ -273,6 +273,51 @@ it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte
   expect(received).toBe(size);
 });
 
+// end() called after a backpressured write() with the reader already gone:
+// end_from_js's own flush() sees EPIPE synchronously. Throwing it would leave
+// the write()'s outstanding promise orphaned (never settled here; in the spawn
+// path on_attached_process_exit rejected it a second time as an unhandled
+// rejection). Instead end() latches the error into that pending promise and
+// returns it, so write()'s promise and end()'s return are the same object and
+// the failure is reported exactly once.
+it.skipIf(!isPosix)(
+  "end() after a backpressured write() with the reader gone returns the write's promise, rejecting with EPIPE",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
+    const sink = Bun.file(writeFd).writer();
+    try {
+      const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      // end()'s flush() hits EPIPE synchronously. It must not throw and strand
+      // writePromise; it hands back the same promise with the error latched.
+      const endResult = sink.end();
+      expect(endResult).toBe(writePromise);
+
+      let caught: any;
+      try {
+        await endResult;
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("EPIPE");
+
+      // The pending slot is now settled; a follow-up end() short-circuits to
+      // the written byte count, not another promise.
+      expect(typeof sink.end()).toBe("number");
+    } finally {
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
+    }
+  },
+);
+
 // The deferred auto-flush microtask runs at the first microtask checkpoint
 // after write() backpressures. If its flush() hit EPIPE, it discarded the
 // error and then let `run_pending_later()` resolve the pending write() promise

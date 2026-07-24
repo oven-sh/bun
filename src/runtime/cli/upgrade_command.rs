@@ -542,10 +542,7 @@ impl UpgradeCommand {
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader: DotEnv::Loader = {
-            // Allocate in the process-lifetime CLI arena.
-            DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
-        };
+        let mut env_loader = DotEnv::Loader::init();
         env_loader.load_process()?;
 
         let use_canary: bool = 'brk: {
@@ -694,6 +691,9 @@ impl UpgradeCommand {
                 200 => {}
                 _ => return Err(crate::Error::HTTPError),
             }
+            // Release the immutable borrow of `env_loader` (via `http_proxy`)
+            // before the map mutations below.
+            drop(async_http);
 
             let bytes = zip_file_buffer.slice();
 

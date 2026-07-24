@@ -60,8 +60,8 @@ fn cell_get<'a, T>(cell: &Cell<*mut T>) -> Option<&'a mut T> {
 /// Construct a `SystemError` with code+message and remaining fields defaulted.
 fn system_error(code: &'static str, message: &'static str) -> SystemError {
     SystemError {
-        code: BunString::static_(code),
-        message: BunString::static_(message),
+        code: BunString::static_(code).into(),
+        message: BunString::static_(message).into(),
         ..Default::default()
     }
 }

@@ -186,13 +186,11 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
     let str = bun_jsc::JSString::opaque_ref(content.as_string()).to_slice(global);
 
-    let mut map = envloader::Map::init();
-    let mut p = envloader::Loader::init(&mut map);
+    let mut p = envloader::Loader::init();
     p.load_from_string::<true, false>(str.slice())?;
-    drop(p);
 
-    let obj = JSValue::create_empty_object(global, map.map.count());
-    for (k, v) in map.map.iter() {
+    let obj = JSValue::create_empty_object(global, p.map.map.count());
+    for (k, v) in p.map.map.iter() {
         obj.put(
             global,
             ZigString::init_utf8(k),

@@ -42,7 +42,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSpecialSandbox;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSourceTextModule;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSyntheticModule;

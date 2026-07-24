@@ -33,27 +33,13 @@
 #include "JSClipboardItem.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
+#include "EventNames.h"
 #include "JSDOMPromiseDeferred.h"
 #include <JavaScriptCore/JSCInlines.h>
-#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
-
-// A runtime has no focused document, so the spec's clipboard events fire at
-// navigator.clipboard once the corresponding operation has succeeded.
-static const AtomString& copyEventName()
-{
-    static NeverDestroyed<const AtomString> name("copy"_s);
-    return name.get();
-}
-
-static const AtomString& pasteEventName()
-{
-    static NeverDestroyed<const AtomString> name("paste"_s);
-    return name.get();
-}
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Clipboard);
 
@@ -92,7 +78,7 @@ void Clipboard::readText(Ref<DeferredPromise>&& promise)
         if (!representations.empty())
             text = String::fromUTF8ReplacingInvalidSequences({ representations[0].bytes, representations[0].length });
         promise->resolve<IDLDOMString>(text);
-        protectedThis->fireClipboardEvent(pasteEventName());
+        protectedThis->fireClipboardEvent(eventNames().pasteEvent);
     });
 
     scheduleClipboardReadText(*globalObject, WTF::move(request));
@@ -112,7 +98,7 @@ void Clipboard::writeText(const String& data, Ref<DeferredPromise>&& promise)
             return;
         }
         promise->resolve();
-        protectedThis->fireClipboardEvent(copyEventName());
+        protectedThis->fireClipboardEvent(eventNames().copyEvent);
     });
 
     scheduleClipboardWriteText(*globalObject, WTF::move(request), data);
@@ -146,7 +132,7 @@ void Clipboard::read(Ref<DeferredPromise>&& promise)
         }
 
         promise->resolve<IDLSequence<IDLInterface<ClipboardItem>>>(items);
-        protectedThis->fireClipboardEvent(pasteEventName());
+        protectedThis->fireClipboardEvent(eventNames().pasteEvent);
     });
 
     scheduleClipboardRead(*globalObject, WTF::move(request));
@@ -303,7 +289,7 @@ void Clipboard::ItemWriter::didFinishPlatformWrite(const String& failureMessage)
     else {
         promise->resolve();
         if (RefPtr clipboard = m_clipboard.get())
-            clipboard->fireClipboardEvent(copyEventName());
+            clipboard->fireClipboardEvent(eventNames().copyEvent);
     }
 
     detachFromClipboard();

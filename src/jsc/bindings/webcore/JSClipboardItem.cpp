@@ -53,14 +53,18 @@
 namespace WebCore {
 using namespace JSC;
 
-// WebIDL: every key of the items record must parse as `type "/" subtype`,
-// each half an HTTP token (https://mimesniff.spec.whatwg.org/#mime-type).
+// WebIDL: every key of the items record must parse per mimesniff §4.4, which
+// strips surrounding HTTP whitespace and parses `;`-delimited parameters. Only
+// the `type "/" subtype` essence is validated here, each half an HTTP token.
 static bool isValidClipboardMIMEType(const String& type)
 {
-    size_t slash = type.find('/');
+    auto view = StringView(type).trim(isASCIIWhitespace<char16_t>);
+    size_t semicolon = view.find(';');
+    if (semicolon != notFound)
+        view = view.left(semicolon).trim(isASCIIWhitespace<char16_t>);
+    size_t slash = view.find('/');
     if (slash == notFound)
         return false;
-    auto view = StringView(type);
     return isValidHTTPToken(view.left(slash)) && isValidHTTPToken(view.substring(slash + 1));
 }
 
@@ -335,6 +339,12 @@ JSC_DEFINE_HOST_FUNCTION(jsClipboardItemConstructorFunction_supports, (JSGlobalO
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(ClipboardItem::supports(type))));
+}
+
+void JSClipboardItem::destroy(JSC::JSCell* cell)
+{
+    JSClipboardItem* thisObject = static_cast<JSClipboardItem*>(cell);
+    thisObject->JSClipboardItem::~JSClipboardItem();
 }
 
 JSC::GCClient::IsoSubspace* JSClipboardItem::subspaceForImpl(JSC::VM& vm)

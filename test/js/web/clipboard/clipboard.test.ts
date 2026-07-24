@@ -147,6 +147,11 @@ describe("ClipboardItem", () => {
     expect(new ClipboardItem(new Proxy({ "text/plain": "x" }, {})).types).toEqual(["text/plain"]);
     const items = Object.defineProperty({ "text/plain": "x" }, "not a mime", { value: "y", enumerable: false });
     expect(new ClipboardItem(items).types).toEqual(["text/plain"]);
+    // mimesniff §4.4: leading/trailing whitespace and `;`-parameters are
+    // accepted (Chrome/Firefox behave the same).
+    expect(() => new ClipboardItem({ "text/plain;charset=utf-8": "x" })).not.toThrow();
+    expect(() => new ClipboardItem({ " text/plain ": "x" })).not.toThrow();
+    expect(() => new ClipboardItem({ "text/": "x" })).toThrow(TypeError);
   });
 
   test("MIME types are normalized to their lowercased serialization", async () => {
@@ -246,6 +251,21 @@ describe("ClipboardItem", () => {
     const proto = ClipboardItem.prototype;
     expect(() => Object.getOwnPropertyDescriptor(proto, "types")!.get!.call({})).toThrow(TypeError);
     expect(() => Object.getOwnPropertyDescriptor(proto, "presentationStyle")!.get!.call({})).toThrow(TypeError);
+  });
+
+  // Regression for JSClipboardItem missing its destroy() method-table entry:
+  // without it GC never ran ~JSClipboardItem, leaking every wrapped impl (and
+  // the Strong<JSPromise> each representation holds) forever.
+  test("collected wrappers release their impl", () => {
+    const { heapStats } = require("bun:jsc");
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.ClipboardItem || 0;
+    for (let i = 0; i < 2000; i++) new ClipboardItem({ "text/plain": "x" });
+    Bun.gc(true);
+    Bun.gc(true);
+    const after = heapStats().objectTypeCounts.ClipboardItem || 0;
+    // The wrapper count returns to near-baseline; without destroy() it stayed at ~2000.
+    expect(after - before).toBeLessThan(100);
   });
 });
 

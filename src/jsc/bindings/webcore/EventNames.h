@@ -33,6 +33,8 @@ namespace WebCore {
     macro(error)                                    \
         macro(abort)                                \
             macro(close)                            \
+                macro(copy)                         \
+                    macro(paste)                    \
                 macro(open)                         \
                     macro(rename)                   \
                         macro(message)              \

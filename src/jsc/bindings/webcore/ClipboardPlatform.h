@@ -8,7 +8,7 @@
 #include "root.h"
 #include "ClipboardItemData.h"
 #include <span>
-#include <wtf/CompletionHandler.h>
+#include <wtf/Function.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -33,7 +33,10 @@ public:
     // what the platform produced — empty is not an error, since a clipboard with
     // no matching representation simply has none. `failureMessage` is null on
     // success and otherwise the actionable reason to reject with.
-    using Completion = CompletionHandler<void(JSC::JSGlobalObject&, std::span<const ClipboardRepresentation>, const String& failureMessage)>;
+    //
+    // `Function`, not `CompletionHandler`: a VM that shuts down while the job is
+    // on the work pool drops the request without a live global to call it with.
+    using Completion = Function<void(JSC::JSGlobalObject&, std::span<const ClipboardRepresentation>, const String& failureMessage)>;
 
     static Ref<ClipboardRequest> create(Completion&& completion)
     {

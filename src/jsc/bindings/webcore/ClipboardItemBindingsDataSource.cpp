@@ -285,8 +285,10 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
         JSC::JSValue error;
         bool terminated = false;
         RefPtr blob = blobFromResolvedValue(*globalObject, resolvedValues.at(index), m_itemPromises[index].key, error, terminated);
-        if (terminated)
+        if (terminated) {
+            invokeCompletionHandler(std::nullopt);
             return;
+        }
         // A representation that could not become a Blob fails the whole item,
         // so a partial write never reaches the clipboard. `error` is the
         // exception its WebIDL coercion threw, if any.

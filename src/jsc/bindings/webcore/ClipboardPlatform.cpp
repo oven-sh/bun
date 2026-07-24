@@ -83,3 +83,11 @@ extern "C" void Bun__Clipboard__requestComplete(JSC::JSGlobalObject* globalObjec
         message = WTF::String::fromUTF8({ failureMessage, failureLength });
     adopted->complete(*globalObject, { representations, count }, message);
 }
+
+// Balances the leaked reference when the backend drops a job without completing
+// it (the VM is shutting down). The completion is never run; the captured
+// DeferredPromise is on a dying global and would ignore the call anyway.
+extern "C" void Bun__Clipboard__requestAbandon(WebCore::ClipboardRequest* request)
+{
+    adoptRef(*request);
+}

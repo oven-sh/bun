@@ -13,8 +13,9 @@ use core::ptr;
 use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
 
 /// An opaque `WebCore::ClipboardRequest*`. Only C++ ever dereferences it; the
-/// job just carries it across the thread hop.
-#[derive(Clone, Copy)]
+/// job just carries it across the thread hop. The job owns the leaked +1 and
+/// must hand it back exactly once — `then()` via `requestComplete`, or `Drop`
+/// via `requestAbandon` when the VM shut down before `then()` could run.
 struct RequestHandle(*mut c_void);
 
 // SAFETY: the pointer is never dereferenced off the JS thread — `run` does not
@@ -42,6 +43,8 @@ unsafe extern "C" {
         failure_message: *const u8,
         failure_length: usize,
     );
+    /// Releases a request the job never got to complete (VM shutting down).
+    fn Bun__Clipboard__requestAbandon(request: *mut c_void);
 }
 
 /// Serializes our own work-pool jobs so concurrent clipboard calls cannot
@@ -107,7 +110,19 @@ enum Outcome {
 pub(crate) struct ClipboardCtx {
     op: Op,
     outcome: Option<Outcome>,
-    request: RequestHandle,
+    request: Option<RequestHandle>,
+}
+
+impl Drop for ClipboardCtx {
+    fn drop(&mut self) {
+        // `then()` (and `schedule`'s sync-failure path) take the handle; a
+        // still-present one means the job was dropped on the VM-shutdown
+        // early-out, so balance the leaked ref here.
+        if let Some(request) = self.request.take() {
+            // SAFETY: `request.0` is the live leaked reference C++ handed over.
+            unsafe { Bun__Clipboard__requestAbandon(request.0) };
+        }
+    }
 }
 
 impl AnyTaskJobCtx for ClipboardCtx {
@@ -156,6 +171,7 @@ impl AnyTaskJobCtx for ClipboardCtx {
     }
 
     fn then(&mut self, global: &JSGlobalObject) -> bun_jsc::JsResult<()> {
+        let request = self.request.take().expect("then() runs once");
         match self.outcome.take().expect("run() filled the outcome") {
             Outcome::Representations(items) => {
                 // Borrowed views over `items`, which outlives the call.
@@ -173,7 +189,7 @@ impl AnyTaskJobCtx for ClipboardCtx {
                 unsafe {
                     Bun__Clipboard__requestComplete(
                         global,
-                        self.request.0,
+                        request.0,
                         views.as_ptr(),
                         views.len(),
                         ptr::null(),
@@ -181,9 +197,7 @@ impl AnyTaskJobCtx for ClipboardCtx {
                     )
                 };
             }
-            Outcome::Failed(unavailable) => {
-                complete_with_failure(global, self.request.0, unavailable)
-            }
+            Outcome::Failed(unavailable) => complete_with_failure(global, request.0, unavailable),
         }
         Ok(())
     }
@@ -205,17 +219,16 @@ fn complete_with_failure(global: &JSGlobalObject, request: *mut c_void, unavaila
     };
 }
 
-/// Schedules the op on the work pool. If scheduling fails there is nothing left
-/// to settle the request, so it is rejected here rather than left pending.
+/// Schedules the op on the work pool. `create_and_schedule` consumes `ctx` on
+/// every path, so a failure (which cannot happen here: the default `init` is
+/// infallible) would already have balanced the request via `Drop`.
 fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
     let ctx = ClipboardCtx {
         op,
         outcome: None,
-        request: RequestHandle(request),
+        request: Some(RequestHandle(request)),
     };
-    if AnyTaskJob::create_and_schedule(global, ctx).is_err() {
-        complete_with_failure(global, request, Unavailable::Platform);
-    }
+    let _ = AnyTaskJob::create_and_schedule(global, ctx);
 }
 
 /// Copies a borrowed byte range; the backing memory belongs to the caller and

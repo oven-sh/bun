@@ -24,6 +24,9 @@
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
 
+#include <sys/stat.h>
+#include <wtf/text/StringBuilder.h>
+
 namespace Bun {
 
 using namespace JSC;
@@ -40,6 +43,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPackageJSON);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
@@ -914,6 +918,96 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
 static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 {
     return moduleObject;
+}
+
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON,
+    (JSC::JSGlobalObject* globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue specifierValue = callFrame->argument(0);
+    if (!specifierValue.isString()) {
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "specifier"_s, "string"_s, specifierValue);
+    }
+
+    String specifier = specifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (specifier.startsWith("file://"_s)) {
+        specifier = specifier.substring(7);
+#if OS(WINDOWS)
+        if (specifier.length() > 2 && specifier[0] == '/' && specifier[2] == ':') {
+            specifier = specifier.substring(1);
+        }
+#else
+        if (specifier.length() > 0 && specifier[0] == '/') {
+        }
+#endif
+    }
+
+    if (!isAbsolutePath(specifier)) {
+        specifier = pathResolveWTFString(globalObject, specifier);
+    }
+
+    String dir;
+    size_t lastSep = specifier.reverseFind('/');
+#if OS(WINDOWS)
+    size_t lastSepBackslash = specifier.reverseFind('\\');
+    if (lastSepBackslash != WTF::notFound && (lastSep == WTF::notFound || lastSepBackslash > lastSep)) {
+        lastSep = lastSepBackslash;
+    }
+#endif
+
+    if (lastSep == WTF::notFound) {
+        dir = String();
+    } else {
+        dir = specifier.substring(0, lastSep);
+    }
+
+    while (dir.length() > 0) {
+        WTF::StringBuilder pathBuilder;
+        pathBuilder.append(dir);
+        pathBuilder.append('/');
+        pathBuilder.append("package.json"_s);
+        String packageJsonPath = pathBuilder.toString();
+
+        auto utf8 = packageJsonPath.utf8();
+        struct stat statbuf;
+        if (stat(utf8.data(), &statbuf) == 0 && S_ISREG(statbuf.st_mode)) {
+            return JSValue::encode(jsString(vm, packageJsonPath));
+        }
+
+        size_t parentSep = dir.reverseFind('/');
+#if OS(WINDOWS)
+        size_t parentSepBackslash = dir.reverseFind('\\');
+        if (parentSepBackslash != WTF::notFound && (parentSep == WTF::notFound || parentSepBackslash > parentSep)) {
+            parentSep = parentSepBackslash;
+        }
+#endif
+
+        if (parentSep == WTF::notFound) {
+            break;
+        }
+
+        dir = dir.substring(0, parentSep);
+        if (dir.length() == 0) {
+            WTF::StringBuilder rootPathBuilder;
+            rootPathBuilder.append('/');
+            rootPathBuilder.append("package.json"_s);
+            String rootPackageJsonPath = rootPathBuilder.toString();
+
+            auto rootUtf8 = rootPackageJsonPath.utf8();
+            if (stat(rootUtf8.data(), &statbuf) == 0 && S_ISREG(statbuf.st_mode)) {
+                return JSValue::encode(jsString(vm, rootPackageJsonPath));
+            }
+            break;
+        }
+    }
+
+    return JSValue::encode(jsNull());
 }
 
 /* Source for NodeModuleModule.lut.h

@@ -35,7 +35,7 @@ impl CallFrame {
     pub fn arguments_as_array<const COUNT: usize>(&self) -> [JSValue; COUNT] {
         let slice = self.arguments();
         let mut value: [JSValue; COUNT] = [JSValue::UNDEFINED; COUNT];
-        let n = (self.arguments_count() as usize).min(COUNT);
+        let n = slice.len().min(COUNT);
         value[0..n].copy_from_slice(&slice[0..n]);
         value
     }

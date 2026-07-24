@@ -514,6 +514,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || (p.options.bundle
                             && p.options.output_format == js_parser::options::Format::Cjs)
                     {
+                        // For `--compile`, avoid embedding the build machine's absolute
+                        // file path into the standalone executable. The CJS entry chunk
+                        // is wrapped in `(function(exports, require, module, __filename,
+                        // __dirname) {...})`, and those parameters are populated at
+                        // runtime with the virtual `/$bunfs/root/...` path, so rewrite
+                        // `import.meta.dir` / `.dirname` / `.path` to reference them
+                        // instead of inlining a string literal.
+                        if p.options.compile {
+                            if name == b"dir" || name == b"dirname" {
+                                p.record_usage(p.dirname_ref);
+                                return Some(p.new_expr(
+                                    E::Identifier {
+                                        ref_: p.dirname_ref,
+                                        ..Default::default()
+                                    },
+                                    name_loc,
+                                ));
+                            } else if name == b"path" {
+                                p.record_usage(p.filename_ref);
+                                return Some(p.new_expr(
+                                    E::Identifier {
+                                        ref_: p.filename_ref,
+                                        ..Default::default()
+                                    },
+                                    name_loc,
+                                ));
+                            }
+                        }
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
                             return Some(

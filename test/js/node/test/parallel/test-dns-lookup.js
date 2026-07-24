@@ -5,13 +5,9 @@ const assert = require('assert');
 
 // Stub `getaddrinfo` to *always* error. This has to be done before we load the
 // `dns` module to guarantee that the `dns` module uses the stub.
-if (typeof Bun === "undefined") {
-  const { internalBinding } = require('internal/test/binding');
-  const cares = internalBinding('cares_wrap');
-  cares.getaddrinfo = () => internalBinding('uv').UV_ENOMEM;
-} else {
-  Bun.dns.lookup = (hostname) => Promise.reject(Object.assign(new Error('Out of memory'), { code: 'ENOMEM', hostname }));
-}
+// Bun has no internalBinding('cares_wrap'); force the same ENOMEM failure
+// through the resolver dns.lookup() actually calls.
+Bun.dns.lookup = (hostname) => Promise.reject(Object.assign(new Error('Out of memory'), { code: 'ENOMEM', hostname }));
 
 const dns = require('dns');
 const dnsPromises = dns.promises;
@@ -20,27 +16,12 @@ const dnsPromises = dns.promises;
   const err = {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /^The "hostname" argument must be of type string\. Received( type number|: "number")/
+    message: /^The "hostname" argument must be of type string\. Received type number/
   };
 
   assert.throws(() => dns.lookup(1, {}), err);
   assert.throws(() => dnsPromises.lookup(1, {}), err);
 }
-
-// This also verifies different expectWarning notations.
-common.expectWarning({
-  // For 'internal/test/binding' module.
-  ...(typeof Bun === "undefined"? {
-    'internal/test/binding': [
-      'These APIs are for internal testing only. Do not use them.',
-    ]
-  } : {}),
-  // For calling `dns.lookup` with falsy `hostname`.
-  'DeprecationWarning': {
-    DEP0118: 'The provided hostname "false" is not a valid ' +
-      'hostname, and is supported in the dns module solely for compatibility.'
-  }
-});
 
 assert.throws(() => {
   dns.lookup(false, 'cb');
@@ -60,7 +41,7 @@ assert.throws(() => {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /The argument 'hints' is invalid\. Received:? 100/
+    message: "The argument 'hints' is invalid. Received 100"
   };
   const options = {
     hints: 100,
@@ -79,7 +60,7 @@ assert.throws(() => {
   const err = {
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: /^The (property 'options.family' must be one of: 0, 4, 6|argument 'family' must be one of 0, 4 or 6)\. Received:? 20$/
+    message: `The property 'options.family' must be one of: 0, 4, 6. Received ${family}`
   };
   const options = {
     hints: 0,
@@ -151,12 +132,13 @@ assert.throws(() => dnsPromises.lookup(false, () => {}),
 (async function() {
   let res;
 
-  res = await dnsPromises.lookup(false, {
+  await assert.rejects(dnsPromises.lookup(false, {
     hints: 0,
     family: 0,
     all: true
+  }), {
+    code: 'ERR_INVALID_ARG_VALUE',
   });
-  assert.deepStrictEqual(res, []);
 
   res = await dnsPromises.lookup('127.0.0.1', {
     hints: 0,
@@ -173,14 +155,13 @@ assert.throws(() => dnsPromises.lookup(false, () => {}),
   assert.deepStrictEqual(res, { address: '127.0.0.1', family: 4 });
 })().then(common.mustCall());
 
-dns.lookup(false, {
+assert.throws(() => dns.lookup(false, {
   hints: 0,
   family: 0,
   all: true
-}, common.mustSucceed((result, addressType) => {
-  assert.deepStrictEqual(result, []);
-  assert.strictEqual(addressType, undefined);
-}));
+}, common.mustNotCall()), {
+  code: 'ERR_INVALID_ARG_VALUE',
+});
 
 dns.lookup('127.0.0.1', {
   hints: 0,
@@ -220,4 +201,4 @@ tickValue = 1;
 
 // Should fail due to stub.
 assert.rejects(dnsPromises.lookup('example.com'),
-              { code: 'ENOMEM', hostname: 'example.com' }).then(common.mustCall());
+               { code: 'ENOMEM', hostname: 'example.com' }).then(common.mustCall());

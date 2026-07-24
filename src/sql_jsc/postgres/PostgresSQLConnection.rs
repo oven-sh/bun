@@ -2410,7 +2410,10 @@ impl PostgresSQLConnection {
                     SQLQueryResultMode::Objects => {
                         let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
                         statement.structure(owner, self.global());
-                        structure = statement.cached_structure.js_value().unwrap_or(JSValue::UNDEFINED);
+                        structure = statement
+                            .cached_structure
+                            .js_value()
+                            .unwrap_or(JSValue::UNDEFINED);
                         cached_structure = Some(&statement.cached_structure);
                     }
                     SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {

@@ -346,8 +346,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             } => {
                 // Package names are short; copy once so later `&mut task` uses
                 // in this arm do not conflict with the `&task.callback` borrow.
-                let name_buf: bun_collections::smallvec::SmallVec<[u8; 64]> =
-                    name.slice().into();
+                let name_buf: bun_collections::smallvec::SmallVec<[u8; 64]> = name.slice().into();
                 let name: &[u8] = &name_buf;
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {

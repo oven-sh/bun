@@ -2132,9 +2132,8 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    if let Some(existing) = self
-                        .path_to_source_index_map(target)
-                        .get(path_primary.text)
+                    if let Some(existing) =
+                        self.path_to_source_index_map(target).get(path_primary.text)
                     {
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()

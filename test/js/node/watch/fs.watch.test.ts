@@ -905,6 +905,108 @@ describe("fs.promises.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
+  test("async iterator has return() and throw() that return Promises", async () => {
+    const root = path.join(testDir, "iter-shape-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const it = fs.promises.watch(root)[Symbol.asyncIterator]();
+    expect(typeof it.return).toBe("function");
+    expect(typeof it.throw).toBe("function");
+    const ret = it.return();
+    expect(ret).toBeInstanceOf(Promise);
+    expect(await ret).toEqual({ value: undefined, done: true });
+    expect(await it.next()).toEqual({ value: undefined, done: true });
+
+    const it2 = fs.promises.watch(root)[Symbol.asyncIterator]();
+    const err = new Error("boom");
+    const thrown = it2.throw(err);
+    expect(thrown).toBeInstanceOf(Promise);
+    await expect(thrown).rejects.toBe(err);
+    expect(await it2.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test("concurrent next() calls both resolve", async () => {
+    const root = path.join(testDir, "concurrent-next-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const ac = new AbortController();
+    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]();
+    try {
+      // Two pending next() calls issued before any event fires. The previous
+      // hand-rolled iterator had a single resolver slot, so p2 overwrote p1's
+      // resolver and p1 would never settle (hangs until the test timeout).
+      const p1 = it.next();
+      const p2 = it.next();
+      const interval = repeat(() => {
+        fs.writeFileSync(path.join(root, "a.txt"), "1");
+        fs.writeFileSync(path.join(root, "b.txt"), "2");
+      });
+      const [r1, r2] = await Promise.all([p1, p2]).finally(() => clearInterval(interval));
+      expect(r1.done).toBe(false);
+      expect(["rename", "change"]).toContain(r1.value.eventType);
+      expect(r2.done).toBe(false);
+      expect(["rename", "change"]).toContain(r2.value.eventType);
+    } finally {
+      ac.abort();
+      await it.return();
+    }
+  });
+
+  test("abort between yields throws AbortError on the next next()", async () => {
+    const root = path.join(testDir, "abort-at-yield-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const ac = new AbortController();
+    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]();
+    const interval = repeat(() => fs.writeFileSync(path.join(root, "a.txt"), "1"));
+    try {
+      const r1 = await it.next();
+      expect(r1.done).toBe(false);
+      // generator is now suspended at `yield event`; abort here.
+      ac.abort();
+      await expect(it.next()).rejects.toMatchObject({ name: "AbortError" });
+      expect(await it.return()).toEqual({ value: undefined, done: true });
+    } finally {
+      clearInterval(interval);
+    }
+  });
+
+  test("never-iterated watch() does not keep the process alive", async () => {
+    const root = path.join(testDir, "never-iterated-dir");
+    fs.mkdirSync(root, { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const it = require("node:fs").promises.watch(${JSON.stringify(root)});` +
+          `console.log(typeof it[Symbol.asyncIterator]);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("ENOENT on a missing path surfaces on first iteration, not synchronously", async () => {
+    const missing = path.join(testDir, "does-not-exist-" + Date.now());
+    // The generator body (and the underlying fs.watch call) runs on the first
+    // next(), so the ENOENT must reject the first iteration rather than throw
+    // out of watch() itself. This is the shape node documents: a try wrapping
+    // the for-await catches it.
+    let watcher;
+    expect(() => {
+      watcher = fs.promises.watch(missing);
+    }).not.toThrow();
+    let caught: any;
+    try {
+      for await (const _ of watcher!) {
+      }
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({ code: "ENOENT" });
+  });
+
   test("yields events with a null prototype", async () => {
     const root = path.join(testDir, "null-proto-dir");
     fs.mkdirSync(root, { recursive: true });

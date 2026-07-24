@@ -434,6 +434,9 @@ public:
     bool asyncHooksNeedsCleanup = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
+    // Monotonic: set by diagnostics_channel on this VM's first `undici:*`
+    // subscribe so native fetch()/WebSocket can skip the JS bridge otherwise.
+    bool hasUndiciDiagnosticsSubscriber = false;
 
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
@@ -671,7 +674,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_undiciDiagnosticsModule)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \

@@ -76,6 +76,7 @@
 #include "JSBuffer.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
+#include "../UndiciDiagnostics.h"
 
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
@@ -765,6 +766,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
                 auto eventInit = createErrorEventInit(protectedThis, "Failed to connect"_s, globalObject);
                 auto message = eventInit.message;
+                Bun::UndiciDiagnostics::publishWebSocketError(globalObject, message);
+                Bun::UndiciDiagnostics::publishWebSocketClose(globalObject, protectedThis, 1006, message);
                 protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
                 protectedThis->dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
 
@@ -977,6 +980,7 @@ void WebSocket::failConnectingWebSocket()
                 // close event. Matches Chrome/Firefox and npm ws.
                 auto reason = "WebSocket is closed before the connection is established"_s;
                 auto eventInit = createErrorEventInit(protectedThis, reason, context.jsGlobalObject());
+                Bun::UndiciDiagnostics::publishWebSocketClose(context.jsGlobalObject(), protectedThis, 1006, reason);
                 protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
                 protectedThis->dispatchEvent(CloseEvent::create(false, 1006, reason));
             }
@@ -1386,6 +1390,7 @@ void WebSocket::didConnect()
     }
 
     if (auto* context = scriptExecutionContext()) {
+        Bun::UndiciDiagnostics::publishWebSocketOpen(context->jsGlobalObject(), *this, m_subprotocol, m_extensions);
 
         if (this->hasEventListeners("open"_s)) {
             this->incPendingActivityCount();
@@ -1578,10 +1583,13 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
 
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
+        if (isConnectionError)
+            Bun::UndiciDiagnostics::publishWebSocketError(context->jsGlobalObject(), reason);
         if (wasConnecting && isConnectionError) {
             auto eventInit = createErrorEventInit(*this, reason, context->jsGlobalObject());
             dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
         }
+        Bun::UndiciDiagnostics::publishWebSocketClose(context->jsGlobalObject(), *this, code, reason);
         // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
         dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));
         this->decPendingActivityCount();
@@ -1646,6 +1654,10 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     // since we are open and closing now we know that we have at least one pending activity
     // so we just call decPendingActivityCount() after dispatching the event
     ASSERT(m_pendingActivityCount > 0);
+
+    if (auto* context = scriptExecutionContext()) {
+        Bun::UndiciDiagnostics::publishWebSocketClose(context->jsGlobalObject(), *this, code, reason);
+    }
 
     if (this->hasEventListeners("close"_s)) {
         this->dispatchEvent(CloseEvent::create(wasClean, code, reason));
@@ -1963,9 +1975,13 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, const 
         webSocket->didReceiveBinaryData("message"_s, { bytes, len });
         break;
     case WebCore::WebSocket::Opcode::Ping:
+        if (auto* context = webSocket->scriptExecutionContext())
+            Bun::UndiciDiagnostics::publishWebSocketPingPong(context->jsGlobalObject(), false, { bytes, len });
         webSocket->didReceiveBinaryData("ping"_s, { bytes, len });
         break;
     case WebCore::WebSocket::Opcode::Pong:
+        if (auto* context = webSocket->scriptExecutionContext())
+            Bun::UndiciDiagnostics::publishWebSocketPingPong(context->jsGlobalObject(), true, { bytes, len });
         webSocket->didReceiveBinaryData("pong"_s, { bytes, len });
         break;
     default:

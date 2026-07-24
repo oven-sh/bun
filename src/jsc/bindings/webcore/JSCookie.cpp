@@ -69,17 +69,20 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
     if (expiresValue.isString()) {
         auto expiresStr = convert<IDLUSVString>(*lexicalGlobalObject, expiresValue);
         RETURN_IF_EXCEPTION(throwScope, Cookie::emptyExpiresAtValue);
-        auto nullTerminatedSpan = expiresStr.utf8();
-        if (auto parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()))) {
-            if (std::isnan(parsed)) {
-                throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
-                return Cookie::emptyExpiresAtValue;
-            }
-            return static_cast<int64_t>(parsed);
-        } else {
+        auto asLatin1 = expiresStr.latin1();
+        std::span<const Latin1Character> span { reinterpret_cast<const Latin1Character*>(asLatin1.data()), asLatin1.length() };
+        // Match Cookie::parse: apply the RFC 6265 §5.1.1 cookie-date algorithm first so
+        // an Expires string means the same thing here as it does in a Set-Cookie header.
+        // Fall back to the general HTTP-date parser to keep accepting inputs §5.1.1
+        // rejects (e.g. a date with no time component).
+        if (auto parsed = parseCookieDate(span))
+            return *parsed;
+        double parsed = WTF::parseDate(span);
+        if (std::isnan(parsed)) {
             throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
             return Cookie::emptyExpiresAtValue;
         }
+        return static_cast<int64_t>(parsed);
     }
 
     return Bun::ERR::INVALID_ARG_VALUE(throwScope, lexicalGlobalObject, "expires"_s, expiresValue, "Invalid expires value. Must be a Date or a number"_s);

@@ -2339,8 +2339,8 @@ impl<'a> ValueBufferer<'a> {
         _global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
+        let args = callframe.arguments();
+        let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
         sink.handle_resolve_stream(true);
@@ -2351,11 +2351,11 @@ impl<'a> ValueBufferer<'a> {
         _global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
+        let args = callframe.arguments();
+        let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let err = args.ptr[0];
+        let err = args[0];
         sink.handle_reject_stream(err, true);
         Ok(JSValue::UNDEFINED)
     }

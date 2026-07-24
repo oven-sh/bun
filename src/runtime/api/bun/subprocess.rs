@@ -731,10 +731,10 @@ impl Subprocess<'_> {
         this.this_value
             .with_mut(|v| v.update(global_this, callframe.this()));
 
-        let arguments = callframe.arguments_old::<1>();
+        let [signal_arg] = callframe.arguments_as_array::<1>();
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(arguments.ptr[0], global_this)?;
+        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
 
         if global_this.has_exception() {
             return Ok(JSValue::ZERO);

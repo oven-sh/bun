@@ -1071,11 +1071,11 @@ pub fn handle_error_return_trace<E>(_err: E) {}
 #[macro_export]
 macro_rules! todo_panic {
     ($($arg:tt)*) => {{
-        // Recorded in the tier-0 `Global::features` counter (same as
-        // css_parser's todo store). `bun_analytics::features::todo_panic` —
-        // the set the crash report serializes via `packed_features()` — is a
-        // re-export of this same static (see `define_features!`'s `core =`
-        // entries in src/analytics/lib.rs), so the bit reaches crash reports.
+        // Recorded in the tier-0 `Global::features` counter.
+        // `bun_analytics::features::todo_panic` — the set the crash report
+        // serializes via `packed_features()` — is a re-export of this same
+        // static (see `define_features!`'s `core =` entries in
+        // src/analytics/lib.rs), so the bit reaches crash reports.
         $crate::Global::features::TODO_PANIC.store(1, ::core::sync::atomic::Ordering::Relaxed);
         $crate::output::panic(::core::format_args!(
             "TODO: {} ({}:{})",

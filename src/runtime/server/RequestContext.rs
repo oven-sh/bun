@@ -637,15 +637,15 @@ where
     pub fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onResolve");
 
-        let arguments = callframe.arguments_old::<2>();
-        let Some(ctx) = NativePromiseContext::take::<Self>(arguments.ptr[1]) else {
+        let arguments = callframe.arguments_as_array::<2>();
+        let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
             // The cell's destructor already released the ref (the Promise
             // was collected before a prior microtask turn reached us).
             return Ok(JSValue::UNDEFINED);
         };
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(ctx));
 
-        let result = arguments.ptr[0];
+        let result = arguments[0];
         result.ensure_still_alive();
 
         Self::handle_resolve(ctx, result);
@@ -885,15 +885,15 @@ where
     pub fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
-        let arguments = callframe.arguments_old::<2>();
-        let Some(ctx) = NativePromiseContext::take::<Self>(arguments.ptr[1]) else {
+        let arguments = callframe.arguments_as_array::<2>();
+        let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
             // The cell's destructor already released the ref (the Promise
             // was collected before a prior microtask turn reached us).
             return Ok(JSValue::UNDEFINED);
         };
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(ctx));
 
-        let err = arguments.ptr[0];
+        let err = arguments[0];
         // Pass the rejection reason through verbatim (including `null` and
         // `undefined`) so `error()` sees the same value the already-settled
         // path delivers. Only an empty JSValue is normalized.
@@ -2906,8 +2906,8 @@ where
 
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
-        let args = callframe.arguments_old::<2>();
-        let Some(req) = NativePromiseContext::take::<Self>(args.ptr[args.len - 1]) else {
+        let args = callframe.arguments();
+        let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(req));
@@ -2920,11 +2920,11 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         stream_log!("onRejectStream");
-        let args = callframe.arguments_old::<2>();
-        let Some(req) = NativePromiseContext::take::<Self>(args.ptr[args.len - 1]) else {
+        let args = callframe.arguments();
+        let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let err = args.ptr[0];
+        let err = args[0];
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(req));
 
         Self::handle_reject_stream(req, global_this, err);

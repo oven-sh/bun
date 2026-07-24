@@ -720,10 +720,9 @@ pub mod testing_apis {
         }
         #[cfg(not(windows))]
         {
-            let arguments_ = callframe.arguments_old::<1>();
             // SAFETY: bun_vm() is non-null for a Bun-owned global.
             let vm = global.bun_vm();
-            let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+            let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
             let string: JSValue = match arguments.next_eat() {
                 Some(s) => s,
                 None => {
@@ -758,10 +757,9 @@ pub mod testing_apis {
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
@@ -838,10 +836,9 @@ pub mod testing_apis {
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {

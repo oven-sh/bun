@@ -43,19 +43,31 @@ type BraceStack = BoundedArray<Brace, 10>;
 /// alternatives. Patterns that exceed this budget fail to match.
 const BRACE_BRANCH_BUDGET: u32 = 10_000;
 
-// `pub` because it appears in the signature of `pub fn match` (private-in-public is forbidden).
+/// Result of [`match`](r#match). Two independent bits: whether the path matched
+/// (after applying any leading `!` negation), and whether the pattern was negated.
+/// Most callers only want [`matches()`](Self::matches); the negation bit is for
+/// multi-pattern filter loops where a `!pattern` hit is a hard veto.
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum MatchResult {
-    NoMatch,
-    Match,
-
-    NegateNoMatch,
-    NegateMatch,
+pub struct MatchResult {
+    matches: bool,
+    negated: bool,
 }
 
 impl MatchResult {
+    /// Overall result: did the path match the pattern? Leading `!`s are already
+    /// applied, so `!foo` against `bar` matches and `!foo` against `foo` does not.
+    #[inline]
     pub fn matches(self) -> bool {
-        self == MatchResult::Match || self == MatchResult::NegateMatch
+        self.matches
+    }
+
+    /// Was the pattern `!`-prefixed (an odd number of times)? Combine with
+    /// `!matches()` to detect an explicit rejection by a negated pattern.
+    /// Callers can't derive this from the pattern string because leading `!`s
+    /// toggle (`!!foo` is un-negated).
+    #[inline]
+    pub fn is_negated(self) -> bool {
+        self.negated
     }
 }
 
@@ -159,21 +171,9 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
         &mut brace_budget,
     );
 
-    // TODO: consider just returning a bool
-    // return matched != negated;
-    if negated {
-        // FIXME(@DonIsaac): This looks backwards to me
-        if matched {
-            MatchResult::NegateNoMatch
-        } else {
-            MatchResult::NegateMatch
-        }
-    } else {
-        if matched {
-            MatchResult::Match
-        } else {
-            MatchResult::NoMatch
-        }
+    MatchResult {
+        matches: matched != negated,
+        negated,
     }
 }
 

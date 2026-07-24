@@ -402,55 +402,37 @@ impl CompileTarget {
         }
     }
 
-    // Exists for consistentcy with values.
-    pub fn define_keys(&self) -> &'static [&'static [u8]] {
-        &[
+    pub fn define_keys(&self) -> [&'static [u8]; 3] {
+        [
             b"process.platform",
             b"process.arch",
             b"process.versions.bun",
         ]
     }
 
-    pub fn define_values(&self) -> &'static [&'static [u8]] {
-        // Could generate static tables via macro_rules! or
-        // const_format::concatcp! over OperatingSystem::name_string().
-        macro_rules! table {
-            ($platform:literal, $arch:literal) => {{
-                const VALUES: &[&[u8]] = &[
-                    $platform,
-                    $arch,
-                    const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"")
-                        .as_bytes(),
-                ];
-                VALUES
-            }};
-        }
-
-        // Use inline else to avoid extra allocations.
-        match self.arch {
-            Architecture::X64 => match self.libc {
-                // process.platform: Node reports "android" on Android, not "linux".
-                Libc::Android => table!(b"\"android\"", b"\"x64\""),
-                _ => match self.os {
-                    OperatingSystem::Mac => table!(b"\"darwin\"", b"\"x64\""),
-                    OperatingSystem::Linux => table!(b"\"linux\"", b"\"x64\""),
-                    OperatingSystem::Windows => table!(b"\"win32\"", b"\"x64\""),
-                    OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"x64\""),
-                    OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"x64\""),
-                },
+    pub fn define_values(&self) -> [&'static [u8]; 3] {
+        // Each axis gets its own exhaustive match so that adding a variant to
+        // `OperatingSystem` / `Architecture` / `Libc` is a compile error here,
+        // not a runtime panic behind a wildcard arm.
+        let platform: &'static [u8] = match self.libc {
+            // process.platform: Node reports "android" on Android, not "linux".
+            Libc::Android => b"\"android\"",
+            Libc::Default | Libc::Musl => match self.os {
+                OperatingSystem::Mac => b"\"darwin\"",
+                OperatingSystem::Linux => b"\"linux\"",
+                OperatingSystem::Windows => b"\"win32\"",
+                OperatingSystem::Freebsd => b"\"freebsd\"",
+                OperatingSystem::Wasm => b"\"wasm\"",
             },
-            Architecture::Arm64 => match self.libc {
-                Libc::Android => table!(b"\"android\"", b"\"arm64\""),
-                _ => match self.os {
-                    OperatingSystem::Mac => table!(b"\"darwin\"", b"\"arm64\""),
-                    OperatingSystem::Linux => table!(b"\"linux\"", b"\"arm64\""),
-                    OperatingSystem::Windows => table!(b"\"win32\"", b"\"arm64\""),
-                    OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"arm64\""),
-                    OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"arm64\""),
-                },
-            },
-            _ => panic!("TODO"),
-        }
+        };
+        let arch: &'static [u8] = match self.arch {
+            Architecture::X64 => b"\"x64\"",
+            Architecture::Arm64 => b"\"arm64\"",
+            Architecture::Wasm => b"\"wasm\"",
+        };
+        const VERSION: &[u8] =
+            const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"").as_bytes();
+        [platform, arch, VERSION]
     }
 }
 

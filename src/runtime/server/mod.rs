@@ -2097,38 +2097,46 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // set_routes is only called after `self.app = Some(..)` in listen().
         let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
+        let h3_app = self.h3_app;
+        let global_this = self.global_this;
         let self_ptr: *mut Self = self;
         let any_server = AnyServer::from(self_ptr.cast_const());
-        // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
-        // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
-        // don't conflict with `&mut self.config` / `&mut self.user_routes`.
-        let dev_server: Option<*mut crate::bake::DevServer::DevServer> =
-            self.dev_server.as_deref_mut().map(std::ptr::from_mut);
+
+        // Split `self` into disjoint field borrows once so the body can hold
+        // `&mut *user_routes` while reading `config.websocket` / mutating
+        // `dev_server` without going through raw pointers. `self_ptr` is only
+        // used for its address (route userdata); it is never dereferenced
+        // below, so these borrows stay valid for the whole body.
+        let Self {
+            config,
+            user_routes,
+            dev_server,
+            plugins,
+            ..
+        } = self;
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
         // Only enable this when we're using the dev server.
         let mut should_add_chrome_devtools_json_route = DEBUG
-            && self.config.allow_hot
+            && config.allow_hot
             && dev_server.is_some()
-            && self
-                .config
-                .enable_chrome_devtools_automatic_workspace_folders;
+            && config.enable_chrome_devtools_automatic_workspace_folders;
         const CHROME_DEVTOOLS_ROUTE: &[u8] = b"/.well-known/appspecific/com.chrome.devtools.json";
 
         // --- 1. user_routes_to_build → user_routes + RouteList JS object ---
-        if !self.config.user_routes_to_build.is_empty() {
-            let mut to_build = core::mem::take(&mut self.config.user_routes_to_build);
+        if !config.user_routes_to_build.is_empty() {
+            let mut to_build = core::mem::take(&mut config.user_routes_to_build);
             let len = to_build.len();
-            let _old = core::mem::replace(&mut self.user_routes, Vec::with_capacity(len));
+            let _old = core::mem::replace(user_routes, Vec::with_capacity(len));
             // Scratch arrays for the C++ factory. `ZigString` borrows the
             // route-path heap bytes; those bytes move (by pointer) into
-            // `self.user_routes` below and stay live across the FFI call.
+            // `user_routes` below and stay live across the FFI call.
             let mut paths: Vec<bun_core::ZigString> = Vec::with_capacity(len);
             let mut callbacks: Vec<JSValue> = Vec::with_capacity(len);
             for (i, builder) in to_build.iter_mut().enumerate() {
                 paths.push(bun_core::ZigString::init(builder.route.path.as_bytes()));
                 callbacks.push(builder.callback.get());
-                self.user_routes.push(UserRoute {
+                user_routes.push(UserRoute {
                     id: i as u32,
                     server: self_ptr,
                     route: core::mem::take(&mut builder.route),
@@ -2138,7 +2146,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `len` elements; C++ copies paths/callbacks into the returned JS
             // object so the borrows end at return.
             route_list_value = Bun__ServerRouteList__create(
-                self.global_this,
+                global_this,
                 callbacks.as_mut_ptr(),
                 paths.as_mut_ptr(),
                 len,
@@ -2149,7 +2157,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // --- 2. WebSocket handler app reference ---
-        if let Some(websocket) = self.config.websocket.as_mut() {
+        if let Some(websocket) = config.websocket.as_mut() {
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
             websocket.handler.server = Some(any_server);
             websocket
@@ -2163,17 +2171,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut has_any_user_route_for_star_path = false;
         let mut has_any_ws_route_for_star_path = false;
 
-        // reshaped for borrowck — `app.ws(..)` reads `to_behavior()`
-        // (borrows `self.config.websocket`) while iterating `self.user_routes`.
-        // Snapshot as a `BackRef` (pointee = `self.config.websocket`, which is
-        // pinned in the server allocation and outlives every use below — the
-        // BackRef invariant) so the two `&mut self.*` accesses do not overlap
-        // from rustc's POV. Replaces the `Option<*mut _>` + per-site
-        // `unsafe { &*p }` pattern with one safe accessor.
-        let websocket_ptr: Option<bun_ptr::BackRef<WebSocketServerContext>> =
-            self.config.websocket.as_ref().map(bun_ptr::BackRef::new);
-
-        for user_route in self.user_routes.iter_mut() {
+        for user_route in user_routes.iter_mut() {
             let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
             let path = user_route.route.path.as_bytes();
             let is_star_path = path == b"/*";
@@ -2195,7 +2193,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         ud,
                     );
                     if Self::HAS_H3 {
-                        if let Some(h3_app) = self.h3_app {
+                        if let Some(h3_app) = h3_app {
                             // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                             bun_opaque::opaque_deref_mut(h3_app).any(
                                 path,
@@ -2207,7 +2205,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if is_star_path {
                         star_methods_covered_by_user = http_method::Set::all();
                     }
-                    if let Some(websocket) = websocket_ptr {
+                    if let Some(websocket) = config.websocket.as_ref() {
                         if is_star_path {
                             has_any_ws_route_for_star_path = true;
                         }
@@ -2227,7 +2225,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         ud,
                     );
                     if Self::HAS_H3 {
-                        if let Some(h3_app) = self.h3_app {
+                        if let Some(h3_app) = h3_app {
                             // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                             bun_opaque::opaque_deref_mut(h3_app).method(
                                 method_val,
@@ -2241,7 +2239,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         star_methods_covered_by_user.insert(method_val);
                     }
                     // Setup user websocket in the route if needed.
-                    if let Some(websocket) = websocket_ptr {
+                    if let Some(websocket) = config.websocket.as_ref() {
                         // Websocket upgrade is a GET request
                         if method_val == http_method::Method::GET {
                             app.ws(
@@ -2260,19 +2258,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // A `false` route means "fall through to the default handler": same
         // ladder as the `/*` fallback in step 9. H3 stays on on_h3_request,
         // which already falls back to on_h3_404 when on_request is empty.
-        let negative_h1 = if !self.config.on_node_http_request.is_empty() {
+        let negative_h1 = if !config.on_node_http_request.is_empty() {
             trampoline::on_node_http_request::<SSL, DEBUG>
-        } else if !self.config.on_request.is_empty() {
+        } else if !config.on_request.is_empty() {
             trampoline::on_request::<SSL, DEBUG>
         } else {
             trampoline::on_404::<SSL, DEBUG>
         };
-        for route_path in self.config.negative_routes.iter() {
+        for route_path in config.negative_routes.iter() {
             let p = route_path.as_bytes();
             app.head(p, Some(negative_h1), self_ptr.cast());
             app.any(p, Some(negative_h1), self_ptr.cast());
             if Self::HAS_H3 {
-                if let Some(h3_app) = self.h3_app {
+                if let Some(h3_app) = h3_app {
                     // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                     let h3_app = bun_opaque::opaque_deref_mut(h3_app);
                     h3_app.head(p, self_ptr, Self::on_h3_request);
@@ -2285,7 +2283,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut needs_plugins = dev_server.is_some();
         let mut has_static_route_for_star_path = false;
 
-        for entry in &self.config.static_routes {
+        for entry in &config.static_routes {
             if &*entry.path == b"/*" {
                 has_static_route_for_star_path = true;
                 match &entry.method {
@@ -2308,15 +2306,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // path: uWS keeps the last registration for a method and path, and
             // static routes register after user routes.
             let path_has_user_head_route =
-                self.user_routes
-                    .iter()
-                    .any(|route| match &route.route.method {
-                        server_config::RouteMethod::Specific(method) => {
-                            *method == http_method::Method::HEAD
-                                && route.route.path.as_bytes() == &*entry.path
-                        }
-                        server_config::RouteMethod::Any => false,
-                    });
+                user_routes.iter().any(|route| match &route.route.method {
+                    server_config::RouteMethod::Specific(method) => {
+                        *method == http_method::Method::HEAD
+                            && route.route.path.as_bytes() == &*entry.path
+                    }
+                    server_config::RouteMethod::Any => false,
+                });
 
             // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h3_app` are the live uWS app handles owned by `self`.
@@ -2331,7 +2327,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         path_has_user_head_route,
                     );
                     if Self::HAS_H3 {
-                        if let Some(h3_app) = self.h3_app {
+                        if let Some(h3_app) = h3_app {
                             server_config::apply_static_route_h3::<StaticRoute>(
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -2354,7 +2350,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         path_has_user_head_route,
                     );
                     if Self::HAS_H3 {
-                        if let Some(h3_app) = self.h3_app {
+                        if let Some(h3_app) = h3_app {
                             server_config::apply_static_route_h3::<FileRoute>(
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -2377,7 +2373,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         path_has_user_head_route,
                     );
                     if Self::HAS_H3 {
-                        if let Some(h3_app) = self.h3_app {
+                        if let Some(h3_app) = h3_app {
                             server_config::apply_static_route_h3::<html_bundle::Route>(
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -2389,15 +2385,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                         }
                     }
-                    if let Some(dev) = dev_server {
-                        // SAFETY: `dev` is the live `*mut DevServer` snapshotted
-                        // from `self.dev_server` above; no other `&mut` to it
-                        // is live in this loop.
-                        bun_core::handle_oom(
-                            unsafe { &mut *dev }
-                                .html_router
-                                .put(&entry.path, r.as_ptr()),
-                        );
+                    if let Some(dev) = dev_server.as_deref_mut() {
+                        bun_core::handle_oom(dev.html_router.put(&entry.path, r.as_ptr()));
                     }
                     needs_plugins = true;
                 }
@@ -2406,7 +2395,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // --- 6. Initialize plugins if needed ---
-        if needs_plugins && self.plugins.is_none() {
+        if needs_plugins && plugins.is_none() {
             // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
             // (non-null for the server's lifetime); single-threaded JS context.
             // Cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
@@ -2419,7 +2408,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .as_ref()
             {
                 if !serve_plugins_config.is_empty() {
-                    self.plugins =
+                    *plugins =
                         core::ptr::NonNull::new(ServePlugins::init(serve_plugins_config.clone()))
                             .map(bun_ptr::BackRef::from);
                 }
@@ -2441,14 +2430,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 8. Handle DevServer routes & track "/*" coverage ---
         let mut has_dev_server_for_star_path = false;
-        if let Some(dev) = dev_server {
+        if let Some(dev) = dev_server.as_deref_mut() {
             // dev.setRoutes might register its own "/*" HTTP handler
-            // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
-            // `self.dev_server` above; `self_ptr` is the live server. The two
-            // allocations are disjoint so the `&mut` borrows do not alias.
-            has_dev_server_for_star_path = bun_core::handle_oom(
-                unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(unsafe { &mut *self_ptr }),
-            );
+            has_dev_server_for_star_path =
+                bun_core::handle_oom(dev.set_routes::<SSL>(any_server, app));
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
                 star_methods_covered_by_user = http_method::Set::all();
@@ -2458,7 +2443,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Setup user websocket fallback route aka fetch function; if fetch is
         // not provided will respond with 403.
         if !has_any_ws_route_for_star_path {
-            if let Some(websocket) = websocket_ptr {
+            if let Some(websocket) = config.websocket.as_ref() {
                 app.ws(
                     b"/*",
                     self_ptr.cast(),
@@ -2470,8 +2455,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 9. Consolidated "/*" HTTP fallback registration ---
         let ud = self_ptr.cast::<c_void>();
-        let has_node_http = !self.config.on_node_http_request.is_empty();
-        let has_on_request = !self.config.on_request.is_empty();
+        let has_node_http = !config.on_node_http_request.is_empty();
+        let has_on_request = !config.on_request.is_empty();
         if star_methods_covered_by_user == http_method::Set::all() {
             // User/Static/Dev has already provided a "/*" handler for ALL methods.
             // No further global "/*" HTTP fallback needed.
@@ -2520,7 +2505,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // H3 fallback — same three-way as H1 above, but driven by user/static
         // "/*" coverage only (DevServer routes are not mirrored to H3).
         if Self::HAS_H3 {
-            if let Some(h3_app) = self.h3_app {
+            if let Some(h3_app) = h3_app {
                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                 let h3_app = bun_opaque::opaque_deref_mut(h3_app);
                 if h3_star_covered == http_method::Set::all() {

@@ -1331,14 +1331,13 @@ impl DevServer {
     }
 
     /// Returns true if a catch-all handler was attached.
-    pub fn set_routes<const SSL: bool, const DEBUG: bool>(
+    pub fn set_routes<const SSL: bool>(
         &mut self,
-        server: &mut crate::server::NewServer<SSL, DEBUG>,
+        server: AnyServer,
+        app: &mut bun_uws_sys::NewApp<SSL>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
-        self.server = Some(AnyServer::from(server));
-        // SAFETY: app is set before set_routes is called (server init path)
-        let app = unsafe { &mut *server.app.unwrap() };
+        self.server = Some(server);
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // The ZST-fn-item trampoline pattern used by

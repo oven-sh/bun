@@ -187,9 +187,8 @@ impl Cat {
                             Ok(buf) => Self::write_buf_to_stdout(interp, cmd, &buf)
                                 .unwrap_or_else(|| Builtin::done(interp, cmd, 0)),
                             Err(e) => {
-                                let buf =
-                                    Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
-                                        .to_vec();
+                                let buf = Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
+                                    .to_vec();
                                 Self::write_failing_error(interp, cmd, &buf, 1)
                             }
                         };
@@ -258,9 +257,8 @@ impl Cat {
                                 None => continue,
                             },
                             Err(e) => {
-                                let buf =
-                                    Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
-                                        .to_vec();
+                                let buf = Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
+                                    .to_vec();
                                 return Self::write_failing_error(interp, cmd, &buf, 1);
                             }
                         }

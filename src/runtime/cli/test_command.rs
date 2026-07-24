@@ -900,14 +900,6 @@ impl JunitReporter {
     }
 }
 
-/// Drain the event loop after a file's tests finish, like a node process
-/// would before exiting; the vendored-node-test runner opts in via
-/// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
-/// completed async work. Off by default: bun suites keep exit-after-tests.
-pub(crate) fn should_drain_event_loop() -> bool {
-    env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
-}
-
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -2250,6 +2242,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
+                node_test_module_used: false,
             },
             last_dot: 0,
             repeat_count: 1,
@@ -3053,18 +3046,41 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        // Run `process.on('exit')` handlers like `bun run` does. Node's test
-        // harness verifies mustCall() counts from one, so skipping them made
-        // those assertions silently pass. Must precede the GC-root release
-        // below: handlers are user JS and may touch still-live state.
-        {
+        if reporter.jest.node_test_module_used {
+            // Node parity: a node test process exits only when its loop drains,
+            // and node's test harness verifies mustCall() counts from a
+            // `process.on('exit')` handler. `on_before_exit()` spins while
+            // `is_event_loop_alive()`, which cannot tell one file's handles
+            // from another's; gate the drain on single-file runs (the vendored
+            // node suite and run() children both spawn one file per process) so
+            // a leaked handle from an earlier file cannot wedge a mixed
+            // multi-file run. Must precede the GC-root release below; handlers
+            // are user JS and may touch still-live state.
+            let drain = reporter.summary().files <= 1;
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+            vm.run_with_api_lock(|| unsafe {
+                let prev_unhandled = (*vm_ptr).unhandled_error_counter;
+                if drain {
+                    (*vm_ptr).on_before_exit();
+                }
+                (*vm_ptr).global().handle_rejected_promises();
+                // The drain runs after `active_file` is cleared and after the
+                // exit-code decision above, so an uncaught throw it surfaces
+                // prints but reaches neither; propagate it here. A throw from
+                // inside an `'exit'` listener stays outside this check to keep
+                // main's existing behavior for `bun test`.
+                if (*vm_ptr).unhandled_error_counter > prev_unhandled {
+                    (*vm_ptr).exit_handler.exit_code = 1;
+                }
+                (*vm_ptr).on_exit();
+            });
+            // on_exit() already set is_shutting_down; global_exit() asserts it.
+        } else {
+            vm.is_shutting_down = true;
         }
-        // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
@@ -3377,14 +3393,6 @@ impl TestCommand {
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
-
-                // Node parity: a node test file exits only when its loop drains.
-                // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
-                // it early-returns when unhandled_error_counter > 0, which is fine
-                // here since such a file already failed. Opt-in; one file per process.
-                if should_drain_event_loop() {
-                    vm.on_before_exit();
-                }
                 drop(buntest_strong);
             }
 

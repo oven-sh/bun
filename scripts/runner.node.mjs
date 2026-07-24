@@ -786,9 +786,6 @@ async function runTests() {
           FORCE_COLOR: "0",
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
-          // Node parity: a node test process exits only when its event loop
-          // drains, and common.mustCall() verifies counts in 'exit' handlers.
-          BUN_TEST_DRAIN_EVENT_LOOP: "1",
         };
         if (title.includes("test-util-styletext")) {
           // These assert styleText's own color decisions against a TTY, so they need a

@@ -1457,10 +1457,32 @@ describe("bun test", () => {
     expect(output).toContain("app message");
   });
 
-  test("runs process.on('exit') handlers", async () => {
-    using dir = tempDir("bun-test-exit-handler", {
+  test("bun:test does not run process.on('exit') handlers", async () => {
+    using dir = tempDir("bun-test-no-exit-handler", {
       "exit.test.ts": `
         import { test } from "bun:test";
+        process.on("exit", () => console.log("exit handler ran"));
+        test("a test", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("exit handler ran");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("node:test runs process.on('exit') handlers", async () => {
+    using dir = tempDir("bun-test-node-exit-handler", {
+      "exit.test.ts": `
+        import { test } from "node:test";
         process.on("exit", () => console.log("exit handler ran"));
         test("a test", () => {});
       `,
@@ -1479,10 +1501,64 @@ describe("bun test", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("an exit handler can fail the run, like node's common.mustCall()", async () => {
-    using dir = tempDir("bun-test-exit-handler-code", {
-      "exit-code.test.ts": `
+  test("node:test in a multi-file run does not hang on a handle an earlier bun:test file leaked", async () => {
+    using dir = tempDir("bun-test-node-multi-file-drain", {
+      "a.test.ts": `
         import { test } from "bun:test";
+        setInterval(() => {}, 100);
+        test("a", () => {});
+      `,
+      "b.test.ts": `
+        import { test } from "node:test";
+        process.on("exit", () => console.log("exit handler ran"));
+        test("b", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("exit handler ran");
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("node:test: an uncaught throw surfaced by the event-loop drain fails the run", async () => {
+    using dir = tempDir("bun-test-node-drain-throw", {
+      "drain-throw.test.ts": `
+        import { test } from "node:test";
+        test("a", () => {
+          // Arm from inside the body so the timer is due after the per-file
+          // loop exits; the end-of-run drain is the first place that ticks it.
+          setTimeout(() => { throw new Error("boom") }, 20);
+        });
+        process.on("exit", code => console.log("exit code seen:", code));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "drain-throw.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("boom");
+    expect(stdout).toContain("exit code seen: 1");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(1);
+  });
+
+  test("node:test: an exit handler can fail the run, like node's common.mustCall()", async () => {
+    using dir = tempDir("bun-test-node-exit-handler-code", {
+      "exit-code.test.ts": `
+        import { test } from "node:test";
         process.on("exit", () => process.exit(1));
         test("a passing test", () => {});
       `,

@@ -1126,8 +1126,21 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
     expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub)))).toBe(true);
   });
 
-  it("Ed25519 with only attributes [0]", async () => {
+  it("Ed25519 v1 with only attributes [0]", async () => {
+    expect(await signsAndVerifies(der("020100", edAlgorithm, wrapSeed(edSeed), emptyAttributes))).toBe(true);
+  });
+
+  it("Ed25519 v2 with only attributes [0]", async () => {
+    // non-conformant (v2 without publicKey) but tolerated, matching Node
     expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), emptyAttributes))).toBe(true);
+  });
+
+  it("Ed25519 with a localKeyId attribute", async () => {
+    // Attribute ::= SEQUENCE { localKeyId OID, SET { OCTET STRING } }
+    const attributes = "a014" + "3012" + "06092a864886f70d010915" + "3105" + "0403aabbcc";
+    expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), attributes, publicKeyField(edPub)))).toBe(
+      true,
+    );
   });
 
   it("X25519 with attributes [0] and publicKey [1]", async () => {
@@ -1179,9 +1192,34 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
     await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub), publicKeyField(edPub)));
   });
 
+  it("rejects attributes [0] that are not a SET OF Attribute", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "a001ff", publicKeyField(edPub)));
+  });
+
+  it("rejects an Attribute missing its type and values", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "a0023000", publicKeyField(edPub)));
+  });
+
+  it("rejects a publicKey [1] BIT STRING without the unused-bits octet", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "8100"));
+  });
+
+  it("rejects a v1 key carrying publicKey [1]", async () => {
+    await expectRejected(der(version1, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub)));
+  });
+
+  it("rejects versions above v2", async () => {
+    await expectRejected(der("020102", edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub)));
+  });
+
+  it("rejects AlgorithmIdentifier parameters", async () => {
+    // RFC 8410: parameters MUST be absent; this one carries a NULL
+    await expectRejected(der(version1, "300706032b65700500", wrapSeed(edSeed)));
+  });
+
   it("accepts long-form lengths on the SEQUENCE and attributes [0]", async () => {
-    // 0x90 bytes of attributes push both lengths into two-byte form
-    const bigAttributes = "a08190" + Buffer.alloc(0x90).toString("hex");
+    // one localKeyId attribute with a 120-byte value pushes both lengths into two-byte form
+    const bigAttributes = "a0818a" + "308187" + "06092a864886f70d010915" + "317a" + "0478" + Buffer.alloc(120).toString("hex");
     const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), bigAttributes, publicKeyField(edPub));
     expect(pkcs8[1]).toBe(0x81); // outer SEQUENCE length is long-form
     expect(await signsAndVerifies(pkcs8)).toBe(true);

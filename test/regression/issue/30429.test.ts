@@ -35,11 +35,7 @@ describe.skipIf(isWindows)("module directly under filesystem root", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "root-ok", stderr: "" });
     expect(exitCode).toBe(0);
   });
@@ -56,11 +52,7 @@ describe.skipIf(isWindows)("module directly under filesystem root", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "root-ok\nroot-ok", stderr: "" });
     expect(exitCode).toBe(0);
   });
@@ -77,11 +69,7 @@ describe.skipIf(isWindows)("module directly under filesystem root", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "root-ok\nroot-ok", stderr: "" });
     expect(exitCode).toBe(0);
   });
@@ -94,11 +82,7 @@ describe.skipIf(isWindows)("module directly under filesystem root", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toContain("root-ok");
     expect(exitCode).toBe(0);

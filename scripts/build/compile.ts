@@ -169,13 +169,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   // Windows ASAN: -fsanitize=address is a clang-cl DRIVER argument (it lives
   // before /link, unlike $ldflags which go raw to lld-link) so the driver
-  // links the ASAN runtime itself. /MD must appear at LINK time too: the
-  // driver picks the CRT-specific glue from it — the dynamic import lib +
-  // clang_rt.asan_dynamic_runtime_thunk for /MD — otherwise it defaults to
-  // the static-CRT thunk, whose own malloc/free definitions collide with
-  // ucrt.lib (duplicate symbol). The dynamic runtime DLL is copied next to
-  // the binary by the build (see bun.ts) so it resolves at load.
-  const winAsanDriver = cfg.windows && cfg.asan ? " -fsanitize=address /MD" : "";
+  // links the ASAN runtime glue itself. /MT must appear at LINK time too,
+  // matching the compile: the driver picks the CRT-specific glue from it and
+  // for a static-CRT (/MT) executable that is the static runtime thunk plus
+  // asan_malloc_win_thunk, which supply ASAN-aware malloc/free/_recalloc by
+  // LINK-TIME symbol substitution — no runtime prologue patching of
+  // ucrtbase (whose _recalloc_base this runtime cannot hook). The dynamic
+  // runtime DLL is still required and is copied next to the binary by the
+  // build (see bun.ts) so it resolves at load.
+  const winAsanDriver = cfg.windows && cfg.asan ? " -fsanitize=address /MT" : "";
   n.rule("link", {
     command: cfg.windows
       ? `${wrap} ${cxx} /nologo${winAsanDriver} -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`

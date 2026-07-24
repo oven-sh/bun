@@ -23,6 +23,11 @@ public:
     // Get property by index (for arrays)
     BUN_EXPORT MaybeLocal<Value> Get(Local<Context> context, uint32_t index);
 
+    BUN_EXPORT Maybe<bool> Has(Local<Context> context, Local<Value> key);
+    BUN_EXPORT Maybe<bool> Has(Local<Context> context, uint32_t index);
+    BUN_EXPORT Maybe<bool> Delete(Local<Context> context, Local<Value> key);
+    BUN_EXPORT Maybe<bool> Delete(Local<Context> context, uint32_t index);
+
     BUN_EXPORT void SetInternalField(int index, Local<Data> data);
     // usually inlined
     BUN_EXPORT Local<Data> GetInternalField(int index);

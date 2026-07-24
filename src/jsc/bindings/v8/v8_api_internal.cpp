@@ -36,6 +36,44 @@ void DisposeGlobal(uintptr_t* location)
     (void)location;
 }
 
+uintptr_t* CopyGlobalReference(uintptr_t* from)
+{
+    auto* isolate = Isolate::GetCurrent();
+    auto* globalHandles = isolate->globalInternals()->globalHandles();
+    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(*from), isolate);
+    return newSlot->asRawPtrLocation();
+}
+
+void MoveGlobalReference(uintptr_t** from, uintptr_t** to)
+{
+    *to = *from;
+}
+
+void MakeWeak(uintptr_t*, void*, void (*)(const WeakCallbackInfo<void>&), WeakCallbackType)
+{
+    V8_UNIMPLEMENTED();
+}
+
+void MakeWeak(uintptr_t**)
+{
+    V8_UNIMPLEMENTED();
+}
+
+void* ClearWeak(uintptr_t*)
+{
+    V8_UNIMPLEMENTED();
+    return nullptr;
+}
+
+void AnnotateStrongRetainer(uintptr_t*, const char*)
+{
+}
+
+uintptr_t* Eternalize(Isolate* isolate, Value* handle)
+{
+    return GlobalizeReference(reinterpret_cast<internal::Isolate*>(isolate), *reinterpret_cast<uintptr_t*>(handle));
+}
+
 Local<Value> GetFunctionTemplateData(Isolate* isolate, Local<Data> target)
 {
     // The target should be a Function that was created from a FunctionTemplate

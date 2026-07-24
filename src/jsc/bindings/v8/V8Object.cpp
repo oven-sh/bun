@@ -113,6 +113,62 @@ MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
     return handleScope->createLocal<Value>(vm, result);
 }
 
+Maybe<bool> Object::Has(Local<Context> context, Local<Value> key)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    JSValue k = key->localToJSValue();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    Identifier identifier = k.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+
+    bool result = object->hasProperty(globalObject, identifier);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    return Just(result);
+}
+
+Maybe<bool> Object::Has(Local<Context> context, uint32_t index)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    bool result = object->hasProperty(globalObject, index);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    return Just(result);
+}
+
+Maybe<bool> Object::Delete(Local<Context> context, Local<Value> key)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    JSValue k = key->localToJSValue();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    Identifier identifier = k.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+
+    bool result = JSC::JSCell::deleteProperty(object, globalObject, identifier);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    return Just(result);
+}
+
+Maybe<bool> Object::Delete(Local<Context> context, uint32_t index)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    bool result = JSC::JSCell::deletePropertyByIndex(object, globalObject, index);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    return Just(result);
+}
+
 void Object::SetInternalField(int index, Local<Data> data)
 {
     auto* fields = getInternalFieldsContainer(this);

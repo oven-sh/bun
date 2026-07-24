@@ -1,7 +1,12 @@
 #include "V8String.h"
 #include "V8HandleScope.h"
+#include "V8Value.h"
 #include "wtf/SIMDUTF.h"
 #include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String::Utf8Value)
+ASSERT_V8_TYPE_FIELD_OFFSET_MATCHES(v8::String::Utf8Value, m_str, str_)
+ASSERT_V8_TYPE_FIELD_OFFSET_MATCHES(v8::String::Utf8Value, m_length, length_)
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::String)
 
@@ -316,6 +321,50 @@ int String::Length() const
 {
     auto jsString = localToObjectPointer<JSString>();
     return static_cast<int>(jsString->length());
+}
+
+String::Utf8Value::Utf8Value(Isolate* isolate, Local<v8::Value> obj)
+    : m_str(nullptr)
+    , m_length(0)
+{
+    if (obj.IsEmpty()) return;
+
+    HandleScope scope(isolate);
+    Local<v8::Value> value = obj;
+    // V8 wraps this in a TryCatch: the documented contract is that a failed
+    // ToString (Symbol, throwing toString()) leaves length()==0 and *==nullptr
+    // with no pending exception.
+    auto& vm = isolate->vm();
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    MaybeLocal<String> maybeString = value->ToString(isolate->GetCurrentContext());
+    CLEAR_AND_RETURN_IF_EXCEPTION(catchScope, );
+    Local<String> str;
+    if (!maybeString.ToLocal(&str)) return;
+
+    size_t capacity = str->Utf8LengthV2(isolate) + 1;
+    m_str = static_cast<char*>(malloc(capacity));
+    if (!m_str) return;
+    m_length = str->WriteUtf8V2(isolate, m_str, capacity, WriteFlags::kNullTerminate | WriteFlags::kReplaceInvalidUtf8) - 1;
+}
+
+String::Utf8Value::~Utf8Value()
+{
+    free(m_str);
+}
+
+char* String::Utf8Value::operator*()
+{
+    return m_str;
+}
+
+const char* String::Utf8Value::operator*() const
+{
+    return m_str;
+}
+
+size_t String::Utf8Value::length() const
+{
+    return m_length;
 }
 
 } // namespace v8

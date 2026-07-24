@@ -10,6 +10,8 @@ namespace v8 {
 
 class Function : public Object {
 public:
+    BUN_EXPORT MaybeLocal<Value> Call(Isolate* isolate, Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[]);
+    BUN_EXPORT MaybeLocal<Value> Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[]);
     BUN_EXPORT void SetName(Local<String> name);
     BUN_EXPORT Local<Value> GetName() const;
 };

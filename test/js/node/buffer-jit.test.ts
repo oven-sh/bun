@@ -88,7 +88,7 @@ describe.concurrent("Buffer accessor JIT", () => {
         () => readAt(buf, 1.5),               // fractional offset
         () => readAt(buf, "4"),               // wrong offset type
         () => readAt(badReceiver, 0),         // wrong receiver: a plain object
-        () => detached.readInt32LE(0),        // detached
+        () => readAt(detached, 0),            // detached
         () => writeAt(buf, 200, 0),           // value out of int8 range
         () => writeAt(buf, 1.5, 0),           // fractional value (host truncates; no throw)
       ];

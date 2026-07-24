@@ -2354,12 +2354,14 @@ pub mod bv2_impl {
                     // Rather than just the first one.
                     record.path.is_disabled = true;
                     if resolve_result.flags.is_missing_optional_peer() {
-                        // The specifier is an uninstalled optional peer
-                        // dependency of the importer's package. Defer to
-                        // runtime: the printer keys off HANDLES_IMPORT_ERRORS
-                        // to emit a runtime throw rather than an empty module,
-                        // which preserves the `MODULE_NOT_FOUND` behavior the
-                        // package's own try/catch wrapper expects.
+                        // The specifier is an uninstalled optional peer of the
+                        // importer's package. Defer to runtime: for `require`
+                        // the printer emits a throw (keyed off
+                        // HANDLES_IMPORT_ERRORS on a disabled record) so the
+                        // package's own try/catch sees `MODULE_NOT_FOUND`;
+                        // `require.resolve` / dynamic `import()` are left as
+                        // external calls and fail at runtime when the module
+                        // is still absent.
                         record
                             .flags
                             .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);

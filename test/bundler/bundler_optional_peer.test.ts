@@ -120,6 +120,9 @@ describe("bundler", () => {
     run: { stdout: "threw=true" },
   });
 
+  // Dynamic `import()` of a missing optional peer is left as an external call
+  // in the output; it rejects at runtime rather than being lowered to a throw
+  // shim (same output as `--external missing-peer`).
   itBundled("optional-peer/MissingOptionalPeerDynamicImport", {
     files: {
       "/entry.js": /* js */ `
@@ -141,6 +144,65 @@ describe("bundler", () => {
     },
     target: "bun",
     run: { stdout: "rejected" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toContain(`import("missing-peer")`);
+    },
+  });
+
+  // The same onResolve-plugin fallback path (plugin returns undefined, bundler
+  // falls through to the resolver) should behave identically.
+  itBundled("optional-peer/MissingOptionalPeerThroughPluginFallback", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require("lib");
+        let threw = false;
+        try { lib.load(); } catch (e) { threw = e instanceof Error; }
+        console.log("threw=" + threw);
+      `,
+      "/node_modules/lib/package.json": /* json */ `
+        {
+          "name": "lib",
+          "peerDependenciesMeta": { "missing-peer": { "optional": true } }
+        }
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        exports.load = function () {
+          return require("missing-peer");
+        };
+      `,
+    },
+    target: "bun",
+    plugins(builder) {
+      builder.onResolve({ filter: /^missing-peer$/ }, () => undefined);
+    },
+    run: { stdout: "threw=true" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toContain("Cannot require module ");
+    },
+  });
+
+  // `peerDependenciesMeta` in the app's own package.json applies to its own
+  // files the same way it would inside node_modules.
+  itBundled("optional-peer/AppRootOptionalPeer", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.load = function () { return require("missing-peer"); };
+        let threw = false;
+        try { exports.load(); } catch (e) { threw = e instanceof Error; }
+        console.log("threw=" + threw);
+      `,
+      "/package.json": /* json */ `
+        {
+          "name": "app",
+          "peerDependenciesMeta": { "missing-peer": { "optional": true } }
+        }
+      `,
+    },
+    target: "bun",
+    run: { stdout: "threw=true" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toContain("Cannot require module ");
+    },
   });
 
   // A peer that is installed resolves normally; being listed as optional does

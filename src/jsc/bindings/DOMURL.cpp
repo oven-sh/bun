@@ -72,7 +72,7 @@ static bool hasValidParsedHost(const URL& url)
 // only (path/query/fragment are percent-encoded by the parser and must stay
 // untouched). Returns a null String when no rewrite is needed, which is the
 // case for every URL that stays on the common path.
-static String applyIDNADeltaToURLAuthority(const String& urlString, bool baseHasSpecialScheme = false)
+static String applyIDNADeltaToURLAuthority(const String& urlString, StringView specialBaseScheme = {})
 {
     if (urlString.is8Bit() || !urlString.length())
         return {};
@@ -88,12 +88,13 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, bool baseHas
     // is UTF-8 percent-encoded verbatim), so only the six special schemes are
     // eligible. For those, the WHATWG parser's special-authority-ignore-slashes
     // state consumes any run of '/' and '\\' (including zero) after the colon
-    // and parses whatever follows as the host, so `http:host`, `http:/host`
-    // and `http:\\\\host` all reach IDNA. A scheme-relative "//" inherits the
-    // base's scheme, which the caller gates.
+    // and parses whatever follows as the host. One exception: when the input's
+    // scheme equals the base's scheme, the parser enters the relative state
+    // instead unless "//" follows, so the remainder is a path, not a host.
+    // A scheme-relative "//" inherits the base's scheme.
     auto isSlash = [](char16_t ch) { return ch == '/' || ch == '\\'; };
     size_t authorityStart = notFound;
-    if (baseHasSpecialScheme && scan + 1 < view.length() && isSlash(view[scan]) && isSlash(view[scan + 1])) {
+    if (!specialBaseScheme.isEmpty() && scan + 1 < view.length() && isSlash(view[scan]) && isSlash(view[scan + 1])) {
         authorityStart = scan + 2;
         while (authorityStart < view.length() && isSlash(view[authorityStart]))
             authorityStart++;
@@ -104,7 +105,13 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, bool baseHas
             if (equalLettersIgnoringASCIICase(scheme, "http"_s) || equalLettersIgnoringASCIICase(scheme, "https"_s)
                 || equalLettersIgnoringASCIICase(scheme, "ws"_s) || equalLettersIgnoringASCIICase(scheme, "wss"_s)
                 || equalLettersIgnoringASCIICase(scheme, "ftp"_s) || equalLettersIgnoringASCIICase(scheme, "file"_s)) {
-                authorityStart = colon + 1;
+                size_t afterColon = colon + 1;
+                const bool hasDoubleSlash = afterColon + 1 < view.length() && isSlash(view[afterColon]) && isSlash(view[afterColon + 1]);
+                // Same scheme as the base and no "//" → relative-state path,
+                // not an authority; the delta must not touch it.
+                if (!hasDoubleSlash && equalIgnoringASCIICase(scheme, specialBaseScheme))
+                    return {};
+                authorityStart = afterColon;
                 while (authorityStart < view.length() && isSlash(view[authorityStart]))
                     authorityStart++;
             }
@@ -168,7 +175,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
 {
     ASSERT(base.isValid() || base.isNull());
-    auto mapped = applyIDNADeltaToURLAuthority(url, base.hasSpecialScheme());
+    auto mapped = applyIDNADeltaToURLAuthority(url, base.hasSpecialScheme() ? base.protocol() : StringView {});
     URL completeURL { base, mapped.isNull() ? url : mapped };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL))
         return Exception { InvalidURLError, url };
@@ -192,7 +199,7 @@ static URL parseInternal(const String& url, const String& base)
     URL baseURL { mappedBase.isNull() ? base : mappedBase };
     if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL)))
         return {};
-    auto mapped = applyIDNADeltaToURLAuthority(url, baseURL.hasSpecialScheme());
+    auto mapped = applyIDNADeltaToURLAuthority(url, baseURL.hasSpecialScheme() ? baseURL.protocol() : StringView {});
     URL result { baseURL, mapped.isNull() ? url : mapped };
     if (result.isValid() && !hasValidParsedHost(result))
         return {};

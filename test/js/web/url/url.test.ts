@@ -89,6 +89,11 @@ describe("url", () => {
     expect(new URL("http:/\u1E9E.com/").href).toBe("http://xn--zca.com/");
     expect(new URL("http:\\\\\u1E9E.com/").href).toBe("http://xn--zca.com/");
     expect(new URL("\t//\u1E9E.com", "http://x/").href).toBe("http://xn--zca.com/");
+    // Same scheme as the base without "//" is relative-state (path, not host):
+    // the delta source stays percent-encoded verbatim.
+    expect(new URL("http:foo\u1E9E", "http://host/").pathname).toBe("/foo%E1%BA%9E");
+    // Cross-scheme reaches the authority state and IDNA runs.
+    expect(new URL("http:\u1E9E.com", "ftp://host/").href).toBe("http://xn--zca.com/");
     // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";

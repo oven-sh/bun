@@ -20,6 +20,8 @@ const {
   init: initMySQL,
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
+const upsertSuffixRegExp = /\bON\s+DUPLICATE\s+KEY\s+UPDATE\s*$/i;
+
 function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {
     return error;
@@ -280,7 +282,9 @@ class MySQLAdapter
   }
 
   isUpsertUpdate(query: string): boolean {
-    return query.trimEnd().endsWith("ON DUPLICATE KEY UPDATE");
+    // SQL keywords are case-insensitive and separated by arbitrary whitespace,
+    // so accept any spelling of the clause
+    return upsertSuffixRegExp.test(query);
   }
 }
 

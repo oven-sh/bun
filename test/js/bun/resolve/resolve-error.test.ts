@@ -110,7 +110,7 @@ describe("ResolveMessage", () => {
   // are bundler aliases usually configured in vite.config.js, which Bun's
   // resolver does not read. The error should carry a note pointing at
   // tsconfig paths / Bun.plugin so people aren't left guessing.
-  describe("path-alias hint on ModuleNotFound", () => {
+  describe.concurrent("path-alias hint on ModuleNotFound", () => {
     const hint = "This looks like a path alias";
 
     it.each(["$app/environment", "$env/dynamic/private", "~/components/Foo", "~~/server/util"])(
@@ -126,7 +126,7 @@ describe("ResolveMessage", () => {
         expect(stdout).toBe("");
         expect(stderr).toContain(`Cannot find module '${specifier}'`);
         expect(stderr).toContain(hint);
-        expect(stderr).toContain('tsconfig.json "paths"');
+        expect(stderr).toContain("tsconfig.json or jsconfig.json");
         expect(exitCode).toBe(1);
       },
     );

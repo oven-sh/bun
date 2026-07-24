@@ -150,9 +150,10 @@ impl ResolveMessage {
         Box::new([bun_ast::range_data(
             None,
             bun_ast::Range::NONE,
-            b"This looks like a path alias. Bun does not read vite.config.js; \
-              configure the alias in tsconfig.json \"paths\", or register it with \
-              Bun.plugin / mock.module.",
+            b"This looks like a path alias. Bun's resolver does not read bundler \
+              config (vite.config.*, svelte.config.*, nuxt.config.*). Check the \
+              alias is under \"paths\" in tsconfig.json or jsconfig.json and that \
+              its target exists, or register it with Bun.plugin / mock.module.",
         )])
     }
 

@@ -621,6 +621,42 @@ describe("writeFileSync numeric open-flag matrix", () => {
       expect({ exists: probe(flag, true), missing: probe(flag, false) }).toEqual(expected);
     });
   }
+
+  // Node reports a directory target from the open, not from the write.
+  // On Windows, NtCreateFile happily returns a directory handle unless the
+  // open asks it not to, which pushed the failure out to the first write.
+  it("a directory target fails at open with EISDIR", async () => {
+    using dir = tempDir("wf-flag-matrix-isdir", {});
+    const target = join(String(dir), "sub");
+    mkdirSync(target);
+
+    const caught = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (e: any) {
+        return { code: e.code, syscall: e.syscall };
+      }
+      throw new Error("expected to throw");
+    };
+    const caughtAsync = async (fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+      } catch (e: any) {
+        return { code: e.code, syscall: e.syscall };
+      }
+      throw new Error("expected to reject");
+    };
+
+    expect({
+      sync: caught(() => writeFileSync(target, "ZZ")),
+      append: caught(() => writeFileSync(target, "ZZ", { flag: "a" })),
+      promises: await caughtAsync(() => promises.writeFile(target, "ZZ")),
+    }).toEqual({
+      sync: { code: "EISDIR", syscall: "open" },
+      append: { code: "EISDIR", syscall: "open" },
+      promises: { code: "EISDIR", syscall: "open" },
+    });
+  });
 });
 
 describe("writeFile with a non-truncating flag", () => {

@@ -3202,6 +3202,9 @@ pub mod __gated_printer {
                     } else {
                         self.print_expr(e.target, Level::Postfix, target_flags);
                     }
+                    // Clear so a later occurrence of the same import identifier
+                    // (e.g. as an argument) isn't mistaken for the call target.
+                    self.call_target = None;
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
                         self.print(b"?.");
@@ -3852,6 +3855,8 @@ pub mod __gated_printer {
                             ExprData::ECall(c) => c.optional_chain.is_some(),
                             _ => false,
                         };
+                        // A template tag receives "this" like a call target does.
+                        self.call_target = Some(tag.data);
                         if is_optional_chain {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
@@ -3859,6 +3864,7 @@ pub mod __gated_printer {
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
                         }
+                        self.call_target = None;
                     } else {
                         self.add_source_mapping(expr.loc);
                     }
@@ -3957,8 +3963,10 @@ pub mod __gated_printer {
                                 did_print = true;
 
                                 if let Some(target) = &self.call_target {
+                                    // "fn()" rewritten to "ns.fn()" must not pass "ns" as
+                                    // "this"; wrap as "(0, ns.fn)()" to keep it undefined.
                                     wrap = e.was_originally_identifier()
-                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
+                                        && matches!(target, ExprData::EImportIdentifier(id) if id.ref_.eql(e.ref_));
                                 }
 
                                 if wrap {
@@ -3994,8 +4002,9 @@ pub mod __gated_printer {
                             did_print = true;
 
                             let wrap = if let Some(target) = &self.call_target {
+                                // Same receiver hazard as above: keep "this" undefined.
                                 e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
+                                    && matches!(target, ExprData::EImportIdentifier(id) if id.ref_.eql(e.ref_))
                             } else {
                                 false
                             };

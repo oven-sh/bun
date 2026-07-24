@@ -96,7 +96,10 @@ pub fn write_bind<Context: WriterContext>(
                 && 'brk: {
                     iter.to(i as u32);
                     if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-                        break 'brk value.is_string();
+                        // Arrays are serialized as postgres text array literals
+                        // (`{1,2,3}`), so they must be declared as format 0 even
+                        // for array tags that otherwise support binary.
+                        break 'brk value.is_string() || value.is_array();
                     }
                     if iter.any_failed() {
                         return Err(AnyPostgresError::InvalidQueryBinding);
@@ -154,6 +157,19 @@ pub fn write_bind<Context: WriterContext>(
         }
         bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
 
+        // Serialize JS arrays as text array literals (`{1,2,3}`); format code
+        // was declared 0 above. Scalar json/jsonb stays JSON text, handled below.
+        if value.is_array() && !matches!(tag, types::Tag::json | types::Tag::jsonb) {
+            let mut buf: Vec<u8> = Vec::new();
+            write_array_literal(&mut buf, value, global, tag, 0)?;
+            let l = writer.length()?;
+            bun_core::scoped_log!(Postgres, "    array literal {} bytes", buf.len());
+            writer.write(&buf)?;
+            l.write_excluding_self()?;
+            i += 1;
+            continue;
+        }
+
         // If they pass a value as a string, let's avoid attempting to
         // convert it to the binary representation. This minimizes the room
         // for mistakes on our end, such as stripping the timezone
@@ -166,8 +182,9 @@ pub fn write_bind<Context: WriterContext>(
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                let mut str = BunString::empty();
-                // Use jsonStringifyFast for SIMD-optimized serialization
+                // json_stringify_fast writes a +1 WTFStringImpl ref into the
+                // out-param; OwnedString releases it on every exit path.
+                let mut str = bun_core::OwnedString::new(BunString::empty());
                 value
                     .json_stringify_fast(global, &mut str)
                     .map_err(js_error_to_postgres)?;
@@ -175,7 +192,6 @@ pub fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
             types::Tag::bool => {
                 let l = writer.length()?;
@@ -202,11 +218,6 @@ pub fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::int4 => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4_array => {
                 let l = writer.length()?;
                 writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
                 l.write_excluding_self()?;
@@ -256,6 +267,98 @@ pub fn write_bind<Context: WriterContext>(
 
     length.write()?;
     Ok(())
+}
+
+/// Serialize a JS array as a PostgreSQL text array literal (`{1,2,3}`).
+/// Element text mirrors the JS-side `serializeArray` in
+/// `src/js/internal/sql/postgres.ts`. `depth` guards recursion (pg max is 6).
+fn write_array_literal(
+    out: &mut Vec<u8>,
+    value: JSValue,
+    global: &JSGlobalObject,
+    tag: types::Tag,
+    depth: u32,
+) -> Result<(), AnyPostgresError> {
+    const MAX_ARRAY_DEPTH: u32 = 64;
+    if depth >= MAX_ARRAY_DEPTH {
+        return Err(AnyPostgresError::InvalidQueryBinding);
+    }
+    // `box` is the one built-in type whose array literal uses `;` as the
+    // element delimiter (its scalar text already contains commas).
+    let delimiter = if tag == types::Tag::box_array {
+        b';'
+    } else {
+        b','
+    };
+    let is_bytea = tag == types::Tag::bytea_array;
+    let is_json = matches!(tag, types::Tag::json_array | types::Tag::jsonb_array);
+
+    out.push(b'{');
+    let len = value.get_length(global).map_err(js_error_to_postgres)?;
+    for idx in 0..len {
+        if idx > 0 {
+            out.push(delimiter);
+        }
+        let element = value
+            .get_index(global, idx as u32)
+            .map_err(js_error_to_postgres)?;
+        let is_array_buffer_like = element.is_cell() && element.js_type().is_array_buffer_like();
+        if element.is_empty_or_undefined_or_null() {
+            out.extend_from_slice(b"NULL");
+        } else if element.is_array() {
+            write_array_literal(out, element, global, tag, depth + 1)?;
+        } else if is_bytea && is_array_buffer_like {
+            let buf = element.as_array_buffer(global);
+            let bytes: &[u8] = buf.as_ref().map(|b| b.byte_slice()).unwrap_or(b"");
+            // `\x<hex>` is bytea's hex input format; write_quoted_element
+            // escapes the backslash so array_in passes it through verbatim.
+            let mut text = vec![0u8; 2 + bytes.len() * 2];
+            text[0] = b'\\';
+            text[1] = b'x';
+            bun_fmt::bytes_to_hex_lower(bytes, &mut text[2..]);
+            write_quoted_element(out, &text);
+        } else if is_json || (element.is_object() && !element.is_date() && !is_array_buffer_like) {
+            // json[]/jsonb[] elements must be valid JSON text, so every scalar
+            // element goes through JSON.stringify. Plain objects elsewhere use
+            // the same path.
+            let mut str = bun_core::OwnedString::new(BunString::empty());
+            element
+                .json_stringify_fast(global, &mut str)
+                .map_err(js_error_to_postgres)?;
+            write_quoted_element(out, str.to_utf8_without_ref().slice());
+        } else if element.is_date() {
+            // JSON.stringify of a Date is its ISO string already wrapped in
+            // double quotes, which is a valid quoted array element as-is.
+            let mut str = bun_core::OwnedString::new(BunString::empty());
+            element
+                .json_stringify_fast(global, &mut str)
+                .map_err(js_error_to_postgres)?;
+            out.extend_from_slice(str.to_utf8_without_ref().slice());
+        } else {
+            let str = bun_core::OwnedString::new(
+                BunString::from_js(element, global).map_err(js_error_to_postgres)?,
+            );
+            if str.tag() == bun_core::Tag::Dead {
+                return Err(AnyPostgresError::OutOfMemory);
+            }
+            write_quoted_element(out, str.to_utf8_without_ref().slice());
+        }
+    }
+    out.push(b'}');
+    Ok(())
+}
+
+/// Append `text` as a double-quoted array element, escaping `"` and `\` the
+/// way PostgreSQL's `array_in` expects.
+fn write_quoted_element(out: &mut Vec<u8>, text: &[u8]) {
+    out.push(b'"');
+    for &byte in text {
+        if byte == b'"' || byte == b'\\' {
+            out.push(b'\\');
+        }
+        out.push(byte);
+    }
+    out.push(b'"');
 }
 
 pub fn write_query<Context: WriterContext>(

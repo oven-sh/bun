@@ -581,7 +581,6 @@ fn parse_nested_block<T>(
         BlockType::SquareBracket => Delimiters::CLOSE_SQUARE_BRACKET,
         BlockType::Parenthesis => Delimiters::CLOSE_PARENTHESIS,
     };
-    // Note: reshaped for borrowck — same aliasing as parse_until_before.
     // Swap stop_before/at_start_of in place rather than constructing a second
     // Parser over the invariant `&'a mut ParserInput<'a>`.
     let saved_stop_before = parser.stop_before;

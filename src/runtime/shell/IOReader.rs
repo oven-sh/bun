@@ -268,11 +268,10 @@ impl IOReader {
         // memory.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
-        // both re-derive `state()` (and the interpreter callback may re-enter
-        // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
-        // `&mut State` across the dispatch. Re-derive `state()` per access
-        // instead.
+        // `dispatch_read_chunk`/`run_yield` re-derive `state()` (and the interpreter callback may
+        // re-enter `add_reader`/`remove_reader`). `state()` takes `&self`, so borrowck would
+        // permit a hoisted `&mut State`, but that aliases the inner re-derive. Re-derive per
+        // access instead.
         let mut i = 0usize;
         while i < self.state().readers.len() {
             let r = self.state().readers[i];

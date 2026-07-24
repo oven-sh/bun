@@ -4011,7 +4011,10 @@ impl H2FrameParser {
             );
             return data.len();
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a heap::alloc'd *mut Stream stored in self.streams. The dispatch
+        // calls below fire JS that can re-enter the parser and touch self.streams, so holding a
+        // map borrow across them would alias; frees are deferred by dispatch_depth so the entry
+        // stays valid here.
         let mut stream = unsafe { &mut *stream_ptr };
 
         let max_frame_size = self.local_settings.get().max_frame_size;
@@ -4396,7 +4399,10 @@ impl H2FrameParser {
             );
             return data.len();
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a heap::alloc'd *mut Stream stored in self.streams. The dispatch
+        // calls below fire JS that can re-enter the parser and touch self.streams, so holding a
+        // map borrow across them would alias; frees are deferred by dispatch_depth so the entry
+        // stays valid here.
         let stream = unsafe { &mut *stream_ptr };
 
         if frame.length != 4 {
@@ -4558,7 +4564,10 @@ impl H2FrameParser {
             );
             return data.len();
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a heap::alloc'd *mut Stream stored in self.streams. The dispatch
+        // calls below fire JS that can re-enter the parser and touch self.streams, so holding a
+        // map borrow across them would alias; frees are deferred by dispatch_depth so the entry
+        // stays valid here.
         let stream = unsafe { &mut *stream_ptr };
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
@@ -4607,7 +4616,10 @@ impl H2FrameParser {
             );
             return Ok(data.len());
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a heap::alloc'd *mut Stream stored in self.streams. The dispatch
+        // calls below fire JS that can re-enter the parser and touch self.streams, so holding a
+        // map borrow across them would alias; frees are deferred by dispatch_depth so the entry
+        // stays valid here.
         let mut stream = unsafe { &mut *stream_ptr };
 
         if !stream.is_waiting_more_headers {
@@ -4731,7 +4743,10 @@ impl H2FrameParser {
             );
             return Ok(data.len());
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a heap::alloc'd *mut Stream stored in self.streams. The dispatch
+        // calls below fire JS that can re-enter the parser and touch self.streams, so holding a
+        // map borrow across them would alias; frees are deferred by dispatch_depth so the entry
+        // stays valid here.
         let mut stream = unsafe { &mut *stream_ptr };
 
         if frame.length > self.local_settings.get().max_frame_size {

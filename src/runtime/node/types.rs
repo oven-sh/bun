@@ -957,8 +957,6 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return ZStr::from_buf(&buf[..], 4 + n);
                 }
-                // reshaped for borrowck — capture the length so
-                // the `Ok` borrow ends at the match, then re-derive.
                 let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
                     Ok(res) => Some(res.len()),
                     // The cwd root + path don't fit `buf` (UNC cwds can push

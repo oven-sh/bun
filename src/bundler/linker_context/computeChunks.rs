@@ -278,7 +278,6 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             }
         }
     }
-    // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
     let css_reprs = this.graph.ast.items_css();

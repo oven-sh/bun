@@ -430,7 +430,6 @@ pub fn generate_slug<'a>(
     let mut out_len: usize = 0;
     let mut prev_hyphen: bool = true; // true to trim leading hyphens
 
-    // reshaped for borrowck — index instead of `for &c in text_items`
     for idx in 0..text_len {
         let c = text_buf[idx];
         if c >= b'A' && c <= b'Z' {

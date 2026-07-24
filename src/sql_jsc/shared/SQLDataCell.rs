@@ -546,8 +546,6 @@ pub fn dedupe_columns<'a>(
     for name_or_index in columns {
         match &*name_or_index {
             ColumnIdentifier::Name(name) => {
-                // reshaped for borrowck — compute `found_existing` before
-                // mutating `*name_or_index`.
                 let found_existing = seen_fields
                     .get_or_put(name.slice())
                     .unwrap_or_oom()

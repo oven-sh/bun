@@ -453,8 +453,6 @@ impl HotReloadEvent {
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
 
                     while let Some(index) = it {
-                        // Note: reshaped for borrowck — re-index per iteration instead of
-                        // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
                         let (source_file_path, specifier, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
                             (dep.source_file_path, &raw const *dep.specifier, dep.next)
@@ -1302,8 +1300,6 @@ impl DirectoryWatchStore {
             self.dependencies.reserve(1);
         }
 
-        // Note: reshaped for borrowck — capture gop scalars before
-        // calling self methods that need &mut self.
         let gop = self.watches.get_or_put(
             bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
         )?;
@@ -1462,8 +1458,6 @@ impl DirectoryWatchStore {
         let mut watch_index = self.watches.count();
         while watch_index > 0 {
             watch_index -= 1;
-            // Note: reshaped for borrowck — cannot hold &mut entry across
-            // self.free_dependency_index(); walk by index and re-borrow.
             let mut new_chain: Option<u32> = None;
             let mut it: Option<u32> = Some(self.watches.values()[watch_index].first_dep);
             while let Some(index) = it {

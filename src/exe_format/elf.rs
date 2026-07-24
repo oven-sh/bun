@@ -88,8 +88,6 @@ impl ElfFile {
                 return;
             }
 
-            // reshaped for borrowck — compute replacement under an
-            // immutable borrow, then take a mutable borrow for the writes.
             let replacement: &'static [u8] = {
                 let interp_region = &self.data[interp_offset..][..interp_filesz];
                 let current = slice_to_nul(interp_region);
@@ -167,8 +165,6 @@ impl ElfFile {
         if strtab_end > self.data.len() as u64 {
             return;
         }
-        // reshaped for borrowck — copy strtab bounds out so we can
-        // re-borrow self.data mutably below.
         let strtab_off = usize::try_from(strtab_shdr.sh_offset).expect("int cast");
         let strtab_len = usize::try_from(strtab_shdr.sh_size).expect("int cast");
 

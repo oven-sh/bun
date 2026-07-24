@@ -2014,9 +2014,6 @@ impl BuildArtifact {
 
         {
             formatter.indent_inc();
-            // NOTE: reshaped for borrowck — scopeguard cannot reborrow
-            // `formatter` while it is also borrowed for the body; decrement
-            // after the block instead.
 
             formatter.write_indent(writer)?;
             bun_core::write_pretty!(

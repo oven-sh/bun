@@ -191,8 +191,8 @@ impl FileCloser for WriteFile {
             let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
-        // reshaped for borrowck — compute the parent raw pointer
-        // before mutably borrowing `io_poll` so the two borrows do not overlap.
+        // SAFETY: `ctx` is the async io-close callback's *mut Self; on_done re-enters and
+        // mutates self, so `ptr::from_mut` write provenance is required.
         let ctx = std::ptr::from_mut::<WriteFile>(this).cast::<()>();
         let fd = this.opened_fd;
         io::Action::Close(io::CloseAction {
@@ -327,8 +327,6 @@ impl WriteFile {
         )
     }
 
-    // reshaped for borrowck — take (off, len) here and re-derive the slice
-    // internally so callers don't hold a borrow of self across the &mut self call.
     pub fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
@@ -543,7 +541,6 @@ impl WriteFile {
     fn do_write_loop_posix(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             let remain_full = self.bytes_blob.shared_view();
-            // reshaped for borrowck — capture len/offset before mut borrow
             let off = self.total_written.min(remain_full.len());
             let remain_len = remain_full.len() - off;
 

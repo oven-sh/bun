@@ -155,8 +155,6 @@ impl MacroEntryPoint {
         let hash = hasher.final_();
         let fmt = bun_fmt::hex_int_lower::<16>(hash);
 
-        // reshaped for borrowck — capture cursor position, drop &mut
-        // borrow, then re-borrow `buf` immutably.
         let n = {
             let mut cursor = std::io::Cursor::new(&mut buf[..]);
             write!(
@@ -192,9 +190,6 @@ impl MacroEntryPoint {
         } else {
             import_path.dir_with_trailing_slash()
         };
-        // reshaped for borrowck — capture the label length, write the
-        // body via a scoped &mut borrow, then re-borrow `code_buffer` immutably
-        // for the (label, code) slices passed to `init_path_string`.
         let label_len = macro_label_.len();
         entry.code_buffer[..label_len].copy_from_slice(macro_label_);
 

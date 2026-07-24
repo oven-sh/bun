@@ -231,9 +231,9 @@ impl PackageManager {
     }
 
     pub fn tick_lifecycle_scripts(&mut self) {
-        // reshaped for borrowck — `self.event_loop.tick_once(self)`
-        // would borrow `self` twice. Erase `self` to a raw context pointer
-        // first; `tick_once` only forwards it opaquely to task callbacks.
+        // `tick_once` forwards `ctx` opaquely; no reachable task callback dereferences it
+        // (the Js arm discards it, every Mini-arm callback takes `_: *mut ()`), so this does
+        // not alias the `&mut self.event_loop` receiver.
         let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
         self.event_loop.tick_once(ctx);
     }
@@ -241,7 +241,7 @@ impl PackageManager {
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
         Output::flush();
-        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
+        // `is_done` callback reborrows
         // `self` (the struct that owns `event_loop`), so use the raw-pointer
         // `tick_raw` variant which only holds `&mut event_loop` between
         // `is_done` calls.

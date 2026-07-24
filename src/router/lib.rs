@@ -760,8 +760,6 @@ impl Route {
                 let mut buf: &mut [u8] = &mut route_file_buf[..];
 
                 if !public_dir.is_empty() {
-                    // NOTE: reshaped for borrowck — `buf` already aliases
-                    // route_file_buf[..]; write through it instead of re-borrowing.
                     buf[0] = b'/';
                     buf = &mut buf[1..];
                     buf[..public_dir.len()].copy_from_slice(public_dir);
@@ -806,10 +804,6 @@ impl Route {
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
-            // NOTE: reshaped for borrowck — both arms intern via DirnameStore
-            // (process-lifetime arena → `&'static`), so the post-if bindings are
-            // 'static and the route_file_buf borrow is dropped before the
-            // abs-path block below needs it mutably.
             let (name, match_name): (&'static [u8], &'static [u8]) = if !name.is_empty() {
                 validation_result = match Pattern::validate(&name[1..], log) {
                     Some(v) => v,
@@ -854,9 +848,6 @@ impl Route {
                 // mutex (the same lock every other `Entry` rewrite path takes).
                 // SAFETY: see fn-level NOTE — read-only reborrow.
                 let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
-                // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
-                // becomes a scopeguard owning the Option<File>; `needs_close` is a
-                // Cell so the drop closure can read it while the body still mutates.
                 // The guard is inverted: when the fd belongs to the cache
                 // (`needs_close == false`), `into_raw()` so we do not close
                 // someone else's fd.

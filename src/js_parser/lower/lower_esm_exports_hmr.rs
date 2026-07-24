@@ -51,7 +51,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 st.is_export = false;
 
                 let mut new_len: usize = 0;
-                // Note: reshaped for borrowck — index loop instead of `|*decl_ptr|`.
                 let decls_len = st.decls.len_u32() as usize;
                 for i in 0..decls_len {
                     // explicit field copies (G::Decl is not `Copy`) to avoid aliasing
@@ -730,8 +729,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             self.last_part
                 .import_record_indices
                 .append_slice(part.import_record_indices.slice());
-            // Note: reshaped for borrowck — index loop avoids
-            // holding two shared borrows of `part.symbol_uses` while &mut-borrowing `last_part`.
             for i in 0..part.symbol_uses.count() {
                 let k = part.symbol_uses.keys()[i];
                 let v = part.symbol_uses.values()[i];

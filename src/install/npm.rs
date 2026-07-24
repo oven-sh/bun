@@ -502,9 +502,6 @@ pub mod registry {
             let final_href: Box<[u8]> = if needs_normalize {
                 url.href_without_auth()
             } else {
-                // reshaped for borrowck — `url` (borrowing
-                // `registry_url`) is dead on this branch (every path that
-                // mutated `url.pathname` also set `needs_normalize = true`).
                 registry_url
             };
 
@@ -2611,7 +2608,6 @@ impl PackageManifest {
                     let has_meta_only_peers =
                         peer_deps_meta.is_some_and(|meta| !meta.properties().is_empty());
                     if items.len() > 0 || has_meta_only_peers {
-                        // reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
                         let values_base = dependency_values_cursor;
 

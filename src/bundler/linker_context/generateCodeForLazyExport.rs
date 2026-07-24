@@ -291,8 +291,6 @@ pub fn generate_code_for_lazy_export(
                 }
             }
 
-            // The Visitor is constructed inside the loop with a fresh `parts`
-            // borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`

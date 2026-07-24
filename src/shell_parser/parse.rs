@@ -766,15 +766,11 @@ impl<'bump> Parser<'bump> {
     /// If you make a subparser and call some fallible functions on it, you need to catch the errors
     /// and call `.continue_from_subparser()`, otherwise errors will not propagate upwards to the parent.
     pub fn make_subparser(&mut self, kind: SubshellKind) -> Parser<'bump> {
-        // reshaped for borrowck — `self.errors` is moved out
-        // via mem::take and restored in continue_from_subparser.
         Parser {
             strpool: self.strpool,
             tokens: self.tokens,
             js_string_ranges: self.js_string_ranges,
             alloc: self.alloc,
-            // reshaped for borrowck — move the
-            // exclusive borrow into the subparser and restore it in continue_from_subparser.
             jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
@@ -2273,8 +2269,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn make_sublexer(&mut self, kind: SubShellKind) -> Self {
         log!("[lex] make sublexer");
-        // reshaped for borrowck — move the lists out via mem::take and restore in
-        // continue_from_sublexer.
         let bump = self.strpool.bump();
         let mut sublexer = Self {
             chars: self.chars,
@@ -2290,8 +2284,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             word_start: self.word_start,
             j: self.j,
             delimit_quote: false,
-            // reshaped for borrowck — move the exclusive borrow into the sublexer
-            // and restore it in continue_from_sublexer (avoids aliased &mut).
             string_refs: core::mem::take(&mut self.string_refs),
             jsobjs_len: self.jsobjs_len,
         };

@@ -632,8 +632,6 @@ pub fn cached_npm_package_folder_name_print<'a>(
         cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
             .as_bytes()
             .len();
-    // reshaped for borrowck — resume the cursor at the basename's
-    // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
     let mut w = ByteCursor {
         buf,
@@ -844,7 +842,6 @@ pub fn path_for_cached_npm_path<'a>(
         None,
     );
     let cache_path_len = cache_path.as_bytes().len();
-    // reshaped for borrowck — drop borrow before mutating buffer
 
     debug_assert!(cache_path_buf[package_name.len()] == b'@');
 

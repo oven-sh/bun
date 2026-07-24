@@ -1078,9 +1078,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let args_len = func_args.len();
                         for arg_idx in 0..args_len {
-                            // reshaped for borrowck — copy the scalars we need
-                            // (id_ref, bind_loc) out of the arg before calling `&mut self`
-                            // helpers, so no live `&Arg` overlaps `self.new_expr`/`declare_symbol`.
                             let (id_ref, bind_loc) = {
                                 let arg = &func_args[arg_idx];
                                 if !arg.is_typescript_ctor_field {

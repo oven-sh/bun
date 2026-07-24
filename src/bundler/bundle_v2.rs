@@ -1129,8 +1129,9 @@ pub mod bv2_impl {
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
-                    // reshaped for borrowck — capture the erased self
-                    // pointer before borrowing fields immutably for the FFI call.
+                    // SAFETY: self_ptr is the *mut c_void context handed to
+                    // JSBundlerPlugin__matchOnResolve; the JS completion callback
+                    // mutates/consumes self, so *mut Self provenance is required.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
                     // SAFETY: `bv2` is a valid backref set by `init`; the plugin
                     // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
@@ -1262,8 +1263,9 @@ pub mod bv2_impl {
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
                     let default_loader = self.default_loader;
-                    // reshaped for borrowck — capture the erased self
-                    // pointer before borrowing fields immutably for the FFI call.
+                    // SAFETY: self_ptr is the *mut c_void context handed to
+                    // JSBundlerPlugin__matchOnLoad; the JS completion callback
+                    // mutates/consumes self, so *mut Self provenance is required.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
                     // SAFETY: `bv2` is a valid backref set by `init`; the plugin
                     // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
@@ -1889,19 +1891,14 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
 
-            // reshaped for borrowck — hoist the values that would
-            // otherwise re-borrow `self`/`self.graph` while the visitor holds
-            // disjoint column refs.
             // Always materialize a valid slice; when the boundary list is empty
             // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
             // null `&Map` via `mem::zeroed()` (UB even though it was never read
             // when `scb_bitset` is `None`).
             let scb_list = self.graph.server_component_boundaries.slice();
 
-            // reshaped for borrowck — `Slice<T>` is a value-type
-            // snapshot of column pointers (does not borrow `self.graph.ast`), so
-            // `split_mut()` on the local can coexist with the shared borrows
-            // below. The slab does not resize for the duration of this function.
+            // INVARIANT: self.graph.ast is not resized while ast_slice is live
+            // (Slice<T> holds raw column pointers).
             let mut ast_slice = self.graph.ast.slice();
             let all_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;
@@ -1960,13 +1957,8 @@ pub mod bv2_impl {
                 }
             }
 
-            // reshaped for borrowck — release the visitor's `&mut`
-            // borrows on the two bitsets and `input_files` columns before the
-            // cleanup loop reads them.
             let ReachableFileVisitor { reachable, .. } = visitor;
 
-            // reshaped for borrowck — three disjoint mutable SoA
-            // columns via `split_mut()` on a value-type `Slice` snapshot.
             let mut input_files_slice = self.graph.input_files.slice();
             let input_files_cols = input_files_slice.split_mut();
             let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
@@ -2066,12 +2058,8 @@ pub mod bv2_impl {
             // version and exports a non-object in CommonJS (often a function). If we
             // pick the "module" field and the package is imported with "require" then
             // code expecting a function will crash.
-            //
-            // reshaped for borrowck — the mutable `import_records` column is
-            // needed alongside shared columns. `split_mut()` on a
-            // value-type `Slice` snapshot yields the one mutable column without
-            // borrowing `self.graph.ast`; read the per-target map through the
-            // disjoint `build_graphs` field instead of the `&mut self` accessor.
+            // INVARIANT: self.graph.ast is not resized while ast_slice is live
+            // (Slice<T> holds raw column pointers).
             let mut ast_slice = self.graph.ast.slice();
             let ast_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;
@@ -6454,11 +6442,9 @@ pub mod bv2_impl {
             importer_source_index: IndexInt,
         ) -> i32 {
             let mut diff: i32 = 0;
-            // reshaped for borrowck — `graph` and the
-            // path map are both needed across the loop body. We (a) capture a raw self ptr for
-            // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
-            // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
-            // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
+            // SAFETY: stored into ParseTask.ctx and scheduled on the thread pool; the task
+            // calls back into BundleV2, so `ptr::from_mut` write provenance is required.
+            // Outlives every ParseTask.
             let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>>> = Some(unsafe {
                 bun_ptr::ParentRef::from_raw_mut(
                     std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),

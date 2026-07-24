@@ -868,7 +868,6 @@ fn attempt_security_scan_with_retry(
             b"false"
         });
         new_code.extend_from_slice(&temp_source[index + suppress_placeholder.len()..]);
-        // reshaped for borrowck — drop borrow of `code` (via `temp_source`) before reassigning.
         code = new_code;
     }
 

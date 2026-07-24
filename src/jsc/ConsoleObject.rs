@@ -944,7 +944,6 @@ impl<'a> TablePrinter<'a> {
                 col.name.deref();
             }
         });
-        // reshaped for borrowck — re-borrow through the guard.
         let columns: &mut Vec<Column> = &mut **_deref_names;
 
         // create the first column " " which is always present

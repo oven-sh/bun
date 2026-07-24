@@ -1236,8 +1236,6 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         });
     }
 
-    // reshaped for borrowck — capture `builder.count` before borrowing
-    // `builder.finalized` mutably.
     let mapping_count: u64 = builder.count as u64;
     let out = builder.finalize();
     let blob = out.list.as_mut_slice();

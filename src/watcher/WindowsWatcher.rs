@@ -444,10 +444,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
             let n_items = this.watchlist.items_file_path().len();
             for item_idx in 0..n_items {
-                // reshaped for borrowck — `rel` is computed in a scoped
-                // block so the borrows of `this.watchlist` / `this.platform.buf`
-                // are released before we touch `this.watch_events` or hand the
-                // whole `&mut Watcher` to `process_watch_event_batch`.
                 let rel = {
                     let eventpath = &this.platform.buf[..eventpath_len];
                     let path = &this.watchlist.items_file_path()[item_idx];
@@ -518,7 +514,6 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
 
     for i in 0..all_events.len() {
         if all_events[i].index as u32 == last_event_id {
-            // reshaped for borrowck — copy then merge to avoid two &mut into all_events.
             let ev = all_events[i];
             all_events[last_event_index].merge(ev);
             continue;

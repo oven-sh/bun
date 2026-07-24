@@ -2728,13 +2728,10 @@ pub mod parse_worker {
                 }
             }
 
-            // reshaped for borrowck — `this` and `this.stage.needs_parse`
-            // both borrowed mutably. The entry must live
-            // in-place so its `Contents::Owned` buffer survives in
-            // `task.stage` for the bundle's lifetime (Success.source.contents
-            // borrows it via the arena-erased `StoreStr` path). Take it out, parse, then *write it
-            // back* on every path before `break 'value` so dropping the local
-            // can't free the buffer underneath the borrowed source.
+            // `entry` must be written back into `this.stage` on every path before `break 'value`:
+            // `Success.source.contents` borrows its `Contents::Owned` buffer via the
+            // arena-erased `StoreStr` path (see `run_with_source_code`), so dropping the local
+            // would free the buffer underneath the borrowed source.
             let mut entry =
                 match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {
                     ParseTaskStage::NeedsParse(e) => e,

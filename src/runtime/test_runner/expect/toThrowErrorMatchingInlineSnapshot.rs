@@ -60,8 +60,6 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
 
     let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
 
-    // reshaped for borrowck — hoist get_value out so the two &mut self
-    // receivers don't overlap.
     let received = this.get_value(
         global,
         this_value,

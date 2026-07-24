@@ -1107,9 +1107,6 @@ impl SendQueue {
 
         // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
         // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
-        // Note: reshaped for borrowck (NLL limitation: early-return of
-        // `&mut self.queue[..]` would otherwise extend the borrow across the
-        // fallback push). Compute the predicate first, then re-borrow.
         let use_last = if handle.is_none() && !self.queue.is_empty() {
             let len = self.queue.len();
             let last = &self.queue[len - 1];
@@ -1891,8 +1888,6 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
 
     // Decode the message with just the temporary buffer, and if that
     // fails (not enough bytes) then we allocate to .ipc_buffer
-    // Note: reshaped for borrowck — match on raw discriminant pointer to allow
-    // calling &mut self methods on send_queue inside arms.
     match &mut send_queue.incoming {
         IncomingBuffer::Json(_) => {
             // JSON mode: append to buffer (scans only new data for newline),

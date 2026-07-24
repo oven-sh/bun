@@ -935,7 +935,6 @@ pub mod semver_string {
             debug_assert!(self.len <= self.cap); // didn't count everything
             debug_assert!(self.ptr.is_some()); // must call allocate first
 
-            // reshaped for borrowck — compute final slice range, then borrow once.
             let start = self.len;
             let end = self.cap;
             {
@@ -959,7 +958,6 @@ pub mod semver_string {
             debug_assert!(self.len <= self.cap); // didn't count everything
             debug_assert!(self.ptr.is_some()); // must call allocate first
 
-            // reshaped for borrowck
             let start = self.len;
             let end = self.cap;
             {
@@ -983,8 +981,6 @@ pub mod semver_string {
             debug_assert!(self.len <= self.cap); // didn't count everything
             debug_assert!(self.ptr.is_some()); // must call allocate first
 
-            // reshaped for borrowck — get_or_put borrows self.string_pool while we also need
-            // &mut self.ptr; capture scalars first, then re-borrow.
             let start = self.len;
             let cap = self.cap;
             let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");

@@ -745,7 +745,6 @@ impl MachoSigner {
         self.data.extend_from_slice(id);
 
         // Hash and write pages
-        // reshaped for borrowck — index instead of slicing self.data while pushing.
         let mut off: usize = 0;
         let end = self.sig_off;
         while end - off >= PAGE_SIZE {

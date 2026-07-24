@@ -125,9 +125,6 @@ impl MySQLRequestQueue {
         // momentary `Deref` lifetime. All queue mutation below goes through
         // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
         let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
-        // reshaped for borrowck — the cleanup that must run at function exit
-        // became a post-block pass; early returns become
-        // `break 'advance` so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
 

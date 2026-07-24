@@ -552,10 +552,6 @@ impl Response {
 // ─── getters & header helpers ───────────────────────────────────────────────
 impl Response {
     pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
-        // reshaped for borrowck — `FetchHeaders::fast_get` takes
-        // `&mut self` (FFI writes through an out-param), so we return the
-        // owned `ZigString` instead of a borrowed slice. Callers do
-        // `.slice()` themselves. R-2 escape hatch via `init_mut()`.
         self.init_mut().headers.as_mut()?.fast_get(name)
     }
 

@@ -1285,9 +1285,6 @@ impl Value {
         global: &JSGlobalObject,
     ) -> JsTerminated<()> {
         if let Value::Locked(_) = self {
-            // reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
-            // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
-            // an empty readable), then overwrite with `Error`.
             let mut locked = match self {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
@@ -1468,7 +1465,6 @@ impl Value {
             _ => {}
         }
 
-        // reshaped for borrowck — re-borrow locked after the early *self = Null path above.
         let Value::Locked(locked) = self else {
             unreachable!()
         };
@@ -1765,8 +1761,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         check: fn(&ReadableStream, &JSGlobalObject) -> bool,
     ) -> bool {
-        // reshaped for borrowck — `get_body_readable_stream` needs `&self`,
-        // so we can't hold a `match` borrow on `get_body_value()` across it.
         match self.get_body_value() {
             Value::Used => true,
             Value::Locked(pending) if !pending.action.is_none() => true,
@@ -1833,7 +1827,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                // reshaped for borrowck
                 let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -2008,7 +2001,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream(global_object);
-            // reshaped for borrowck — re-borrow after self method call.
             let value = self.get_body_value();
             let Value::Locked(locked) = value else {
                 unreachable!()
@@ -2486,7 +2478,6 @@ impl<'a> ValueBufferer<'a> {
             }
         }
 
-        // reshaped for borrowck — re-borrow locked after possible *value = Used above.
         let Value::Locked(locked) = value else {
             unreachable!()
         };

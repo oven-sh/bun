@@ -386,9 +386,6 @@ impl<'a> Scanner<'a> {
                 // Prune ignored directory trees early so we never traverse them.
                 if !self.path_ignore_patterns.is_empty() {
                     let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                    // reshaped for borrowck — drop the &mut borrow from
-                    // abs_buf and reborrow open_dir_buf immutably so &self methods
-                    // can be called with the slice.
                     let dir_path_len = Self::abs_buf_projected(
                         self.top_level_dir(),
                         &parts,
@@ -423,9 +420,6 @@ impl<'a> Scanner<'a> {
                 }
 
                 let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                // reshaped for borrowck — drop the &mut borrow from
-                // abs_buf and reborrow open_dir_buf immutably so &self methods
-                // below can be called with the slice.
                 let path_len =
                     Self::abs_buf_projected(self.top_level_dir(), &parts, &mut self.open_dir_buf)
                         .len();

@@ -1527,7 +1527,6 @@ impl FrameworkRouter {
                 // serialized on the per-entry `Entry.mutex`.
                 let file = unsafe { &*file_ptr };
                 let base = file.base();
-                // Note: reshaped for borrowck — fetch type fields fresh each iteration.
                 // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
                 // is the unique live reference to this entry during the scan, and `fs_impl`
                 // points at the process-global FS implementation.

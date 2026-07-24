@@ -623,7 +623,6 @@ impl PostgresSQLConnection {
         if current == Status::Failed {
             return;
         }
-        // reshaped for borrowck — `defer this.updateHasPendingActivity()` moved to explicit calls below.
 
         self.status.set(status);
         self.reset_connection_timeout();
@@ -696,8 +695,6 @@ impl PostgresSQLConnection {
     }
 
     pub fn fail_with_js_value(&self, value: JSValue) {
-        // reshaped for borrowck — `update_has_pending_activity()` + `ref_and_close(value)`
-        // are expanded inline at each return below.
         self.stop_timers();
         if self.status.get() == Status::Failed {
             self.update_has_pending_activity();

@@ -417,7 +417,6 @@ impl Queue {
             bstr::BStr::new(name)
         );
 
-        // reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
             for pending in module.parse_result.pending_imports.iter() {
                 if pending.tag == bun_resolver::PendingResolutionTag::Resolve {
@@ -478,7 +477,6 @@ impl Queue {
                 .as_slice(),
         );
 
-        // reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
             for pending in module.parse_result.pending_imports.iter() {
                 if resolution_ids.slice()[pending.root_dependency_id as usize] != package_id {

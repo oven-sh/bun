@@ -474,7 +474,6 @@ impl Listener {
             }
         };
         if listen_socket.is_null() {
-            // Note: reshaped for borrowck — extract hostname bytes for error formatting
             let hostname_bytes: &[u8] = match &connection {
                 UnixOrHost::Host { host, .. } => host,
                 UnixOrHost::Unix(u) => u,
@@ -1096,9 +1095,6 @@ impl Listener {
             use bun_sys::FdExt as _;
 
             let mut buf = PathBuffer::uninit();
-            // Note: reshaped for borrowck — `normalize_pipe_name` borrows
-            // `buf` for the returned slice; store length and re-borrow after the
-            // `connection` match drops.
             let mut pipe_name_len: Option<usize> = None;
             let is_named_pipe = match &mut connection {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX

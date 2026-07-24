@@ -358,7 +358,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         #[cfg(debug_assertions)]
         {
             // set old range to undefined. Note: may be wrapped around
-            // reshaped for borrowck — capture len, then re-borrow.
             let slice_len = self.readable_slice_mut(0).len();
             if slice_len >= count {
                 poison(self.readable_slice_mut(0), count);
@@ -448,8 +447,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.ensure_unused_capacity(size)?;
 
         // try to avoid realigning buffer
-        // reshaped for borrowck — check len, drop borrow, maybe
-        // realign, then take the final borrow.
         if self.writable_slice(0).len() < size {
             self.realign();
         }
@@ -474,8 +471,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
         let mut src_left = src;
         while !src_left.is_empty() {
-            // reshaped for borrowck — scoped block drops the
-            // `writable` borrow before `self.update`.
             let n = {
                 let writable = self.writable_slice(0);
                 debug_assert!(!writable.is_empty());
@@ -544,8 +539,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
         self.rewind(src.len());
 
-        // reshaped for borrowck — copy into first chunk in a scoped
-        // block, drop borrow, then re-borrow for the wrapped chunk.
         let slice_len = {
             let s = self.readable_slice_mut(0);
             let n = s.len().min(src.len());

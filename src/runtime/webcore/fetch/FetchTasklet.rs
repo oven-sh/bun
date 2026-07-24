@@ -1747,7 +1747,6 @@ impl FetchTasklet {
         let metadata = self.metadata.as_ref().unwrap();
         let http_response = &metadata.response;
         self.is_waiting_body = self.result.has_more;
-        // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
         // status_text and url must NOT be atomized: the Response can be
@@ -2189,9 +2188,6 @@ impl FetchTasklet {
         if data.is_empty() {
             return ResumableSinkBackpressure::WantMore;
         }
-        // reshaped for borrowck — read sink HWM (Copy) before
-        // borrowing the stream buffer so `self` is unborrowed during the
-        // mutex critical section below.
         let high_water_mark: usize = match self.sink_mut() {
             Some(sink) => sink.high_water_mark() as usize,
             None => 16384,

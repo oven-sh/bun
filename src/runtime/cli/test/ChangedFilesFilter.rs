@@ -281,7 +281,6 @@ pub(crate) fn filter<'a>(
     // affected, or (b) the test file itself is in the changed set (covers
     // test files that failed to enter the graph for any reason).
     let mut write: usize = 0;
-    // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
     debug_assert_eq!(test_files.len(), slot_to_source.len());
     for i in 0..total {

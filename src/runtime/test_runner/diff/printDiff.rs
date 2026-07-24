@@ -167,7 +167,6 @@ pub fn print_diff_main(
         diff_segments = new_diff_segments;
 
         // Forward pass: unskip segments after non-equal segments
-        // reshaped for borrowck (capture len before mutable slice borrow)
         let len = diff_segments.len();
         for i in 0..len {
             if diff_segments[i].mode != DiffSegmentMode::Equal {

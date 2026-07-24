@@ -1024,8 +1024,6 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        // reshaped for borrowck — bind the owned buffer first, then
-        // borrow `content` from it (or fall back to the stack `chunk`).
         let content_to_free: Box<[u8]>;
         let content: &[u8] = if chunk.len() >= shebang_buf.len() {
             // Partial read. Need to read the rest of the file.
@@ -1504,7 +1502,6 @@ impl<'a> Linker<'a> {
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
 
-        // reshaped for borrowck — track offset instead of remain.ptr arithmetic
         let mut off: usize = 0;
         let buf = &mut *self.abs_target_buf;
 

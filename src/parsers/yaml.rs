@@ -4096,9 +4096,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let scalar_line = self.token.line;
                     let scalar_tab_after_indent = self.tab_after_indent;
 
-                    // reshaped for borrowck — we must hold the scalar
-                    // payload across `self.scan()` which replaces self.token.
-                    // Take it out before scanning.
                     let scalar = match core::mem::replace(
                         &mut self.token.data,
                         TokenData::Eof, // placeholder; overwritten by scan() below

@@ -404,7 +404,6 @@ impl EventLoop {
         let this: *mut Self = core::hint::black_box(this);
         // SAFETY: as above.
         unsafe { (*this).exit() };
-        // Note: reshaped for borrowck — `defer this.exit()` moved to tail; no early returns
     }
 
     pub fn run_callback_with_result(
@@ -431,7 +430,6 @@ impl EventLoop {
         let this: *mut Self = core::hint::black_box(this);
         // SAFETY: as above.
         unsafe { (*this).exit() };
-        // Note: reshaped for borrowck — `defer this.exit()` moved to tail
         result
     }
 
@@ -628,8 +626,6 @@ impl EventLoop {
         self.tick_concurrent();
         self.process_gc_timer();
 
-        // Note: reshaped for borrowck — `vm_ref()` is `&'static`, so the
-        // global borrow detaches from `&self` and survives the `&mut self` call.
         let global = self.vm_ref().global();
         let global_vm = self.vm_ref().jsc_vm();
 
@@ -676,7 +672,6 @@ impl EventLoop {
         }
 
         self.vm_ref().suppress_microtask_drain.set(prev);
-        // Note: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
     }
 
     pub fn enqueue_task(&mut self, task: Task) {

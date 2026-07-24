@@ -136,8 +136,6 @@ impl Editor {
                 return Some(editor);
             }
 
-            // Note: reshaped for borrowck — by_fallback_path_for_editor writes a
-            // 'static slice; we widen `out` to accept it via a temporary.
             let mut static_out: &'static [u8] = b"";
             if Self::by_fallback_path_for_editor(editor, Some(&mut static_out)) {
                 *out = static_out;

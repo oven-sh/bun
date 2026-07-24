@@ -1389,7 +1389,6 @@ impl Archiver {
         let mut count: u32 = 0;
         let dir_fd = dir;
 
-        // reshaped for borrowck — ctx is Option<&mut>, rebound as needed
         let mut ctx = ctx;
 
         #[cfg(unix)]
@@ -1781,8 +1780,6 @@ impl Archiver {
                                 owned
                             };
 
-                            // reshaped for borrowck — `plucked_file` is captured by
-                            // the guard tuple; mutate via close_guard.1.
                             let mut close_guard =
                                 scopeguard::guard((file_handle, false), |(fh, plucked)| {
                                     if options.close_handles && !plucked {

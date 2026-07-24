@@ -557,11 +557,8 @@ impl<'a> LinkerContext<'a> {
         }
 
         if self.options.output_format == Format::Cjs || self.options.output_format == Format::Iife {
-            // Note: reshaped for borrowck — `Slice<T>` is a value-type
-            // snapshot of column pointers (does not borrow `self.graph.ast`),
-            // so `split_mut()` on the local can coexist with the
-            // `self.graph.meta` borrow below. The slab does not reallocate for
-            // the duration of this loop.
+            // INVARIANT: self.graph.ast is not resized while ast_slice is live
+            // (Slice<T> holds raw column pointers).
             let mut ast_slice = self.graph.ast.slice();
             let ast_cols = ast_slice.split_mut();
             let exports_kind: &mut [ExportsKind] = ast_cols.exports_kind;

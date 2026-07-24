@@ -87,8 +87,6 @@ impl Mkdir {
     }
 
     pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // NOTE: reshaped for borrowck — read scalars, drop the borrow,
-        // then act.
         let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!("Invalid state"),
             State::Exec(exec) => {

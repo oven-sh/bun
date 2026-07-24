@@ -422,9 +422,6 @@ fn parse_array(
                             let mut has_exponent = false;
                             let mut has_negative_sign = false;
                             let mut has_positive_sign = false;
-                            // reshaped for borrowck — cannot mutate `slice` mid-loop while
-                            // iterating it (the Infinity arm). We capture the advance amount and
-                            // apply after the loop.
                             let mut advance_after: Option<usize> = None;
                             for (index, &byte) in slice.iter().enumerate() {
                                 match byte {
@@ -1124,7 +1121,6 @@ fn parse_binary_numeric<'a>(
             result.truncate(end);
         }
     }
-    // reshaped for borrowck — return borrowed slice of `result`
     Ok(PGNummericString::Dynamic(result.as_slice()))
 }
 

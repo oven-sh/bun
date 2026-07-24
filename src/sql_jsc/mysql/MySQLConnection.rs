@@ -1281,13 +1281,6 @@ impl MySQLConnection {
         Ok(())
     }
 
-    // reshaped for borrowck — `request` comes from `self.queue` so
-    // passing `&mut self` alongside `&mut JSMySQLQuery` would alias. `request`
-    // is `&JSMySQLQuery` (R-2: fully interior-mutable, so a shared borrow is
-    // sound across the re-entrant `on_query_result` callback). The statement is
-    // re-fetched via the single-unsafe `request.get_statement()` accessor at
-    // each touch point so no `&mut MySQLStatement` spans the re-entrant
-    // `on_query_result` call (which may itself call `get_statement()`).
     fn handle_result_set_ok(
         &mut self,
         request: &JSMySQLQuery,

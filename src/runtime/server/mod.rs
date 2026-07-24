@@ -2574,12 +2574,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self: ServerPools<SSL, DEBUG>,
     {
         httplog!("listen");
-        // reshaped for borrowck (PORTING.md §Forbidden — aliased
-        // `&mut`). No long-lived `&mut Self` is held across re-derives from
-        // `this`; each use site reborrows fresh and the borrow ends before the
-        // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so
-        // no `&self.config` outlives the per-domain `set_routes()` call.
-        //
         // SAFETY (applies to every `&mut *this` below): `this` was produced by
         // `init()` and is live for this call; only one reference derived from
         // it is alive at a time. Read-only access goes through `this_ref`

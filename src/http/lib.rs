@@ -3164,11 +3164,6 @@ impl<'a> HTTPClient<'a> {
         ) {
             return;
         }
-        // reshaped for borrowck — copy out the Copy bits we need
-        // (`upgrade_state`, the stream-buffer NonNull, `ended`) so the
-        // `&mut self.state.original_request_body` borrow is dropped before any
-        // call that takes `&mut self`. The stream is re-borrowed only at the
-        // `detach()` sites via `request_stream_detach`.
         let upgrade_state = self.flags.upgrade_state;
         let (stream_buffer_ptr, ended) = {
             let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
@@ -4176,14 +4171,6 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
-        // reshaped for borrowck — `to_result()` returns an
-        // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
-        // `body: &mut MutableString` borrow). Holding that result across the
-        // `is_done` mutations below would require a second live `&mut Self`,
-        // which PORTING.md §Forbidden flags as aliased `&mut`. Instead:
-        // snapshot every owned/Copy field out of the result, drop it, mutate
-        // `self` directly, then rebuild a fresh `HTTPClientResult` for the
-        // callback from the snapshotted fields + the restored body.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value so that `state.reset()`
         // — which calls `body.reset()` and clears the list — doesn't deliver
@@ -4381,12 +4368,6 @@ impl<'a> HTTPClient<'a> {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // reshaped for borrowck — `to_result()` ties `result`'s
-        // lifetime to `&mut self`, so holding it across the `is_done` mutations
-        // would require a second live `&mut Self` (aliased UB). Instead snapshot
-        // every owned/Copy field out of the result, drop it, mutate `self`
-        // directly, then rebuild a fresh `HTTPClientResult` for the callback.
-        // See send_progress_update_without_stage_check for the same pattern.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value; restored below.
         let body_snapshot = body_out::take_list(body);
@@ -4715,11 +4696,6 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
-        // reshaped for borrowck — get_body_buffer() may return
-        // `&mut self.state.compressed_body`, so its borrow must be scoped
-        // tightly and not held across other `self.state.*` accesses (would be
-        // aliased `&mut`). Read the Copy fields first, then borrow the buffer
-        // only for the write block.
         let content_length = self.state.content_length;
 
         let remainder: &[u8] = if let Some(cl) = content_length {
@@ -4793,11 +4769,6 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
-        // reshaped for borrowck — `chunked_decoder` and the body
-        // buffer (`compressed_body` / `body_out_str`) are disjoint fields of
-        // `self.state`, so borrow them once together via the split accessor and
-        // operate on safe references. Deep-cloning the buffer here would
-        // diverge (mutations from process_body_buffer would be lost).
         let (decoder, body_buf) = self.state.chunked_decoder_and_body_buffer();
         body_buf.append_slice(incoming_data)?;
 

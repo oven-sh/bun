@@ -282,9 +282,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).
                     let list_val = unsafe { (*list).clone() };
-                    // reshaped for borrowck — `Command::Context<'a>`
-                    // is `&'a mut ContextData`; reborrow instead of moving the
-                    // field out of `*installer`.
                     let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
                     // `installer.manager == manager` (same allocation,
                     // see fn-signature note); call via the body shadow which is a
@@ -552,13 +549,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
-                            // reshaped for borrowck — compute the
-                            // `&mut`-taking directory accessors first so the
-                            // shared `scope_for_package_name` / `manifests`
-                            // borrows below do not overlap them. `save_async`
-                            // only needs `&PackageManifest`, so reborrow the
-                            // freshly-inserted entry immutably alongside the
-                            // scope (both `&manager`, no conflict).
                             let tmp_fd = directories::get_temporary_directory(manager).handle.fd;
                             let cache_fd = directories::get_cache_directory(manager);
                             npm::package_manifest::Serializer::save_async(
@@ -605,8 +595,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable");
-                // reshaped for borrowck — split the nested `&mut
-                // manager` borrows (`task_batch.push` vs. `enqueue_*`).
                 // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
                 // and exclusively owned by this batch; `manager` is the live PackageManager.
                 let queued = unsafe {
@@ -892,7 +880,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                // reshaped for borrowck — split nested `&mut manager`.
                 let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr);
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
@@ -1336,13 +1323,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
                     let dep_id = clone.dep_id;
-                    // reshaped for borrowck — copy the small `String` handles
-                    // + behavior bit so
-                    // the `&manager.lockfile` borrow doesn't extend across the
-                    // `&mut manager` calls (`has_created_network_task`,
-                    // `enqueue_git_checkout`) below; detach the slice backing
-                    // through `string_buf_ptr` (matching the
-                    // `PackageManifest`-arm `name` detach pattern above).
                     let (dep_name_handle, is_required) = {
                         let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                         (dep.name, dep.behavior.is_required())
@@ -1375,7 +1355,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    // reshaped for borrowck — split nested `&mut manager`.
                     let queued = enqueue::enqueue_git_checkout(
                         manager,
                         checkout_id,
@@ -1768,11 +1747,6 @@ pub fn generate_network_task_for_tarball<'a>(
         return Ok(None);
     }
 
-    // reshaped for borrowck —
-    // all `&mut this` uses (patch-task alloc, cache/temp dir, pool slot) happen
-    // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
-    // live only through `for_tarball`, leaving `this` free for the streaming
-    // tail.
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
     // from package.json, leaving the hash only in

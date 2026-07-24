@@ -773,8 +773,6 @@ impl Parser<'_> {
 
     /// Resolve emphasis delimiters using the CommonMark algorithm.
     pub fn resolve_emphasis_delimiters(&mut self) {
-        // reshaped for borrowck — index directly into self.emph_delims
-        // instead of binding `delims` + `opener` aliases.
         let len = self.emph_delims.len();
         if len == 0 {
             return;

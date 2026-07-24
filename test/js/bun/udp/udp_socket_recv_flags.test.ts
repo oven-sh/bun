@@ -55,7 +55,7 @@ describe("udpSocket() receive flags", () => {
 
       const sender = await udpSocket({
         socket: {
-          error(err: Error & { code?: string }) {
+          error(_socket, err: Error & { code?: string }) {
             resolveErr(err);
           },
         },

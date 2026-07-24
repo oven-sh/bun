@@ -34,7 +34,11 @@ pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             return Err(global.throw_invalid_argument_type_value("actual", "array", actual_arg));
         }
         if !expected_arg.is_array() {
-            return Err(global.throw_invalid_argument_type_value("expected", "array", expected_arg));
+            return Err(global.throw_invalid_argument_type_value(
+                "expected",
+                "array",
+                expected_arg,
+            ));
         }
         return node_assert::myers_diff_arrays(
             global,

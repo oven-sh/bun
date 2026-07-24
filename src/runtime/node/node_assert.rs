@@ -107,7 +107,8 @@ pub(crate) fn myers_diff_arrays(
     let diff: MyersDiff::DiffList<&[u8]> = if check_comma_disparity {
         MyersDiff::Differ::<&[u8], true>::diff(&a, &e).map_err(|err| map_diff_error(global, err))?
     } else {
-        MyersDiff::Differ::<&[u8], false>::diff(&a, &e).map_err(|err| map_diff_error(global, err))?
+        MyersDiff::Differ::<&[u8], false>::diff(&a, &e)
+            .map_err(|err| map_diff_error(global, err))?
     };
     diff_list_to_js(global, &diff)
 }

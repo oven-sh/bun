@@ -576,7 +576,7 @@ impl PostgresSQLConnection {
         );
     }
 
-    fn start(&self) {
+    pub(crate) fn start(&self) {
         self.setup_max_lifetime_timer_if_necessary();
         self.reset_connection_timeout();
         self.send_startup_message();

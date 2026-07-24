@@ -97,7 +97,9 @@ const ObjectPrototypePropertyIsEnumerable = uncurryThis(Object.prototype.propert
 const ObjectPrototypeToString = uncurryThis(Object.prototype.toString);
 const ObjectSeal = Object.seal;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ReflectDefineProperty = Reflect.defineProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ReflectSet = Reflect.set;
 const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 const RegExpPrototypeSymbolReplace = uncurryThis(RegExp.prototype[Symbol.replace]);
 const RegExpPrototypeSymbolSplit = uncurryThis(RegExp.prototype[Symbol.split]);
@@ -730,14 +732,53 @@ function inspect(value, opts) {
 }
 inspect.custom = customInspectSymbol;
 
+// The global console's native formatter ignores `inspectDefaultOptions`; on the
+// first mutation, hand it JS formatters so its output matches Node.js.
+let defaultOptionsOverridden = false;
+let defaultOptionsDepthSet = false;
+const cliConsoleDepth = $newRustFunction("node_util_binding.rs", "getConsoleDepth", 0)();
+const setDefaultInspectOptionsOverridden = $newRustFunction(
+  "node_util_binding.rs",
+  "setDefaultInspectOptionsOverridden",
+  2,
+);
+function consoleInspectOptions(colors) {
+  return cliConsoleDepth !== undefined && !defaultOptionsDepthSet ? { colors, depth: cliConsoleDepth } : { colors };
+}
+function onDefaultOptionsChanged(key) {
+  if (key === "depth") defaultOptionsDepthSet = true;
+  if (defaultOptionsOverridden) return;
+  defaultOptionsOverridden = true;
+  setDefaultInspectOptionsOverridden(
+    (colors, ...args) => formatWithOptionsInternal(consoleInspectOptions(colors), args),
+    (colors, value, options) => inspect(value, { customInspect: false, ...consoleInspectOptions(colors), ...options }),
+  );
+}
+const inspectDefaultOptionsProxy = new Proxy(inspectDefaultOptions, {
+  __proto__: null,
+  set(target, key, value, receiver) {
+    if (receiver !== inspectDefaultOptionsProxy) {
+      return ReflectSet(target, key, value, receiver);
+    }
+    const ok = ReflectSet(target, key, value);
+    if (ok) onDefaultOptionsChanged(key);
+    return ok;
+  },
+  defineProperty(target, key, desc) {
+    const ok = ReflectDefineProperty(target, key, desc);
+    if (ok) onDefaultOptionsChanged(key);
+    return ok;
+  },
+});
+
 ObjectDefineProperty(inspect, "defaultOptions", {
   __proto__: null,
   get() {
-    return inspectDefaultOptions;
+    return inspectDefaultOptionsProxy;
   },
   set(options) {
     validateObject(options, "options");
-    return ObjectAssign(inspectDefaultOptions, options);
+    return ObjectAssign(inspectDefaultOptionsProxy, options);
   },
 });
 ObjectDefineProperty(inspect, "replDefaults", {

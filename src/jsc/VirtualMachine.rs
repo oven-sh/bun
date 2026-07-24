@@ -330,6 +330,12 @@ pub struct VirtualMachine {
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
 
+    /// JS formatter the global console switches to once
+    /// `util.inspect.defaultOptions` is mutated; empty keeps the native path.
+    pub console_util_format: crate::strong::Optional,
+    /// `util.inspect` formatter for global `console.dir`; paired with the above.
+    pub console_util_dir: crate::strong::Optional,
+
     /// A set of extensions that exist in the require.extensions map.
     pub commonjs_custom_extensions:
         bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
@@ -4435,6 +4441,8 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.resolved_path_dups));
 
         self.overridden_main.deinit();
+        self.console_util_format.deinit();
+        self.console_util_dir.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.
@@ -4694,6 +4702,8 @@ impl VirtualMachine {
         }
 
         self.overridden_main.deinit();
+        self.console_util_format.deinit();
+        self.console_util_dir.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         if let Some(promise) = self.pending_internal_promise {

@@ -558,6 +558,57 @@ fn message_with_type_and_level_(
         }
     }
 
+    // `util.inspect.defaultOptions` was modified: hand off to the JS
+    // formatters `node:util` installed so those knobs (maxArrayLength,
+    // numericSeparator, ...) apply. Untouched defaults keep the native path.
+    if len >= 1 {
+        let vm = global.bun_vm();
+        let fallback = if message_type == MessageType::Dir {
+            vm.console_util_dir.get()
+        } else {
+            vm.console_util_format.get()
+        };
+        if let Some(func) = fallback {
+            let formatted = if message_type == MessageType::Dir {
+                let opts = if len >= 2 {
+                    vals_slice[1]
+                } else {
+                    JSValue::UNDEFINED
+                };
+                func.call_with_global_this(
+                    global,
+                    &[JSValue::js_boolean(enable_colors), vals_slice[0], opts],
+                )?
+            } else {
+                let mut call_args: Vec<JSValue> = Vec::with_capacity(1 + len);
+                call_args.push(JSValue::js_boolean(enable_colors));
+                call_args.extend_from_slice(vals_slice);
+                func.call_with_global_this(global, &call_args)?
+            };
+            let text = formatted.to_slice(global)?;
+            let bytes = text.slice();
+            let _ = formatter::write_indent_n(u32::from(default_indent), writer);
+            if default_indent > 0 && strings::contains(bytes, b"\n") {
+                let mut rest = bytes;
+                while let Some(i) = strings::index_of(rest, b"\n") {
+                    let _ = writer.write_all(&rest[..=i]);
+                    let _ = formatter::write_indent_n(u32::from(default_indent), writer);
+                    rest = &rest[i + 1..];
+                }
+                let _ = writer.write_all(rest);
+            } else {
+                let _ = writer.write_all(bytes);
+            }
+            let _ = writer.write_all(b"\n");
+            let _ = writer.flush();
+            if message_type == MessageType::Trace {
+                write_trace(writer, global);
+                let _ = writer.flush();
+            }
+            return Ok(());
+        }
+    }
+
     if message_type == MessageType::Dir && len >= 2 {
         print_length = 1;
         let opts = vals_slice[1];
@@ -5964,6 +6015,34 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     }
     Output::flush();
 
+    let colors = Output::enable_ansi_colors_stderr();
+    let console = vm_console(global);
+    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
+    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
+    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
+    // across the `fmt.format(...)` calls below, which can re-enter JS.
+    let mut writer = unsafe { (*console).error_writer() };
+
+    // SAFETY: caller passes a valid (args, args_len) pair.
+    let args_slice = unsafe { bun_core::ffi::slice(args, args_len) };
+
+    if args_len >= 1 {
+        if let Some(func) = global.bun_vm().console_util_format.get() {
+            let mut call_args: Vec<JSValue> = Vec::with_capacity(1 + args_len);
+            call_args.push(JSValue::js_boolean(colors));
+            call_args.extend_from_slice(args_slice);
+            if let Ok(formatted) = func.call_with_global_this(global, &call_args) {
+                if let Ok(text) = formatted.to_slice(global) {
+                    let _ = bun_io::Write::write_all(&mut writer, b" ");
+                    let _ = bun_io::Write::write_all(&mut writer, text.slice());
+                }
+            }
+            let _ = bun_io::Write::write_all(&mut writer, b"\n");
+            let _ = bun_io::Write::flush(&mut writer);
+            return;
+        }
+    }
+
     // print the arguments
     // `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
@@ -5973,19 +6052,12 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
-    let console = vm_console(global);
-    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
-    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
-    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
-    // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut writer = unsafe { (*console).error_writer() };
-    // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
+    for &arg in args_slice {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
-        if Output::enable_ansi_colors_stderr() {
+        if colors {
             let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
             let _ = fmt.format::<false>(tag, &mut writer, arg, global);

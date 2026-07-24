@@ -424,7 +424,8 @@ pub(crate) fn post_process_js_chunk(
                 continue;
             }
             let mut quoted = MutableString::default();
-            bun_core::quote_for_json(directive.slice(), &mut quoted, false)?;
+            // Bun-target output must be ASCII-only, matching the chunk printer.
+            bun_core::quote_for_json(directive.slice(), &mut quoted, is_bun)?;
             quoted.append_slice(b";")?;
             quoted.append_slice(newline)?;
             let quoted = quoted.take_slice().into_boxed_slice();

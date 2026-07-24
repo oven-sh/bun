@@ -145,9 +145,8 @@ bitflags::bitflags! {
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
-        const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
-        const HAS_IMPORT_META = 1 << 8;
-        // _padding: u7 fills the rest
+        const HAS_IMPORT_META = 1 << 7;
+        // _padding: u8 fills the rest
     }
 }
 
@@ -271,13 +270,6 @@ impl<'arena> BundledAst<'arena> {
         flags.set(
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
             ast.commonjs_module_exports_assigned_deoptimized,
-        );
-        flags.set(
-            Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE,
-            ast.directives
-                .slice()
-                .iter()
-                .any(|d| d.slice() == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
 

@@ -2450,6 +2450,26 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    it("reports dynamic import() with non-ASCII specifiers", () => {
+      const t = new Bun.Transpiler({ loader: "ts" });
+      for (const src of [
+        `import("./café");`,
+        `import("./caf\\u00e9");`,
+        `import("./caf\\u{e9}");`,
+        `import("./中文");`,
+        `import("./🍣");`,
+        `import("./plain");`,
+      ]) {
+        const fast = t.scanImports(src);
+        const full = t.scan(src).imports;
+        expect({ src, fast }).toEqual({
+          src,
+          fast: [{ kind: "dynamic-import", path: expect.any(String) }],
+        });
+        expect({ src, fast }).toEqual({ src, fast: full });
+      }
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

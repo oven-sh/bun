@@ -248,16 +248,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
 
     {
-      await Bun.write(
-        Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
-        Bun.file(tmpbase + "fetch.js.out"),
-      );
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(
-        exampleHtml.substring(0, (exampleHtml.length / 2) | 0),
-      );
-    }
-
-    {
       await gcTick();
       await Bun.write(tmpbase + "fetch.js.in", Bun.file(tmpbase + "fetch.js.out"));
       await gcTick();
@@ -726,5 +716,242 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+
+  describe("file to file", () => {
+    it.skipIf(isWindows)("Bun.write(path, Bun.file(path)) does not truncate the file", async () => {
+      using dir = tempDir("bun-write-self-copy", {
+        "f.txt": "twenty-one bytes here",
+      });
+      const p = join(String(dir), "f.txt");
+      const written = await Bun.write(p, Bun.file(p));
+      expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({
+        written: 21,
+        content: "twenty-one bytes here",
+      });
+    });
+
+    it.skipIf(isWindows)("Bun.write(Bun.file(path), Bun.file(path)) does not truncate the file", async () => {
+      using dir = tempDir("bun-write-self-copy-blob-dest", {
+        "f.txt": "twenty-one bytes here",
+      });
+      const p = join(String(dir), "f.txt");
+      const written = await Bun.write(Bun.file(p), Bun.file(p));
+      expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({
+        written: 21,
+        content: "twenty-one bytes here",
+      });
+    });
+
+    it.skipIf(isWindows)("Bun.write to the same inode via a hardlink does not truncate the file", async () => {
+      using dir = tempDir("bun-write-self-copy-hardlink", {
+        "a.txt": "twenty-one bytes here",
+      });
+      const a = join(String(dir), "a.txt");
+      const b = join(String(dir), "b.txt");
+      fs.linkSync(a, b);
+      const written = await Bun.write(b, Bun.file(a));
+      expect({ written, a: fs.readFileSync(a, "utf8"), b: fs.readFileSync(b, "utf8") }).toEqual({
+        written: 21,
+        a: "twenty-one bytes here",
+        b: "twenty-one bytes here",
+      });
+    });
+
+    it.skipIf(isWindows)("Bun.write to the same inode via a hardlink honours source slices", async () => {
+      using dir = tempDir("bun-write-self-copy-hardlink-slice", {
+        "a.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      });
+      const a = join(String(dir), "a.txt");
+      const b = join(String(dir), "b.txt");
+      fs.linkSync(a, b);
+      const written = await Bun.write(b, Bun.file(a).slice(10, 20));
+      expect({ written, a: fs.readFileSync(a, "utf8"), b: fs.readFileSync(b, "utf8") }).toEqual({
+        written: 10,
+        a: "KLMNOPQRST",
+        b: "KLMNOPQRST",
+      });
+    });
+
+    it.skipIf(isWindows)(
+      "Bun.write(path, Bun.file(path).slice(a, b)) replaces the file with its own slice",
+      async () => {
+        using dir = tempDir("bun-write-self-slice", {
+          "f.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+        const p = join(String(dir), "f.txt");
+        const written = await Bun.write(p, Bun.file(p).slice(10, 20));
+        expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({
+          written: 10,
+          content: "KLMNOPQRST",
+        });
+      },
+    );
+
+    it.skipIf(isWindows)("Bun.write(path, Bun.file(path).slice(0, n)) truncates the file to n bytes", async () => {
+      using dir = tempDir("bun-write-self-slice-head", {
+        "f.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      });
+      const p = join(String(dir), "f.txt");
+      const written = await Bun.write(p, Bun.file(p).slice(0, 8));
+      expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({
+        written: 8,
+        content: "ABCDEFGH",
+      });
+    });
+
+    it.skipIf(isWindows)(
+      "Bun.write(path, Bun.file(path).slice(a, b)) works for windows larger than one read chunk",
+      async () => {
+        using dir = tempDir("bun-write-self-slice-large", {});
+        const p = join(String(dir), "f.bin");
+        const total = 200 * 1024;
+        const buf = Buffer.alloc(total);
+        for (let i = 0; i < total; i++) buf[i] = i & 0xff;
+        fs.writeFileSync(p, buf);
+        const a = 1000;
+        const b = 1000 + 150 * 1024;
+        const written = await Bun.write(p, Bun.file(p).slice(a, b));
+        const out = fs.readFileSync(p);
+        expect({ written, length: out.length, equal: out.equals(buf.subarray(a, b)) }).toEqual({
+          written: b - a,
+          length: b - a,
+          equal: true,
+        });
+      },
+    );
+
+    it.skipIf(isWindows)("Bun.write(dest, Bun.file(src).slice(a, b)) writes only the sliced window", async () => {
+      using dir = tempDir("bun-write-file-slice", {
+        "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const slice = Bun.file(src).slice(10, 20);
+      expect({ size: slice.size, text: await slice.text() }).toEqual({
+        size: 10,
+        text: "KLMNOPQRST",
+      });
+      const written = await Bun.write(dst, slice);
+      expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+        written: 10,
+        content: "KLMNOPQRST",
+      });
+    });
+
+    it.skipIf(isWindows)("Bun.write(dest, Bun.file(src).slice(0, n)) writes only the first n bytes", async () => {
+      using dir = tempDir("bun-write-file-slice-head", {
+        "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const written = await Bun.write(dst, Bun.file(src).slice(0, 8));
+      expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+        written: 8,
+        content: "ABCDEFGH",
+      });
+    });
+
+    it.skipIf(isWindows)("Bun.write(dest, Bun.file(src).slice(a)) writes from offset to end", async () => {
+      using dir = tempDir("bun-write-file-slice-tail", {
+        "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      const written = await Bun.write(dst, Bun.file(src).slice(20));
+      expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+        written: 6,
+        content: "UVWXYZ",
+      });
+    });
+
+    it.skipIf(isWindows)(
+      "Bun.write(dest, Bun.file(src).slice(a, b)) over an existing larger file replaces it",
+      async () => {
+        using dir = tempDir("bun-write-file-slice-overwrite", {
+          "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+          "dst.txt": Buffer.alloc(100, "x").toString(),
+        });
+        const src = join(String(dir), "src.txt");
+        const dst = join(String(dir), "dst.txt");
+        const written = await Bun.write(dst, Bun.file(src).slice(10, 20));
+        expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+          written: 10,
+          content: "KLMNOPQRST",
+        });
+      },
+    );
+
+    it.skipIf(isWindows)(
+      "Bun.write(dest, Bun.file(src).slice(a, b)) honours the slice on the read/write fallback path",
+      async () => {
+        using dir = tempDir("bun-write-file-slice-fallback", {
+          "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+        const src = join(String(dir), "src.txt");
+        const dst = join(String(dir), "dst.txt");
+        const script = `
+          const fs = require("fs");
+          const written = await Bun.write(${JSON.stringify(dst)}, Bun.file(${JSON.stringify(src)}).slice(10, 20));
+          console.log(JSON.stringify({ written, content: fs.readFileSync(${JSON.stringify(dst)}, "utf8") }));
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+          result: { written: 10, content: "KLMNOPQRST" },
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    it.skipIf(isWindows)("Bun.write to a non-regular file path (/dev/null) succeeds", async () => {
+      using dir = tempDir("bun-write-devnull", {
+        "src.txt": "hello world",
+      });
+      const src = join(String(dir), "src.txt");
+      const written = await Bun.write("/dev/null", Bun.file(src));
+      expect(written).toBe(11);
+    });
+
+    it.skipIf(isWindows)("a cached stat size on an unsliced source BunFile does not cap the write", async () => {
+      using dir = tempDir("bun-write-stale-src-stat", {});
+      const a = join(String(dir), "a.txt");
+      const b = join(String(dir), "b.txt");
+      const f = Bun.file(a);
+      fs.writeFileSync(a, "0123456789");
+      await f.exists();
+      fs.writeFileSync(a, "0123456789ABCDEFGHIJ");
+      const written = await Bun.write(b, f);
+      expect({ written, content: fs.readFileSync(b, "utf8") }).toEqual({
+        written: 20,
+        content: "0123456789ABCDEFGHIJ",
+      });
+    });
+
+    // https://github.com/oven-sh/bun/issues/22456
+    it.skipIf(isWindows)("reusing a BunFile as a destination does not cap the write at its previous size", async () => {
+      using dir = tempDir("bun-write-reused-dest", {});
+      const content1 = "this is a long long long long line";
+      const file1 = Bun.file(join(String(dir), "file1.txt"));
+      await Bun.write(file1, content1);
+      const file2 = Bun.file(join(String(dir), "file2.txt"));
+      const file2Path = join(String(dir), "file2.txt");
+      await Bun.write(file2, "short line");
+      const file3 = Bun.file(join(String(dir), "file3.txt"));
+      if (await file2.exists()) {
+        await Bun.write(file3, file2);
+      }
+      const written = await Bun.write(file2, file1);
+      expect({ written, content: fs.readFileSync(file2Path, "utf8") }).toEqual({
+        written: 34,
+        content: content1,
+      });
+    });
   });
 });

@@ -547,6 +547,10 @@ pub struct RuntimeOptions {
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
     /// compatibility.
     pub expose_gc: bool,
+    /// `--disallow-code-generation-from-strings` makes `eval()` and the
+    /// `Function` constructor throw `EvalError`, matching the V8 flag node
+    /// exposes under the same name.
+    pub disallow_code_generation_from_strings: bool,
     pub preserve_symlinks_main: bool,
     pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
@@ -609,6 +613,7 @@ impl Default for RuntimeOptions {
             experimental_http3_fetch: false,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
+            disallow_code_generation_from_strings: false,
             preserve_symlinks_main: false,
             console_depth: None,
             cron_title: Box::default(),

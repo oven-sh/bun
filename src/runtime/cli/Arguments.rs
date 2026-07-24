@@ -259,6 +259,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
     ),
     parse_param!(
+        "--disallow-code-generation-from-strings  Make eval() and new Function() throw EvalError."
+    ),
+    parse_param!(
         "--no-deprecation                  Suppress all reporting of the custom deprecation."
     ),
     parse_param!(
@@ -1179,6 +1182,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        ctx.runtime_options.disallow_code_generation_from_strings =
+            args.flag(b"--disallow-code-generation-from-strings");
         if args.flag(b"--expose-internals") {
             // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
             // sets (VirtualMachine::configure_from_env): allows resolving

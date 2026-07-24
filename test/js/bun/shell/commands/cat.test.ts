@@ -8,10 +8,7 @@ import path from "node:path";
 // every platform.
 const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
 
-async function runShell(
-  dir: string,
-  script: string,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runShell(dir: string, script: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -23,11 +20,7 @@ async function runShell(
     env: builtinEnv,
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 

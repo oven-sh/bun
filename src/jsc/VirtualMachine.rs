@@ -1375,6 +1375,32 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
+        self.uncaught_exception_impl(global_object, err, origin, true)
+    }
+
+    /// Web `reportError()` (and the debug/bootstrap logging that shares it):
+    /// print like an uncaught exception — listeners and exit code included —
+    /// but keep the process running.
+    pub fn report_error_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+    ) -> bool {
+        self.uncaught_exception_impl(
+            global_object,
+            err,
+            UncaughtExceptionOrigin::Exception,
+            false,
+        )
+    }
+
+    fn uncaught_exception_impl(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        origin: UncaughtExceptionOrigin,
+        fatal_exit: bool,
+    ) -> bool {
         if self.is_shutting_down() {
             return true;
         }
@@ -1430,6 +1456,38 @@ impl VirtualMachine {
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
+                self.is_handling_uncaught_exception = false;
+                // SAFETY: see above.
+                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                panic!("made it past process.exit()");
+            }
+            // Node's fatal path exits without another loop turn: already
+            // queued I/O completions, timers, immediates, and later ticks
+            // never run — only 'exit' listeners do (via process_exit). Print
+            // through the same reporter the drain path used, then exit.
+            // Entry-point rejections keep their run_command owner (it already
+            // exits promptly via exit_with_unhandled_note), watch/hot mode
+            // keeps the process alive for reload, and a worker falls through
+            // to route the error to its parent.
+            if fatal_exit
+                && self.is_main_thread()
+                && self.hot_reload == 0
+                && origin != UncaughtExceptionOrigin::EntryPointRejection
+            {
+                self.unhandled_error_counter += 1;
+                self.exit_handler.exit_code = 1;
+                (self.on_unhandled_rejection)(self, global_object, err);
+                // Match run_command's exit_with_unhandled_note: the drain path
+                // would have printed the missing-sourcemaps note and the
+                // version footer after the error; process_exit below bypasses
+                // that owner, so emit them here.
+                bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
+                bun_core::pretty_errorln!(
+                    "<r>\n<d>{}<r>",
+                    bun_core::Global::unhandled_error_bun_version_string,
+                );
+                // See the recursion-guard note above: drop it before
+                // process_exit emits 'exit'.
                 self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };

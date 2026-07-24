@@ -70,7 +70,7 @@ describe('with type: "module"', () => {
 });
 
 // https://github.com/oven-sh/bun/issues/6747
-describe("accessor properties on module.exports", () => {
+describe.concurrent("accessor properties on module.exports", () => {
   const fixtures = join(import.meta.dir, "without-type-module");
 
   test("without __esModule, getters are not invoked or exposed as named exports", async () => {

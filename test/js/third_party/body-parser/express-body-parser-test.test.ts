@@ -1,8 +1,9 @@
 // @ts-nocheck
 // can't use @types/express or @types/body-parser because they
 // depend on @types/node which conflicts with bun-types
-import { json } from "body-parser";
+import bodyParser from "body-parser";
 import { expect, test } from "bun:test";
+const { json } = bodyParser;
 import express, { Application, Request, Response } from "express";
 import net from "net";
 // Express uses iconv-lite

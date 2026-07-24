@@ -22,18 +22,19 @@ test("shows __esModule if it was exported", () => {
 test("arraylike", () => {
   expect(CJSArrayLike[0]).toBe(0);
   expect(CJSArrayLike[1]).toBe(1);
-  expect(CJSArrayLike[2]).toBe(3);
+  // Accessor-defined own properties (indices 2 and 4) on a plain CJS module
+  // are not exposed as named exports; see issue #6747.
+  expect(CJSArrayLike[2]).toBe(undefined);
+  expect(CJSArrayLike).not.toHaveProperty("2");
   expect(CJSArrayLike[3]).toBe(4);
   expect(CJSArrayLike[4]).toBe(undefined);
-  expect(CJSArrayLike).toHaveProperty("4");
+  expect(CJSArrayLike).not.toHaveProperty("4");
   expect(Object.getOwnPropertyNames(CJSArrayLike)).not.toContain("__esModule");
   expect(Object.getOwnPropertyNames(CJSArrayLike.default)).not.toContain("__esModule");
   expect(Bun.inspect(CJSArrayLike)).toBe(`Module {
   "0": 0,
   "1": 1,
-  "2": 3,
   "3": 4,
-  "4": undefined,
   default: {
     "0": 0,
     "1": 1,

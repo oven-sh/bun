@@ -1066,12 +1066,16 @@ impl VirtualMachine {
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + (el.has_pending_refs() as usize)
-                > 0)
+        // A reported-but-unhandled error no longer kills liveness: fatal
+        // (node-compat) throws exit inside uncaught_exception_fatal, and
+        // keep-alive reports (Bun.serve/listen handlers, reportError) leave
+        // servers serving. The counter still arms exit code 1 and skips
+        // beforeExit at the natural end of the run.
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + (el.has_pending_refs() as usize)
+            > 0
     }
 
     pub fn is_event_loop_alive(&self) -> bool {

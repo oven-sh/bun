@@ -2153,3 +2153,64 @@ it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
   // Reported error arms exit 1 for the natural end of the run.
   expect(exitCode).toBe(1);
 });
+
+it("a throwing Bun.serve websocket message handler keeps the server serving", async () => {
+  // The error is reported, but the listen socket keeps the loop alive: a
+  // second connection is served afterwards (previously any unhandled
+  // report made is_event_loop_alive false and an idle server exited).
+  using dir = tempDir("ws-throw-alive", {
+    "server.js": `
+      const server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("http-ok");
+        },
+        websocket: {
+          message(ws, msg) {
+            if (msg === "boom") throw new Error("ws-boom");
+            ws.send("echo:" + msg);
+          },
+        },
+      });
+      console.log(server.port);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = proc.stdout.getReader();
+  const { value } = await reader.read();
+  reader.releaseLock();
+  const port = parseInt(new TextDecoder().decode(value).trim());
+
+  // First connection: the handler throws; the socket stays open, so don't
+  // wait on a close event that never comes.
+  const first = new WebSocket("ws://127.0.0.1:" + port);
+  await new Promise((resolve, reject) => {
+    first.onopen = resolve;
+    first.onerror = () => reject(new Error("first connection failed to open"));
+  });
+  first.send("boom");
+
+  // Second connection is served normally; its echo stops the server.
+  const echoed = await new Promise((resolve, reject) => {
+    const ws = new WebSocket("ws://127.0.0.1:" + port);
+    ws.onopen = () => ws.send("after");
+    ws.onmessage = e => resolve(e.data);
+    ws.onclose = e => reject(new Error("second connection closed: " + e.code));
+    ws.onerror = () => reject(new Error("second connection errored"));
+  });
+  expect(echoed).toBe("echo:after");
+  first.close();
+
+  // The server would keep serving forever; tear it down ourselves. stdout
+  // was consumed by the port reader above.
+  proc.kill();
+  const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("ws-boom");
+});

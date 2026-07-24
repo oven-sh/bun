@@ -95,30 +95,36 @@ it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom k
   }
 });
 
-it.skipIf(!isWindows)("process.env defineProperty enumerates special-accessor keys and coerces accessor reads", () => {
+it.skipIf(!isWindows)("process.env defineProperty enumerates special-accessor keys and coerces accessor reads", async () => {
   // HTTP_PROXY and friends exist on the underlying env object as DontEnum
   // CustomAccessors even when unset; the defineProperty trap must use the
   // envMapList predicate (like the set trap) so a first-time define still
-  // makes the key enumerable.
-  const key = "HTTP_PROXY";
-  const hadKey = Reflect.ownKeys(process.env).includes(key);
-  if (hadKey) return; // only meaningful when the var is not already set
-  try {
-    Object.defineProperty(process.env, key, {
-      value: "http://x",
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-    expect(Reflect.ownKeys(process.env)).toContain(key);
-    expect({ ...process.env }[key]).toBe("http://x");
-    // An accessor getter's result reaches the OS sync via the trap; a
-    // non-string result must not violate editWindowsEnvVar's string contract.
-    Object.defineProperty(process.env, key, { get: () => 42, configurable: true });
-    expect(process.env[key]).toBe(42);
-  } finally {
-    delete process.env[key];
-  }
+  // makes the key enumerable. Run in a subprocess with proxy vars stripped so
+  // the var is guaranteed absent from the OS env block at startup.
+  const env = { ...bunEnv };
+  for (const k of Object.keys(env)) if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const key = "HTTP_PROXY";
+       Object.defineProperty(process.env, key, { value: "http://x", writable: true, enumerable: true, configurable: true });
+       const inKeys = Reflect.ownKeys(process.env).includes(key);
+       const spread = { ...process.env }[key];
+       // An accessor getter's result reaches the OS sync via the trap; a
+       // non-string result must not violate editWindowsEnvVar's string contract.
+       Object.defineProperty(process.env, key, { get: () => 42, configurable: true });
+       console.log(JSON.stringify({ inKeys, spread, getter: process.env[key] }));`,
+    ],
+    env,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+    out: { inKeys: true, spread: "http://x", getter: 42 },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 /**

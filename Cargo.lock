@@ -1574,7 +1574,6 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_http_types",
- "bun_js_parser",
  "bun_paths",
  "bun_ptr",
  "bun_resolver",

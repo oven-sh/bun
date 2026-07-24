@@ -553,6 +553,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
+            // Outermost exception scope: this runs from Rust with no scope on
+            // the stack. The putDirect* family bypasses the defineOwnProperty
+            // hook, so descriptor validation cannot fire here; only allocation
+            // (jsString, index storage) can throw.
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             if (options.env.has_value()) {
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
@@ -566,12 +571,16 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     strings.append(jsString(vm, value));
                 }
 
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                auto env = Bun::createEmptyProcessEnvMap(globalObject);
                 size_t i = 0;
                 for (auto k : map) {
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    // Index-storage allocation can throw (OOM); stop populating
+                    // rather than keep calling into JSC with a pending exception.
+                    if (catchScope.exception()) [[unlikely]]
+                        break;
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {
@@ -582,6 +591,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->scriptExecutionContext()->setSharedEnvStore(*store);
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
+            // The only possible exception above is allocation failure while
+            // populating env, and there is no JS frame to deliver it to during
+            // global creation — drop it at this top scope (termination stays).
+            catchScope.clearExceptionExceptTermination();
 
             // Ensure that the TerminationException singleton is constructed. Workers need this so
             // that we can request their termination from another thread. For the main thread, we
@@ -3186,6 +3199,10 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    // Also reached from web_worker.rs start_vm before the worker thread takes
+    // the API lock; putDirectNativeFunction allocates and asserts the lock.
+    // JSLock is recursive, so this is a no-op on the main path.
+    JSC::JSLockHolder locker(vm);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
 

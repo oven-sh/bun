@@ -528,13 +528,31 @@ export function windowsEnv(
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
+      if (typeof p === "symbol") {
+        // JSProcessEnvMap rejects symbol keys (after descriptor validation),
+        // matching node; no bookkeeping applies.
+        return $Object.$defineProperty(internalEnv, p, attributes);
+      }
       const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      // Same predicate as the set trap: don't gate on `k in internalEnv` —
+      // the proxy/TZ/TLS accessor names always exist on internalEnv as
+      // DontEnum CustomAccessors, so the `in` check would skip envMapList
+      // for them and the key would vanish from Object.keys(process.env).
+      const isNewKey = !envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k);
+      // The define can throw (JSProcessEnvMap rejects partial data
+      // descriptors), so it runs before the bookkeeping: a rejected define
+      // must not leave a phantom key in envMapList, and the OS env var is
+      // synced to the value the define actually installed.
+      const r = $Object.$defineProperty(internalEnv, k, attributes);
+      if (isNewKey) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      // String-coerce: the data path is coerced natively, but an accessor
+      // descriptor (deliberate divergence) installs a getter whose result
+      // reaches this read raw, and editWindowsEnvVar requires string|null.
+      const v = internalEnv[k];
+      editWindowsEnvVar(k, v == null ? null : String(v));
+      return r;
     },
     getOwnPropertyDescriptor(target, p) {
       if (typeof p === "string") {

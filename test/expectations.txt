@@ -26,21 +26,6 @@
 # ships ClangCL. Runs everywhere else.
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
-# Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
-# within ONE globalThis.gc() + ONE setImmediate after the connect callback's
-# closure is unreferenced. The FinalizationRegistry spec gives no timing
-# guarantee for cleanup callbacks; JSC schedules them via DeferredWorkTimer
-# with no defined ordering relative to the immediate queue. The connect
-# listener IS removed (verified: listenerCount("secureConnect") === 0 in
-# done()) and the object IS collected (test passes 70/70 on darwin and
-# glibc Linux); on alpine x64 the FR callback delivery slips past the single
-# setImmediate after this PR's added module loads at process startup shift
-# the heap layout. The robust fix is gcUntil() rather than a single tick,
-# but the file is a verbatim upstream port. Quarantined on the failing
-# linux-x64-musl matrix only; still runs everywhere else (build 63145:
-# alpine 3.23 x64 + x64-baseline only).
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
-
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public
 # Bun.Socket whose setKeepAlive is documented in MILLISECONDS, so net.ts

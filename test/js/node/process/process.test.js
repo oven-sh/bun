@@ -6,6 +6,130 @@ import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
+it("process.env defineProperty validates descriptors like node", () => {
+  // Matrix verified against node v26.3.0.
+  const key = "BUN_TEST_DEFINE_MATRIX";
+  const dataMsg = "'process.env' only accepts a configurable, writable, and enumerable data descriptor";
+  const full = { value: "v", writable: true, enumerable: true, configurable: true };
+  try {
+    for (const [desc, msg] of [
+      [{ writable: false }, dataMsg],
+      [{}, dataMsg],
+      [{ value: "v" }, dataMsg],
+    ]) {
+      expect(() => Object.defineProperty(process.env, key, desc)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", message: msg }),
+      );
+      expect(key in process.env).toBe(false);
+    }
+    // Attribute-only on an existing key is rejected too, and the var stays
+    // writable — node validates before looking at the current entry.
+    process.env[key] = "before";
+    expect(() => Object.defineProperty(process.env, key, { writable: false })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+    );
+    process.env[key] = "after";
+    expect(process.env[key]).toBe("after");
+    Object.defineProperty(process.env, key, full);
+    expect(process.env[key]).toBe("v");
+    // node's EnvDefiner stringifies the value, matching the assignment trap.
+    Object.defineProperty(process.env, key, { value: 42, writable: true, enumerable: true, configurable: true });
+    expect(process.env[key]).toBe("42");
+    // [[PreventExtensions]] fails like node, so freeze/seal/preventExtensions
+    // throw plain TypeErrors (no code) and the env stays extensible.
+    for (const op of ["freeze", "seal", "preventExtensions"]) {
+      let opErr;
+      try {
+        Object[op](process.env);
+      } catch (e) {
+        opErr = e;
+      }
+      expect(opErr?.name).toBe("TypeError");
+      expect(opErr?.code).toBeUndefined();
+    }
+    expect(Object.isExtensible(process.env)).toBe(true);
+    // Symbol keys: the descriptor is validated first, then node's key
+    // coercion throws a plain TypeError with no code.
+    let symErr;
+    try {
+      Object.defineProperty(process.env, Symbol("s"), full);
+    } catch (e) {
+      symErr = e;
+    }
+    expect(symErr?.name).toBe("TypeError");
+    expect(symErr?.message).toBe("Cannot convert a Symbol value to a string");
+    expect(symErr?.code).toBeUndefined();
+    expect(() => Object.defineProperty(process.env, Symbol("s"), { writable: false })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+    );
+    // Deliberate divergence: node rejects accessor descriptors on process.env
+    // outright; bun accepts them (documented in JSEnvironmentVariableMap.cpp).
+    Object.defineProperty(process.env, key, { get: () => "g", configurable: true });
+    expect(process.env[key]).toBe("g");
+  } finally {
+    delete process.env[key];
+  }
+});
+
+it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom key", () => {
+  const key = "BUN_TEST_PHANTOM_DEFINE";
+  expect(key in process.env).toBe(false);
+  // Partial data descriptors are rejected (ERR_INVALID_OBJECT_DEFINE_PROPERTY);
+  // the windowsEnv proxy must not record the key before the define runs.
+  expect(() => Object.defineProperty(process.env, key, { value: "42" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+  );
+  expect(Reflect.ownKeys(process.env)).not.toContain(key);
+  expect(Bun.inspect(process.env)).not.toContain(key);
+  try {
+    Object.defineProperty(process.env, key, {
+      value: "42",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(process.env[key]).toBe("42");
+    expect(Reflect.ownKeys(process.env)).toContain(key);
+  } finally {
+    delete process.env[key];
+  }
+});
+
+it.skipIf(!isWindows)(
+  "process.env defineProperty enumerates special-accessor keys and coerces accessor reads",
+  async () => {
+    // HTTP_PROXY and friends exist on the underlying env object as DontEnum
+    // CustomAccessors even when unset; the defineProperty trap must use the
+    // envMapList predicate (like the set trap) so a first-time define still
+    // makes the key enumerable. Run in a subprocess with proxy vars stripped so
+    // the var is guaranteed absent from the OS env block at startup.
+    const env = { ...bunEnv };
+    for (const k of Object.keys(env)) if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const key = "HTTP_PROXY";
+       Object.defineProperty(process.env, key, { value: "http://x", writable: true, enumerable: true, configurable: true });
+       const inKeys = Reflect.ownKeys(process.env).includes(key);
+       const spread = { ...process.env }[key];
+       // An accessor getter's result reaches the OS sync via the trap; a
+       // non-string result must not violate editWindowsEnvVar's string contract.
+       Object.defineProperty(process.env, key, { get: () => 42, configurable: true });
+       console.log(JSON.stringify({ inKeys, spread, getter: process.env[key] }));`,
+      ],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { inKeys: true, spread: "http://x", getter: 42 },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 /**
  * Helper function to run inline fixture code and return stdout and exit code
  */
@@ -1273,6 +1397,9 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    // a `-`-prefixed value is still a value (bun_clap consumes it by arity),
+    // not a short chain to normalize
+    ["--define -d:1 index.ts", ["--define", "-d:1"], []],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {

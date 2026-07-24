@@ -245,81 +245,23 @@ mod _impl {
             return JSValue::create_empty_array(global_object, 0);
         }
 
-        let argv = bun_core::argv();
+        // Re-parsing the process argv is rare, so it isn't done as part of
+        // the CLI. The token builder lives alongside the worker execArgv
+        // policy so `process.execArgv` and the inherit-path honoring scan see
+        // identical tokens.
+        let tokens = crate::cli::worker_exec_argv::collect_process_exec_argv_tokens();
         // `defer args.deinit()` + `defer for args |*a| a.deref()`
-        let mut args = scopeguard::guard(
-            Vec::<BunString>::with_capacity(argv.len().saturating_sub(1)),
+        let args = scopeguard::guard(
+            tokens
+                .iter()
+                .map(|t| BunString::clone_utf8(t))
+                .collect::<Vec<_>>(),
             |v| {
                 for a in &v {
                     a.deref();
                 }
             },
         );
-
-        let mut seen_run = false;
-        let mut prev: Option<&[u8]> = None;
-
-        // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
-        // it isn't worth doing this as a part of the CLI
-        let mut iter = argv.iter();
-        let _ = iter.next(); // skip argv[0]
-        for arg in iter {
-            // emulate `defer prev = arg` by setting at end of each iteration body
-            let arg: &[u8] = arg;
-
-            if arg.len() >= 1 && arg[0] == b'-' {
-                args.push(BunString::clone_utf8(arg));
-                prev = Some(arg);
-                continue;
-            }
-
-            if !seen_run && arg == b"run" {
-                seen_run = true;
-                prev = Some(arg);
-                continue;
-            }
-
-            // A set of execArgv args consume an extra argument, so we do not want to
-            // confuse these with script names.
-            // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-            // `--long` / `-s` for every param with a value.
-            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-                std::sync::LazyLock::new(|| {
-                    let mut set = bun_collections::StringSet::new();
-                    for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        if param.takes_value != bun_clap::Values::None {
-                            if let Some(name) = param.names.long {
-                                let mut k = Vec::with_capacity(2 + name.len());
-                                k.extend_from_slice(b"--");
-                                k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
-                            }
-                            if let Some(name) = param.names.short {
-                                bun_core::handle_oom(set.insert(&[b'-', name]));
-                            }
-                        }
-                    }
-                    set
-                });
-
-            if let Some(p) = prev {
-                // Node's whole-token aliases only apply on the `bun`/`node`
-                // entry points (Arguments::parse scopes them the same way).
-                let takes_value = MAP.contains(p)
-                    || (!seen_run
-                        && crate::cli::arguments::NODE_SHORT_ALIASES
-                            .iter()
-                            .any(|(from, to)| *from == p && MAP.contains(to)));
-                if takes_value {
-                    args.push(BunString::clone_utf8(arg));
-                    prev = Some(arg);
-                    continue;
-                }
-            }
-
-            // we hit the script name
-            break;
-        }
 
         bun_string_jsc::to_js_array(global_object, &args)
     }

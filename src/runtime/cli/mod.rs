@@ -310,6 +310,7 @@ pub mod arguments;
 pub use arguments as Arguments;
 #[path = "run_command.rs"]
 pub mod run_command;
+pub mod worker_exec_argv;
 
 // ─── per-subcommand bodies ───────────────────────────────────────────────────
 #[path = "build_command.rs"]

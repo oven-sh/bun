@@ -35,11 +35,19 @@ it("process.env defineProperty validates descriptors like node", () => {
     // node's EnvDefiner stringifies the value, matching the assignment trap.
     Object.defineProperty(process.env, key, { value: 42, writable: true, enumerable: true, configurable: true });
     expect(process.env[key]).toBe("42");
-    // Object.freeze applies {configurable:false, writable:false} per key via
-    // the hook, which is the attribute-only case above.
-    expect(() => Object.freeze(process.env)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
-    );
+    // [[PreventExtensions]] fails like node, so freeze/seal/preventExtensions
+    // throw plain TypeErrors (no code) and the env stays extensible.
+    for (const op of ["freeze", "seal", "preventExtensions"]) {
+      let opErr;
+      try {
+        Object[op](process.env);
+      } catch (e) {
+        opErr = e;
+      }
+      expect(opErr?.name).toBe("TypeError");
+      expect(opErr?.code).toBeUndefined();
+    }
+    expect(Object.isExtensible(process.env)).toBe(true);
     // Symbol keys: the descriptor is validated first, then node's key
     // coercion throws a plain TypeError with no code.
     let symErr;

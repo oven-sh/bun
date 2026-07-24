@@ -473,6 +473,10 @@ describe("execArgv option", async () => {
            'catch (e) { out.partial = e.code; }' +
            'try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }' +
            'catch (e) { out.symbol = e.name; }' +
+           'try { Object.defineProperty(process.env, "BUN_TEST_SHARE_NUM", { value: 7, writable: true, enumerable: true, configurable: true }); out.numeric = typeof process.env.BUN_TEST_SHARE_NUM; }' +
+           'catch (e) { out.numeric = e.code; }' +
+           'try { Object.freeze(process.env); out.freeze = null; } catch (e) { out.freeze = e.name; }' +
+           'out.extensibleAfterFreeze = Object.isExtensible(process.env);' +
            'require("worker_threads").parentPort.postMessage(out);',
            { eval: true, env: SHARE_ENV },
          ).on("message", out => { console.log(JSON.stringify(out)); process.exit(0); });`,
@@ -482,7 +486,7 @@ describe("execArgv option", async () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
-      out: { partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError" },
+      out: { partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError", numeric: "string", freeze: "TypeError", extensibleAfterFreeze: true },
       stderr: "",
       exitCode: 0,
     });

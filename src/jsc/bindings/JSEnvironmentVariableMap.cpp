@@ -466,6 +466,11 @@ public:
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    // See JSProcessEnvMap::preventExtensions — node parity for freeze/seal.
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
+    {
+        return false;
+    }
 
 private:
     JSSharedEnvMap(JSC::VM& vm, JSC::Structure* structure)
@@ -841,6 +846,15 @@ public:
         RETURN_IF_EXCEPTION(scope, false);
         JSC::PropertyDescriptor coerced(jsString(vm, stringValue), 0);
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
+    }
+
+    // node's process.env fails [[PreventExtensions]], so Object.freeze /
+    // seal / preventExtensions throw plain TypeErrors and the map stays
+    // extensible (verified on v26.3.0; a failed freeze must not leave the
+    // env non-extensible, and the per-key define hook is never reached).
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
+    {
+        return false;
     }
 
 private:

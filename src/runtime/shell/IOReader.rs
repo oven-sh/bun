@@ -333,7 +333,7 @@ impl IOReader {
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
-        let readers: Vec<ChildPtr> = s.readers.clone();
+        let readers = std::mem::take(&mut s.readers);
         let interp = s.interp;
         // `SystemError` isn't `Clone` yet, so we keep the source `sys::Error`
         // (which IS `Clone`) and re-derive a fresh `SystemError` per callee —

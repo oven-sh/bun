@@ -2462,7 +2462,7 @@ impl<'a> LinkerContext<'a> {
     pub fn append_isolated_hashes_for_imported_chunks(
         &self,
         hash: &mut ContentHasher,
-        chunks: &mut [Chunk],
+        chunks: &[Chunk],
         index: u32,
         chunk_visit_map: &mut AutoBitSet,
     ) {
@@ -2475,14 +2475,14 @@ impl<'a> LinkerContext<'a> {
         }
         chunk_visit_map.set(index as usize);
 
+        let chunk = &chunks[index as usize];
+
         // Visit the other chunks that this chunk imports before visiting this chunk
-        let n = chunks[index as usize].cross_chunk_imports.slice().len();
-        for i in 0..n {
-            let chunk_index = chunks[index as usize].cross_chunk_imports.slice()[i].chunk_index;
+        for import in chunk.cross_chunk_imports.slice() {
             self.append_isolated_hashes_for_imported_chunks(
                 hash,
                 chunks,
-                chunk_index,
+                import.chunk_index,
                 chunk_visit_map,
             );
         }
@@ -2491,72 +2491,62 @@ impl<'a> LinkerContext<'a> {
         // express cross-chunk dependencies via `cross_chunk_imports` above, but
         // HTML (and CSS) chunks only reference other chunks through pieces, so
         // recurse on those too.
-        let pieces_len = match &chunks[index as usize].intermediate_output {
-            crate::chunk::IntermediateOutput::Pieces(pieces) => pieces.slice().len(),
-            _ => 0,
-        };
-        for i in 0..pieces_len {
-            let (kind, piece_index) = {
-                let crate::chunk::IntermediateOutput::Pieces(pieces) =
-                    &chunks[index as usize].intermediate_output
-                else {
-                    unreachable!()
-                };
-                let p = &pieces.slice()[i];
-                (p.query.kind(), p.query.index())
-            };
-            match kind {
-                crate::chunk::QueryKind::Asset => {
-                    let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
-                        bun_paths::resolve_path::platform::Posix,
-                    >(
-                        &chunks[index as usize].final_rel_path
-                    );
-                    if from_chunk_dir == b"." {
-                        from_chunk_dir = b"";
-                    }
-
-                    let source_index = piece_index;
-                    let parse_graph = self.parse_graph();
-                    let additional_files: &[AdditionalFile] =
-                        parse_graph.input_files.items_additional_files()[source_index as usize]
-                            .slice();
-                    debug_assert!(!additional_files.is_empty());
-                    match &additional_files[0] {
-                        AdditionalFile::OutputFile(output_file_id) => {
-                            let path = &parse_graph.additional_output_files
-                                [*output_file_id as usize]
-                                .dest_path;
-                            hash.write(bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Posix,
-                                false,
-                            >(from_chunk_dir, path));
+        if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+            for p in pieces.slice() {
+                match p.query.kind() {
+                    crate::chunk::QueryKind::Asset => {
+                        let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
+                            bun_paths::resolve_path::platform::Posix,
+                        >(&chunk.final_rel_path);
+                        if from_chunk_dir == b"." {
+                            from_chunk_dir = b"";
                         }
-                        AdditionalFile::SourceIndex(_) => {}
+
+                        let source_index = p.query.index();
+                        let parse_graph = self.parse_graph();
+                        let additional_files: &[AdditionalFile] = parse_graph
+                            .input_files
+                            .items_additional_files()[source_index as usize]
+                            .slice();
+                        debug_assert!(!additional_files.is_empty());
+                        match &additional_files[0] {
+                            AdditionalFile::OutputFile(output_file_id) => {
+                                let path = &parse_graph.additional_output_files
+                                    [*output_file_id as usize]
+                                    .dest_path;
+                                hash.write(bun_paths::resolve_path::relative_platform::<
+                                    bun_paths::resolve_path::platform::Posix,
+                                    false,
+                                >(
+                                    from_chunk_dir, path
+                                ));
+                            }
+                            AdditionalFile::SourceIndex(_) => {}
+                        }
                     }
+                    crate::chunk::QueryKind::Chunk => {
+                        self.append_isolated_hashes_for_imported_chunks(
+                            hash,
+                            chunks,
+                            p.query.index(),
+                            chunk_visit_map,
+                        );
+                    }
+                    crate::chunk::QueryKind::Scb => {
+                        self.append_isolated_hashes_for_imported_chunks(
+                            hash,
+                            chunks,
+                            self.graph.files.items_entry_point_chunk_index()
+                                [p.query.index() as usize],
+                            chunk_visit_map,
+                        );
+                    }
+                    crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
                 }
-                crate::chunk::QueryKind::Chunk => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        piece_index,
-                        chunk_visit_map,
-                    );
-                }
-                crate::chunk::QueryKind::Scb => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        self.graph.files.items_entry_point_chunk_index()[piece_index as usize],
-                        chunk_visit_map,
-                    );
-                }
-                crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
             }
         }
 
         // Mix in the hash for this chunk
-        let chunk = &chunks[index as usize];
         hash.write(&chunk.isolated_hash.to_ne_bytes());
     }
 

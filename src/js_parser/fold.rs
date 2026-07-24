@@ -381,11 +381,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     return None;
                                 }
 
-                                // Note: lookup is split from insertion for borrowck.
-                                let ref_ = if let Some(existing) =
-                                    p.commonjs_named_exports.get(name)
-                                {
-                                    existing.loc_ref.ref_
+                                let gop = p
+                                    .commonjs_named_exports
+                                    .get_or_put(name)
+                                    .expect("unreachable");
+                                let index = gop.index;
+                                let ref_ = if gop.found_existing {
+                                    gop.value_ptr.loc_ref.ref_
                                 } else {
                                     let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
@@ -395,21 +397,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
-                                    p.commonjs_named_exports
-                                        .put(
-                                            name,
-                                            CommonJSNamedExport {
-                                                loc_ref: LocRef {
-                                                    loc: name_loc,
-                                                    ref_: new_ref,
-                                                },
-                                                needs_decl: true,
+                                    p.commonjs_named_exports.values_mut()[index] =
+                                        CommonJSNamedExport {
+                                            loc_ref: LocRef {
+                                                loc: name_loc,
+                                                ref_: new_ref,
                                             },
-                                        )
-                                        .expect("unreachable");
+                                            needs_decl: true,
+                                        };
                                     if p.commonjs_named_exports_needs_conversion == u32::MAX {
-                                        p.commonjs_named_exports_needs_conversion =
-                                            (p.commonjs_named_exports.count() - 1) as u32;
+                                        p.commonjs_named_exports_needs_conversion = index as u32;
                                     }
                                     new_ref
                                 };

@@ -463,6 +463,10 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // (STATUS_ENTRYPOINT_NOT_FOUND). Rust's own bounds checks cover its
     // accesses; the intercepted allocator covers heap lifetime bugs.
     if (!cfg.windows) rustflags.push("-Zsanitizer=address");
+    // Windows ASAN links the DYNAMIC CRT (see flags.ts /MD); the msvc
+    // target defaults to crt-static, so switch it off or the Rust objects
+    // would drag a second, static CRT (and its own heap) into the binary.
+    if (cfg.windows) rustflags.push("-Ctarget-feature=-crt-static");
     rustflags.push("--cfg=bun_asan");
   }
   // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).
